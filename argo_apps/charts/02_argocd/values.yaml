@@ -1,0 +1,67 @@
+# Values for the 02_argocd wrapper chart. SINGLE SOURCE OF TRUTH — both the 05_argocd.sh
+# bootstrap and the (self-managed) ArgoCD Application consume this. Chart version pinned in Chart.yaml.
+#
+# HA-lite posture for 3x 8GB Pi 5s: ArgoCD is NOT in the data path of running apps (once an app
+# is synced it runs regardless of Argo), so a few seconds of no reconciliation is fine. We keep the
+# reconciler + redis as self-healing singletons, and run the stateless front-ends 2-on-2-nodes.
+
+# Everything under `argo-cd:` is passed to the upstream argoproj/argo-cd subchart (key == dependency name).
+argo-cd:
+  # --- HA-lite topology: spread the 2-replica components across the 3 nodes ------------------
+  # global.topologySpreadConstraints applies to every component; the chart fills in each
+  # component's labelSelector automatically. Singletons (controller, redis) satisfy it trivially.
+  # maxSkew 1 + DoNotSchedule over 3 nodes => the 2 replicas land on 2 distinct nodes.
+  global:
+    topologySpreadConstraints:
+      - maxSkew: 1
+        topologyKey: kubernetes.io/hostname
+        whenUnsatisfiable: DoNotSchedule
+
+  # --- trim the footprint --------------------------------------------------------------------
+  dex:
+    enabled: false                 # no SSO — drop the dex pod
+  notifications:
+    enabled: false                 # no notifications controller yet — drop the pod
+  redis-ha:
+    enabled: false                 # single redis (the default); it's only a cache, self-heals on restart
+
+  # --- UI/API served plain HTTP so `kubectl port-forward` is simple (no ingress/LB yet) -------
+  # Flip to false (and front it with a Gateway/LoadBalancer) when the UI gets real ingress.
+  configs:
+    params:
+      server.insecure: true
+
+  # --- the reconciler: singleton StatefulSet, self-heals on restart --------------------------
+  controller:
+    replicas: 1
+    resources:
+      requests: { cpu: 100m, memory: 256Mi }
+      limits:   { memory: 512Mi }
+
+  # --- manifest generation: 2 replicas on 2 nodes + PDB (stays up across a node drain) -------
+  repoServer:
+    replicas: 2
+    pdb:
+      enabled: true
+      minAvailable: 1
+    resources:
+      requests: { cpu: 50m, memory: 128Mi }
+      limits:   { memory: 256Mi }
+
+  # --- API/UI: 2 replicas on 2 nodes + PDB ---------------------------------------------------
+  server:
+    replicas: 2
+    pdb:
+      enabled: true
+      minAvailable: 1
+    resources:
+      requests: { cpu: 50m, memory: 128Mi }
+      limits:   { memory: 256Mi }
+
+  # --- ApplicationSet controller: leader-elected; 2 replicas for fast failover ---------------
+  # (drop to 1 if RAM gets tight once Longhorn + monitoring land.)
+  applicationSet:
+    replicas: 2
+    resources:
+      requests: { cpu: 50m, memory: 128Mi }
+      limits:   { memory: 256Mi }

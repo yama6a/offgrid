@@ -1,0 +1,33 @@
+# ArgoCD Application that makes ArgoCD MANAGE ITSELF from the wrapper chart at
+# argo_apps/charts/02_argocd/. The 05_argocd.sh bootstrap installs the same chart/release by hand
+# first; this Application then adopts it (same name "argocd" + namespace "argocd") and, from then
+# on, reconciles ArgoCD from git. See 05_gitops.md.
+#
+# AUTOMATED (prune + selfHeal): safe to self-manage — ArgoCD applying its own manifests is the
+# whole point. ServerSideApply avoids the "last-applied annotation too long" failure on the large
+# argo-cd CRDs.
+#
+# sync-wave "0": same wave as 01_cilium (both bootstrap apps are adopted, not installed-in-order).
+apiVersion: argoproj.io/v1alpha1
+kind: Application
+metadata:
+  name: argocd
+  namespace: argocd
+  annotations:
+    argocd.argoproj.io/sync-wave: "0"
+spec:
+  project: default
+  source:
+    repoURL: https://github.com/yama6a/offgrid.git
+    targetRevision: HEAD
+    path: argo_apps/charts/02_argocd
+  destination:
+    server: https://kubernetes.default.svc
+    namespace: argocd
+  syncPolicy:
+    automated:
+      prune: true
+      selfHeal: true
+    syncOptions:
+      - CreateNamespace=true
+      - ServerSideApply=true

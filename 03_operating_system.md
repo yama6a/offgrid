@@ -289,7 +289,8 @@ Once the cluster is up (nodes **NotReady** — no CNI yet), in order:
 2. **Cilium** — CNI + LoadBalancer + gateway + WireGuard encryption; this is what flips the nodes to **Ready**. **Done
    by `04_cilium.sh`** (step 04) — decision basis + detail in [04_networking.md](04_networking.md). The one
    imperative install; everything after it is GitOps.
-3. **ArgoCD** (next step) — then it **adopts** Cilium, and everything below becomes declarative.
+3. **ArgoCD** — **Done by `05_argocd.sh`** (step 05); it self-manages, then **adopts** Cilium, and everything below
+   becomes declarative. See [05_gitops.md](05_gitops.md).
 4. **NIC recovery DaemonSet** (EEE-off + link-watchdog + `ss -K`) — **deferred** to GitOps (ArgoCD); documented below.
 5. **etcd snapshot** schedule.
 6. Monitoring (kube-prometheus-stack, Loki) → then **Longhorn** on the reserved partition.
@@ -344,7 +345,7 @@ Exit 0 = all green. A `[FAIL]` on `patch` mentioning *reboot* means the change w
 reboot (it refused) — investigate before forcing. A watchdog `[FAIL]` usually means the
 timeout exceeded the hardware max → lower `WATCHDOG_TIMEOUT`.
 
-### Deferred — the recovery DaemonSet (next step, ArgoCD)
+### Deferred — the recovery DaemonSet (GitOps, see [05_gitops.md](05_gitops.md))
 
 The wedge itself is assumed tolerable for now, so the **runtime** recovery is deferred
 until GitOps (ArgoCD) lands, then managed declaratively. It will run per-node, privileged,
