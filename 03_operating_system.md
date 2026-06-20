@@ -4,7 +4,8 @@ OS for the 3-node Pi 5 cluster: **Talos Linux**. Immutable, API-managed, Kuberne
 declarative config: no SSH, no package manager, no drift. Talos has no official Pi 5 image, so we build our own
 against the latest Talos on a recent Raspberry Pi kernel. This doc covers why we picked Talos, what we looked at and
 rejected, how the NVMe image gets built, validated, and flashed, and how the nodes are brought up into a cluster
-([Cluster bring-up](#cluster-bring-up) below).
+([Cluster bring-up](#cluster-bring-up)). The networking layer — **Cilium** as CNI, load balancer, gateway, and
+encryption — is the next step: see [04_networking.md](04_networking.md).
 
 ## Why Talos
 
@@ -202,8 +203,10 @@ Drop that in `~/.zshrc`, reload, and `talosctl` works normally from there.
 ## Cluster bring-up
 
 Bring up the control-plane cluster from the NVMes flashed above. The **same image** is on every node; per-node identity
-(hostname, role) is applied now via `talosctl`. CNI = **Flannel** (Talos default); all nodes are control-plane **and**
-schedulable.
+(hostname, role) is applied now via `talosctl`. The CNI is **disabled at the Talos layer** (`cni: none`) and kube-proxy
+is **off** (`proxy.disabled: true`) — both are replaced by **Cilium** in [step 04](04_networking.md). All
+nodes are control-plane **and** schedulable. Nodes come up **NotReady** until Cilium lands — that's expected, not a
+fault.
 
 > The cluster name, VIP, install disk, NIC, and the node list (hostname + IP per node) all live in `03_config.sh` —
 > nothing is hardcoded in the script. Edit them there to match your network.
@@ -238,9 +241,12 @@ picked `192.168.100.1` for the VIP.
 
 1. Reads cluster name, install disk, EPHEMERAL cap, NIC, the **VIP**, and each node's hostname + **IP** from
    `03_config.sh`, prints a summary, and waits for a `YES` confirmation.
-2. `talosctl gen config` — secrets + base machine config, API endpoint = the VIP, Flannel CNI.
+2. `talosctl gen config` — secrets + base machine config, API endpoint = the VIP. (The base would default to Flannel;
+   the patch below turns the CNI off so Cilium can take over.)
 3. Applies a control-plane patch to every node: the **VIP** bound to the wired NIC, `allowSchedulingOnControlPlanes:
-   true`, and `certSANs` (VIP + node IPs).
+   true`, `certSANs` (VIP + node IPs), and the **Cilium prep** — `cluster.network.cni.name: none`,
+   `cluster.proxy.disabled: true` (Cilium does kube-proxy replacement), and `machine.features.kubePrism.enabled: true`
+   (Cilium's API endpoint at `localhost:7445`; default-on in 1.13, set explicitly here to document the dependency).
 4. Appends the **partition layout**: `EPHEMERAL` capped (default 64 GiB) + a `longhorn` user volume taking the rest of
    the NVMe (`/var/mnt/longhorn`, sits empty until step 04).
 5. `apply-config` to each node — only the hostname differs.
@@ -269,20 +275,24 @@ bootstrap. No manual stopwatch.
 
 ```bash
 export KUBECONFIG=./talos-cluster/kubeconfig
-kubectl get nodes -o wide                  # 3× Ready, control-plane
+kubectl get nodes -o wide                  # 3× NotReady — no CNI yet; flips to Ready after step 04 (Cilium)
 talosctl -n <cp1-ip> etcd members          # 3 members
 ```
 
-## Then — hardening
+## Then — networking & hardening
 
-Applied after the cluster is up, once we can read real device names off a live node:
+Once the cluster is up (nodes **NotReady** — no CNI yet), in order:
 
-- **NIC machine-config defences** — `EthernetConfig` + `WatchdogTimerConfig`. **Done by
-  `03e_nic_hardening.sh`** — see [NIC hardening](#nic-hardening--the-macb-wedge) below.
-- **NIC recovery DaemonSet** (EEE-off + link-watchdog + `ss -K`) — **deferred** to GitOps
-  (ArgoCD); documented below.
-- **etcd snapshot** schedule.
-- Monitoring (kube-prometheus-stack, Loki) → then **Longhorn** on the reserved partition.
+1. **NIC machine-config defences** — `EthernetConfig` + `WatchdogTimerConfig`. **Done by
+   `03e_nic_hardening.sh`** — see [NIC hardening](#nic-hardening--the-macb-wedge). Run *before* Cilium, so the NIC is
+   hardened ahead of the network-heavy CNI rollout.
+2. **Cilium** — CNI + LoadBalancer + gateway + WireGuard encryption; this is what flips the nodes to **Ready**. **Done
+   by `04_cilium.sh`** (step 04) — decision basis + detail in [04_networking.md](04_networking.md). The one
+   imperative install; everything after it is GitOps.
+3. **ArgoCD** (next step) — then it **adopts** Cilium, and everything below becomes declarative.
+4. **NIC recovery DaemonSet** (EEE-off + link-watchdog + `ss -K`) — **deferred** to GitOps (ArgoCD); documented below.
+5. **etcd snapshot** schedule.
+6. Monitoring (kube-prometheus-stack, Loki) → then **Longhorn** on the reserved partition.
 
 ## NIC hardening — the macb wedge
 
@@ -390,6 +400,8 @@ hostNetwork, and do:
 - **Won't boot at all** -> EEPROM boot order / `PCIE_PROBE` (step 02).
 - **NVMe not detected** -> PCIe probe / `dtparam`; confirm Gen 2 link with step 02's checks.
 
+(Cilium / networking troubleshooting lives in [04_networking.md](04_networking.md).)
+
 ## Reference
 
 - talos-builder: <https://github.com/talos-rpi5/talos-builder>
@@ -400,5 +412,10 @@ hostNetwork, and do:
 - Upgrades: <https://www.talos.dev/latest/talos-guides/upgrading-talos/>
 - Pi 5 macb wedge (why the NIC fix lives in step 04 config, not the
   image): <https://github.com/siderolabs/sbc-raspberrypi/issues/91>
+- Cilium on Talos (KubePrism, kube-proxy replacement, cgroup/securityContext):
+  <https://docs.cilium.io/en/stable/installation/k8s-install-helm/>
+- Cilium Gateway API (the v1.4.1 CRD set for 1.19): <https://docs.cilium.io/en/v1.19/network/servicemesh/gateway-api/gateway-api/>
+- Cilium LB-IPAM + L2 announcements: <https://docs.cilium.io/en/stable/network/lb-ipam/>
+- ingress-nginx retirement (why Gateway API): <https://kubernetes.io/blog/2025/11/11/ingress-nginx-retirement/>
 - Worked examples: <https://kcirtap.io/posts/talos-rpi5-custom-kernel-build/>
   and <https://rcwz.pl/2025-10-04-installing-talos-on-raspberry-pi-5/>

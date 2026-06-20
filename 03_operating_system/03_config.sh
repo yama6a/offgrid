@@ -68,3 +68,7 @@ CLUSTER_VIP="192.168.100.1"          # control-plane VIP (unused IP, outside you
 INSTALL_DISK="/dev/${EXPECT_DISK}"   # nvme0n1 -> /dev/nvme0n1
 EPHEMERAL_SIZE="64GiB"               # EPHEMERAL cap; rest of the NVMe -> longhorn user volume
 IFACE="${EXPECT_NIC}"                # wired NIC the VIP binds to (dhcp + vip)
+
+# Cilium (CNI/LB/gateway/encryption) is step 04. Its version, values, Gateway API CRDs,
+# and LB-IPAM pool all live in the wrapper chart argo_apps/charts/01_cilium/ — see
+# ../04_networking/04_cilium.sh and 04_networking.md. Nothing for it is configured here.

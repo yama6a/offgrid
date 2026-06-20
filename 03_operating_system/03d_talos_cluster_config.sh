@@ -48,7 +48,6 @@ echo "Cluster:  ${CLUSTER}     VIP: ${VIP}     NIC: ${IFACE}"
 echo "Disk:     ${DISK}        EPHEMERAL cap: ${EPHEMERAL}"
 for i in "${!IPS[@]}"; do echo "  ${HOSTNAMES[$i]}  ->  ${IPS[$i]}"; done
 echo "Output:   ${OUTDIR}"
-read -r -p ">> proceed? type YES: " ok; [ "${ok}" = "YES" ] || { echo aborted; exit 1; }
 
 # 1. Secrets + base machine config (generated once; preserved on re-run)
 if [ ! -f "${OUTDIR}/controlplane.yaml" ]; then
@@ -59,6 +58,10 @@ fi
 CERTSANS="$(printf '      - %s\n' "${VIP}" "${IPS[@]}")"
 cat > "${OUTDIR}/cp-patch.yaml" <<EOF
 machine:
+  features:
+    kubePrism:
+      enabled: true
+      port: 7445
   network:
     interfaces:
       - interface: ${IFACE}
@@ -67,6 +70,11 @@ machine:
           ip: ${VIP}
 cluster:
   allowSchedulingOnControlPlanes: true
+  network:
+    cni:
+      name: none          # hand the CNI to Cilium
+  proxy:
+    disabled: true        # Cilium kube-proxy replacement; L2 needs it
   apiServer:
     certSANs:
 ${CERTSANS}
@@ -134,9 +142,6 @@ for i in "${!IPS[@]}"; do
 done
 
 # 8. Bootstrap etcd ONCE, on the first node only
-echo
-read -r -p ">> bootstrap etcd on ${HOSTNAMES[0]} (${IPS[0]})? ONE TIME ONLY. type YES: " ok
-[ "${ok}" = "YES" ] || { echo "skipped bootstrap (re-run later)."; exit 0; }
 talosctl bootstrap -n "${IPS[0]}"
 
 # 9. Wait for the cluster, then fetch kubeconfig (-> ${OUTDIR}/kubeconfig)
@@ -147,3 +152,4 @@ echo
 echo ">> Done."
 echo ">> talosconfig: ${OUTDIR}/talosconfig   (export TALOSCONFIG=${OUTDIR}/talosconfig)"
 echo ">> kubeconfig:  ${OUTDIR}/kubeconfig    (export KUBECONFIG=${OUTDIR}/kubeconfig && kubectl get nodes -o wide)"
+echo ">> cp ~/.kube/config ~/.kube/config.bak && KUBECONFIG=\"${SCRIPT_DIR}/talos-cluster/kubeconfig:${HOME}/.kube/config\" kubectl config view --flatten > /tmp/kc && mv /tmp/kc ~/.kube/config"
