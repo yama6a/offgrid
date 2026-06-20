@@ -1,0 +1,3 @@
+# Build scratch + output (BUILD_DIR in 03_config.sh) — talos-builder checkouts,
+# kernel tarball, staged image, etc. Can grow to >100 GB; never commit it.
+.cache/
