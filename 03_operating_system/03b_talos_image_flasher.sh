@@ -1,20 +1,20 @@
 #!/usr/bin/env bash
 #
-# 03_talos_image_flasher.sh  (macOS)
+# 03b_talos_image_flasher.sh  (macOS)
 #
 # Writes the LOCAL custom Raspberry Pi 5 Talos image — built and validated by
-# 03_talos_image_builder.sh — to an NVMe SSD over a USB adapter. Run once per
+# 03a_talos_image_builder.sh — to an NVMe SSD over a USB adapter. Run once per
 # drive; swap the SSD each time.
 #
 # Boot chain: the EEPROM (step 02) tries SD first, then NVMe. With no card
 # inserted, the Pi boots Talos from this NVMe straight into maintenance mode.
-# Cluster config (IPs, VIP, partitions) is applied later in step 04.
+# Cluster config (IPs, VIP, partitions) is applied later by 03d_talos_cluster_config.sh.
 #
 # Requires: xz   (brew install xz)
 #
 set -euo pipefail
 
-# Config (OUT_DIR, RAW_XZ — the compressed raw image from 03_talos_image_builder.sh)
+# Config (OUT_DIR, RAW_XZ — the compressed raw image from 03a_talos_image_builder.sh)
 # lives in 03_config.sh. Override RAW_XZ to flash a specific build.
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 source "${SCRIPT_DIR}/03_config.sh"
@@ -22,7 +22,7 @@ source "${SCRIPT_DIR}/03_config.sh"
 command -v xz >/dev/null || { echo "ERROR: xz not found (brew install xz)"; exit 1; }
 [ -f "$RAW_XZ" ] || {
   echo "ERROR: image not found: $RAW_XZ"
-  echo "       build it first:  ./03_talos_image_builder.sh"
+  echo "       build it first:  ./03a_talos_image_builder.sh"
   exit 1
 }
 

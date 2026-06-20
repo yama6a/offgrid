@@ -1,10 +1,11 @@
 #!/usr/bin/env bash
 #
-# 03_talos_image_builder.sh  (macOS, Apple Silicon)
+# 03a_talos_image_builder.sh  (macOS, Apple Silicon)
 #
 # Builds a CUSTOM Talos Linux image for the Raspberry Pi 5 at the latest Talos
-# on a recent Raspberry Pi kernel, bakes in the items step 04/05 need, and ends
-# with an OFFLINE validation stage. A clean run = a built AND validated image.
+# on a recent Raspberry Pi kernel, bakes in the items cluster bring-up (03d) and
+# hardening (step 04) need, and ends with an OFFLINE validation stage. A clean
+# run = a built AND validated image.
 #
 # It drives talos-rpi5/talos-builder (which stitches siderolabs/pkgs +
 # siderolabs/talos + the talos-rpi5 overlay), but rebases four things the
@@ -15,7 +16,7 @@
 #   - zstd, xz, jq, curl           brew install zstd xz jq
 #   - docker (Rancher Desktop ok) with an arm64 Linux VM, >= ~120 GB free disk
 #
-# Nothing here touches hardware. Flashing is a separate step (03_talos_image_flasher.sh).
+# Nothing here touches hardware. Flashing is next (03b_talos_image_flasher.sh).
 #
 set -euo pipefail
 
@@ -118,7 +119,7 @@ CONFIG_COMMON_CLK_RP1_SDIO=y
 CONFIG_PINCTRL_BCM2712=y
 CONFIG_BCM2712_MIP=y
 CONFIG_BCM2712_IOMMU=y
-# Boot path + Pi 5 hardware watchdog (step 05 WatchdogTimerConfig binds here)
+# Boot path + Pi 5 hardware watchdog (step 04 WatchdogTimerConfig binds here)
 CONFIG_PCIE_BRCMSTB=y
 CONFIG_BLK_DEV_NVME=y
 CONFIG_MACB=y
@@ -259,4 +260,4 @@ PY
 say "BUILD + VALIDATION PASSED"
 echo "   image:     $STAGED"
 echo "   installer: ${REGISTRY_HOST}/${REGISTRY_USER}/installer:${TALOS_TAG}  (local registry)"
-echo "   flash:     ./03_talos_image_flasher.sh"
+echo "   flash:     ./03b_talos_image_flasher.sh"

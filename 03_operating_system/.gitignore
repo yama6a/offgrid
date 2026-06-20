@@ -1,3 +1,7 @@
 # Build scratch + output (BUILD_DIR in 03_config.sh) — talos-builder checkouts,
 # kernel tarball, staged image, etc. Can grow to >100 GB; never commit it.
 .cache/
+
+# Cluster bring-up output (03d_talos_cluster_config.sh) — holds SECRETS
+# (talosconfig, kubeconfig, controlplane.yaml). Never commit it.
+talos-cluster/

@@ -1,15 +1,16 @@
-# Talos. OS choice & custom NVMe image
+# Talos: OS choice, custom NVMe image & cluster bring-up
 
 OS for the 3-node Pi 5 cluster: **Talos Linux**. Immutable, API-managed, Kubernetes-only. The whole node is one
 declarative config: no SSH, no package manager, no drift. Talos has no official Pi 5 image, so we build our own
 against the latest Talos on a recent Raspberry Pi kernel. This doc covers why we picked Talos, what we looked at and
-rejected, and how the NVMe image gets built, validated, and flashed. Cluster config (IPs, VIP, partitions) is in
-`04_talos_setup.md`.
+rejected, how the NVMe image gets built, validated, and flashed, and how the nodes are brought up into a cluster
+([Cluster bring-up](#cluster-bring-up) below).
 
 ## Why Talos
 
 - **Whole node = one declarative config.** Managed via `talosctl`. Everything-as-code without exception.
-- **Identical nodes.** Same image on every board; what makes a node different is just its config (step 04).
+- **Identical nodes.** Same image on every board; what makes a node different is just its config (cluster bring-up,
+  below).
 - **Atomic A/B upgrades + rollback** via `talosctl upgrade`. No in-place mutation.
 - **Minimal attack surface.** No shell, no SSH, ~12 host binaries. WiFi/Bluetooth/cron daemons aren't in the image at
   all.
@@ -24,7 +25,7 @@ rejected, and how the NVMe image gets built, validated, and flashed. Cluster con
   rebased onto latest Talos (details below). Upgrading Talos = rebuild the image.
 - **We own the build.** New Talos release -> re-run the builder, possibly re-apply the rebases too.
 - **API-only, no shell.** A hung node gets rebooted, not SSH'd into.
-- **Pi 5 NIC bug:** silent `macb` link wedge that needs mitigation, handled in step 05. The image's job on the NIC side
+- **Pi 5 NIC bug:** silent `macb` link wedge that needs mitigation, handled in step 04. The image's job on the NIC side
   is just shipping the newer kernel that makes EEE actually disableable (6.12 can't do it on Pi 5; 6.18 can).
 
 ## OSes considered
@@ -52,7 +53,7 @@ that combination doesn't exist as a published image anywhere:
 - The only prebuilt Talos Pi 5 image is the community one, which is old.
 
 So we drive the `talos-rpi5` pipeline but rebase it onto latest Talos. The 6.18 kernel is the whole point: it carries
-the upstream RP1 patches that let step 05 disable EEE on the NIC.
+the upstream RP1 patches that let step 04 disable EEE on the NIC.
 
 ## Versions (pinned)
 
@@ -66,8 +67,8 @@ the upstream RP1 patches that let step 05 disable EEE on the NIC.
 
 ## The build
 
-Script: **`03_talos_image_builder.sh`** (macOS, Apple Silicon). All config (version knobs, kernel ref, registry,
-extensions, output path) lives in **`03_config.sh`**, shared by all three step-03 scripts. A clean run builds and
+Script: **`03a_talos_image_builder.sh`** (macOS, Apple Silicon). All config (version knobs, kernel ref, registry,
+extensions, output path) lives in **`03_config.sh`**, shared by all the step-03 scripts. A clean run builds and
 validates; it exits non-zero if anything goes wrong.
 
 What it does: spins up a local registry + a mergeop-capable buildx builder -> clones and checks out `talos-builder` ->
@@ -96,7 +97,7 @@ applies the four rebases -> builds kernel -> overlay -> installer -> raw image -
    properly and the EFI partition ends up with the boot bits it needs.
 
 ```bash
-03_operating_system/03_talos_image_builder.sh
+03_operating_system/03a_talos_image_builder.sh
 ```
 
 First run takes a while. Full clang/ThinLTO kernel compile is 30-40 min on 12 cores (macBook Pro, M2 Pro). Later runs
@@ -105,7 +106,8 @@ cache the kernel layer.
 ## What's baked into the image (and why it has to be)
 
 - **4K kernel pages** (`CONFIG_ARM64_4K_PAGES=y`, not the Pi defconfig's 16K). The 16K risk lands squarely in
-  mount/filesystem handling, which is exactly what steps 04 and 05 (Longhorn) touch. Etcd and Kubernetes are fine on
+  mount/filesystem handling, which is exactly what cluster bring-up and step 04 (Longhorn) touch. Etcd and Kubernetes
+  are fine on
   16K, but **XFS only mounts when its block size <= the kernel page size**, so a 16K-block XFS volume won't mount on a
   4K
   kernel. Some other software has 16K compatibility issues too. 4K is also what stock Talos `metal-arm64` uses. Keep
@@ -114,9 +116,9 @@ cache the kernel layer.
   `util-linux-tools` (fstrim).
 - **Radios off:** `dtoverlay=disable-wifi` + `dtoverlay=disable-bt` in the overlay's `config.txt`, plus the `.dtbo`
   files.
-- **Built-in (`=y`) drivers** needed for step 05 and Longhorn: Pi 5 watchdog (`BCM2835_WDT`), NVMe + PCIe
+- **Built-in (`=y`) drivers** needed for step 04 (hardening) and Longhorn: Pi 5 watchdog (`BCM2835_WDT`), NVMe + PCIe
   (`PCIE_BRCMSTB`), the Pi 5 NIC (`MACB` + PHYLINK/PHYLIB/BROADCOM_PHY), RP1 bring-up (`MFD_RP1`, `BCM2712_MIP`, ...).
-- **Not baked in** (tuned in step 05): NIC mitigation. TSO/GSO off, ring sizes, EEE disable, watchdog enable, the
+- **Not baked in** (tuned in step 04): NIC mitigation. TSO/GSO off, ring sizes, EEE disable, watchdog enable, the
   link-watchdog DaemonSet, kubelet socket cleanup. The image just ships the kernel version that makes EEE controllable.
 
 ## Registry & upgrades
@@ -147,7 +149,7 @@ container. Exits non-zero on any failure.
 
 ## Flash the NVMe
 
-Script: **`03_talos_image_flasher.sh`** (macOS). `dd`s the local built image (`.raw.xz`) to an NVMe over a USB
+Script: **`03b_talos_image_flasher.sh`** (macOS). `dd`s the local built image (`.raw.xz`) to an NVMe over a USB
 adapter. Has the usual safeguards: lists disks, requires typing `YES`, writes to `/dev/rdiskN`, ejects. Needs `xz`
 (`brew install xz`).
 
@@ -160,12 +162,12 @@ maintenance mode (no role assigned yet).
 
 ## Boot & verify (per node)
 
-Script: **`03_talos_boot_verify.sh`** — prompts for the node IP(s) and runs the checklist below against each
-(maintenance mode, `--insecure`), **inspecting** each output and printing PASS/FAIL + a summary. It uses the talosctl
-container by default (sidesteps the macOS gotcha below); `ping`/`nc` run natively.
+Script: **`03c_talos_boot_verify.sh`** — reads the node IPs from `NODES` in `03_config.sh` and runs the checklist below
+against each (maintenance mode, `--insecure`), **inspecting** each output and printing PASS/FAIL + a summary. It uses
+the talosctl container (sidesteps the macOS gotcha below); `ping`/`nc` run natively.
 
 ```bash
-./03_talos_boot_verify.sh        # then enter the node IPs when prompted
+./03c_talos_boot_verify.sh        # checks the nodes listed in 03_config.sh
 ```
 
 What it checks per node:
@@ -181,9 +183,9 @@ talosctl -n <node-ip> get kernelcmdlines --insecure  # cmdline has console=ttyAM
 
 > Maintenance mode can't report the kernel *version* string — `dmesg` has no `--insecure` flag and needs certs. The
 > `6.18.34` kernel is already proven by the builder's offline validation; re-confirm it **after** the cluster is up
-> (step 04, certs present): `talosctl -n <ip> dmesg | grep 'Linux version'`.
+> (certs present): `talosctl -n <ip> dmesg | grep 'Linux version'`.
 
-All green → proceed to `04_talos_setup.md` to bring up the cluster.
+All green → proceed to [Cluster bring-up](#cluster-bring-up) below.
 
 ### macOS `talosctl` gotcha
 
@@ -197,10 +199,96 @@ talosctl() { docker run --rm --network host -v "$HOME/.talos:/root/.talos" ghcr.
 
 Drop that in `~/.zshrc`, reload, and `talosctl` works normally from there.
 
+## Cluster bring-up
+
+Bring up the control-plane cluster from the NVMes flashed above. The **same image** is on every node; per-node identity
+(hostname, role) is applied now via `talosctl`. CNI = **Flannel** (Talos default); all nodes are control-plane **and**
+schedulable.
+
+> The cluster name, VIP, install disk, NIC, and the node list (hostname + IP per node) all live in `03_config.sh` —
+> nothing is hardcoded in the script. Edit them there to match your network.
+
+### Router reservations (manual, once)
+
+Reserve one MAC/IP pair per Pi so each always boots at a known IP. My values:
+
+| Node   | IP (my choice) |
+|--------|----------------|
+| pi-cp1 | 192.168.10.201 |
+| pi-cp2 | 192.168.10.202 |
+| pi-cp3 | 192.168.10.203 |
+
+Boot the Pis one by one, read their MAC addresses from the router's client list, and add a reservation for each. (You
+can do this with a standard PiOS image on an SD card first, or with the Talos image on the NVMe — as long as the Pi
+boots, its MAC shows up and you can reserve the IP.)
+
+The VIP is **not** reserved in the router: it's outside the DHCP pool, Talos claims it via ARP, and it can move between
+nodes, so it can't be pinned to a MAC. My subnet is `192.168.0.0/16` with DHCP `192.168.2.1`–`192.168.10.254`, so I
+picked `192.168.100.1` for the VIP.
+
+### Prereqs
+
+- The nodes are all booted from NVMe and reachable in **maintenance mode** at their reserved IPs (this is exactly what
+  `03c_talos_boot_verify.sh` confirms — `talosctl -n <node-ip> version --insecure`).
+- Docker, with host networking enabled in Docker Desktop (Settings → Resources → Network → Enable host networking). The
+  script runs `talosctl` as a pinned container, so no host `talosctl`/`kubectl` is required for bring-up (you'll want
+  `kubectl` for the verify step). If a native `talosctl` ever misbehaves, see the macOS gotcha above.
+
+### What `03d_talos_cluster_config.sh` does
+
+1. Reads cluster name, install disk, EPHEMERAL cap, NIC, the **VIP**, and each node's hostname + **IP** from
+   `03_config.sh`, prints a summary, and waits for a `YES` confirmation.
+2. `talosctl gen config` — secrets + base machine config, API endpoint = the VIP, Flannel CNI.
+3. Applies a control-plane patch to every node: the **VIP** bound to the wired NIC, `allowSchedulingOnControlPlanes:
+   true`, and `certSANs` (VIP + node IPs).
+4. Appends the **partition layout**: `EPHEMERAL` capped (default 64 GiB) + a `longhorn` user volume taking the rest of
+   the NVMe (`/var/mnt/longhorn`, sits empty until step 04).
+5. `apply-config` to each node — only the hostname differs.
+6. **Waits for every node to reboot back into its configured state** (polls the secure Talos API per node, up to 5 min
+   each) — so the bootstrap prompt only appears once the nodes are actually ready, no guessing.
+7. `bootstrap` etcd **once** on the first node (after a confirm); the others join automatically.
+8. Waits for health, writes `kubeconfig`.
+
+> **NIC selector:** the VIP is bound to `interface: end0` (the Pi 5 wired NIC) rather than `physical: true`, so it can
+> never latch onto WiFi. Confirm the name on a live node with `talosctl get links` if unsure (`IFACE` in `03_config.sh`,
+> default `end0`).
+
+### Run
+
+```bash
+./03d_talos_cluster_config.sh
+```
+
+All values come from `03_config.sh`; review the printed summary, then type `YES`. After `apply-config` the nodes
+reboot — the script **waits for each to come back up** (polling the secure API) and only then asks you to confirm the
+bootstrap. No manual stopwatch.
+
+> Bootstrap runs on **one** node only. Never re-run it on another node, or you split etcd into two clusters.
+
+### Verify
+
+```bash
+export KUBECONFIG=./talos-cluster/kubeconfig
+kubectl get nodes -o wide                  # 3× Ready, control-plane
+talosctl -n <cp1-ip> etcd members          # 3 members
+```
+
+## Then — hardening (step 04)
+
+Applied after the cluster is up, once we can read real device names off a live node:
+
+- **NIC fix** `EthernetConfig` (TSO/GSO off, rings) — confirm the link name first (`talosctl get links`).
+- **Hardware watchdog** `WatchdogTimerConfig` — confirm device + supported max timeout on Pi 5.
+- **NIC link-watchdog DaemonSet** (silent-wedge recovery).
+- **etcd snapshot** schedule.
+- Monitoring (kube-prometheus-stack, Loki) → then **Longhorn** on the reserved partition.
+
 ## Troubleshooting
 
 **Build:**
 
+- `ping failed` can happen because of the NIC bug. Re-run the validator a fwe times. If it fails occasionally, just move
+  on, we will fix/mitigate this in a later step.
 - `missing separator` in a Makefile -> you're on make 3.81; use `gmake` (the script already does this).
 - `mergeop has been disabled` -> Rancher's default builder can't run siderolabs `bldr`; the script creates a
   `docker-container` buildx builder that can.
@@ -227,7 +315,7 @@ Drop that in `~/.zshrc`, reload, and `talosctl` works normally from there.
 - extensions: <https://github.com/siderolabs/extensions>
 - Boot assets / imager: <https://www.talos.dev/latest/talos-guides/install/boot-assets/>
 - Upgrades: <https://www.talos.dev/latest/talos-guides/upgrading-talos/>
-- Pi 5 macb wedge (why the NIC fix lives in step 05 config, not the
+- Pi 5 macb wedge (why the NIC fix lives in step 04 config, not the
   image): <https://github.com/siderolabs/sbc-raspberrypi/issues/91>
 - Worked examples: <https://kcirtap.io/posts/talos-rpi5-custom-kernel-build/>
   and <https://rcwz.pl/2025-10-04-installing-talos-on-raspberry-pi-5/>

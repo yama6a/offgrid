@@ -1,8 +1,8 @@
 #!/usr/bin/env bash
 #
-# 03_talos_boot_verify.sh  (macOS)
+# 03c_talos_boot_verify.sh  (macOS)
 #
-# Run AFTER flashing (03_talos_image_flasher.sh) and booting each Pi from NVMe
+# Run AFTER flashing (03b_talos_image_flasher.sh) and booting each Pi from NVMe
 # with no SD card. Checks the nodes in NODES (03_config.sh) in MAINTENANCE mode
 # (pre-cluster, so `--insecure`), and inspects the output for correctness —
 # printing PASS/FAIL per check and an overall summary.
@@ -11,7 +11,7 @@
 # report "no route to host" even when the node is fine (see 03_operating_system.md).
 # ping/nc run natively on the Mac.
 #
-# This is the step-03 check. Cluster bring-up + its own verify is step 04.
+# Last per-node check before cluster bring-up (03d_talos_cluster_config.sh).
 #
 set -u
 
@@ -106,7 +106,7 @@ done
 echo ""
 echo "=============== summary: ${PASS} passed, ${FAIL} failed ==============="
 if [ "$FAIL" -eq 0 ]; then
-  echo "All nodes good. Next: cluster bring-up — 04_talos_setup.md"
+  echo "All nodes good. Next: cluster bring-up — ./03d_talos_cluster_config.sh"
 else
   echo "Some checks failed. This script runs talosctl via the container to avoid the"
   echo "native macOS 'no route to host' gotcha."

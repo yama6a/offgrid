@@ -1,11 +1,12 @@
 #!/usr/bin/env bash
 #
 # 03_config.sh — shared config for the step-03 scripts. Sourced by:
-#   03_talos_image_builder.sh, 03_talos_image_flasher.sh, 03_talos_boot_verify.sh
+#   03a_talos_image_builder.sh, 03b_talos_image_flasher.sh,
+#   03c_talos_boot_verify.sh, 03d_talos_cluster_config.sh
 #
 # Assignments only — no side effects, no `set` (the scripts manage their own shell
 # options). `: "${VAR:=default}"` keeps env overrides working, e.g.
-#   RAW_XZ=/path/to.raw.xz ./03_talos_image_flasher.sh
+#   RAW_XZ=/path/to.raw.xz ./03b_talos_image_flasher.sh
 
 # ---- versions (single source of truth) --------------------------------------
 TALOS_VERSION="v1.13.4"               # siderolabs/talos; also the talosctl client + expected server
@@ -49,10 +50,21 @@ BUILDER_NAME="talos-bx"                    # docker-container buildx builder (me
 SRCSERVER_NAME="talos-srcserver"           # local HTTP server for the (non-byte-stable) kernel tarball
 SRCSERVER_PORT="8099"
 
-# ---- boot-verify checks -----------------------------------------------------
-NODES="192.168.10.201 192.168.10.202 192.168.10.203"  # the Pi node IPs to check (edit me)
+# ---- nodes (single source for boot-verify 03c + cluster bring-up 03d) -------
+# "hostname:ip" per node — reserve each IP in your router. Edit to your cluster.
+CLUSTER_NODES=("pi-cp1:192.168.10.201" "pi-cp2:192.168.10.202" "pi-cp3:192.168.10.203")
+NODES="${CLUSTER_NODES[*]##*:}"       # IPs only (space-separated), used by boot-verify
+
+# ---- boot-verify checks (03c_talos_boot_verify.sh) --------------------------
 API_PORT=50000                        # Talos API
 EXPECT_TALOS="${TALOS_VERSION}"       # our build's Talos version (a local "-dirty" build matches too)
 EXPECT_NIC="end0"                     # Pi 5 wired NIC
 EXPECT_DISK="nvme0n1"                 # the NVMe
 EXPECT_CMDLINE="console=ttyAMA0,115200"  # rpi5 overlay signature in the kernel cmdline
+
+# ---- cluster bring-up (03d_talos_cluster_config.sh) -------------------------
+CLUSTER_NAME="home-pi"                # talosctl gen config cluster name
+CLUSTER_VIP="192.168.100.1"          # control-plane VIP (unused IP, outside your DHCP pool)
+INSTALL_DISK="/dev/${EXPECT_DISK}"   # nvme0n1 -> /dev/nvme0n1
+EPHEMERAL_SIZE="64GiB"               # EPHEMERAL cap; rest of the NVMe -> longhorn user volume
+IFACE="${EXPECT_NIC}"                # wired NIC the VIP binds to (dhcp + vip)
