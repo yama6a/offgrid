@@ -4,4 +4,4 @@
 
 # Cluster bring-up output (03d_talos_cluster_config.sh) — holds SECRETS
 # (talosconfig, kubeconfig, controlplane.yaml). Never commit it.
-talos-cluster/
+talos-cluster

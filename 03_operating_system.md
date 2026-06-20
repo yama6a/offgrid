@@ -273,15 +273,98 @@ kubectl get nodes -o wide                  # 3× Ready, control-plane
 talosctl -n <cp1-ip> etcd members          # 3 members
 ```
 
-## Then — hardening (step 04)
+## Then — hardening
 
 Applied after the cluster is up, once we can read real device names off a live node:
 
-- **NIC fix** `EthernetConfig` (TSO/GSO off, rings) — confirm the link name first (`talosctl get links`).
-- **Hardware watchdog** `WatchdogTimerConfig` — confirm device + supported max timeout on Pi 5.
-- **NIC link-watchdog DaemonSet** (silent-wedge recovery).
+- **NIC machine-config defences** — `EthernetConfig` + `WatchdogTimerConfig`. **Done by
+  `03e_nic_hardening.sh`** — see [NIC hardening](#nic-hardening--the-macb-wedge) below.
+- **NIC recovery DaemonSet** (EEE-off + link-watchdog + `ss -K`) — **deferred** to GitOps
+  (ArgoCD); documented below.
 - **etcd snapshot** schedule.
 - Monitoring (kube-prometheus-stack, Loki) → then **Longhorn** on the reserved partition.
+
+## NIC hardening — the macb wedge
+
+The Pi 5 `macb` NIC wedges ([sbc-raspberrypi #91](https://github.com/siderolabs/sbc-raspberrypi/issues/91)).
+A newer kernel does **not** fix it; the mitigation is config/runtime. Three triggers, and
+the defence for each:
+
+| macb trigger                    | defence                                                    | where              |
+|---------------------------------|------------------------------------------------------------|--------------------|
+| silent TSO/GSO TX-ring hang     | offloads off + RX/TX rings → NIC max (`EthernetConfig`)    | **`03e` now**      |
+| full node hang                  | hardware watchdog reboots the node (`WatchdogTimerConfig`) | **`03e` now**      |
+| EEE LPI-wake race               | `ethtool --set-eee end0 eee off`                           | deferred DaemonSet |
+| post-wedge kubelet socket stall | `ss -K` after recovery                                     | deferred DaemonSet |
+| silent-wedge detection/recovery | link-watchdog: `ip link` down/up                           | deferred DaemonSet |
+
+### `03e_nic_hardening.sh` (implemented now)
+
+Fully automated, idempotent, safe to re-run. Reuses the dockerized `talosctl` + `kubectl`
+and `talos-cluster/` from cluster bring-up.
+
+```bash
+./03e_nic_hardening.sh
+```
+
+What it does:
+
+1. **Nodes** from the talosconfig endpoints (`talosctl config info`); maps IP → k8s node name.
+2. **Discovers** the NIC facts instead of hardcoding them. Rings (pre-set max) and the exact
+   offload **feature keys** come from Talos's own `EthernetStatus` resource — these are the
+   kernel *netdev* names `EthernetConfig` accepts (e.g. `tx-tcp-segmentation`,
+   `tx-generic-segmentation`, `rx-gro`), which **differ from `ethtool -k`'s umbrella names**.
+   A temporary privileged probe pod (hostNetwork, pinned to one node, `kube-system`) reads
+   only what has no resource: EEE controllability (`ethtool --show-eee`, captured for the
+   deferred DaemonSet — not applied) and the watchdog device.
+3. **Generates** the config: `EthernetConfig` (rings = discovered max; the settable,
+   non-`[fixed]` TSO/GSO/GRO keys → `false`) + `WatchdogTimerConfig` (discovered device;
+   timeout clamped to `[10s, ~Pi-max]`).
+4. **Applies** to every node with `talosctl patch mc --patch @… --mode no-reboot` — a
+   document-level strategic merge that **leaves `v1alpha1` untouched** (so the live certSAN
+   fix is preserved); never a full re-apply, never a reboot. `EthernetConfig` is
+   **delete-then-readd** so its `features` map is authoritative each run (see caveats).
+5. **Verifies** against the authoritative resources, per node, polled (the apply is async):
+   `EthernetStatus` → offloads off + rings at max; `WatchdogTimerStatus` → armed with the
+   set timeout. It **never triggers the watchdog.**
+6. **Cleans up** the probe pod.
+
+**Reading the output:** `[PASS]`/`[FAIL]` per check, then `summary: N passed, M failed`.
+Exit 0 = all green. A `[FAIL]` on `patch` mentioning *reboot* means the change wanted a
+reboot (it refused) — investigate before forcing. A watchdog `[FAIL]` usually means the
+timeout exceeded the hardware max → lower `WATCHDOG_TIMEOUT`.
+
+### Deferred — the recovery DaemonSet (next step, ArgoCD)
+
+The wedge itself is assumed tolerable for now, so the **runtime** recovery is deferred
+until GitOps (ArgoCD) lands, then managed declaratively. It will run per-node, privileged,
+hostNetwork, and do:
+
+- **EEE off:** `ethtool --set-eee end0 eee off` — there is no `EthernetConfig` field for
+  EEE, so it can only live here. (Needs the 6.18 kernel from the image; older kernels
+  can't toggle EEE on Pi 5.)
+- **link-watchdog:** detect a silent wedge and `ip link set end0 down/up` to recover.
+- **kubelet socket cleanup:** `ss -K` to drop stale sockets after recovery.
+
+### Caveats
+
+- **Feature keys are kernel *netdev* names, not `ethtool -k` names.** `EthernetConfig`
+  (and `EthernetStatus`) use `tx-tcp-segmentation` / `tx-generic-segmentation` / `rx-gro`,
+  **not** the umbrella `tcp-segmentation-offload` etc. Talos *accepts* a wrong key but it
+  fails the whole ethtool reconcile (`bit name not found`) — so every offload silently
+  stays on. `03e` sources the keys from `EthernetStatus` to avoid this; don't hand-edit.
+- **`features` map is replaced, not merged.** Strategic merge *unions* maps, so a stale or
+  renamed key would linger and break the reconcile. `03e` deletes the `EthernetConfig`
+  document (`$patch: delete`) then re-adds it — authoritative + idempotent each run.
+- **Discovered, not hardcoded:** ring max + the watchdog device/timeout ceiling are
+  driver/hardware-specific (Pi `bcm2712` watchdog max ≈15s; Talos min 10s) — `03e` reads
+  them live and clamps.
+- **certSAN-preserving apply:** only `talosctl patch mc` (document merge). Never
+  `apply-config`/full replace, which would clobber the live certSAN fix.
+- **`kube-system` PSS exemption:** Talos applies Pod Security elsewhere; the privileged
+  probe pod runs in `kube-system`, which is exempt.
+- Image: see step 03a (build) for the 6.18 kernel that makes EEE controllable; the EEE
+  step itself is in the deferred DaemonSet, not the image.
 
 ## Troubleshooting
 
