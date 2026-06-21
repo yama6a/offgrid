@@ -1,0 +1,36 @@
+# Values for the 02_cert_manager wrapper chart. SINGLE SOURCE OF TRUTH — ArgoCD (and any local
+# `helm template`) consume this. Chart version pinned in Chart.yaml.
+#
+# cert-manager runs in its own `cert-manager` namespace (CreateNamespace=true in the Application).
+# This step installs the CONTROLLER ONLY — no Issuer/ClusterIssuer is shipped yet (the Let's Encrypt
+# wiring depends on a domain + public-reachable Cilium Gateway + ACME email, decided later). See
+# 08_cert_manager.md.
+
+# Everything under `cert-manager:` is passed to the upstream jetstack/cert-manager subchart
+# (key == dependency name).
+cert-manager:
+  # Install the cert-manager CRDs as part of this release (the chart owns them)...
+  crds:
+    enabled: true
+    # ...but never let an ArgoCD prune cascade-delete them — that would take every Certificate,
+    # Issuer and Order CR down with them. `keep` leaves the CRDs in place on uninstall/prune.
+    keep: true
+
+  # Modest footprint for a 3x 8GB Pi 5 cluster — three light components (controller, webhook,
+  # cainjector). Defaults are generous; trim requests, keep memory limits to bound the webhook.
+  resources:
+    requests: { cpu: 25m, memory: 64Mi }
+    limits:   { memory: 128Mi }
+  webhook:
+    resources:
+      requests: { cpu: 25m, memory: 64Mi }
+      limits:   { memory: 128Mi }
+  cainjector:
+    resources:
+      requests: { cpu: 25m, memory: 64Mi }
+      limits:   { memory: 256Mi }
+
+  # FUTURE (do not enable until the Let's Encrypt step): HTTP-01 solving through the Cilium Gateway
+  # API needs this controller feature gate. Left OFF now — there is no issuer/Gateway to solve against
+  # yet. When wiring LE, uncomment and add the matching Gateway + ClusterIssuer.
+  # featureGates: "ExperimentalGatewayAPISupport=true"
