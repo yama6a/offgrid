@@ -1,0 +1,25 @@
+# Values for the 02_sealed_secrets wrapper chart. SINGLE SOURCE OF TRUTH — ArgoCD (and any local
+# `helm template`) consume this. Chart version pinned in Chart.yaml.
+#
+# The controller runs in its own `sealed-secrets` namespace (CreateNamespace=true in the
+# Application), mirroring how ArgoCD gets its own ns. It generates an RSA key pair on first start,
+# keeps the private key in a labelled Secret in this namespace, and rotates it ~monthly (old keys
+# are retained so previously-sealed secrets still decrypt). That key is the ONLY thing that can
+# decrypt committed SealedSecrets — back it up with 05_gitops/backup_sealed_secrets_key.sh.
+
+# Everything under `sealed-secrets:` is passed to the upstream bitnami/sealed-secrets subchart
+# (key == dependency name).
+sealed-secrets:
+  # Pin the resource names so the controller is predictably `sealed-secrets` in ns `sealed-secrets`.
+  # This is the `--controller-name` / `--controller-namespace` kubeseal targets — keep them stable.
+  fullnameOverride: sealed-secrets
+
+  # Logging: structured JSON at INFO, emitted to stdout so it lands in the normal pod logs.
+  logLevel: INFO          # INFO | ERROR
+  logFormat: json         # text | json
+  logInfoStdout: true
+
+  # Modest footprint for a 3x 8GB Pi 5 cluster — the controller is light (decrypt-on-admission).
+  resources:
+    requests: { cpu: 25m, memory: 64Mi }
+    limits:   { memory: 128Mi }

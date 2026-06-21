@@ -1,0 +1,19 @@
+apiVersion: v2
+name: sealed-secrets
+description: >-
+  Wrapper chart for the Bitnami Sealed Secrets controller on the Talos/Raspberry Pi 5 cluster —
+  in-cluster secret encryption so secrets can be committed to git as SealedSecret CRs. Single
+  source of truth for the sealed-secrets chart version (this file) and its values (values.yaml,
+  under the `sealed-secrets:` key). Delivered purely by ArgoCD (no imperative bootstrap) via
+  argo_apps/apps/02_sealed_secrets.yaml — wave 2, same as nic-keeper (they're independent leaves).
+  The controller's RSA private key is the crown jewel: back it up with
+  ../../../05_gitops/backup_sealed_secrets_key.sh. See 07_sealed_secrets.md.
+type: application
+version: 0.1.0                 # this wrapper chart's own version
+appVersion: "0.38.1"          # sealed-secrets controller version the pinned chart ships (mirrors the dependency)
+
+dependencies:
+  - name: sealed-secrets
+    version: "2.19.0"         # bitnami/sealed-secrets chart — THE single source for the pin
+    # NB: the chart repo moved org — it's bitnami.github.io now (the old bitnami-labs.github.io 404s).
+    repository: https://bitnami.github.io/sealed-secrets
