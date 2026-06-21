@@ -68,6 +68,11 @@ CLUSTER_VIP="192.168.100.1"          # control-plane VIP (unused IP, outside you
 INSTALL_DISK="/dev/${EXPECT_DISK}"   # nvme0n1 -> /dev/nvme0n1
 EPHEMERAL_SIZE="64GiB"               # EPHEMERAL cap; rest of the NVMe -> longhorn user volume
 IFACE="${EXPECT_NIC}"                # wired NIC the VIP binds to (dhcp + vip)
+# Node label node.kubernetes.io/instance-type, stamped via machine.nodeLabels in 03d. Lets the
+# nic-keeper DaemonSet (06_nic_keeper.md) target rpi5 hardware only, so a future non-rpi5 node
+# never gets the macb-wedge agent. This key is on the kubelet NodeRestriction allowlist (so Talos
+# may set it); an arbitrary kubernetes.io/* label would be rejected by admission.
+NODE_INSTANCE_TYPE="rpi5"
 
 # Cilium (CNI/LB/gateway/encryption) is step 04. Its version, values, Gateway API CRDs,
 # and LB-IPAM pool all live in the wrapper chart argo_apps/charts/00_cilium/ — see

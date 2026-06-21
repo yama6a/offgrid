@@ -58,6 +58,8 @@ fi
 CERTSANS="$(printf '      - %s\n' "${VIP}" "${IPS[@]}")"
 cat > "${OUTDIR}/cp-patch.yaml" <<EOF
 machine:
+  nodeLabels:
+    node.kubernetes.io/instance-type: ${NODE_INSTANCE_TYPE}   # nic-keeper DaemonSet selector (06_nic_keeper.md)
   features:
     kubePrism:
       enabled: true
@@ -141,8 +143,12 @@ for i in "${!IPS[@]}"; do
   echo "ready"
 done
 
+sleep 10
+
 # 8. Bootstrap etcd ONCE, on the first node only
 talosctl bootstrap -n "${IPS[0]}"
+
+sleep 10
 
 # 9. Wait for the cluster, then fetch kubeconfig (-> ${OUTDIR}/kubeconfig)
 echo ">> waiting for cluster health (a few minutes)..."

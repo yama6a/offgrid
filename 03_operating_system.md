@@ -244,7 +244,9 @@ picked `192.168.100.1` for the VIP.
 2. `talosctl gen config` — secrets + base machine config, API endpoint = the VIP. (The base would default to Flannel;
    the patch below turns the CNI off so Cilium can take over.)
 3. Applies a control-plane patch to every node: the **VIP** bound to the wired NIC, `allowSchedulingOnControlPlanes:
-   true`, `certSANs` (VIP + node IPs), and the **Cilium prep** — `cluster.network.cni.name: none`,
+   true`, `certSANs` (VIP + node IPs), the node label `machine.nodeLabels: node.kubernetes.io/instance-type=rpi5`
+   (so the `nic-keeper` DaemonSet targets rpi5 hardware only — see [06_nic_keeper.md](06_nic_keeper.md); `NODE_INSTANCE_TYPE`
+   in `03_config.sh`), and the **Cilium prep** — `cluster.network.cni.name: none`,
    `cluster.proxy.disabled: true` (Cilium does kube-proxy replacement), and `machine.features.kubePrism.enabled: true`
    (Cilium's API endpoint at `localhost:7445`; default-on in 1.13, set explicitly here to document the dependency).
 4. Appends the **partition layout**: `EPHEMERAL` capped (default 64 GiB) + a `longhorn` user volume taking the rest of
@@ -291,7 +293,8 @@ Once the cluster is up (nodes **NotReady** — no CNI yet), in order:
    imperative install; everything after it is GitOps.
 3. **ArgoCD** — **Done by `05_argocd.sh`** (step 05); it self-manages, then **adopts** Cilium, and everything below
    becomes declarative. See [05_gitops.md](05_gitops.md).
-4. **NIC recovery DaemonSet** (EEE-off + link-watchdog + `ss -K`) — **deferred** to GitOps (ArgoCD); documented below.
+4. **NIC recovery DaemonSet** (`nic-keeper`: EEE-off + link-watchdog + `ss -K`) — GitOps (ArgoCD), runs at
+   sync-wave 2. See [06_nic_keeper.md](06_nic_keeper.md) and below.
 5. **etcd snapshot** schedule.
 6. Monitoring (kube-prometheus-stack, Loki) → then **Longhorn** on the reserved partition.
 
@@ -301,13 +304,13 @@ The Pi 5 `macb` NIC wedges ([sbc-raspberrypi #91](https://github.com/siderolabs/
 A newer kernel does **not** fix it; the mitigation is config/runtime. Three triggers, and
 the defence for each:
 
-| macb trigger                    | defence                                                    | where              |
-|---------------------------------|------------------------------------------------------------|--------------------|
-| silent TSO/GSO TX-ring hang     | offloads off + RX/TX rings → NIC max (`EthernetConfig`)    | **`03e` now**      |
-| full node hang                  | hardware watchdog reboots the node (`WatchdogTimerConfig`) | **`03e` now**      |
-| EEE LPI-wake race               | `ethtool --set-eee end0 eee off`                           | deferred DaemonSet |
-| post-wedge kubelet socket stall | `ss -K` after recovery                                     | deferred DaemonSet |
-| silent-wedge detection/recovery | link-watchdog: `ip link` down/up                           | deferred DaemonSet |
+| macb trigger                    | defence                                                    | where                  |
+|---------------------------------|------------------------------------------------------------|------------------------|
+| silent TSO/GSO TX-ring hang     | offloads off + RX/TX rings → NIC max (`EthernetConfig`)    | **`03e` now**          |
+| full node hang                  | hardware watchdog reboots the node (`WatchdogTimerConfig`) | **`03e` now**          |
+| EEE LPI-wake race               | `ethtool --set-eee end0 eee off`                           | `nic-keeper` DaemonSet |
+| post-wedge kubelet socket stall | `ss -K` after recovery                                     | `nic-keeper` DaemonSet |
+| silent-wedge detection/recovery | link-watchdog: `ip link` down/up                           | `nic-keeper` DaemonSet |
 
 ### `03e_nic_hardening.sh` (implemented now)
 
@@ -345,17 +348,20 @@ Exit 0 = all green. A `[FAIL]` on `patch` mentioning *reboot* means the change w
 reboot (it refused) — investigate before forcing. A watchdog `[FAIL]` usually means the
 timeout exceeded the hardware max → lower `WATCHDOG_TIMEOUT`.
 
-### Deferred — the recovery DaemonSet (GitOps, see [05_gitops.md](05_gitops.md))
+### Runtime — the recovery DaemonSet (`nic-keeper`, GitOps)
 
-The wedge itself is assumed tolerable for now, so the **runtime** recovery is deferred
-until GitOps (ArgoCD) lands, then managed declaratively. It will run per-node, privileged,
-hostNetwork, and do:
+The wedge itself is assumed tolerable, so the **runtime** recovery waited for GitOps (ArgoCD)
+to land — now it has. It ships as the **`nic-keeper` DaemonSet**, one pod per rpi5 node,
+hostNetwork, `NET_ADMIN` only (not privileged), doing:
 
 - **EEE off:** `ethtool --set-eee end0 eee off` — there is no `EthernetConfig` field for
   EEE, so it can only live here. (Needs the 6.18 kernel from the image; older kernels
   can't toggle EEE on Pi 5.)
-- **link-watchdog:** detect a silent wedge and `ip link set end0 down/up` to recover.
+- **link-watchdog:** an active ping probe detects a silent wedge and `ip link set end0 down/up`
+  to recover.
 - **kubelet socket cleanup:** `ss -K` to drop stale sockets after recovery.
+
+Full reasoning, knobs, and verify steps: **[06_nic_keeper.md](06_nic_keeper.md)**.
 
 ### Caveats
 

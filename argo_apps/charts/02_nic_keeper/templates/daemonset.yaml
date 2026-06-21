@@ -1,0 +1,65 @@
+# One pod per rpi5 node. hostNetwork so it sees and acts on the host NIC + host-netns sockets.
+# Least privilege: NET_ADMIN (ethtool EEE, `ip link`, `ss -K`) + NET_RAW (ping) — not privileged.
+# Never calls the k8s API → automountServiceAccountToken: false.
+apiVersion: apps/v1
+kind: DaemonSet
+metadata:
+  name: nic-keeper
+  namespace: {{ .Release.Namespace }}
+  labels:
+    app.kubernetes.io/name: nic-keeper
+spec:
+  selector:
+    matchLabels:
+      app.kubernetes.io/name: nic-keeper
+  updateStrategy:
+    type: RollingUpdate
+  template:
+    metadata:
+      labels:
+        app.kubernetes.io/name: nic-keeper
+      annotations:
+        # Roll the pods whenever the loop script changes.
+        checksum/config: {{ include (print $.Template.BasePath "/configmap.yaml") . | sha256sum | quote }}
+    spec:
+      hostNetwork: true
+      hostPID: false
+      dnsPolicy: ClusterFirstWithHostNet
+      automountServiceAccountToken: false
+      priorityClassName: system-node-critical
+      # All nodes here are control-plane, so tolerate that taint (plus anything else, so the
+      # NIC keeper keeps recovering the node even under pressure).
+      tolerations:
+        - key: node-role.kubernetes.io/control-plane
+          operator: Exists
+          effect: NoSchedule
+        - operator: Exists
+      nodeSelector: {{ .Values.nodeSelector | toYaml | nindent 8 }}
+      containers:
+        - name: nic-keeper
+          image: {{ .Values.image | quote }}
+          command: ["/bin/sh", "/scripts/nic-keeper.sh"]
+          securityContext:
+            allowPrivilegeEscalation: false
+            capabilities:
+              drop: ["ALL"]
+              # NET_ADMIN: ethtool EEE, `ip link` down/up, `ss -K`. NET_RAW: ping's ICMP socket
+              # (dropped by drop:ALL otherwise, so every probe would false-fail → false wedge).
+              add: ["NET_ADMIN", "NET_RAW"]
+          env:
+            - {name: IFACE, value: {{ .Values.iface | quote }}}
+            - {name: PING_TARGET, value: {{ .Values.pingTarget | quote }}}
+            - {name: CHECK_INTERVAL, value: {{ .Values.checkIntervalSeconds | quote }}}
+            - {name: FAIL_THRESHOLD, value: {{ .Values.failThreshold | quote }}}
+            - {name: LINK_DOWN_SECONDS, value: {{ .Values.linkDownSeconds | quote }}}
+            - {name: COOLDOWN, value: {{ .Values.cooldownSeconds | quote }}}
+            - {name: SS_KILL_FILTER, value: {{ .Values.ssKillFilter | quote }}}
+            - {name: EEE_REASSERT_EACH_CYCLE, value: {{ .Values.eeeReassertEachCycle | quote }}}
+          volumeMounts:
+            - {name: scripts, mountPath: /scripts, readOnly: true}
+          resources: {{ .Values.resources | toYaml | nindent 12 }}
+      volumes:
+        - name: scripts
+          configMap:
+            name: nic-keeper
+            defaultMode: 0555

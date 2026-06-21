@@ -1,0 +1,2 @@
+# No upstream dependency, so nothing is pulled here — kept for parity with the other charts.
+charts/*.tgz

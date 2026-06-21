@@ -1,0 +1,13 @@
+apiVersion: v2
+name: nic-keeper
+description: >-
+  Per-node DaemonSet that mitigates the Raspberry Pi 5 `macb` NIC wedge at
+  RUNTIME — the complement to 03e's machine-config defences. Asserts EEE off,
+  actively probes link health, and on a wedge bounces the link + re-asserts EEE
+  + drops stale sockets. Single source of truth: the loop script lives in
+  templates/configmap.yaml, all knobs in values.yaml. Adopted by ArgoCD via
+  argo_apps/apps/02_nic_keeper.yaml. See 06_nic_keeper.md.
+type: application
+version: 0.1.0                 # this chart's own version
+# No upstream dependency — this is our own DaemonSet (the loop is in templates/configmap.yaml),
+# so there is no Chart.lock / charts/ to build, unlike 00_cilium / 01_argocd.

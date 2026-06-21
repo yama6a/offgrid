@@ -1,0 +1,100 @@
+# The nic-keeper loop, kept in Git and mounted into the pod (exec'd as /scripts/nic-keeper.sh).
+# POSIX sh. One structured stdout line per event: "<ts> nic-keeper iface=<if> event=<name> <detail>".
+# Knobs arrive as env (wired from values.yaml in the DaemonSet); defaults below are a fallback only.
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: nic-keeper
+  namespace: {{ .Release.Namespace }}
+  labels:
+    app.kubernetes.io/name: nic-keeper
+data:
+  nic-keeper.sh: |
+    #!/bin/sh
+    # Runtime mitigation for the Raspberry Pi 5 macb NIC wedge. Complement to 03e's
+    # machine-config defences. Only ever touches $IFACE; every sleep is bounded so the
+    # loop always makes progress and never trips the 03e hardware watchdog.
+    set -u
+
+    IFACE="${IFACE:-end0}"
+    PING_TARGET="${PING_TARGET:-}"
+    CHECK_INTERVAL="${CHECK_INTERVAL:-5}"
+    FAIL_THRESHOLD="${FAIL_THRESHOLD:-4}"
+    LINK_DOWN_SECONDS="${LINK_DOWN_SECONDS:-2}"
+    COOLDOWN="${COOLDOWN:-60}"
+    SS_KILL_FILTER="${SS_KILL_FILTER:-dport = :6443}"
+    EEE_REASSERT_EACH_CYCLE="${EEE_REASSERT_EACH_CYCLE:-false}"
+    PING_TIMEOUT="${PING_TIMEOUT:-2}"   # bounded < CHECK_INTERVAL
+
+    SS_KILL_OK=1
+    count=0
+
+    log() { ev="$1"; shift; printf '%s nic-keeper iface=%s event=%s %s\n' \
+      "$(date -u +%Y-%m-%dT%H:%M:%SZ)" "$IFACE" "$ev" "$*"; }
+
+    # EEE off: no EthernetConfig field exists for it, so it lives here. Needs kernel 6.18 on Pi5.
+    eee_off() {
+      if out="$(ethtool --set-eee "$IFACE" eee off 2>&1)"; then
+        log eee-off "ok"
+      else
+        log eee-unsupported "ethtool --set-eee failed (needs kernel 6.18 on Pi5): ${out}"
+      fi
+    }
+
+    # Probe `ss -K` support once: it needs CONFIG_INET_DIAG_DESTROY in the kernel.
+    probe_ss() {
+      out="$(ss -K dport = :0 2>&1)"
+      if printf '%s' "$out" | grep -qi 'not supported'; then
+        SS_KILL_OK=0
+        log ss-k-unsupported "kernel lacks CONFIG_INET_DIAG_DESTROY — socket-drop step disabled: ${out}"
+      fi
+    }
+
+    resolve_target() {
+      [ -n "$PING_TARGET" ] && return 0
+      PING_TARGET="$(ip route show default 2>/dev/null | awk '/default/{print $3; exit}')"
+      [ -n "$PING_TARGET" ] && log target-resolved "gateway=$PING_TARGET"
+    }
+
+    # A wedge is link-up-but-no-traffic, so carrier alone can't catch it — the active ping is the
+    # real signal. Bounce the link, re-assert EEE (a bounce can re-enable it), drop stale sockets.
+    recover() {
+      carrier="$(cat "/sys/class/net/$IFACE/carrier" 2>/dev/null || echo '?')"
+      log wedge "fail_count=$count threshold=$FAIL_THRESHOLD carrier=$carrier — bouncing link"
+      ip link set "$IFACE" down
+      sleep "$LINK_DOWN_SECONDS"
+      ip link set "$IFACE" up
+      eee_off
+      if [ "$SS_KILL_OK" = 1 ]; then
+        killed="$(ss -K $SS_KILL_FILTER 2>&1)"
+        log ss-kill "filter='$SS_KILL_FILTER' result='${killed:-none}'"
+      fi
+      count=0
+      log recovery "link bounced + eee re-asserted; cooldown=${COOLDOWN}s"
+      sleep "$COOLDOWN"
+    }
+
+    resolve_target
+    probe_ss
+    eee_off
+    log start "target=${PING_TARGET:-<unresolved>} interval=${CHECK_INTERVAL}s threshold=$FAIL_THRESHOLD cooldown=${COOLDOWN}s"
+
+    while true; do
+      resolve_target
+      if [ -z "$PING_TARGET" ]; then
+        log probe-skip "no default gateway yet — cannot probe"
+        sleep "$CHECK_INTERVAL"
+        continue
+      fi
+      carrier="$(cat "/sys/class/net/$IFACE/carrier" 2>/dev/null || echo '?')"
+      if ping -c 1 -W "$PING_TIMEOUT" "$PING_TARGET" >/dev/null 2>&1; then
+        [ "$count" -ne 0 ] && log probe-recovered "carrier=$carrier after $count fail(s)"
+        count=0
+        [ "$EEE_REASSERT_EACH_CYCLE" = "true" ] && eee_off
+      else
+        count=$((count + 1))
+        log probe-fail "target=$PING_TARGET carrier=$carrier count=$count/$FAIL_THRESHOLD"
+        [ "$count" -ge "$FAIL_THRESHOLD" ] && recover
+      fi
+      sleep "$CHECK_INTERVAL"
+    done

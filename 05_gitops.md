@@ -3,7 +3,7 @@
 The cluster from [step 03](03_operating_system.md) is networked by [step 04](04_networking.md) (**Cilium**). **ArgoCD**
 is the next and **last component installed imperatively** — from here on, everything is GitOps. ArgoCD **manages
 itself** from a wrapper chart in this repo, **adopts** the already-running Cilium, and becomes the delivery path for
-every later app (the deferred NIC-recovery DaemonSet, etcd snapshots, monitoring, Longhorn, workloads). **`05_argocd.sh`**
+every later app (the [`nic-keeper` recovery DaemonSet](06_nic_keeper.md), etcd snapshots, monitoring, Longhorn, workloads). **`05_argocd.sh`**
 does the one-time bootstrap.
 
 The **single source of truth** is the wrapper Helm chart at `argo_apps/charts/01_argocd/`. `05_argocd.sh` just installs
