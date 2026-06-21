@@ -6,7 +6,7 @@
 # proxy: disabled). One-time imperative bootstrap — the chicken-and-egg breaker,
 # since ArgoCD and everything else need pod networking to exist first.
 #
-# SINGLE SOURCE OF TRUTH is the wrapper chart at argo_apps/charts/01_cilium/:
+# SINGLE SOURCE OF TRUTH is the wrapper chart at argo_apps/charts/00_cilium/:
 #   - Chart.yaml  pins the cilium chart version (dependency)
 #   - values.yaml holds the Talos-flavoured cilium values + the loadBalancer gate
 #   - crds/       vendors the Gateway API CRDs (v1.4.1)
@@ -28,10 +28,19 @@ SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 
 # ---- knobs ------------------------------------------------------------------
 OUTDIR="${OUTDIR:-${SCRIPT_DIR}/../03_operating_system/talos-cluster}"  # talosconfig + kubeconfig (from 03d)
-CHART_DIR="${CHART_DIR:-${SCRIPT_DIR}/../argo_apps/charts/01_cilium}"   # the wrapper chart (Argo consumes it too)
+CHART_DIR="${CHART_DIR:-${SCRIPT_DIR}/../argo_apps/charts/00_cilium}"   # the wrapper chart (Argo consumes it too)
+CONFIG_FILE="${CONFIG_FILE:-${SCRIPT_DIR}/config.sh}"                   # LB range knobs (LB_RANGE_START/STOP)
 RELEASE="cilium"
 NS="kube-system"
+API_WAIT="${API_WAIT:-300}"                        # secs to wait for the API to answer (the VIP lags the 03e reboot)
 export KUBECONFIG="${OUTDIR}/kubeconfig"          # the 03d kubeconfig (points at the VIP)
+
+# LB-IPAM range lives in config.sh (single source of truth for the shell side); we write it into
+# the chart's values.yaml below so ArgoCD renders the same pool. Sourced before its own knobs so
+# an inline `LB_RANGE_START=... ./04_cilium.sh` env override still wins (the ${VAR:-default} form).
+# shellcheck source=config.sh
+[ -f "$CONFIG_FILE" ] && . "$CONFIG_FILE"
+VALUES="${CHART_DIR}/values.yaml"
 # -----------------------------------------------------------------------------
 
 say() { printf '\n\033[1;36m>> %s\033[0m\n' "$*"; }
@@ -44,10 +53,37 @@ bad() { printf '  \033[31m[FAIL]\033[0m %s\n' "$1"; FAIL=$((FAIL+1)); }
 say "prerequisites"
 command -v kubectl >/dev/null || die "kubectl not found on PATH — install it (https://kubernetes.io/docs/tasks/tools/)"
 command -v helm    >/dev/null || die "helm not found on PATH — install it (https://helm.sh/docs/intro/install/)"
-[ -f "${CHART_DIR}/Chart.yaml" ] || die "no chart at ${CHART_DIR} (expected argo_apps/charts/01_cilium)"
+command -v yq      >/dev/null || die "yq not found on PATH — install it (https://github.com/mikefarah/yq, brew install yq)"
+[ -f "${CHART_DIR}/Chart.yaml" ] || die "no chart at ${CHART_DIR} (expected argo_apps/charts/00_cilium)"
+[ -f "$VALUES" ] || die "missing ${VALUES}"
 [ -f "$KUBECONFIG" ] || die "missing ${KUBECONFIG} — run step 03 (03d) first"
-kubectl get nodes >/dev/null 2>&1 || die "kubectl can't reach the API via ${KUBECONFIG}"
-ok "kubectl + helm present, API reachable, chart found"
+ok "kubectl + helm + yq present, chart + values found"
+
+# The API/VIP can take a minute or two to answer right after 03e (the NIC-hardening reboot), so
+# PROBE instead of dying on the first miss. Poll every 5s up to API_WAIT, then give up with a clear
+# message. Override the budget with API_WAIT=<secs>.
+say "waiting for the Kubernetes API to answer (up to ${API_WAIT}s; the VIP lags the 03e reboot)"
+deadline=$(( $(date +%s) + API_WAIT ))
+until kubectl get nodes >/dev/null 2>&1; do
+  [ "$(date +%s)" -lt "$deadline" ] \
+    || die "API still unreachable via ${KUBECONFIG} after ${API_WAIT}s — is the cluster up? (run step 03, or wait longer after the 03e reboot, or raise API_WAIT)"
+  printf '.'; sleep 5
+done
+echo
+ok "Kubernetes API reachable"
+
+# === 0b. write the LB-IPAM range from config.sh into the chart's values.yaml ===
+# yq edits the chart's plain-YAML values (NOT the helm-templated cilium-lb.yaml, which references
+# .Values.loadBalancer.ipPool). Committing values.yaml is what keeps ArgoCD's render in sync with
+# this bootstrap. strenv() forces the IPs to stay quoted strings.
+say "LB-IPAM range -> values.yaml (${LB_RANGE_START} – ${LB_RANGE_STOP})"
+if LB_RANGE_START="$LB_RANGE_START" LB_RANGE_STOP="$LB_RANGE_STOP" \
+     yq -i '.loadBalancer.ipPool.start = strenv(LB_RANGE_START)
+          | .loadBalancer.ipPool.stop  = strenv(LB_RANGE_STOP)' "$VALUES"; then
+  ok "LB range written to values.yaml (commit this so ArgoCD renders the same pool)"
+else
+  bad "yq failed to write LB range into ${VALUES}"
+fi
 
 # === 1. resolve the cilium subchart (Gateway API CRDs ride along in crds/) ====
 say "helm dependency build (${CHART_DIR})"
@@ -130,7 +166,7 @@ echo "=============== summary: ${PASS} passed, ${FAIL} failed ==============="
 if [ "$FAIL" -eq 0 ]; then
   cat <<EOF
 Cilium is the CNI. Encryption (WireGuard), LB-IPAM/L2, Gateway API, Hubble are live.
-Single source of truth: argo_apps/charts/01_cilium/ (Chart.yaml + values.yaml + crds/ + templates/).
+Single source of truth: argo_apps/charts/00_cilium/ (Chart.yaml + values.yaml + crds/ + templates/).
 
 Next:
   - smoke-test a LoadBalancer:  kubectl create deploy nginx --image=nginx

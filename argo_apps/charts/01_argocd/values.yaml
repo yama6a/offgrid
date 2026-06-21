@@ -1,4 +1,4 @@
-# Values for the 02_argocd wrapper chart. SINGLE SOURCE OF TRUTH — both the 05_argocd.sh
+# Values for the 01_argocd wrapper chart. SINGLE SOURCE OF TRUTH — both the 05_argocd.sh
 # bootstrap and the (self-managed) ArgoCD Application consume this. Chart version pinned in Chart.yaml.
 #
 # HA-lite posture for 3x 8GB Pi 5s: ArgoCD is NOT in the data path of running apps (once an app
@@ -30,6 +30,11 @@ argo-cd:
   configs:
     params:
       server.insecure: true
+    # Fast 10s poll (no webhook). Safe on GitHub: one shared repoURL dedupes to ~1 ls-remote per
+    # poll regardless of app count, and ls-remote isn't on the REST rate limit. See 05_gitops.md.
+    cm:
+      timeout.reconciliation: 10s
+      timeout.reconciliation.jitter: 2s
 
   # --- the reconciler: singleton StatefulSet, self-heals on restart --------------------------
   controller:

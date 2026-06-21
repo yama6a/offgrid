@@ -14,7 +14,7 @@ metadata:
 spec:
   project: default
   source:
-    repoURL: https://github.com/yama6a/offgrid.git
+    repoURL: https://github.com/yama6a/offgrid
     targetRevision: HEAD
     path: argo_apps/apps
     directory:

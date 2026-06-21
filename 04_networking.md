@@ -8,7 +8,7 @@ nodes to **Ready**.
 This is the **one component installed imperatively** — everything after it is GitOps. The cluster has no working pod
 network until it lands, so ArgoCD (and CoreDNS, and every workload) depend on it.
 
-The **single source of truth** is the wrapper Helm chart at `argo_apps/charts/01_cilium/`. `04_cilium.sh` just installs
+The **single source of truth** is the wrapper Helm chart at `argo_apps/charts/00_cilium/`. `04_cilium.sh` just installs
 that chart; ArgoCD later **adopts** the same release (same chart, namespace, release name, values → Argo sees it in-sync
 rather than fighting it). Nothing — no version, no CRD list, no values — is defined in the script. The chart:
 
@@ -47,9 +47,9 @@ Uses **native `helm` + `kubectl`** (errors out if either is missing) — unlike 
 (03a–03e). Talks to the cluster via `03_operating_system/talos-cluster/kubeconfig` (written by 03d). Idempotent
 (re-run safe).
 
-1. `helm dependency build argo_apps/charts/01_cilium` — pulls the pinned `cilium/cilium` subchart into `charts/`
+1. `helm dependency build argo_apps/charts/00_cilium` — pulls the pinned `cilium/cilium` subchart into `charts/`
    (falls back to `helm dependency update` to generate `Chart.lock` on first run).
-2. `helm upgrade --install cilium argo_apps/charts/01_cilium --wait` — installs Cilium with the chart's values, **and**
+2. `helm upgrade --install cilium argo_apps/charts/00_cilium --wait` — installs Cilium with the chart's values, **and**
    the Gateway API CRDs from `crds/` (Helm installs a chart's `crds/` directly, so the "too big for client-side apply"
    annotation limit doesn't apply). The values are Talos-flavoured: KubePrism endpoint, kube-proxy replacement,
    WireGuard, L2 announcements, Gateway API, Hubble, and the Talos-mandatory `cgroup` (no auto-mount) +
@@ -87,9 +87,12 @@ kubectl get svc nginx              # EXTERNAL-IP from your pool, reachable over 
 - **L2 announcements is Beta** and leans on leader-election leases; if you grow the pool and see operator API
   throttling, raise `k8sClientRateLimit` in the values.
 - **Circular dependency once Argo owns it:** ArgoCD runs on Cilium's network, so a bad Cilium change synced through Argo
-  can cut Argo off. Cilium upgrades are normally non-disruptive (per-node agent restart, eBPF datapath persists), but
-  **keep `04_cilium.sh` as break-glass**, and consider leaving the Cilium Argo Application on **manual sync** — it's the
-  one app that can take the whole cluster down.
+  can cut Argo off. Cilium upgrades are normally non-disruptive (per-node agent restart, eBPF datapath persists). The
+  Cilium Argo Application **auto-syncs but deliberately without `selfHeal` (and `prune: false`)** — hands-off upgrades,
+  but Argo never reverts an out-of-band fix mid-incident nor cascade-deletes a CRD. **Keep `04_cilium.sh` as
+  break-glass**; after using it, commit the fix to git so the app reconciles. The trade-off is that a bad change *pushed
+  to git* applies unattended, so mind your pushes — it's the one app that can take the whole cluster down. See
+  [05_gitops.md](05_gitops.md) "sync-wave convention".
 - **LB pool placement:** must sit outside the Archer's DHCP lease range and clear of the `.100.1` VIP, or you'll get IP
   conflicts.
 

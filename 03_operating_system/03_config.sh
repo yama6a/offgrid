@@ -70,5 +70,5 @@ EPHEMERAL_SIZE="64GiB"               # EPHEMERAL cap; rest of the NVMe -> longho
 IFACE="${EXPECT_NIC}"                # wired NIC the VIP binds to (dhcp + vip)
 
 # Cilium (CNI/LB/gateway/encryption) is step 04. Its version, values, Gateway API CRDs,
-# and LB-IPAM pool all live in the wrapper chart argo_apps/charts/01_cilium/ — see
+# and LB-IPAM pool all live in the wrapper chart argo_apps/charts/00_cilium/ — see
 # ../04_networking/04_cilium.sh and 04_networking.md. Nothing for it is configured here.
