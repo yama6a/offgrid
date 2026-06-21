@@ -1,0 +1,19 @@
+apiVersion: v2
+name: longhorn
+description: >-
+  Wrapper chart for Longhorn on the Talos/Raspberry Pi 5 cluster — the cluster's
+  distributed block storage / default StorageClass, backed by the dedicated XFS
+  'longhorn' user volume on each NVMe (mounted at /var/mnt/longhorn by 03d).
+  Single source of truth for the Longhorn chart version (this file) and its values
+  (values.yaml, under the `longhorn:` key). Delivered purely by ArgoCD (no imperative
+  bootstrap) via argo_apps/apps/02_longhorn.yaml — wave 2, same as nic-keeper /
+  sealed-secrets / cert-manager (independent leaves). The one-time host prerequisite
+  (kubelet extraMount for /var/mnt/longhorn) lives in 03d. See 09_longhorn.md.
+type: application
+version: 0.1.0                 # this wrapper chart's own version
+appVersion: "v1.12.0"         # Longhorn version the pinned chart ships (mirrors the dependency)
+
+dependencies:
+  - name: longhorn
+    version: "1.12.0"         # longhorn/longhorn chart — THE single source for the pin
+    repository: https://charts.longhorn.io

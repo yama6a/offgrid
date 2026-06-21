@@ -60,6 +60,17 @@ cat > "${OUTDIR}/cp-patch.yaml" <<EOF
 machine:
   nodeLabels:
     node.kubernetes.io/instance-type: ${NODE_INSTANCE_TYPE}   # nic-keeper DaemonSet selector (06_nic_keeper.md)
+  kubelet:
+    # Longhorn's data path lives on the dedicated 'longhorn' user volume (see volumes.yaml below),
+    # mounted at /var/mnt/longhorn on the host. Talos runs the kubelet in a container and does NOT
+    # auto-propagate /var/mnt mounts into it, so Longhorn's pods can't see the disk without this
+    # explicit bind. rshared lets Longhorn's per-replica sub-mounts propagate back to the host.
+    # See 09_longhorn.md.
+    extraMounts:
+      - destination: /var/mnt/longhorn
+        type: bind
+        source: /var/mnt/longhorn
+        options: [bind, rshared, rw]
   features:
     kubePrism:
       enabled: true

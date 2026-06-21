@@ -1,0 +1,32 @@
+# Values for the 02_longhorn wrapper chart. SINGLE SOURCE OF TRUTH — ArgoCD (and any local
+# `helm template`) consume this. Chart version pinned in Chart.yaml. See 09_longhorn.md for the why.
+#
+# Longhorn runs in its own `longhorn-system` namespace (CreateNamespace=true in the Application,
+# which also stamps the `pod-security.kubernetes.io/enforce: privileged` label Longhorn requires).
+#
+# Everything under `longhorn:` is passed to the upstream longhorn/longhorn subchart (key == dependency name).
+longhorn:
+  defaultSettings:
+    # Point Longhorn at the dedicated XFS user volume (03d volumes.yaml -> /var/mnt/longhorn),
+    # exposed to the kubelet by the extraMount in 03d's cp-patch. Longhorn auto-creates a default
+    # disk here on every node and reads its (fixed, grow-once-at-provision) capacity via statfs.
+    defaultDataPath: /var/mnt/longhorn
+
+    # 3 nodes -> one replica per node: full HA, survives a single node loss with data intact.
+    # replicaSoftAntiAffinity is left at its default (false) => hard anti-affinity, so the three
+    # replicas always land on three distinct nodes (exactly what we want at 3 nodes / 3 replicas).
+    defaultReplicaCount: 3
+
+    # Keep headroom on the Pi NVMes — don't schedule replicas onto a disk under 15% free.
+    storageMinimalAvailablePercentage: 15
+
+  persistence:
+    # Longhorn is the cluster's only storage, so make it the default StorageClass. Flip to false
+    # if you'd rather PVCs name `longhorn` explicitly.
+    defaultClass: true
+    defaultClassReplicaCount: 3
+
+  # The pre-upgrade checker is a Helm pre-upgrade HOOK Job. Under ArgoCD a hook Job can stall the
+  # sync waiting on its completion; version control already lives in git, so disable it.
+  preUpgradeChecker:
+    jobEnabled: false
