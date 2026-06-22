@@ -1,0 +1,14 @@
+apiVersion: v2
+name: gateway
+description: >-
+  Wrapper chart for the cluster's shared ingress: a single Cilium Gateway (Gateway API)
+  on a pinned LB-IPAM IP, the Let's Encrypt ClusterIssuers (staging + prod) that cert-manager
+  uses to mint certs via HTTP-01 solved THROUGH that Gateway, and gateway-test — a toggleable
+  whoami echo app (Deployment/Service/Certificate/HTTPS-listener/HTTPRoute) that proves the full
+  HTTPS path end to end. Unlike the other wrapper charts this pins NO upstream dependency (the
+  resources are first-party CRs + a tiny Deployment), so there is no Chart.lock. Single source of
+  truth for the gateway IP, ACME config and base domain (values.yaml; email + baseDomain written by
+  10_gateway/10_gateway.sh). Delivered purely by ArgoCD via argo_apps/apps/03_gateway.yaml — wave 3
+  (after cert-manager, wave 2, is Healthy). See 10_gateway.md.
+type: application
+version: 0.1.0                 # this wrapper chart's own version

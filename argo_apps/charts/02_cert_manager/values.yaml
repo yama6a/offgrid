@@ -30,7 +30,13 @@ cert-manager:
       requests: { cpu: 25m, memory: 64Mi }
       limits:   { memory: 256Mi }
 
-  # FUTURE (do not enable until the Let's Encrypt step): HTTP-01 solving through the Cilium Gateway
-  # API needs this controller feature gate. Left OFF now — there is no issuer/Gateway to solve against
-  # yet. When wiring LE, uncomment and add the matching Gateway + ClusterIssuer.
-  # featureGates: "ExperimentalGatewayAPISupport=true"
+  # HTTP-01 solving through the Cilium Gateway API. NOTE: since cert-manager 1.15 this is NOT a
+  # feature gate any more — the old `ExperimentalGatewayAPISupport` gate is gone. It's enabled via
+  # the controller's file config below. The one ordering requirement is that the Gateway API CRDs
+  # exist before the controller starts; they do (Cilium vendors them at wave 0, before this wave-2
+  # app), so a fresh rollout picks them up. The matching Gateway + Let's Encrypt ClusterIssuers live
+  # in the 03_gateway chart (wave 3). See 10_gateway.md.
+  config:
+    apiVersion: controller.config.cert-manager.io/v1alpha1
+    kind: ControllerConfiguration
+    enableGatewayAPI: true

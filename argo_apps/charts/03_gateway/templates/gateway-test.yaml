@@ -1,0 +1,80 @@
+{{- if .Values.gatewayTest.enabled }}
+{{- $host := printf "%s.%s" .Values.gatewayTest.subdomain .Values.baseDomain }}
+# gateway-test: a throwaway echo workload to validate the full HTTPS ingress path end to end.
+# whoami listens on :80 and echoes the request — the simplest possible "is the gateway working" app.
+# Deployment + Service + Certificate + HTTPRoute all live in the Gateway's namespace so nothing needs
+# a cross-namespace ReferenceGrant. See 10_gateway.md.
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: gateway-test
+  namespace: {{ .Values.gateway.namespace }}
+  labels:
+    app: gateway-test
+spec:
+  replicas: 1
+  selector:
+    matchLabels:
+      app: gateway-test
+  template:
+    metadata:
+      labels:
+        app: gateway-test
+    spec:
+      containers:
+        - name: whoami
+          image: {{ .Values.gatewayTest.image | quote }}
+          ports:
+            - name: http
+              containerPort: 80
+          resources:
+            requests: { cpu: 10m, memory: 16Mi }
+            limits:   { memory: 32Mi }
+---
+apiVersion: v1
+kind: Service
+metadata:
+  name: gateway-test
+  namespace: {{ .Values.gateway.namespace }}
+spec:
+  selector:
+    app: gateway-test
+  ports:
+    - name: http
+      port: 80
+      targetPort: http
+---
+# cert-manager mints this from the chosen ClusterIssuer (HTTP-01 via the Gateway) and writes it into
+# the Secret the Gateway's gateway-test-https listener references.
+apiVersion: cert-manager.io/v1
+kind: Certificate
+metadata:
+  name: gateway-test
+  namespace: {{ .Values.gateway.namespace }}
+spec:
+  secretName: {{ .Values.gatewayTest.tlsSecretName | quote }}
+  dnsNames:
+    - {{ $host | quote }}
+  issuerRef:
+    name: {{ .Values.gatewayTest.issuer | quote }}
+    kind: ClusterIssuer
+---
+# Routes HTTPS traffic for the host (on the gateway-test-https listener) to the echo Service.
+# No :80 redirect route yet — the http listener is left free for ACME; reach the test over https.
+apiVersion: gateway.networking.k8s.io/v1
+kind: HTTPRoute
+metadata:
+  name: gateway-test
+  namespace: {{ .Values.gateway.namespace }}
+spec:
+  parentRefs:
+    - name: {{ .Values.gateway.name }}
+      namespace: {{ .Values.gateway.namespace }}
+      sectionName: gateway-test-https
+  hostnames:
+    - {{ $host | quote }}
+  rules:
+    - backendRefs:
+        - name: gateway-test
+          port: 80
+{{- end }}

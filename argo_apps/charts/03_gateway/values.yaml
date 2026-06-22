@@ -1,0 +1,50 @@
+# Values for the 03_gateway wrapper chart. SINGLE SOURCE OF TRUTH — ArgoCD (and any local
+# `helm template`) consume this. See 10_gateway.md for the why.
+#
+# This chart ships:
+#   1. a shared Cilium Gateway (the one ingress point, on a pinned LB IP),
+#   2. the Let's Encrypt ClusterIssuers that mint certs via HTTP-01 solved through that Gateway, and
+#   3. gateway-test — a throwaway echo app (whoami) that exercises the full HTTPS path: its HTTPS
+#      listener, Certificate and HTTPRoute are the first real app on the Gateway (toggle gatewayTest
+#      to remove it). The forced http->https redirect is still deferred. See 10_gateway.md.
+
+gateway:
+  name: shared-gateway
+  # Dedicated namespace. App HTTPRoutes attach cross-namespace (listener allowedRoutes.from: All),
+  # and later the gateway's TLS Secrets live here too. Created via CreateNamespace in the Application.
+  namespace: gateway
+  className: cilium
+  # Pinned LoadBalancer IP, taken from the Cilium LB-IPAM pool defined in 04_networking/config.sh
+  # (192.168.100.10-250). MUST sit inside that pool and not collide with another pinned LB service.
+  # This is the IP the old Raspberry Pi's Traefik forwards :80 (and later :443) to. Set via the
+  # Gateway API spec.addresses field (Cilium honours it through LB-IPAM; the older
+  # io.cilium/lb-ipam-ips annotation is being deprecated). See 10_gateway.md.
+  loadBalancerIP: "192.168.100.10"
+# Base domain for cluster-hosted app hostnames (derived as <subdomain>.<baseDomain>). The
+# 10_gateway/10_gateway.sh script writes this AND acme.email here from 10_gateway/config.sh (yq) —
+# config.sh is the source of truth for the shell side; commit the result so ArgoCD renders the same.
+baseDomain: example.com
+acme:
+  # ACME registration email (account-level; LE expiry notices go here).
+  email: "letsencrypt@example.com"
+  # Two issuers: ALWAYS test a new host against staging first (its rate limits are generous and its
+  # certs are untrusted-but-harmless), then switch the host's Certificate to prod once issuance works.
+  # Prod has tight rate limits — a misconfigured HTTP-01 loop can burn your weekly quota fast.
+  issuers:
+    - name: letsencrypt-staging
+      server: "https://acme-staging-v02.api.letsencrypt.org/directory"
+    - name: letsencrypt-prod
+      server: "https://acme-v02.api.letsencrypt.org/directory"
+# gateway-test — a throwaway echo workload (traefik/whoami) that proves the whole HTTPS path end to
+# end: DNS -> old-Pi :80 forward -> Gateway -> cert-manager HTTP-01 -> issued cert -> TLS terminate ->
+# echo. Everything lives in the gateway namespace (Deployment/Service/Certificate/HTTPRoute) so there
+# are no cross-namespace ReferenceGrants. Set enabled:false (and re-sync) to tear it all down — incl.
+# its :443 listener on the shared Gateway. See 10_gateway.md.
+gatewayTest:
+  enabled: true
+  image: "traefik/whoami:v1.10.3"
+  subdomain: gateway-test # -> gateway-test.<baseDomain>
+  # Which ClusterIssuer mints its cert. Default STAGING (untrusted but harmless) to prove issuance
+  # without spending prod quota; switch to letsencrypt-prod for a browser-trusted cert once it works.
+  issuer: letsencrypt-staging
+  tlsSecretName: gateway-test-tls

@@ -1,0 +1,45 @@
+# The cluster's single shared ingress Gateway. Cilium materialises this as a LoadBalancer Service
+# (cilium-gateway-<name>) and pins it to .Values.gateway.loadBalancerIP via LB-IPAM (spec.addresses).
+#
+# Only an HTTP :80 listener for now — it needs no cert, and it serves BOTH jobs we need before
+# HTTPS exists: (a) cert-manager's HTTP-01 ACME challenges (solver HTTPRoutes attach here), and
+# (b) later, the forced http->https redirect (a RequestRedirect HTTPRoute on this same listener).
+# The HTTPS :443 listener(s) + certificateRefs arrive with the first app, once a cert exists to
+# reference. See 10_gateway.md.
+apiVersion: gateway.networking.k8s.io/v1
+kind: Gateway
+metadata:
+  name: {{ .Values.gateway.name }}
+  namespace: {{ .Values.gateway.namespace }}
+spec:
+  gatewayClassName: {{ .Values.gateway.className }}
+  addresses:
+    - type: IPAddress
+      value: {{ .Values.gateway.loadBalancerIP | quote }}
+  listeners:
+    - name: http
+      protocol: HTTP
+      port: 80
+      # from: All so HTTPRoutes in any app namespace (and cert-manager's solver routes, created in
+      # the Certificate's namespace) can attach to this Gateway across namespaces.
+      allowedRoutes:
+        namespaces:
+          from: All
+    {{- if .Values.gatewayTest.enabled }}
+    # First HTTPS listener — added with the first app (gateway-test). It references a Secret that
+    # cert-manager fills via HTTP-01 on the :80 listener above, so it stays not-Ready until the cert
+    # is issued (needs the host to resolve + the old Pi to forward :80 here). Each future app adds its
+    # own analogous listener (a Terminate listener with no cert would sit permanently not-Ready).
+    - name: gateway-test-https
+      protocol: HTTPS
+      port: 443
+      hostname: {{ printf "%s.%s" .Values.gatewayTest.subdomain .Values.baseDomain | quote }}
+      tls:
+        mode: Terminate
+        certificateRefs:
+          - kind: Secret
+            name: {{ .Values.gatewayTest.tlsSecretName | quote }}
+      allowedRoutes:
+        namespaces:
+          from: All
+    {{- end }}

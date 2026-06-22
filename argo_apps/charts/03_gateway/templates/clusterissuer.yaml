@@ -1,0 +1,27 @@
+# Let's Encrypt ClusterIssuers (cluster-scoped — usable by Certificates in any namespace).
+# Let's Encrypt ClusterIssuers (cluster-scoped — usable by Certificates in any namespace).
+# Each solves HTTP-01 by having cert-manager create a temporary HTTPRoute attached to the shared
+# Gateway (parentRefs below); the challenge is served on the Gateway's :80 listener. Reachability
+# from the internet is provided by the old Raspberry Pi forwarding :80 for the migrated host to the
+# Gateway IP (see 10_gateway.md / the old-host Traefik /rules). The ACME account key is stored in a
+# Secret in cert-manager's namespace (the cluster resource namespace for ClusterIssuers).
+{{- range .Values.acme.issuers }}
+---
+apiVersion: cert-manager.io/v1
+kind: ClusterIssuer
+metadata:
+  name: {{ .name }}
+spec:
+  acme:
+    email: {{ $.Values.acme.email | quote }}
+    server: {{ .server | quote }}
+    privateKeySecretRef:
+      name: {{ .name }}-account-key
+    solvers:
+      - http01:
+          gatewayHTTPRoute:
+            parentRefs:
+              - name: {{ $.Values.gateway.name }}
+                namespace: {{ $.Values.gateway.namespace }}
+                kind: Gateway
+{{- end }}
