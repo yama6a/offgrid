@@ -44,7 +44,8 @@ gatewayTest:
   enabled: true
   image: "traefik/whoami:v1.10.3"
   subdomain: gateway-test # -> gateway-test.<baseDomain>
-  # Which ClusterIssuer mints its cert. Default STAGING (untrusted but harmless) to prove issuance
-  # without spending prod quota; switch to letsencrypt-prod for a browser-trusted cert once it works.
-  issuer: letsencrypt-staging
+  # Which ClusterIssuer mints its cert. STAGING (untrusted but harmless) proves issuance without
+  # spending prod quota; PROD gives a browser-trusted cert. Issuance was validated on staging, so
+  # this is now on prod. (Flip back to letsencrypt-staging if you ever re-debug the HTTP-01 path.)
+  issuer: letsencrypt-prod
   tlsSecretName: gateway-test-tls
