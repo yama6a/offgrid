@@ -1,0 +1,41 @@
+# Values for the 04_google_sso wrapper chart. SINGLE SOURCE OF TRUTH — ArgoCD (and any local
+# `helm template`) consume this.
+#
+# One SecurityPolicy (templates/securitypolicy.yaml) attaches Google SSO to every HTTPRoute labelled
+# `auth: google-sso`. The clientID, host-derived redirectURL/cookieDomain and the email allowlist are
+# written here by 12_google_sso/12_google_sso.sh; the client SECRET is the only sealed bit (Secret
+# `google-oauth`, key `client-secret`, in templates/google-oauth-sealedsecret.yaml). See 12_google_sso.md.
+#
+# Fail-safe defaults: the placeholder clientID + placeholder allowlist mean NOBODY gets in until the
+# script runs (OIDC login fails on a bogus client; defaultAction is Deny anyway). Safe to ship un-run.
+
+# Namespace the SecurityPolicy + the sealed Secret live in. MUST equal the namespace of the routes it
+# targets (a SecurityPolicy selects routes in its own namespace) — the gateway-test-sso route is in
+# `gateway`, so this is `gateway`.
+namespace: gateway
+
+# The label the policy selects on. Routes carrying this label (e.g. gateway-test-sso) get SSO.
+routeLabel:
+  key: auth
+  value: google-sso
+
+oidc:
+  # Google OAuth client id (NOT sensitive). Written by the script. Placeholder denies login until set.
+  clientID: "000000000000-xxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxx.apps.googleusercontent.com"
+  # Sealed Secret holding the client secret under key `client-secret` (the key Envoy Gateway expects).
+  clientSecretName: google-oauth
+  # Host-derived (written by the script from the gateway chart's baseDomain + gatewayTestSso.subdomain).
+  # redirectURL MUST be registered verbatim as an Authorized redirect URI on the Google OAuth client,
+  # and MUST match a host routed by the Gateway.
+  redirectURL: "https://gateway-test-sso.example.com/oauth2/callback"
+  # Cookie domain for the session — set to the base domain so a future shared-auth-host setup can share
+  # the session across *.<baseDomain>. Written by the script (= baseDomain).
+  cookieDomain: "example.com"
+  # Name of the cookie Envoy Gateway stores the Google ID token in. The jwt provider below extracts the
+  # email claim from THIS cookie (Google's access token is opaque; the email lives in the ID token).
+  idTokenCookie: "google-id-token"
+
+# The email allowlist — INLINE (plaintext) by design. Written by the script. defaultAction is Deny, so
+# only these Google accounts pass; everyone else completes the Google login but is rejected.
+allowlist:
+  - "you@example.com"

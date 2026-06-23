@@ -1,0 +1,4 @@
+# This dir holds google-oauth-sealedsecret.yaml, written by 12_google_sso/12_google_sso.sh (the sealed
+# Google OAuth client secret). It is NOT committed by hand — run the script, then commit its output.
+# Helm ignores dotfiles, so this .gitkeep is inert. Until the SealedSecret exists, the SecurityPolicy
+# references a missing Secret and the route is NOT protected (fail-open) — run the script first.

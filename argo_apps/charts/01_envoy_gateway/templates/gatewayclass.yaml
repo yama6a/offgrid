@@ -1,0 +1,14 @@
+# The `eg` GatewayClass — the cluster's single Gateway API class now that Cilium's is gone. The
+# shared Gateway (03_gateway chart) references it by name. parametersRef points at the EnvoyProxy
+# below so every Gateway of this class inherits the pinned-LB-IP provider config.
+apiVersion: gateway.networking.k8s.io/v1
+kind: GatewayClass
+metadata:
+  name: {{ .Values.gatewayClass.name }}
+spec:
+  controllerName: gateway.envoyproxy.io/gatewayclass-controller
+  parametersRef:
+    group: gateway.envoyproxy.io
+    kind: EnvoyProxy
+    name: {{ .Values.envoyProxy.name }}
+    namespace: {{ .Values.envoyProxy.namespace }}

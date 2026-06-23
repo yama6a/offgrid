@@ -1,0 +1,14 @@
+apiVersion: v2
+name: google-sso
+description: >-
+  The OPTIONAL Google-SSO layer: one Envoy Gateway SecurityPolicy that attaches Google OIDC login +
+  an email allowlist to any HTTPRoute carrying the label `auth: google-sso` (targetSelectors). Add a
+  host = label its route; no per-host proxy or config. Unlike the other wrapper charts it pins NO
+  upstream dependency (the resources are first-party CRs — a SecurityPolicy + a sealed Secret), so
+  there is no Chart.lock. The allowlist is INLINE in values.yaml (Envoy Gateway cannot source
+  authorization values from a Secret; it's low-sensitivity email in a private repo); only the Google
+  OAuth client secret is sealed (minted by 12_google_sso/12_google_sso.sh into templates/). Delivered
+  purely by ArgoCD via argo_apps/apps/04_google_sso.yaml — wave 4 (after the gateway wave 3 and
+  sealed-secrets wave 2). See 12_google_sso.md.
+type: application
+version: 0.1.0                 # this wrapper chart's own version

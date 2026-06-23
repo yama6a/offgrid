@@ -1,5 +1,6 @@
-# The cluster's single shared ingress Gateway. Cilium materialises this as a LoadBalancer Service
-# (cilium-gateway-<name>) and pins it to .Values.gateway.loadBalancerIP via LB-IPAM (spec.addresses).
+# The cluster's single shared ingress Gateway. Envoy Gateway (the `eg` class) materialises this as a
+# data-plane Envoy Deployment + LoadBalancer Service, pinned to .Values.gateway.loadBalancerIP via the
+# EnvoyProxy annotation (01_envoy_gateway chart) and the spec.addresses below.
 #
 # Only an HTTP :80 listener for now — it needs no cert, and it serves BOTH jobs we need before
 # HTTPS exists: (a) cert-manager's HTTP-01 ACME challenges (solver HTTPRoutes attach here), and
@@ -39,6 +40,23 @@ spec:
         certificateRefs:
           - kind: Secret
             name: {{ .Values.gatewayTest.tlsSecretName | quote }}
+      allowedRoutes:
+        namespaces:
+          from: All
+    {{- end }}
+    {{- if .Values.gatewayTestSso.enabled }}
+    # gateway-test-sso's HTTPS listener — same shape as gateway-test's. Its HTTPRoute (gateway-test-sso.yaml)
+    # is labelled `auth: google-sso` so the 04_google_sso SecurityPolicy attaches Google SSO to it.
+    # Stays not-Ready until its cert is issued (HTTP-01 on :80) — expected, blocks nothing. See 12_google_sso.md.
+    - name: gateway-test-sso-https
+      protocol: HTTPS
+      port: 443
+      hostname: {{ printf "%s.%s" .Values.gatewayTestSso.subdomain .Values.baseDomain | quote }}
+      tls:
+        mode: Terminate
+        certificateRefs:
+          - kind: Secret
+            name: {{ .Values.gatewayTestSso.tlsSecretName | quote }}
       allowedRoutes:
         namespaces:
           from: All

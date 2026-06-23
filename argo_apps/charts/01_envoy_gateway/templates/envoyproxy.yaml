@@ -1,0 +1,19 @@
+# Provider config for every Gateway of the `eg` class. Its one job here: pin the data-plane Envoy's
+# LoadBalancer Service to the LB-IPAM IP, exactly as the old Cilium Gateway was pinned via
+# spec.addresses. Cilium LB-IPAM honours the `lbipam.cilium.io/ips` annotation (Cilium >= 1.15); the
+# Gateway's own spec.addresses (03_gateway chart) requests the same IP, belt-and-suspenders. This is
+# the fixed IP the old Raspberry Pi forwards :80/:443 to — keep it inside the pool (192.168.100.10-250,
+# from 04_networking/config.sh) and stable. See 11_envoy_gateway.md.
+apiVersion: gateway.envoyproxy.io/v1alpha1
+kind: EnvoyProxy
+metadata:
+  name: {{ .Values.envoyProxy.name }}
+  namespace: {{ .Values.envoyProxy.namespace }}
+spec:
+  provider:
+    type: Kubernetes
+    kubernetes:
+      envoyService:
+        type: LoadBalancer
+        annotations:
+          lbipam.cilium.io/ips: {{ .Values.envoyProxy.loadBalancerIP | quote }}

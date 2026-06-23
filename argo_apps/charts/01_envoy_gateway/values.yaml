@@ -1,0 +1,30 @@
+# Values for the 01_envoy_gateway wrapper chart. SINGLE SOURCE OF TRUTH — ArgoCD (and any local
+# `helm template`) consume this. Chart version pinned in Chart.yaml.
+#
+# This chart delivers the envoy-gateway controller (which also installs the Gateway API + Envoy
+# Gateway CRDs), plus the `eg` GatewayClass and the EnvoyProxy that pins the LoadBalancer IP
+# (templates/). The actual data-plane Envoy proxies are created per-Gateway by the controller.
+# See 11_envoy_gateway.md.
+
+# The `eg` GatewayClass this chart registers (templates/gatewayclass.yaml). The 03_gateway chart's
+# shared Gateway sets gatewayClassName to this.
+gatewayClass:
+  name: eg
+
+# The EnvoyProxy provider config (templates/envoyproxy.yaml), referenced by the GatewayClass above.
+# Lives in the controller's namespace (the Application destination). loadBalancerIP MUST sit inside the
+# Cilium LB-IPAM pool (192.168.100.10-250) and match the old Pi's forward target.
+envoyProxy:
+  name: eg-proxy-config
+  namespace: envoy-gateway-system
+  loadBalancerIP: "192.168.100.10"
+
+# Everything under `gateway-helm:` is passed to the upstream gateway-helm subchart (key == dep name).
+gateway-helm:
+  deployment:
+    envoyGateway:
+      # Trim the controller's footprint for a 3x 8GB Pi 5 cluster (chart default limit is 1Gi).
+      resources:
+        requests: { cpu: 50m, memory: 128Mi }
+        limits:   { memory: 512Mi }
+    replicas: 1

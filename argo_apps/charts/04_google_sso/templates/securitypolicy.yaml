@@ -1,0 +1,62 @@
+# The cluster's Google-SSO policy. It attaches to HTTPRoutes by LABEL (targetSelectors), not by name —
+# so protecting a host is just labelling its route `auth: google-sso`, with zero per-host config here.
+# Three stacked filters run at the Envoy edge, in order:
+#   1. oidc            — unauthenticated request -> 302 to Google; on return, stores the ID token in a cookie.
+#   2. jwt             — validates that ID token (Google's JWKS) and exposes its claims.
+#   3. authorization   — Deny by default; Allow only when the `email` claim is in the inline allowlist.
+# A SecurityPolicy is namespaced and selects routes in its OWN namespace, hence ns == the routes' ns.
+# See 12_google_sso.md.
+apiVersion: gateway.envoyproxy.io/v1alpha1
+kind: SecurityPolicy
+metadata:
+  name: google-sso
+  namespace: {{ .Values.namespace }}
+spec:
+  targetSelectors:
+    - group: gateway.networking.k8s.io
+      kind: HTTPRoute
+      matchLabels:
+        {{ .Values.routeLabel.key }}: {{ .Values.routeLabel.value }}
+
+  oidc:
+    provider:
+      issuer: "https://accounts.google.com"
+    clientID: {{ .Values.oidc.clientID | quote }}
+    clientSecret:
+      name: {{ .Values.oidc.clientSecretName | quote }}
+    redirectURL: {{ .Values.oidc.redirectURL | quote }}
+    cookieDomain: {{ .Values.oidc.cookieDomain | quote }}
+    # Store the ID token in a named cookie so the jwt provider below can read it.
+    cookieNames:
+      idToken: {{ .Values.oidc.idTokenCookie | quote }}
+    scopes:
+      - openid
+      - email
+      - profile
+
+  jwt:
+    providers:
+      - name: google
+        issuer: "https://accounts.google.com"
+        remoteJWKS:
+          uri: "https://www.googleapis.com/oauth2/v3/certs"
+        # Read the token from the OIDC ID-token cookie, not an Authorization header.
+        extractFrom:
+          cookies:
+            - {{ .Values.oidc.idTokenCookie | quote }}
+
+  authorization:
+    defaultAction: Deny
+    rules:
+      - name: allow-listed-emails
+        action: Allow
+        principal:
+          jwt:
+            provider: google
+            claims:
+              - name: email
+                valueType: String
+                values:
+                  {{- range .Values.allowlist }}
+                  - {{ . | quote }}
+                  {{- end }}

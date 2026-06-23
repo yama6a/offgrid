@@ -2,23 +2,27 @@
 # `helm template`) consume this. See 10_gateway.md for the why.
 #
 # This chart ships:
-#   1. a shared Cilium Gateway (the one ingress point, on a pinned LB IP),
-#   2. the Let's Encrypt ClusterIssuers that mint certs via HTTP-01 solved through that Gateway, and
+#   1. a shared Gateway (the one ingress point, on a pinned LB IP) on the Envoy Gateway `eg` class,
+#   2. the Let's Encrypt ClusterIssuers that mint certs via HTTP-01 solved through that Gateway,
 #   3. gateway-test — a throwaway echo app (whoami) that exercises the full HTTPS path: its HTTPS
 #      listener, Certificate and HTTPRoute are the first real app on the Gateway (toggle gatewayTest
 #      to remove it). The forced http->https redirect is still deferred. See 10_gateway.md.
+#   4. gateway-test-sso — the same echo, but its route is labelled for Google SSO (04_google_sso).
+#      See 12_google_sso.md.
 
 gateway:
   name: shared-gateway
   # Dedicated namespace. App HTTPRoutes attach cross-namespace (listener allowedRoutes.from: All),
   # and later the gateway's TLS Secrets live here too. Created via CreateNamespace in the Application.
   namespace: gateway
-  className: cilium
+  # Envoy Gateway's class (registered by the 01_envoy_gateway chart). Was `cilium` until the data
+  # plane moved to Envoy Gateway for its SecurityPolicy CRD (label-selectable SSO). See 11_envoy_gateway.md.
+  className: eg
   # Pinned LoadBalancer IP, taken from the Cilium LB-IPAM pool defined in 04_networking/config.sh
   # (192.168.100.10-250). MUST sit inside that pool and not collide with another pinned LB service.
-  # This is the IP the old Raspberry Pi's Traefik forwards :80 (and later :443) to. Set via the
-  # Gateway API spec.addresses field (Cilium honours it through LB-IPAM; the older
-  # io.cilium/lb-ipam-ips annotation is being deprecated). See 10_gateway.md.
+  # This is the IP the old Raspberry Pi's Traefik forwards :80 (and later :443) to. Requested via the
+  # Gateway API spec.addresses field below AND the EnvoyProxy's lbipam.cilium.io/ips annotation
+  # (01_envoy_gateway chart) — Cilium LB-IPAM honours both. See 11_envoy_gateway.md.
   loadBalancerIP: "192.168.100.10"
 # Base domain for cluster-hosted app hostnames (derived as <subdomain>.<baseDomain>). The
 # 10_gateway/10_gateway.sh script writes this AND acme.email here from 10_gateway/config.sh (yq) —
@@ -49,3 +53,16 @@ gatewayTest:
   # this is now on prod. (Flip back to letsencrypt-staging if you ever re-debug the HTTP-01 path.)
   issuer: letsencrypt-prod
   tlsSecretName: gateway-test-tls
+# gateway-test-sso — the SAME whoami echo, but its HTTPRoute carries the label `auth: google-sso`, so
+# the Envoy Gateway SecurityPolicy in the 04_google_sso chart attaches Google SSO to it (and ONLY to
+# it — gateway-test above is unlabelled and stays open). This proves the label-selector SSO model:
+# protecting a host = labelling its route, no per-host proxy. Backend + Certificate + the
+# gateway-test-sso-https listener live here; the SecurityPolicy + sealed client secret are wave 4.
+# Set enabled:false (and re-sync) to tear it all down. See 12_google_sso.md.
+gatewayTestSso:
+  enabled: true
+  image: "traefik/whoami:v1.10.3"
+  subdomain: gateway-test-sso # -> gateway-test-sso.<baseDomain> (the SSO redirect-url is derived from this)
+  # New host: start on STAGING to validate HTTP-01, then flip to letsencrypt-prod for a trusted cert.
+  issuer: letsencrypt-prod
+  tlsSecretName: gateway-test-sso-tls
