@@ -13,12 +13,10 @@
 # targets (a SecurityPolicy selects routes in its own namespace) — the gateway-test-sso route is in
 # `gateway`, so this is `gateway`.
 namespace: gateway
-
 # The label the policy selects on. Routes carrying this label (e.g. gateway-test-sso) get SSO.
 routeLabel:
   key: auth
   value: google-sso
-
 oidc:
   # Google OAuth client id (NOT sensitive). Written by the script. Placeholder denies login until set.
   clientID: "000000000000-xxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxx.apps.googleusercontent.com"
@@ -34,8 +32,7 @@ oidc:
   # Name of the cookie Envoy Gateway stores the Google ID token in. The jwt provider below extracts the
   # email claim from THIS cookie (Google's access token is opaque; the email lives in the ID token).
   idTokenCookie: "google-id-token"
-
 # The email allowlist — INLINE (plaintext) by design. Written by the script. defaultAction is Deny, so
 # only these Google accounts pass; everyone else completes the Google login but is rejected.
 allowlist:
-  - "you@example.com"
+  - you@example.com
