@@ -9,13 +9,13 @@
 # SINGLE SOURCE OF TRUTH is the wrapper chart at argo_apps/charts/00_cilium/:
 #   - Chart.yaml  pins the cilium chart version (dependency)
 #   - values.yaml holds the Talos-flavoured cilium values + the loadBalancer gate
-#   - crds/       vendors the Gateway API CRDs (v1.4.1)
 #   - templates/cilium-lb.yaml is the LB-IPAM pool + L2 policy
 # This script just installs THAT chart; ArgoCD later adopts the same release. No
 # versions, CRD lists, or values are defined here. See 04_networking.md.
 #
 # Brings up: WireGuard transparent encryption, kube-proxy replacement (via KubePrism),
-# LB-IPAM + L2 announcements (replaces MetalLB), Gateway API, Hubble.
+# LB-IPAM + L2 announcements (replaces MetalLB), Hubble. (Cilium's gatewayAPI is OFF — the ingress
+# data plane is Envoy Gateway; see 11_envoy_gateway.md.)
 #
 # Uses NATIVE helm + kubectl (errors out if either is missing). Talks to the cluster
 # via the kubeconfig step 03 (03d) wrote to 03_operating_system/talos-cluster/kubeconfig.
@@ -85,7 +85,7 @@ else
   bad "yq failed to write LB range into ${VALUES}"
 fi
 
-# === 1. resolve the cilium subchart (Gateway API CRDs ride along in crds/) ====
+# === 1. resolve the cilium subchart ==========================================
 say "helm dependency build (${CHART_DIR})"
 helm repo add cilium https://helm.cilium.io >/dev/null 2>&1 || true
 helm repo update cilium >/dev/null 2>&1 || helm repo update >/dev/null
@@ -101,7 +101,7 @@ fi
 # RUNTIME, not shipped by the chart — so on a FRESH cluster they don't exist when
 # helm would apply the LB pool. Install with loadBalancer OFF first, let the operator
 # come up (--wait), then re-apply with it ON. On a re-run (CRD already present) do it
-# in one shot. Gateway API CRDs come from the chart's crds/ on first install.
+# in one shot.
 FRESH=0
 kubectl get crd ciliumloadbalancerippools.cilium.io >/dev/null 2>&1 || FRESH=1
 # Always pass loadBalancer.enabled EXPLICITLY: helm carries a release's previously-set values
@@ -112,7 +112,7 @@ LB_FIRST=true; [ "$FRESH" -eq 1 ] && LB_FIRST=false
 # --reset-values: recompute from the chart's values.yaml + our explicit --set on every upgrade.
 # Without it, a value stored by a previous revision (e.g. the fresh-path "=false") carries forward
 # and can win over the new --set, leaving the LB pool gated off. See 04_networking.md caveats.
-say "helm upgrade --install ${RELEASE} (cilium + Gateway API CRDs)"
+say "helm upgrade --install ${RELEASE} (cilium)"
 if helm upgrade --install "$RELEASE" "$CHART_DIR" --namespace "$NS" \
      --reset-values --set loadBalancer.enabled="$LB_FIRST" --wait --timeout 5m; then
   ok "cilium release applied"
@@ -148,8 +148,8 @@ kubectl -n "$NS" rollout status ds/cilium --timeout=120s >/dev/null 2>&1 \
   && ok "cilium agent DaemonSet rolled out" || bad "cilium DaemonSet not ready"
 kubectl -n "$NS" rollout status deploy/cilium-operator --timeout=120s >/dev/null 2>&1 \
   && ok "cilium-operator ready" || bad "cilium-operator not ready"
-kubectl get crd gateways.gateway.networking.k8s.io >/dev/null 2>&1 \
-  && ok "Gateway API CRDs present" || bad "Gateway API CRDs missing"
+# (No Gateway API CRD check here — Cilium's gatewayAPI is OFF; Envoy Gateway installs those later, see
+# 11_envoy_gateway.md.)
 # fully-qualified name + retry: the cilium.io CRDs may have only just been registered by the
 # operator, so kubectl's API-discovery cache can lag a few seconds behind reality.
 pool_ok=1
@@ -165,8 +165,8 @@ echo ""
 echo "=============== summary: ${PASS} passed, ${FAIL} failed ==============="
 if [ "$FAIL" -eq 0 ]; then
   cat <<EOF
-Cilium is the CNI. Encryption (WireGuard), LB-IPAM/L2, Gateway API, Hubble are live.
-Single source of truth: argo_apps/charts/00_cilium/ (Chart.yaml + values.yaml + crds/ + templates/).
+Cilium is the CNI. Encryption (WireGuard), LB-IPAM/L2, Hubble are live. (Gateway API is Envoy Gateway, not Cilium.)
+Single source of truth: argo_apps/charts/00_cilium/ (Chart.yaml + values.yaml + templates/).
 
 Next:
   - smoke-test a LoadBalancer:  kubectl create deploy nginx --image=nginx

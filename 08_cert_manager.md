@@ -1,7 +1,8 @@
 # cert-manager — X.509 certificates for the cluster
 
-The cluster will serve HTTPS through the Cilium Gateway API (CRDs + LoadBalancer already installed by
-[`00_cilium`](04_networking.md)). [cert-manager](https://cert-manager.io) is the controller that
+The cluster will serve HTTPS through its Gateway API ingress — **Envoy Gateway** (see
+[`11_envoy_gateway.md`](11_envoy_gateway.md)); the LoadBalancer IP comes from Cilium LB-IPAM
+([`00_cilium`](04_networking.md)). [cert-manager](https://cert-manager.io) is the controller that
 **issues and renews** the X.509 certs behind those listeners — ultimately Let's Encrypt certificates,
 fetched and rotated automatically.
 
@@ -61,10 +62,11 @@ A *working* Let's Encrypt `ClusterIssuer` needs several things this repo hasn't 
 
 - **An ACME account email** to register with Let's Encrypt.
 - **A challenge solver, each with an unmet dependency:**
-    - **HTTP-01 via Gateway API** — needs the `ExperimentalGatewayAPISupport` controller feature gate
-      (the commented `featureGates` knob in `values.yaml`) **and** a real `Gateway` + `HTTPRoute` to
-      attach to, plus LE reaching `http://<domain>/.well-known/...` from the public internet (a domain,
-      a public DNS A-record → the Cilium LB IP, inbound :80).
+    - **HTTP-01 via Gateway API** — needs cert-manager's Gateway API support (since cert-manager 1.15 this
+      is the `enableGatewayAPI: true` controller config, **not** the old `ExperimentalGatewayAPISupport`
+      feature gate) **and** a real `Gateway` + `HTTPRoute` to attach to, plus LE reaching
+      `http://<domain>/.well-known/...` from the public internet (a domain, a public DNS A-record → the
+      Gateway's LB IP, inbound :80). The Gateway is Envoy Gateway — see [10_gateway.md](10_gateway.md).
     - **DNS-01** — needs a DNS-provider API token. That secrets-strategy prerequisite is now **solved**:
       [`sealed-secrets`](07_sealed_secrets.md) lets the token be committed to git as a `SealedSecret`.
 - **Staging before production** — Let's Encrypt production has hard rate limits, so the normal path is

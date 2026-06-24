@@ -421,7 +421,7 @@ Full reasoning, knobs, and verify steps: **[06_nic_keeper.md](06_nic_keeper.md)*
   image): <https://github.com/siderolabs/sbc-raspberrypi/issues/91>
 - Cilium on Talos (KubePrism, kube-proxy replacement, cgroup/securityContext):
   <https://docs.cilium.io/en/stable/installation/k8s-install-helm/>
-- Cilium Gateway API (the v1.4.1 CRD set for 1.19): <https://docs.cilium.io/en/v1.19/network/servicemesh/gateway-api/gateway-api/>
+- Envoy Gateway (the cluster's Gateway API data plane; Cilium's gatewayAPI is disabled): <https://gateway.envoyproxy.io/>
 - Cilium LB-IPAM + L2 announcements: <https://docs.cilium.io/en/stable/network/lb-ipam/>
 - ingress-nginx retirement (why Gateway API): <https://kubernetes.io/blog/2025/11/11/ingress-nginx-retirement/>
 - Worked examples: <https://kcirtap.io/posts/talos-rpi5-custom-kernel-build/>

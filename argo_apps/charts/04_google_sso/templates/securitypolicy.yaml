@@ -1,34 +1,40 @@
-# The cluster's Google-SSO policy. It attaches to HTTPRoutes by LABEL (targetSelectors), not by name —
-# so protecting a host is just labelling its route `auth: google-sso`, with zero per-host config here.
-# Three stacked filters run at the Envoy edge, in order:
-#   1. oidc            — unauthenticated request -> 302 to Google; on return, stores the ID token in a cookie.
+# One Google-SSO policy PER domain. Each selects routes by LABEL (`sso: <domain>`, targetSelectors) — so
+# protecting a host is just labelling its route with its domain, zero per-host config. Three filters run
+# at the Envoy edge, in order:
+#   1. oidc            — no session -> 302 to Google; callback lands on the shared google-sso.<domain>
+#                        host and stores the ID token in a cookie scoped to <domain> (cookieDomain).
 #   2. jwt             — validates that ID token (Google's JWKS) and exposes its claims.
-#   3. authorization   — Deny by default; Allow only when the `email` claim is in the inline allowlist.
-# A SecurityPolicy is namespaced and selects routes in its OWN namespace, hence ns == the routes' ns.
-# See 12_google_sso.md.
+#   3. authorization   — Deny by default; Allow only when the `email` claim is in THIS domain's allowlist.
+# ONE Google OAuth client is shared across domains (same clientID + sealed secret); only the redirectURL,
+# cookieDomain, label and allowlist differ per domain. A SecurityPolicy is namespaced and selects routes
+# in its OWN namespace, hence ns == the routes' ns. See 12_google_sso.md.
+{{- range .Values.ssoDomains }}
+{{- $slug := .domain | replace "." "-" }}
+---
 apiVersion: gateway.envoyproxy.io/v1alpha1
 kind: SecurityPolicy
 metadata:
-  name: google-sso
-  namespace: {{ .Values.namespace }}
+  name: google-sso-{{ $slug }}
+  namespace: {{ $.Values.namespace }}
 spec:
   targetSelectors:
     - group: gateway.networking.k8s.io
       kind: HTTPRoute
       matchLabels:
-        {{ .Values.routeLabel.key }}: {{ .Values.routeLabel.value }}
+        {{ $.Values.routeLabelKey }}: {{ .domain | quote }}
 
   oidc:
     provider:
       issuer: "https://accounts.google.com"
-    clientID: {{ .Values.oidc.clientID | quote }}
+    clientID: {{ $.Values.oidc.clientID | quote }}
     clientSecret:
-      name: {{ .Values.oidc.clientSecretName | quote }}
-    redirectURL: {{ .Values.oidc.redirectURL | quote }}
-    cookieDomain: {{ .Values.oidc.cookieDomain | quote }}
-    # Store the ID token in a named cookie so the jwt provider below can read it.
+      name: {{ $.Values.oidc.clientSecretName | quote }}
+    # Fixed shared callback host for this domain — register it on the Google OAuth client.
+    redirectURL: {{ printf "https://%s.%s/oauth2/callback" $.Values.authSubdomain .domain | quote }}
+    # Share the session cookie across every subdomain of this domain (one login covers them all).
+    cookieDomain: {{ .domain | quote }}
     cookieNames:
-      idToken: {{ .Values.oidc.idTokenCookie | quote }}
+      idToken: {{ $.Values.oidc.idTokenCookie | quote }}
     scopes:
       - openid
       - email
@@ -40,10 +46,9 @@ spec:
         issuer: "https://accounts.google.com"
         remoteJWKS:
           uri: "https://www.googleapis.com/oauth2/v3/certs"
-        # Read the token from the OIDC ID-token cookie, not an Authorization header.
         extractFrom:
           cookies:
-            - {{ .Values.oidc.idTokenCookie | quote }}
+            - {{ $.Values.oidc.idTokenCookie | quote }}
 
   authorization:
     defaultAction: Deny
@@ -57,6 +62,7 @@ spec:
               - name: email
                 valueType: String
                 values:
-                  {{- range .Values.allowlist }}
+                  {{- range .allowlist }}
                   - {{ . | quote }}
                   {{- end }}
+{{- end }}

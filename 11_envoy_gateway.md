@@ -12,8 +12,8 @@ Delivered purely by ArgoCD:
   `gateway-helm`), the `eg` `GatewayClass`, and an `EnvoyProxy` that pins the LoadBalancer IP.
 - a one-line flip in `argo_apps/charts/00_cilium/values.yaml` (`gatewayAPI.enabled: false`) + removal
   of the vendored Gateway API CRDs.
-- `argo_apps/charts/03_gateway/` retargeted to `gatewayClassName: eg` (plus the `gateway-test-sso`
-  slice, whose auth is step 12).
+- `argo_apps/charts/03_gateway/` retargeted to `gatewayClassName: eg` (it's now platform-only — Gateway
+  + listeners + issuers; the demo apps live in [05_gateway_test](13_gateway_test.md)).
 
 This step has **no imperative script** — the only manual action is generating the chart's `Chart.lock`
 (`helm dependency update argo_apps/charts/01_envoy_gateway` + commit), like the other dependency charts.
@@ -55,7 +55,8 @@ its `spec.addresses` request for the same IP. The IP must stay inside the LB-IPA
 ### cert-manager HTTP-01 is unaffected
 The `gatewayHTTPRoute` solver is standard Gateway API — cert-manager creates a temporary HTTPRoute on
 the `:80` listener exactly as before, now served by Envoy Gateway. No ClusterIssuer change. The
-`03_gateway` chart's issuers, `gateway-test` and certificates carry over untouched apart from the class.
+`03_gateway` chart's issuers + Gateway carry over untouched apart from the class (its demo apps have
+since moved to [`05_gateway_test`](13_gateway_test.md), and per-host certs/routes are owned by each app).
 
 ### The `eg` GatewayClass + EnvoyProxy live in the controller chart
 `GatewayClass eg` (`controllerName: gateway.envoyproxy.io/gatewayclass-controller`) points its
@@ -78,8 +79,9 @@ Checks:
 - `kubectl -n envoy-gateway-system get pods` → controller Running; a data-plane `envoy-*` pod appears
   once the Gateway is programmed, and its Service has EXTERNAL-IP `192.168.100.10`.
 - `kubectl get clusterissuer` → both Ready; `kubectl -n gateway get certificate` issuing as before.
-- `curl -kv https://gateway-test.<baseDomain>/` → the whoami echo (no auth — `gateway-test` is the
-  unprotected control; `gateway-test-sso` gets SSO in step 12).
+- once the demo apps ([05_gateway_test](13_gateway_test.md)) sync,
+  `curl -kv https://gateway-test.<baseDomain>/` → the whoami echo (no auth — the unprotected control;
+  `gateway-test-sso` gets SSO in step 12).
 
 ## Caveats
 

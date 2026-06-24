@@ -16,7 +16,7 @@ rather than fighting it). Nothing — no version, no CRD list, no values — is 
 |----------------------------|--------------------------------------------------------------------------------------------|
 | `Chart.yaml`               | the **cilium chart version** (`1.19.5`), declared as a dependency on `helm.cilium.io`.     |
 | `values.yaml`              | the Talos-flavoured cilium **values** (under the `cilium:` key) + the `loadBalancer` gate. |
-| `crds/`                    | the vendored **Gateway API CRDs** (v1.4.1) — Helm/ArgoCD install them with the chart.      |
+| `crds/`                    | (empty) — Cilium **no longer** vendors the Gateway API CRDs; **Envoy Gateway** owns them now. See [11_envoy_gateway.md](11_envoy_gateway.md). |
 | `templates/cilium-lb.yaml` | the **LB-IPAM pool + L2 policy** (gated by `.Values.loadBalancer.enabled`).                |
 
 ## Why Cilium — one component instead of three
@@ -27,7 +27,7 @@ single-purpose tools; Cilium provides all of it from one agent + operator:
 | Need              | Cilium provides                      | What it replaces — and why                                                                                                                                                                                                                                                                           |
 |-------------------|--------------------------------------|------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------|
 | LoadBalancer IPs  | LB-IPAM + L2 announcements (ARP)     | **MetalLB.** On an all-Cilium cluster MetalLB only duplicates the IP-announce half (eBPF already does the data-path LB), adds a second ARP owner on the same nodes (conflict-prone), and adds pods/CRDs for no gain. Trade-off: Cilium L2 is **Beta** vs MetalLB's GA L2 — acceptable for a homelab. |
-| Ingress / gateway | Gateway API (Envoy-backed)           | **ingress-nginx**, which is retired (community EOL March 2026). Gateway API is the forward path regardless; Cilium ships a conformant implementation.                                                                                                                                                |
+| Ingress / gateway | Gateway API (Envoy-backed)           | **ingress-nginx**, which is retired (community EOL March 2026). Gateway API is the forward path. Cilium can serve it, but ingress later moved to **Envoy Gateway** (for its SecurityPolicy CRD — label-attached SSO); Cilium's `gatewayAPI` is now **disabled** and it no longer vendors the Gateway API CRDs. See [11_envoy_gateway.md](11_envoy_gateway.md).                                                                                                                                                |
 | Pod encryption    | transparent **WireGuard** (one flag) | **Istio / a service mesh.** We only wanted the wire encrypted + a gateway, not AuthorizationPolicy/VirtualService. Sidecar Istio is also heavy on 3× 8 GB Pis — an Envoy per pod.                                                                                                                    |
 | (mesh, if needed) | sidecarless L7 + Hubble              | — covers what we'd use a mesh for, without per-pod sidecars.                                                                                                                                                                                                                                         |
 
@@ -49,11 +49,11 @@ Uses **native `helm` + `kubectl`** (errors out if either is missing) — unlike 
 
 1. `helm dependency build argo_apps/charts/00_cilium` — pulls the pinned `cilium/cilium` subchart into `charts/`
    (falls back to `helm dependency update` to generate `Chart.lock` on first run).
-2. `helm upgrade --install cilium argo_apps/charts/00_cilium --wait` — installs Cilium with the chart's values, **and**
-   the Gateway API CRDs from `crds/` (Helm installs a chart's `crds/` directly, so the "too big for client-side apply"
-   annotation limit doesn't apply). The values are Talos-flavoured: KubePrism endpoint, kube-proxy replacement,
-   WireGuard, L2 announcements, Gateway API, Hubble, and the Talos-mandatory `cgroup` (no auto-mount) +
-   `securityContext` capability blocks.
+2. `helm upgrade --install cilium argo_apps/charts/00_cilium --wait` — installs Cilium with the chart's values. They
+   are Talos-flavoured: KubePrism endpoint, kube-proxy replacement, WireGuard, L2 announcements, Hubble, and the
+   Talos-mandatory `cgroup` (no auto-mount) + `securityContext` capability blocks. Cilium's `gatewayAPI` is **off** —
+   the ingress data plane is Envoy Gateway (see [11_envoy_gateway.md](11_envoy_gateway.md)), so no Gateway API CRDs
+   ride along here anymore.
 3. Waits for nodes **Ready** (they were NotReady with no CNI).
 4. **Enables the LB-IPAM pool + L2 policy.** The `CiliumLoadBalancerIPPool` / L2 CRDs are registered by the
    cilium-operator at *runtime*, not shipped by the chart — so on a **fresh** cluster they don't exist when Helm would
@@ -61,7 +61,7 @@ Uses **native `helm` + `kubectl`** (errors out if either is missing) — unlike 
    operator is up re-runs the upgrade with the gate back on (default `true`) so the pool + L2 policy land. On a re-run
    (CRD already present) it does it in one shot. ArgoCD just leaves `loadBalancer.enabled=true` and relies on
    sync-retry.
-5. Verifies agent/operator rollout, the Gateway CRDs, and the LB pool.
+5. Verifies agent/operator rollout and the LB pool.
 
 ```bash
 ./04_cilium.sh
@@ -108,5 +108,5 @@ kubectl get svc nginx              # EXTERNAL-IP from your pool, reachable over 
 - **LB IP assigned but unreachable** -> L2 isn't announcing. On this all-control-plane cluster confirm the policy's
   `nodeSelector` is *not* `control-plane: DoesNotExist` (selects zero nodes here), and the `interfaces` regex matches
   `end0`. `kubectl get ciliuml2announcementpolicy`.
-- **Gateway stuck `Waiting for controller`** -> Gateway API CRDs missing or wrong version; confirm **v1.4.1** applied
-  (`kubectl get crd | grep gateway.networking.k8s.io`).
+- **Gateway not programmed** -> that's **Envoy Gateway** now, not Cilium (Cilium's `gatewayAPI` is disabled). The
+  Gateway API CRDs + the `eg` GatewayClass come from the `01_envoy_gateway` app. See [11_envoy_gateway.md](11_envoy_gateway.md).

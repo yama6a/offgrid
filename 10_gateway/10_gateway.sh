@@ -71,17 +71,15 @@ got_domain="$(yq -r '.baseDomain' "$VALUES" 2>/dev/null)"
 echo ""
 echo "=============== summary: ${PASS} passed, ${FAIL} failed ==============="
 if [ "$FAIL" -eq 0 ]; then
-  test_host="$(yq -r '.gatewayTest.subdomain' "$VALUES" 2>/dev/null).${BASE_DOMAIN}"
   cat <<EOF
 values.yaml now carries email=${LE_EMAIL}, baseDomain=${BASE_DOMAIN}.
 Single source of truth: 10_gateway/config.sh -> argo_apps/charts/03_gateway/values.yaml (ArgoCD renders it).
 
 Next:
-  - git add -A && git commit && git push   # ArgoCD (wave 3) applies the Gateway + ClusterIssuers + gateway-test
-  - point ${test_host} (public DNS) at home router, and forward :80 for it to the Gateway IP
-    on the old Pi (see 10_gateway.md) so cert-manager's HTTP-01 challenge can reach the cluster
-  - watch issuance:  kubectl -n gateway get certificate,gateway,httproute
-                     curl -kv https://${test_host}/   # whoami echo == path works
+  - git add -A && git commit && git push   # ArgoCD (wave 3) applies the Gateway + ClusterIssuers only
+    (the demo apps are 05_gateway_test, the SSO callback hosts 04_google_sso — each owns its cert+route)
+  - watch the Gateway:  kubectl -n gateway get gateway shared-gateway   # PROGRAMMED=True, pinned LB IP
+  - the per-host listeners stay not-Ready until their apps' certs issue (HTTP-01) — expected. See 10_gateway.md.
 EOF
 else
   echo "Some checks failed — see above. Fix config.sh (or the env override) and re-run (idempotent)."

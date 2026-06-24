@@ -2,11 +2,10 @@
 # data-plane Envoy Deployment + LoadBalancer Service, pinned to .Values.gateway.loadBalancerIP via the
 # EnvoyProxy annotation (01_envoy_gateway chart) and the spec.addresses below.
 #
-# Only an HTTP :80 listener for now — it needs no cert, and it serves BOTH jobs we need before
-# HTTPS exists: (a) cert-manager's HTTP-01 ACME challenges (solver HTTPRoutes attach here), and
-# (b) later, the forced http->https redirect (a RequestRedirect HTTPRoute on this same listener).
-# The HTTPS :443 listener(s) + certificateRefs arrive with the first app, once a cert exists to
-# reference. See 10_gateway.md.
+# An always-on HTTP :80 listener serves cert-manager's HTTP-01 ACME challenges (solver HTTPRoutes attach
+# here) and, later, the forced http->https redirect. Then one HTTPS :443 listener per entry in
+# .Values.httpsHosts — each terminates TLS for a hostname using a cert Secret the owning app fills via
+# HTTP-01, so a listener stays not-Ready until that cert is issued. See 10_gateway.md.
 apiVersion: gateway.networking.k8s.io/v1
 kind: Gateway
 metadata:
@@ -26,37 +25,16 @@ spec:
       allowedRoutes:
         namespaces:
           from: All
-    {{- if .Values.gatewayTest.enabled }}
-    # First HTTPS listener — added with the first app (gateway-test). It references a Secret that
-    # cert-manager fills via HTTP-01 on the :80 listener above, so it stays not-Ready until the cert
-    # is issued (needs the host to resolve + the old Pi to forward :80 here). Each future app adds its
-    # own analogous listener (a Terminate listener with no cert would sit permanently not-Ready).
-    - name: gateway-test-https
+    {{- range .Values.httpsHosts }}
+    - name: {{ .name }}
       protocol: HTTPS
       port: 443
-      hostname: {{ printf "%s.%s" .Values.gatewayTest.subdomain .Values.baseDomain | quote }}
+      hostname: {{ .hostname | quote }}
       tls:
         mode: Terminate
         certificateRefs:
           - kind: Secret
-            name: {{ .Values.gatewayTest.tlsSecretName | quote }}
-      allowedRoutes:
-        namespaces:
-          from: All
-    {{- end }}
-    {{- if .Values.gatewayTestSso.enabled }}
-    # gateway-test-sso's HTTPS listener — same shape as gateway-test's. Its HTTPRoute (gateway-test-sso.yaml)
-    # is labelled `auth: google-sso` so the 04_google_sso SecurityPolicy attaches Google SSO to it.
-    # Stays not-Ready until its cert is issued (HTTP-01 on :80) — expected, blocks nothing. See 12_google_sso.md.
-    - name: gateway-test-sso-https
-      protocol: HTTPS
-      port: 443
-      hostname: {{ printf "%s.%s" .Values.gatewayTestSso.subdomain .Values.baseDomain | quote }}
-      tls:
-        mode: Terminate
-        certificateRefs:
-          - kind: Secret
-            name: {{ .Values.gatewayTestSso.tlsSecretName | quote }}
+            name: {{ .tlsSecretName | quote }}
       allowedRoutes:
         namespaces:
           from: All

@@ -87,7 +87,7 @@ The 2-replica components carry `global.topologySpreadConstraints` (`maxSkew 1`, 
   first run of `05_argocd.sh` (`helm dependency update`) — **commit it** before the `argocd` app reconciles (the script
   reminds you).
 - **UI over port-forward** for now. `server.insecure: true` serves plain HTTP, so no TLS to fumble through a port-forward.
-  Cilium's LB-IPAM + Gateway API are live (step 04), so a `LoadBalancer` Service or Gateway is an option later — flip
+  Cilium's LB-IPAM is live (step 04) and the Envoy Gateway ingress lands later, so a `LoadBalancer` Service or Gateway is an option later — flip
   `server.insecure` to `false` and front it with TLS when that happens.
 
 ## Git auth

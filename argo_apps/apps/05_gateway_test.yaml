@@ -1,0 +1,34 @@
+# ArgoCD Application for the demo/echo apps (argo_apps/charts/05_gateway_test/) — split out of the
+# 03_gateway ingress platform so the platform owns no apps. gateway-test is the open control;
+# gateway-test-sso is protected by the wave-4 SSO policy. See 13_gateway_test.md.
+#
+# AUTOMATED (prune + selfHeal): a safe leaf — throwaway echo apps, no CRDs, can't cut the cluster off
+# its network. Toggle individual apps via the chart's `apps` list (and re-sync) to add/remove them.
+#
+# sync-wave "5": after the Gateway (wave 3 — its listeners must exist) AND the SSO policies (wave 4 —
+# so gateway-test-sso is guarded the instant its labelled route appears, never briefly exposed). It has
+# no hard dependency that stalls a wave (the route is Healthy with or without the policy); wave 5 is the
+# ordering guarantee that a protected route never goes live before its policy. Per CLAUDE.md the NN
+# prefix IS the wave.
+apiVersion: argoproj.io/v1alpha1
+kind: Application
+metadata:
+  name: gateway-test
+  namespace: argocd
+  annotations:
+    argocd.argoproj.io/sync-wave: "5"
+spec:
+  project: default
+  source:
+    repoURL: https://github.com/yama6a/offgrid
+    targetRevision: HEAD
+    path: argo_apps/charts/05_gateway_test
+  destination:
+    server: https://kubernetes.default.svc
+    namespace: gateway
+  syncPolicy:
+    automated:
+      prune: true
+      selfHeal: true
+    syncOptions:
+      - ServerSideApply=true

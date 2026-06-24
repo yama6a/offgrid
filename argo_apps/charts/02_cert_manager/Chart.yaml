@@ -3,7 +3,7 @@ name: cert-manager
 description: >-
   Wrapper chart for cert-manager on the Talos/Raspberry Pi 5 cluster — the X.509
   certificate controller (issuance + renewal) that will later mint Let's Encrypt
-  HTTPS certs for the Cilium Gateway. Single source of truth for the cert-manager
+  HTTPS certs for the Envoy Gateway ingress. Single source of truth for the cert-manager
   chart version (this file) and its values (values.yaml, under the `cert-manager:`
   key). Delivered purely by ArgoCD (no imperative bootstrap) via
   argo_apps/apps/02_cert_manager.yaml — wave 2, same as nic-keeper / sealed-secrets

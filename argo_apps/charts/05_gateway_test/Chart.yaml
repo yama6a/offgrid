@@ -1,0 +1,13 @@
+apiVersion: v2
+name: gateway-test
+description: >-
+  Throwaway demo/echo apps that exercise the shared Gateway end to end — split out of 03_gateway so the
+  ingress platform owns no apps. gateway-test is OPEN (the unprotected control); gateway-test-sso is
+  PROTECTED (its HTTPRoute is labelled sso:<domain> so the 04_google_sso SecurityPolicy attaches Google
+  SSO). Each app ships its own Deployment + Service + Certificate + HTTPRoute; the matching :443 listener
+  lives on the Gateway (03_gateway httpsHosts). No upstream dependency (first-party resources + a tiny
+  Deployment), so no Chart.lock. Delivered purely by ArgoCD via argo_apps/apps/05_gateway_test.yaml —
+  wave 5 (after the Gateway wave 3 AND the SSO policies wave 4, so the protected app is guarded the
+  instant its route appears). See 13_gateway_test.md.
+type: application
+version: 0.1.0
