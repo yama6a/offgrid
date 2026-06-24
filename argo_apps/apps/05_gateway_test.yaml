@@ -17,6 +17,10 @@ metadata:
   namespace: argocd
   annotations:
     argocd.argoproj.io/sync-wave: "5"
+    # Diff via a server-side-apply dry-run so server-defaulted Gateway API fields (HTTPRoute
+    # parentRefs/backendRefs group+kind, rules.matches, weight, …) don't show as perpetual OutOfSync.
+    # Pairs with ServerSideApply below. Needs ArgoCD >= 2.10. See 13_gateway_test.md.
+    argocd.argoproj.io/compare-options: ServerSideDiff=true
 spec:
   project: default
   source:

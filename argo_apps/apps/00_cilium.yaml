@@ -33,7 +33,6 @@ spec:
   syncPolicy:
     automated:
       selfHeal: true
-      prune: false   # never cascade-delete (a removed CRD would take every CR with it)
-      # no selfHeal: an out-of-band break-glass fix (04_cilium.sh) must NOT be auto-reverted
+      prune: true
     syncOptions:
       - ServerSideApply=true
