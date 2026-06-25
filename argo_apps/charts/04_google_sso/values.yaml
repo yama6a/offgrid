@@ -37,6 +37,9 @@ oidc:
   # Cookie Envoy Gateway stores the Google ID token in; the jwt provider extracts the email claim from it
   # (Google's access token is opaque, so the email lives in the ID token).
   idTokenCookie: "google-id-token"
+  # Path the OIDC filter uses for ITS OWN logout — moved off the default /logout so it doesn't swallow a
+  # backend app's /logout (e.g. ArgoCD's). Applies to every domain's policy.
+  logoutPath: "/oauth2/sign_out"
 # One entry per SSO domain. `domain` becomes the label value, the cookieDomain, the google-sso.<domain>
 # redirect host, and (with `issuer`) the callback host's cert. `allowlist` is per-domain (inline; written
 # by the script — Deny is the default). This list MUST match the `google-sso.<domain>` entries in

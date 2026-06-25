@@ -47,6 +47,10 @@ httpsHosts:
   - name: gateway-test-sso
     hostname: gateway-test-sso.example.com
     tlsSecretName: gateway-test-sso-tls
+  # the ArgoCD UI, fronted by Google SSO (06_argocd_ingress)
+  - name: argocd
+    hostname: argocd.example.com
+    tlsSecretName: argocd-tls
   # SSO shared callback hosts (04_google_sso) — one per SSO domain (google-sso.<domain>)
   - name: google-sso-example-com
     hostname: google-sso.example.com

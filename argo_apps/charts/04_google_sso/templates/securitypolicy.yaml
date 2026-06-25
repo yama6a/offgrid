@@ -31,6 +31,8 @@ spec:
       name: {{ $.Values.oidc.clientSecretName | quote }}
     # Fixed shared callback host for this domain — register it on the Google OAuth client.
     redirectURL: {{ printf "https://%s.%s/oauth2/callback" $.Values.authSubdomain .domain | quote }}
+    # Off the default /logout so it doesn't collide with a backend app's own /logout (e.g. ArgoCD's).
+    logoutPath: {{ $.Values.oidc.logoutPath | quote }}
     # Share the session cookie across every subdomain of this domain (one login covers them all).
     cookieDomain: {{ .domain | quote }}
     cookieNames:
