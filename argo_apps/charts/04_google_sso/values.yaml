@@ -50,4 +50,9 @@ ssoDomains:
   - domain: yama.casa
     issuer: letsencrypt-staging
     allowlist:
-      - user6@example.com
+      - you@example.com
+      - user2@example.com
+      - user3@example.com
+      - user3@example.com
+      - user4@example.com
+      - user5@example.com
