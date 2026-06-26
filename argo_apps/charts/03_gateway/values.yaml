@@ -65,3 +65,6 @@ httpsHosts:
   - name: alertmanager
     hostname: alertmanager.example.com
     tlsSecretName: alertmanager-tls
+  - name: grafana
+    hostname: grafana.example.com
+    tlsSecretName: grafana-tls

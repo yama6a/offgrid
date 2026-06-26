@@ -1,0 +1,65 @@
+# Values for the 07_grafana wrapper chart. SINGLE SOURCE OF TRUTH — ArgoCD (and any local
+# `helm template`) consume this. Chart version pinned in Chart.yaml. See 16_grafana.md for the why.
+#
+# Grafana runs in the `monitoring` namespace (release name `grafana`), alongside the kube-prometheus-stack
+# it visualises. Everything under `grafana:` is passed to the upstream grafana/grafana subchart (key ==
+# dependency name).
+grafana:
+  # No persistent storage (explicit request). Ephemeral pod — fine, because Grafana holds no state worth
+  # keeping: the Prometheus datasource + curated dashboards are re-provisioned on every start by the
+  # sidecar from kube-prometheus-stack's emitted ConfigMaps. TRADE-OFF: dashboards/settings a user
+  # creates in the UI are lost on restart. See 16_grafana.md.
+  persistence:
+    enabled: false
+
+  # Grafana's OWN auth is OFF — the gateway Google SSO allowlist (07_monitoring_ingress' `sso: example.com`
+  # route + the 04_google_sso SecurityPolicy) is the only barrier, exactly like the Prometheus/Alertmanager
+  # UIs. Every request arrives already authenticated at the edge, so we serve it as an anonymous Admin:
+  # no second login, full functionality. dotted keys (`auth.anonymous` etc.) are grafana.ini SECTION names.
+  grafana.ini:
+    server:
+      domain: grafana.example.com
+      root_url: https://grafana.example.com
+    auth:
+      disable_login_form: true       # no built-in login — SSO is the front door
+    auth.anonymous:
+      enabled: true
+      org_name: Main Org.
+      org_role: Admin                # everyone who clears the SSO allowlist gets full admin
+    auth.basic:
+      enabled: false                 # no basic-auth path either
+
+  # Ingest kube-prometheus-stack's emitted ConfigMaps across ALL namespaces — the Prometheus datasource
+  # (label grafana_datasource) and the curated dashboards (label grafana_dashboard). The chart wires the
+  # sidecar's cluster-wide ConfigMap RBAC. Labels match the stack's defaults (forceDeployDatasources /
+  # forceDeployDashboards in 07_kube_prometheus_stack). No hardcoded datasource needed — the stack ships
+  # one pointing at http://kube-prometheus-stack-prometheus.monitoring.svc:9090.
+  sidecar:
+    dashboards:
+      enabled: true
+      label: grafana_dashboard
+      searchNamespace: ALL
+    datasources:
+      enabled: true
+      label: grafana_datasource
+      searchNamespace: ALL
+
+  # Default ClusterIP Service on :80 -> container :3000 — what 07_monitoring_ingress' grafana backendRef
+  # targets (name `grafana`, port 80).
+  service:
+    enabled: true
+    type: ClusterIP
+    port: 80
+
+  # No Helm test Pod — it's a `helm.sh/hook: test` resource ArgoCD ignores anyway; drop it so the chart
+  # ships only the running workload.
+  testFramework:
+    enabled: false
+
+  # Modest footprint for a Pi 5.
+  resources:
+    requests:
+      cpu: 50m
+      memory: 128Mi
+    limits:
+      memory: 256Mi

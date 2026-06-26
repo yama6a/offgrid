@@ -36,3 +36,11 @@ hosts:
     backend:
       name: kube-prometheus-stack-alertmanager
       port: 9093
+  # Grafana (07_grafana) — its own login is disabled, so the `sso` label IS the only gate, same as the
+  # other two. backend == the grafana/grafana chart's Service (release name `grafana`, default port 80).
+  - name: grafana
+    host: grafana.example.com
+    tlsSecretName: grafana-tls
+    backend:
+      name: grafana
+      port: 80

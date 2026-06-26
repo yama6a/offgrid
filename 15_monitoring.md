@@ -242,21 +242,14 @@ label-driven Google SSO ([12_google_sso.md](12_google_sso.md)).
 - **Break-glass** — `kubectl -n monitoring port-forward svc/kube-prometheus-stack-prometheus 9090:9090`
   bypasses the Gateway + SSO.
 
-## Installing Grafana later (not done here)
+## Grafana
 
-When Grafana lands as its own numbered app (after this stack):
-
-- Same `grafana/grafana` chart, **standalone** (not the stack subchart) — no feature loss.
-- **Datasource/dashboards**: the stack already emits the ConfigMaps (`grafana_datasource: "1"` /
-  `grafana_dashboard: "1"`). Enable `sidecar.datasources.enabled` + `sidecar.dashboards.enabled`
-  (search all namespaces); the chart wires the sidecar's cluster-wide ConfigMap RBAC. Prometheus
-  datasource URL: `http://kube-prometheus-stack-prometheus.monitoring.svc:9090`.
-- **Persistence**: small `longhorn` PVC (SQLite) keeps it simple; CNPG-backed only if wanted (pushes
-  Grafana's wave after the CNPG `Cluster`).
-- **Admin password**: Sealed Secret via `grafana.admin.existingSecret`.
-- **Exposure**: add a `grafana` `httpsHosts` entry + a `grafana.example.com` host to
-  `07_monitoring_ingress` — same pattern. Grafana has its own login, so the `sso` label is optional but
-  applying it keeps one consistent front door.
+Grafana now lands as its own wave-7 app — see **[16_grafana.md](16_grafana.md)**. Standalone
+`grafana/grafana` chart, the sidecar ingests the datasource/dashboard ConfigMaps this stack emits
+(`grafana_datasource: "1"` / `grafana_dashboard: "1"`, search-all-namespaces). No persistence; Grafana's
+own login is **off** (anonymous Admin) and the only gate is the Google SSO front door, reusing
+`07_monitoring_ingress` for the `grafana.example.com` host (cert + `sso`-labelled HTTPRoute) and a
+`grafana` listener on `03_gateway`.
 
 ## Apply / verify
 
