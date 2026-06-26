@@ -84,10 +84,9 @@ victoria-metrics-k8s-stack:
 
   # ---- exporters -----------------------------------------------------------------------------------
   prometheus-node-exporter:
-    # CUTOVER GATE: kept OFF in the additive commit so it doesn't clash with the still-running
-    # kube-prometheus-stack node-exporter on hostPort 9100. The cutover commit (which `git rm`s
-    # kube-prometheus-stack) flips this to `true`. See 15_monitoring.md / the migration plan.
-    enabled: false
+    # Enabled at cutover, together with the removal of kube-prometheus-stack (whose node-exporter freed
+    # hostPort 9100). DaemonSet lands on all 3 nodes via the tolerations below. See 15_monitoring.md.
+    enabled: true
     # DaemonSet must land on all 3 nodes. All-control-plane cluster, so tolerate everything rather than a
     # control-plane nodeSelector (a node-role.kubernetes.io/control-plane:DoesNotExist selector would match
     # ZERO nodes here).
