@@ -59,6 +59,16 @@ victoria-metrics-k8s-stack:
         cluster: raspi-cluster
       extraArgs:
         promscrape.streamParse: "true"
+      # Global metric-relabel drop, applied to EVERY scrape after collection (__name__ available) — the
+      # catch-all for high-cardinality noise we never want, regardless of which job emits it. The
+      # gRPC server counters (~4.5k series) come from argocd-server, hubble/cilium and others via their
+      # converted ServiceMonitors, which carry no per-source drop; this kills them everywhere in one place.
+      # TRADE-OFF: grpc_server_handled_total carries grpc_code (RPC error rates) — dropped too; if you ever
+      # want ArgoCD/Hubble RPC health, narrow this to grpc_server_(started|msg_received|msg_sent)_total.
+      globalScrapeMetricRelabelConfigs:
+        - sourceLabels: [__name__]
+          action: drop
+          regex: "grpc_server_(handled|started|msg_received|msg_sent)_total"
       resources:
         requests: {cpu: 100m, memory: 256Mi}
         limits: {memory: 512Mi}
