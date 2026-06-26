@@ -10,7 +10,7 @@ ArgoCD UI ([14_argocd_ingress.md](14_argocd_ingress.md)).
 ```
 node-exporter (DS, all 3 nodes) ┐
 kube-state-metrics ┐            │
-cilium/hubble, argocd, cert-mgr,│  ServiceMonitors   ┌─ Prometheus (1×, 20Gi Longhorn PVC, 180d/16GiB)
+cilium/hubble, argocd, cert-mgr,│  ServiceMonitors   ┌─ Prometheus (1×, 50Gi Longhorn PVC, 120d/40GiB)
 longhorn, sealed-secrets ───────┼───────────────────►│
 control-plane (etcd/sched/kcm) ─┘  (cluster-wide)    └─ Alertmanager (1×, 1Gi) → email | null
                                                           ▲
@@ -57,7 +57,7 @@ dashboard ConfigMaps (`grafana_dashboard: "1"`) and the Prometheus datasource Co
 (`grafana_datasource: "1"`). The future Grafana's sidecar ingests them with zero rework.
 
 ### Storage — Longhorn, global class, replica 3
-Prometheus 20Gi, Alertmanager 1Gi, both on the default `longhorn` class — **no per-app StorageClass**.
+Prometheus 50Gi, Alertmanager 1Gi, both on the default `longhorn` class — **no per-app StorageClass**.
 `02_longhorn` already sets replica 3 globally (`persistence.defaultClassReplicaCount: 3`,
 `defaultSettings.defaultReplicaCount: 3`). With replica 3 on 3 nodes **every node holds a replica**, so
 a rescheduled pod always lands next to a local one — no data-locality tuning needed. The class is
@@ -67,12 +67,19 @@ The Prometheus PVC comes from the StatefulSet `volumeClaimTemplate`, which is **
 it survives app sync/delete, so metrics persist across normal GitOps ops. **Manually** deleting the PVC
 destroys the data. Reclaim policy is the class default `Delete`.
 
-### Retention — 180d OR 16GiB, whichever first
-`retention: 180d`, `retentionSize: "16GiB"` (≈80% of the 20Gi PVC). The size cap is the guardrail
-against a full-PVC crashloop: if cardinality grows enough to hit 16GiB before 180d, the window trims
-below 180d — **intended, not a bug**. `walCompression: true`. 20Gi covers 180d comfortably at this
-cluster's low cardinality (few series, pruned as they go). An autoscaling PVC is possible (see
-Cardinality) but a fixed 20Gi + size cap is simpler and bounded by design — the default.
+### Retention — 120d OR 40GiB, whichever first
+`retention: 120d`, `retentionSize: "40GiB"` (≈80% of the 50Gi PVC), `walCompression: true`. The size cap
+is the guardrail against a full-PVC crashloop; whichever limit hits first wins.
+
+**Sizing math (do this, don't guess).** The original "180d in 20Gi" assumed ~30k series — but the real
+cardinality is ~160k (kube-apiserver/etcd/cAdvisor/kube-state histograms dominate). At ~3.5k samples/s
+that's ~0.55 GiB/day, so 16GiB would have capped at **~30 days**, not 180. After the apiserver/etcd
+histogram drops (see Cardinality) it's ~90k series ≈ ~0.3 GiB/day, so **40GiB ≈ ~120 days** — hence
+`120d` + `40GiB` + `50Gi`. Check your real rate any time:
+`rate(prometheus_tsdb_head_samples_appended_total[1h])` × ~2 bytes × 86400 = bytes/day; divide
+`retentionSize` by that for days-to-cap. To go longer, cut cardinality further or raise `retentionSize`
++ `storage` together (the Longhorn volume fills the NVMe, so disk isn't the constraint — see
+`03d` `minSize`).
 
 ### 60s intervals, external label
 `scrapeInterval`/`evaluationInterval: 60s` halves sample volume vs 30s for negligible loss at homelab
@@ -197,13 +204,21 @@ The fixed-PVC design only holds if cardinality stays low. Workflow:
   `topk(20, count by (__name__)({__name__=~".+"}))`.
 - **Drop at source**: add `metricRelabelings` with `action: drop` on the offending ServiceMonitor /
   PodMonitor (declarative, co-located with its app).
-- `retentionSize: 16GiB` trims the window below 180d if cardinality trips the cap first — intended.
+- **Already dropped** (the top offenders, ~70k series): the kube-apiserver request/response/watch/
+  flowcontrol/admission `*_bucket` histograms (`kubeApiServer.serviceMonitor.metricRelabelings`) and
+  etcd's `etcd_request_duration_seconds_bucket` + `grpc_server_*_total`
+  (`kubeEtcd.serviceMonitor.metricRelabelings`). We keep `apiserver_request_total` (request + error
+  rates). Because those buckets are gone, the apiserver SLO/burn-rate/histogram rule groups + the etcd
+  rules are disabled (`defaultRules.rules.kubeApiserver{Slos,Burnrate,Histogram}: false`, `etcd: false`)
+  so they don't evaluate empty; `kubeApiserverAvailability` stays. Next candidates if you need more:
+  cAdvisor per-container/per-interface series, verbose `kube-state-metrics`, `workqueue_*_bucket`.
+- `retentionSize: 40GiB` trims the window below 120d if cardinality trips the cap first — intended.
   Re-evaluate PVC size / retention (or add a PVC autoscaler) if it trips.
 
 > **Optional PVC autoscaling** (documented, not enabled): native k8s doesn't autoscale PVCs. A
 > volume-autoscaler add-on watching PVC usage + `retentionSize` near the max gives "start small, grow to
 > 50Gi". Trade-off: an extra component and a lag risk (if the disk fills faster than it expands,
-> Prometheus crashloops). Viable at this fill rate, but fixed 20Gi + 16GiB cap is simpler and bounded.
+> Prometheus crashloops). Viable at this fill rate, but fixed 50Gi + 40GiB cap is simpler and bounded.
 
 ## Public exposure
 
@@ -258,7 +273,7 @@ Checks:
 - `kubectl get crd | grep monitoring.coreos.com` present **before** the stack syncs; the CRDs app shows
   no apply-size errors.
 - `kubectl -n monitoring get prometheus,alertmanager,statefulset,pvc` → Prometheus `1/1`, PVC bound on
-  `longhorn` at 20Gi (`kubectl -n longhorn-system get volume` shows 3 replicas).
+  `longhorn` at 50Gi (`kubectl -n longhorn-system get volume` shows 3 replicas).
 - node-exporter DaemonSet on **all 3** nodes; kube-proxy target absent.
 - Prometheus UI `Status → Targets`: kubelet/cAdvisor, kube-state-metrics, node-exporter up; cilium/hubble,
   argocd, cert-manager, longhorn, sealed-secrets up; control-plane jobs up (after the Talos patch) or

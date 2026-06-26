@@ -60,6 +60,31 @@ kube-prometheus-stack:
       targetPort: 2381
     serviceMonitor:
       scheme: http
+      # Drop etcd's request-latency histogram + gRPC server counters (top cardinality, low homelab value).
+      metricRelabelings:
+        - sourceLabels: [__name__]
+          action: drop
+          regex: "etcd_request_duration_seconds_bucket|grpc_server_(handled|started|msg_received|msg_sent)_total"
+
+  # Scrape the apiserver but DROP its big histograms (request/response/watch/flowcontrol/admission *_bucket)
+  # — the top cardinality hogs, and we don't run the apiserver latency SLOs. Keep apiserver_request_total
+  # (request + error rates). This REPLACES the chart's default le-trim (moot now we drop the whole metrics).
+  kubeApiServer:
+    serviceMonitor:
+      metricRelabelings:
+        - sourceLabels: [__name__]
+          action: drop
+          regex: "apiserver_(request_duration_seconds|request_sli_duration_seconds|request_slo_duration_seconds|request_body_size_bytes|response_sizes|watch_list_duration_seconds|watch_cache_read_wait_seconds|watch_events_sizes|flowcontrol_request_execution_seconds|flowcontrol_priority_level_request_utilization|flowcontrol_priority_level_seat_utilization|flowcontrol_request_wait_duration_seconds|flowcontrol_demand_seats|admission_controller_admission_duration_seconds|admission_webhook_admission_duration_seconds)_bucket"
+
+  # The apiserver/etcd latency buckets are dropped above, so their rule groups would evaluate empty —
+  # disable the SLO/burn-rate/histogram rules + the etcd rules. kubeApiserverAvailability STAYS (it uses
+  # apiserver_request_total, which we keep). See 15_monitoring.md.
+  defaultRules:
+    rules:
+      kubeApiserverSlos: false
+      kubeApiserverBurnrate: false
+      kubeApiserverHistogram: false
+      etcd: false
   prometheusOperator:
     admissionWebhooks:
       # The webhook validates PromQL rule syntax in PrometheusRule CRs. Its cert is minted by
@@ -73,11 +98,11 @@ kube-prometheus-stack:
       limits: {memory: 128Mi}
   prometheus:
     prometheusSpec:
-      # Retention: 180d OR 16GiB, whichever hits first. 16GiB ≈ 80% of the 20Gi PVC — the size cap is
-      # the guardrail against a full-PVC crashloop; if cardinality grows enough to trip it, the window
-      # trims below 180d (intended). See 15_monitoring.md (storage/retention, cardinality).
-      retention: 180d
-      retentionSize: "16GiB"
+      # Retention: 120d OR 40GiB, whichever hits first. 40GiB ≈ 80% of the 50Gi PVC — the size cap is the
+      # guardrail against a full-PVC crashloop. Sized for ~120d at this cluster's cardinality AFTER the
+      # apiserver/etcd histogram drops (~0.3 GiB/day); raise both together for longer. See 15_monitoring.md.
+      retention: 120d
+      retentionSize: "40GiB"
       walCompression: true
       # 60s halves sample volume vs 30s for negligible loss at homelab cardinality.
       scrapeInterval: 60s
@@ -100,7 +125,7 @@ kube-prometheus-stack:
             accessModes: ["ReadWriteOnce"]
             resources:
               requests:
-                storage: 20Gi
+                storage: 50Gi
       resources:
         requests: {cpu: 250m, memory: 1Gi}
         limits: {memory: 2Gi} # no CPU limit — avoid throttling compaction/scrape
