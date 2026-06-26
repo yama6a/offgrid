@@ -18,7 +18,7 @@ listenerName: argocd
 tlsSecretName: argocd-tls
 # Cert issuer (HTTP-01). STAGING for the brand-new host; flip to letsencrypt-prod once it issues (the
 # UI is browser-facing, so a trusted cert is wanted — example.com's HTTP-01 path is already validated).
-issuer: letsencrypt-prod
+issuer: letsencrypt-staging
 
 # Route label that opts this host into SSO. `sso: <domain>` -> gated by that domain's SecurityPolicy.
 routeLabelKey: sso

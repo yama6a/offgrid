@@ -15,5 +15,10 @@ spec:
     kubernetes:
       envoyService:
         type: LoadBalancer
+        # Cluster, not EG's default Local: the Cilium L2 announcer node isn't necessarily the node
+        # running the single Envoy pod, and Local can't serve the IP from a node without a local backend
+        # (dead LB after a reschedule). We don't need Local's source-IP preservation (NAT'd at the old-Pi;
+        # SSO authorizes by email). See 11_envoy_gateway.md.
+        externalTrafficPolicy: Cluster
         annotations:
           lbipam.cilium.io/ips: {{ .Values.envoyProxy.loadBalancerIP | quote }}

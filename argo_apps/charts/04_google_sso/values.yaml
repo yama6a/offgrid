@@ -47,7 +47,7 @@ oidc:
 # domain's HTTP-01 path is validated, because the login flow redirects the browser THROUGH it.
 ssoDomains:
   - domain: example.com
-    issuer: letsencrypt-prod
+    issuer: letsencrypt-staging
     allowlist:
       - you@example.com
   - domain: yama.casa

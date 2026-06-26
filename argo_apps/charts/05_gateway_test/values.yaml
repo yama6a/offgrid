@@ -18,7 +18,7 @@ apps:
     host: gateway-test.example.com
     listenerName: gateway-test
     tlsSecretName: gateway-test-tls
-    issuer: letsencrypt-prod
+    issuer: letsencrypt-staging
     sso: ""
   # The protected demo — labelled sso:example.com, so the example.com SecurityPolicy (04_google_sso)
   # gates it behind Google login + the example.com allowlist. Auth bounces via google-sso.example.com.
@@ -26,5 +26,5 @@ apps:
     host: gateway-test-sso.example.com
     listenerName: gateway-test-sso
     tlsSecretName: gateway-test-sso-tls
-    issuer: letsencrypt-prod
+    issuer: letsencrypt-staging
     sso: "example.com"

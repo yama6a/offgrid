@@ -119,6 +119,26 @@ EOF
 cp "${OUTDIR}/controlplane.yaml" "${OUTDIR}/cp.yaml"
 cat "${OUTDIR}/volumes.yaml" >> "${OUTDIR}/cp.yaml"
 
+# 4b. Wait for every node to be in MAINTENANCE before applying. After a reset
+#     (DANGEROUS_reset_talos_cluster.sh / DANGEROUS_rebuild_cluster.sh) the nodes wipe + reboot
+#     asynchronously, so the apply-config --insecure below would fail on a node that hasn't come back
+#     yet. A maintenance node answers --insecure; a CONFIGURED one does not (and a freshly-reset node
+#     can't boot configured — STATE is wiped), so this check is never fooled by the pre-reset instance:
+#     it blocks until the node is genuinely back in maintenance. nc gates the call so we don't hang on a
+#     node mid-reboot. On a first install (straight off 03b) the nodes are already in maintenance, so
+#     this returns immediately.
+echo ">> waiting for nodes in maintenance (up to 5 min each)..."
+for i in "${!IPS[@]}"; do
+  ip="${IPS[$i]}"; host="${HOSTNAMES[$i]}"
+  printf '   %-8s %-15s ' "$host" "$ip"
+  deadline=$(( $(date +%s) + 300 ))
+  until nc -z -G2 "$ip" "$API_PORT" >/dev/null 2>&1 && talosctl -e "$ip" -n "$ip" version --insecure >/dev/null 2>&1; do
+    [ "$(date +%s)" -lt "$deadline" ] || { echo "TIMEOUT"; echo "ERROR: ${ip} not in maintenance after 300s — check its console/power"; exit 1; }
+    printf '.'; sleep 5
+  done
+  echo "ready"
+done
+
 # 5. Apply to each node (file paths are relative to /work inside the container).
 #    Hostname goes through the HostnameConfig document (Talos 1.12+), not the legacy
 #    machine.network.hostname — gen config now ships HostnameConfig (auto: stable), and
