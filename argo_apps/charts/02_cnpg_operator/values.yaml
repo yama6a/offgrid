@@ -1,0 +1,30 @@
+# Values for the 02_cnpg_operator wrapper chart. SINGLE SOURCE OF TRUTH — ArgoCD (and any local
+# `helm template`) consume this. Chart version pinned in Chart.yaml. See 17_cnpg.md for the why.
+#
+# The operator runs in its own `cnpg-system` namespace (CreateNamespace=true in the Application).
+# No privileged PSA needed — the controller and the Postgres pods it later spawns run non-root
+# (uid 26), so the namespace stays restricted-compatible (like cert-manager / sealed-secrets).
+#
+# Everything under `cloudnative-pg:` is passed to the upstream cnpg/cloudnative-pg subchart (key == dependency name).
+cloudnative-pg:
+  # The operator chart bundles + installs the CNPG CRDs (Cluster, Backup, ScheduledBackup, ...). No
+  # separate wave-0 CRD app is needed: 03_cnpg_cluster is wave 3, and the root only creates a wave
+  # after the previous one is Synced + Healthy, so these CRDs are registered before the Cluster CR
+  # is ever applied. (ServerSideApply in the Application handles the large CRD manifests.)
+  crds:
+    create: true
+
+  # Emit the operator's PodMonitor so vmagent scrapes the controller's /metrics. The VM operator
+  # auto-converts PodMonitor -> VMPodScrape, and the k8s-stack discovers every scrape cluster-wide,
+  # so this wires into VictoriaMetrics with no extra config. CRDs exist from wave 0. See 15_monitoring.md.
+  monitoring:
+    podMonitorEnabled: true
+
+  # Modest footprint for the single controller pod on the Pi 5s — it only reconciles, the DB work
+  # lives in the Postgres pods (03_cnpg_cluster).
+  resources:
+    requests:
+      cpu: 100m
+      memory: 100Mi
+    limits:
+      memory: 200Mi
