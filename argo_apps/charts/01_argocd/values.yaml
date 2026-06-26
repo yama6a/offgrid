@@ -62,7 +62,7 @@ argo-cd:
       minAvailable: 1
     resources:
       requests: { cpu: 50m, memory: 128Mi }
-      limits:   { memory: 256Mi }
+      limits:   { memory: 1Gi }
 
   # --- API/UI: 2 replicas on 2 nodes + PDB ---------------------------------------------------
   server:
@@ -76,7 +76,7 @@ argo-cd:
       minAvailable: 1
     resources:
       requests: { cpu: 50m, memory: 128Mi }
-      limits:   { memory: 256Mi }
+      limits:   { memory: 1Gi }
 
   # --- ApplicationSet controller: leader-elected; 2 replicas for fast failover ---------------
   # (drop to 1 if RAM gets tight once Longhorn + monitoring land.)
@@ -88,4 +88,4 @@ argo-cd:
         enabled: true
     resources:
       requests: { cpu: 50m, memory: 128Mi }
-      limits:   { memory: 256Mi }
+      limits:   { memory: 1Gi }
