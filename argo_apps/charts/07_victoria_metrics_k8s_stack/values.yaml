@@ -156,16 +156,20 @@ victoria-metrics-k8s-stack:
         endpoints:
           - port: http-metrics
             scheme: http
-            # Drop etcd's request-latency histogram + gRPC server counters (top cardinality, low value).
+            # Drop etcd's gRPC server counters (top cardinality, low value). NOTE: the apiserver→etcd
+            # request-latency histogram `etcd_request_duration_seconds_bucket` is NOT exported here — it
+            # comes from the apiserver job, so it's dropped in kubeApiServer below, not here.
             metricRelabelConfigs:
               - source_labels: [__name__]
                 action: drop
-                regex: "etcd_request_duration_seconds_bucket|grpc_server_(handled|started|msg_received|msg_sent)_total"
+                regex: "grpc_server_(handled|started|msg_received|msg_sent)_total"
         jobLabel: app.kubernetes.io/component
         namespaceSelector:
           matchNames: []
   # Scrape the apiserver but DROP its big histograms (request/response/watch/flowcontrol/admission *_bucket)
   # — the top cardinality hogs, and we don't run the apiserver latency SLOs. Keep apiserver_request_total.
+  # Also drop `etcd_request_duration_seconds_bucket` here: it's the apiserver's CLIENT-side etcd latency
+  # histogram (exported by THIS job, not by etcd — ~30k series, by far the biggest hog). _count/_sum stay.
   kubeApiServer:
     enabled: true
     vmScrape:
@@ -180,7 +184,7 @@ victoria-metrics-k8s-stack:
             metricRelabelConfigs:
               - source_labels: [__name__]
                 action: drop
-                regex: "apiserver_(request_duration_seconds|request_sli_duration_seconds|request_slo_duration_seconds|request_body_size_bytes|response_sizes|watch_list_duration_seconds|watch_cache_read_wait_seconds|watch_events_sizes|flowcontrol_request_execution_seconds|flowcontrol_priority_level_request_utilization|flowcontrol_priority_level_seat_utilization|flowcontrol_request_wait_duration_seconds|flowcontrol_demand_seats|admission_controller_admission_duration_seconds|admission_webhook_admission_duration_seconds)_bucket"
+                regex: "apiserver_(request_duration_seconds|request_sli_duration_seconds|request_slo_duration_seconds|request_body_size_bytes|response_sizes|watch_list_duration_seconds|watch_cache_read_wait_seconds|watch_events_sizes|flowcontrol_request_execution_seconds|flowcontrol_priority_level_request_utilization|flowcontrol_priority_level_seat_utilization|flowcontrol_request_wait_duration_seconds|flowcontrol_demand_seats|admission_controller_admission_duration_seconds|admission_webhook_admission_duration_seconds)_bucket|etcd_request_duration_seconds_bucket"
         jobLabel: component
         namespaceSelector:
           matchNames: [default]
