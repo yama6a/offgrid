@@ -120,7 +120,8 @@ if [ -n "$SMTP_USERNAME" ] && [ -n "$SMTP_PASSWORD" ]; then
            "repeat_interval": "4h"
          },
          "receivers": [
-           {"name": "email", "email_configs": [{"to": strenv(TO), "send_resolved": true}]}
+           {"name": "email", "email_configs": [{"to": strenv(TO), "send_resolved": true}]},
+           {"name": "null"}
          ]
        }' "$STACK_VALUES"; then
     [ "$(K="$VALUES_KEY" yq -r '.[strenv(K)].alertmanager.config.route.receiver' "$STACK_VALUES")" = "email" ] \

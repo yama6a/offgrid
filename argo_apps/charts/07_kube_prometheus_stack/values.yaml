@@ -153,6 +153,10 @@ kube-prometheus-stack:
           email_configs:
             - to: you@example.com
               send_resolved: true
+        # The chart's default route keeps a Watchdog sub-route -> "null" (Helm deep-merges route, so it
+        # survives even when we set receiver: email). Define the null receiver or the operator rejects the
+        # whole config with: undefined receiver "null" used in route.
+        - name: "null"
   kube-state-metrics:
     resources:
       requests: {cpu: 25m, memory: 64Mi}

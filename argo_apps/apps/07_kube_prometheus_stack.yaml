@@ -28,6 +28,14 @@ spec:
     server: https://kubernetes.default.svc
     namespace: monitoring
   syncPolicy:
+    # node-exporter is a hostNetwork/hostPID/hostPath/hostPort DaemonSet, so the monitoring namespace
+    # must allow privileged pods — Talos stamps `baseline` PSA by default, which rejects it (the DS sits
+    # 0/N and the app hangs Progressing). Label the namespace privileged, exactly like 02_longhorn does.
+    managedNamespaceMetadata:
+      labels:
+        pod-security.kubernetes.io/enforce: privileged
+        pod-security.kubernetes.io/warn: privileged
+        pod-security.kubernetes.io/audit: privileged
     automated:
       prune: true
       selfHeal: true
