@@ -40,11 +40,6 @@ spec:
     syncOptions:
       - CreateNamespace=true
       - ServerSideApply=true
-  ignoreDifferences:
-    # The operator mints its own self-signed CA and injects the caBundle into its validation webhook;
-    # ignore it (no name -> matches this app's single ValidatingWebhookConfiguration) so it never shows
-    # perpetual OutOfSync. Mirrors the old kube-prometheus-stack admission-webhook ignoreDifferences.
-    - group: admissionregistration.k8s.io
-      kind: ValidatingWebhookConfiguration
-      jqPathExpressions:
-        - '.webhooks[].clientConfig.caBundle'
+  # NOTE: the operator's validating webhook is disabled in values.yaml (wave-1 placement is before
+  # cert-manager, and the chart's Helm-genCA fallback drifts under ArgoCD re-renders), so there is no
+  # ValidatingWebhookConfiguration to reconcile or ignoreDifferences here. See 15_monitoring.md.
