@@ -58,13 +58,14 @@ httpsHosts:
   - name: google-sso-yama-casa
     hostname: google-sso.yama.casa
     tlsSecretName: google-sso-yama-casa-tls
-  # monitoring UIs, fronted by Google SSO (07_monitoring_ingress)
-  - name: prometheus
-    hostname: prometheus.example.com
-    tlsSecretName: prometheus-tls
-  - name: alertmanager
-    hostname: alertmanager.example.com
-    tlsSecretName: alertmanager-tls
+  # monitoring UIs, fronted by Google SSO (07_monitoring_ingress) — VictoriaMetrics vmui, VictoriaLogs UI
+  # and Grafana (replaced the retired Prometheus/Alertmanager UIs).
+  - name: vmui
+    hostname: vmui.example.com
+    tlsSecretName: vmui-tls
+  - name: vlogs
+    hostname: vlogs.example.com
+    tlsSecretName: vlogs-tls
   - name: grafana
     hostname: grafana.example.com
     tlsSecretName: grafana-tls

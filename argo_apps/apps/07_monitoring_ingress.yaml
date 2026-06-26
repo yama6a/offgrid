@@ -1,18 +1,18 @@
-# ArgoCD Application that exposes the Prometheus + Alertmanager UIs through the shared Gateway behind
-# Google SSO (argo_apps/charts/07_monitoring_ingress/). Edge only — the stack is untouched. Unlike
-# ArgoCD (which has its own admin login behind the SSO gate), these UIs have NO login of their own, so
-# the `sso: example.com` label IS the only barrier. See 15_monitoring.md.
+# ArgoCD Application that exposes the VictoriaMetrics vmui, VictoriaLogs UI and Grafana through the shared
+# Gateway behind Google SSO (argo_apps/charts/07_monitoring_ingress/). Edge only — the stacks are
+# untouched. vmui and the VictoriaLogs UI have NO login of their own (and Grafana's is disabled), so the
+# `sso: example.com` label IS the only barrier. See 15_monitoring.md.
 #
 # AUTOMATED (prune + selfHeal): a safe leaf — per-host Certificates + HTTPRoutes + one ReferenceGrant,
 # no CRDs, can't cut the cluster off its network. Break-glass if a route wedges:
-# `kubectl -n monitoring port-forward svc/kube-prometheus-stack-prometheus 9090:9090` bypasses the
+# `kubectl -n monitoring port-forward svc/vmsingle-victoria-metrics-k8s-stack 8428:8428` bypasses the
 # Gateway + SSO entirely.
 #
-# sync-wave "7": after the gateway (wave 3 — the prometheus/alertmanager listeners) AND the SSO policy
+# sync-wave "7": after the gateway (wave 3 — the vmui/vlogs/grafana listeners) AND the SSO policy
 # (wave 4 — so the UIs are gated the instant their labelled routes appear, never briefly exposed). Same
-# wave as the stack it fronts (07_kube_prometheus_stack); the routes' backendRefs resolve once the
-# stack's Services come up (brief ResolvedRefs:False, self-clears — the HTTP-01 cert path is independent).
-# ServerSideDiff so server-defaulted Gateway API fields don't show perpetual OutOfSync.
+# wave as the stacks it fronts (07_victoria_metrics_k8s_stack, 07_victoria_logs, 07_grafana); the routes'
+# backendRefs resolve once those Services come up (brief ResolvedRefs:False, self-clears — the HTTP-01
+# cert path is independent). ServerSideDiff so server-defaulted Gateway API fields don't show OutOfSync.
 apiVersion: argoproj.io/v1alpha1
 kind: Application
 metadata:

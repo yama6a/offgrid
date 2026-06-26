@@ -1,4 +1,91 @@
-# 15 — Monitoring (kube-prometheus-stack)
+# 15 — Monitoring
+
+> **2026-06 migration — now an all-VictoriaMetrics stack.** The metrics core moved off
+> kube-prometheus-stack to **VictoriaMetrics + VictoriaLogs**, with **alerting owned by the standalone
+> Grafana** (no Alertmanager, no vmalert). The section immediately below is the current design; the
+> "(prior design) — kube-prometheus-stack" narrative further down is kept as the **prior** decision record
+> (history).
+
+## VictoriaMetrics / VictoriaLogs (current)
+
+```
+node-exporter (DS, all 3 nodes) ┐                         ┌─ VMSingle  (1×, 50Gi Longhorn PVC, 180d)  ── vmui  ─┐
+kube-state-metrics ┐            │  VMServiceScrape/        │                                                    │
+cilium/hubble, argocd, cert-mgr,│  VMPodScrape (converted │  vmagent (Deploy, selectAllByDefault) ─scrapes─────┤  shared Gateway
+longhorn, sealed-secrets ───────┼─ from ServiceMonitors)  │                                                    ├─ + Google SSO
+control-plane (etcd/sched/kcm) ─┘  (cluster-wide)         └─ VLSingle (1×, 30Gi Longhorn PVC, 60d)  ── vlogs ──┤  (sso: example.com)
+                                                              ▲                                                 │
+victoria-logs-collector (DS, all 3 nodes) ─ remote-write ─────┘     Grafana (1×, no PVC) ── alerts (email) ─────┘
+                                                                       └ datasources: VictoriaMetrics + VictoriaLogs
+vm operator ── reconciles VM*/VL* CRs AND converts prometheus-operator objects (ServiceMonitor→VMServiceScrape, …)
+```
+
+**Why VictoriaMetrics.** One operator covers both metrics (VM*) and logs (VL*); far lighter than
+Prometheus+Loki on 8GB Pi 5 nodes; PromQL-compatible so dashboards/queries port unchanged. The operator's
+**prometheus-operator converter** turns every existing `ServiceMonitor`/`PodMonitor`/`PrometheusRule`/`Probe`
+(cilium, argocd, cert-manager, longhorn, sealed-secrets, …) into the VM equivalent **with no rewrites** —
+that's why the `monitoring.coreos.com` CRDs are **preserved** (the wave-0 `00_prometheus_operator_crds` app
+stays; it's the converter's source). The converter stamps ArgoCD-ignore annotations on its output
+(`operator.prometheus_converter_add_argocd_ignore_annotations: true`) so ArgoCD never fights or prunes
+operator-created objects.
+
+**Shape B — Grafana owns alerting.** `vmalert` and `vmalertmanager` are OFF; Grafana provisions the contact
+point + notification policy + alert rules as code ([16_grafana.md](16_grafana.md)). Dropping vmalert means
+the stack's default recording/alerting **VMRules are not created** (`defaultRules.create: false`) — Grafana
+alert expressions are inlined PromQL instead.
+
+**Decisions (this migration).** Both VMSingle and VLSingle PVCs use the existing **`longhorn` (replica-3)**
+class. Metrics retention **180d**, logs retention **60d** (logs are bulkier → their own shorter window).
+Metrics start **fresh** (no `vmctl` backfill — the cluster was nearly empty). VictoriaLogs store is the
+operator **`VLSingle` CR** (one operator for everything), not the standalone logs chart. node-exporter and
+the log collector are **DaemonSets with `tolerations: [{operator: Exists}]`** — this is an all-control-plane
+cluster, so a `node-role.kubernetes.io/control-plane: DoesNotExist` selector would match ZERO nodes.
+
+**Wave consolidation.** Only three waves are touched: **0** = CRDs (`00_prometheus_operator_crds` preserved
++ `00_victoria_metrics_operator_crds`, both prune:false); **1** = the VM operator (admission webhook); **7**
+= everything data-plane (`07_victoria_metrics_k8s_stack`, `07_victoria_logs`, `07_grafana`,
+`07_monitoring_ingress`) together, so co-wave apps never artificially block each other. By the time the root
+reaches wave 7 the operator (wave 1) is long Healthy, so its webhook validates the VMSingle/VLSingle/VMAgent
+CRs; brief cross-app `ResolvedRefs:False` / datasource-down states self-clear.
+
+**Talos control-plane scrapes.** kube-controller-manager (:10257, https, self-signed → insecureSkipVerify),
+kube-scheduler (:10259, same), etcd (:2381, plain http — Talos `listen-metrics-urls`) are exposed via Talos
+machine config (applied OUTSIDE ArgoCD) and scraped by static `endpoints` at the CP node IPs
+(192.168.10.201-203). kube-proxy is OFF (Cilium replaces it). apiserver/etcd high-cardinality histograms are
+dropped via `metricRelabelConfigs`, exactly as the old stack did.
+
+**SMTP.** Grafana's Gmail app-password is sealed by `16_grafana_smtp/16_grafana_smtp.sh` into the
+`grafana-smtp` Secret (key `password`), surfaced as `GF_SMTP_PASSWORD` (optional, so Grafana starts before
+it's sealed). Host/user/from are non-secret in the 07_grafana values.
+
+### Pinned versions (current)
+
+| Chart | Version | appVersion |
+|-------|---------|------------|
+| `victoria-metrics-operator-crds` | **0.12.0** | v0.72.0 |
+| `victoria-metrics-operator`      | **0.65.1** | v0.72.0 |
+| `victoria-metrics-k8s-stack`     | **0.85.5** | v1.146.0 |
+| `victoria-logs-collector`        | **0.3.6**  | v1.51.0 |
+| VLSingle (operator image)        | —          | v1.51.0 |
+
+The CRDs chart's appVersion **must** match the operator version (both `v0.72.0`). Bump together: change
+`Chart.yaml`, `helm dependency build`, commit the refreshed `Chart.lock`. The `00_prometheus_operator_crds`
+app (v0.92.0) is **kept** — it is the converter's source; do not remove it.
+
+### Cutover (CRD-safe)
+
+1. Land waves 0–1 (VM CRDs + operator) and the wave-7 VM/VL/grafana/ingress apps additively; confirm
+   `kubectl get vmservicescrape,vmpodscrape -A` shows a converted equivalent for every pre-existing
+   ServiceMonitor/PodMonitor. The VM stack's node-exporter is gated OFF here
+   (`prometheus-node-exporter.enabled: false`) so it doesn't clash with the still-running kube-prometheus
+   one on **hostPort 9100**.
+2. Clean swap: `git rm` the `07_kube_prometheus_stack` app + chart (the root prunes its Prometheus,
+   Alertmanager, node-exporter, KSM) AND flip the VM node-exporter to `enabled: true`. Brief metrics gap is
+   acceptable. The `monitoring.coreos.com` CRDs survive (owned by the wave-0 app, not the stack).
+
+---
+
+## (prior design) — kube-prometheus-stack
 
 The cluster's metrics core: **Prometheus + Alertmanager + node-exporter + kube-state-metrics**,
 operator-managed, single-replica StatefulSets backed by Longhorn. Bundled **Grafana stays off** (a

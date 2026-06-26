@@ -1,0 +1,45 @@
+# Values for the 07_victoria_logs wrapper chart. SINGLE SOURCE OF TRUTH — ArgoCD (and any local
+# `helm template`) consume this. Chart version pinned in Chart.yaml. See 15_monitoring.md.
+#
+# Two pieces:
+#   1. vlsingle.*           -> our hand-written VLSingle CR (templates/vlsingle.yaml), reconciled by the
+#                              standalone VM operator (01_victoria_metrics_operator).
+#   2. victoria-logs-collector.* -> the upstream collector DaemonSet (key == dependency name).
+
+# ---- VLSingle (the logs store) ---------------------------------------------------------------------
+vlsingle:
+  # CR name -> the operator names the Service `vlsingle-<name>` on :9428 (the collector remoteWrite target
+  # and the vlogs UI backend both reference it). Keep in step with victoria-logs-collector.remoteWrite and
+  # 07_monitoring_ingress.
+  name: victoria-logs
+  namespace: monitoring
+  # Logs are bulkier than metrics, so they get their OWN, shorter window (metrics are 180d). 60d here.
+  retentionPeriod: "60d"
+  storage:
+    storageClassName: longhorn   # default global class, replica 3 (02_longhorn)
+    size: 30Gi
+  resources:
+    requests: {cpu: 100m, memory: 256Mi}
+    limits: {memory: 512Mi}
+
+# ---- victoria-logs-collector (the DaemonSet) -------------------------------------------------------
+victoria-logs-collector:
+  # Tail all container logs on every node, remote-write to the VLSingle service above.
+  remoteWrite:
+    - url: http://vlsingle-victoria-logs.monitoring.svc:9428
+
+  # DaemonSet must land on all 3 nodes. All-control-plane cluster, so tolerate everything rather than a
+  # control-plane nodeSelector (a node-role.kubernetes.io/control-plane:DoesNotExist selector would match
+  # ZERO nodes here).
+  tolerations:
+    - operator: Exists
+
+  # Let vmagent scrape the collector's own /metrics via a VMPodScrape (vm: true) — operator-native,
+  # picked up by vmagent's selectAllByDefault.
+  podMonitor:
+    enabled: true
+    vm: true
+
+  resources:
+    requests: {cpu: 25m, memory: 64Mi}
+    limits: {memory: 128Mi}

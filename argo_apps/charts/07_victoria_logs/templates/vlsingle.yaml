@@ -1,0 +1,19 @@
+# The VictoriaLogs store, reconciled by the standalone VM operator (01_victoria_metrics_operator). Single
+# replica, Longhorn-backed, on its own 60d retention (logs are bulkier than the 180d metrics). The
+# operator materialises this as a Deployment + a `vlsingle-{{ .Values.vlsingle.name }}` Service on :9428,
+# and auto-creates a self VMServiceScrape so vmagent monitors it. See 15_monitoring.md.
+apiVersion: operator.victoriametrics.com/v1
+kind: VLSingle
+metadata:
+  name: {{ .Values.vlsingle.name }}
+  namespace: {{ .Values.vlsingle.namespace }}
+spec:
+  retentionPeriod: {{ .Values.vlsingle.retentionPeriod | quote }}
+  storage:
+    storageClassName: {{ .Values.vlsingle.storage.storageClassName }}
+    accessModes:
+      - ReadWriteOnce
+    resources:
+      requests:
+        storage: {{ .Values.vlsingle.storage.size }}
+  resources: {{ .Values.vlsingle.resources | toYaml | nindent 4 }}

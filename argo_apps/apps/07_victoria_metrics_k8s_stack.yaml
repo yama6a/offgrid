@@ -1,0 +1,44 @@
+# ArgoCD Application for the monitoring core — victoria-metrics-k8s-stack
+# (argo_apps/charts/07_victoria_metrics_k8s_stack/). VMSingle + VMAgent + node-exporter + kube-state-metrics
+# + default dashboards. Shape B: the bundled operator, vmalert, Alertmanager and Grafana are all OFF —
+# the operator runs standalone (01_victoria_metrics_operator) and Grafana (07_grafana) owns alerting.
+# Replaces the retired kube-prometheus-stack in the same `monitoring` namespace. See 15_monitoring.md.
+#
+# AUTOMATED (prune + selfHeal): a safe leaf — it owns no CRDs (wave-0 app) and can't cut the cluster off
+# its network. The operator-created VM* objects carry ArgoCD-ignore annotations
+# (prometheus_converter_add_argocd_ignore_annotations / the operator's own resources), so ArgoCD doesn't
+# fight the operator. Break-glass: `kubectl -n monitoring port-forward svc/vmsingle-victoria-metrics-k8s-stack 8428:8428`.
+#
+# sync-wave "7": same wave as Grafana (07_grafana) and the edge routes (07_monitoring_ingress) — after the
+# operator (wave 1, long Healthy by now, so its webhook validates these VMSingle/VMAgent CRs) and Longhorn
+# (wave 2, for the vmsingle PVC). ServerSideApply for the large CRs; ServerSideDiff so operator-defaulted
+# CR fields don't show perpetual OutOfSync.
+apiVersion: argoproj.io/v1alpha1
+kind: Application
+metadata:
+  name: victoria-metrics-k8s-stack
+  namespace: argocd
+  annotations:
+    argocd.argoproj.io/sync-wave: "7"
+    argocd.argoproj.io/compare-options: ServerSideDiff=true
+spec:
+  project: default
+  source:
+    repoURL: https://github.com/yama6a/offgrid
+    targetRevision: HEAD
+    path: argo_apps/charts/07_victoria_metrics_k8s_stack
+  destination:
+    server: https://kubernetes.default.svc
+    namespace: monitoring
+  syncPolicy:
+    managedNamespaceMetadata:
+      labels:
+        pod-security.kubernetes.io/enforce: privileged
+        pod-security.kubernetes.io/warn: privileged
+        pod-security.kubernetes.io/audit: privileged
+    automated:
+      prune: true
+      selfHeal: true
+    syncOptions:
+      - CreateNamespace=true
+      - ServerSideApply=true

@@ -1,21 +1,23 @@
 # Values for the 07_grafana wrapper chart. SINGLE SOURCE OF TRUTH — ArgoCD (and any local
 # `helm template`) consume this. Chart version pinned in Chart.yaml. See 16_grafana.md for the why.
 #
-# Grafana runs in the `monitoring` namespace (release name `grafana`), alongside the kube-prometheus-stack
-# it visualises. Everything under `grafana:` is passed to the upstream grafana/grafana subchart (key ==
-# dependency name).
+# Grafana runs in the `monitoring` namespace (release name `grafana`), alongside the VictoriaMetrics +
+# VictoriaLogs stack it visualises AND alerts on. Everything under `grafana:` is passed to the upstream
+# grafana/grafana subchart (key == dependency name). Since the Prometheus → VictoriaMetrics migration,
+# Grafana also OWNS alerting (no Alertmanager, no vmalert): datasources, contact point, notification
+# policy and alert rules are all provisioned here as code.
 grafana:
-  # No persistent storage (explicit request). Ephemeral pod — fine, because Grafana holds no state worth
-  # keeping: the Prometheus datasource + curated dashboards are re-provisioned on every start by the
-  # sidecar from kube-prometheus-stack's emitted ConfigMaps. TRADE-OFF: dashboards/settings a user
-  # creates in the UI are lost on restart. See 16_grafana.md.
+  # No persistent storage (explicit request). Ephemeral pod — the datasources, dashboards and alert rules
+  # are all re-provisioned on every start (from these values + the k8s-stack's emitted dashboard
+  # ConfigMaps). TRADE-OFF: alert *state* (firing history, silences) and any UI-created dashboards reset
+  # on restart; rules themselves survive because they are file-provisioned. See 16_grafana.md.
   persistence:
     enabled: false
 
   # Grafana's OWN auth is OFF — the gateway Google SSO allowlist (07_monitoring_ingress' `sso: example.com`
-  # route + the 04_google_sso SecurityPolicy) is the only barrier, exactly like the Prometheus/Alertmanager
-  # UIs. Every request arrives already authenticated at the edge, so we serve it as an anonymous Admin:
-  # no second login, full functionality. dotted keys (`auth.anonymous` etc.) are grafana.ini SECTION names.
+  # route + the 04_google_sso SecurityPolicy) is the only barrier, exactly like the vmui/VictoriaLogs UIs.
+  # Every request arrives already authenticated at the edge, so we serve it as an anonymous Admin: no
+  # second login, full functionality. dotted keys (`auth.anonymous` etc.) are grafana.ini SECTION names.
   grafana.ini:
     server:
       domain: grafana.example.com
@@ -28,21 +30,333 @@ grafana:
       org_role: Admin                # everyone who clears the SSO allowlist gets full admin
     auth.basic:
       enabled: false                 # no basic-auth path either
+    # SMTP for unified-alerting email. The PASSWORD is NOT here — Grafana maps the GF_SMTP_PASSWORD env
+    # (injected from the sealed `grafana-smtp` Secret via envValueFrom below) onto [smtp].password. The
+    # Gmail app-password is sealed by 16_grafana_smtp/16_grafana_smtp.sh (plaintext never committed).
+    smtp:
+      enabled: true
+      host: smtp.gmail.com:587
+      user: you@example.com
+      from_address: you@example.com
+      from_name: Grafana (raspi-cluster)
+      startTLS_policy: MandatoryStartTLS
 
-  # Ingest kube-prometheus-stack's emitted ConfigMaps across ALL namespaces — the Prometheus datasource
-  # (label grafana_datasource) and the curated dashboards (label grafana_dashboard). The chart wires the
-  # sidecar's cluster-wide ConfigMap RBAC. Labels match the stack's defaults (forceDeployDatasources /
-  # forceDeployDashboards in 07_kube_prometheus_stack). No hardcoded datasource needed — the stack ships
-  # one pointing at http://kube-prometheus-stack-prometheus.monitoring.svc:9090.
+  # GF_SMTP_PASSWORD <- the sealed grafana-smtp Secret (key `password`). Grafana auto-maps it to
+  # [smtp].password. The Secret is created by the committed SealedSecret (templates/grafana-smtp-sealedsecret.yaml).
+  envValueFrom:
+    GF_SMTP_PASSWORD:
+      secretKeyRef:
+        name: grafana-smtp
+        key: password
+        optional: true   # so Grafana starts before 16_grafana_smtp.sh seals the secret; SMTP stays
+                         # unconfigured (test email fails) until the SealedSecret lands and the pod restarts
+
+  # The VictoriaLogs datasource is NOT built in (unlike Loki) — install the signed plugin (commercial
+  # signature, so no allow-unsigned needed). Version pinned; the space-separated form pins the version via
+  # grafana-cli. The VictoriaMetrics datasource is the built-in `prometheus` type — no plugin required.
+  plugins:
+    - victoriametrics-logs-datasource 0.29.0
+
+  # Provisioned datasources (replaces the old sidecar-fed Prometheus datasource ConfigMap). UIDs are PINNED
+  # and deliberately match the k8s-stack's defaults (`VictoriaMetrics` / `VictoriaLogs`) so BOTH the
+  # synced default dashboards AND the alert rules below resolve their datasource. See 16_grafana.md.
+  datasources:
+    datasources.yaml:
+      apiVersion: 1
+      datasources:
+        - name: VictoriaMetrics
+          type: prometheus
+          uid: VictoriaMetrics
+          access: proxy
+          url: http://vmsingle-victoria-metrics-k8s-stack.monitoring.svc:8428
+          isDefault: true
+          jsonData:
+            # VM is PromQL-compatible; mark it so Grafana enables the right query editor features.
+            prometheusType: Prometheus
+        - name: VictoriaLogs
+          type: victoriametrics-logs-datasource
+          uid: VictoriaLogs
+          access: proxy
+          url: http://vlsingle-victoria-logs.monitoring.svc:9428
+
+  # Dashboards: keep the sidecar (it ingests the k8s-stack's emitted `grafana_dashboard` ConfigMaps across
+  # ALL namespaces). Datasources sidecar is OFF — datasources are provisioned directly above now.
   sidecar:
     dashboards:
       enabled: true
       label: grafana_dashboard
       searchNamespace: ALL
     datasources:
-      enabled: true
-      label: grafana_datasource
-      searchNamespace: ALL
+      enabled: false
+
+  # ---- Unified alerting (Grafana OWNS it: contact point + policy + rules) --------------------------
+  # File-provisioned (https://grafana.com/docs/grafana/latest/alerting/set-up/provision-alerting-resources/).
+  # Metrics rules query the `VictoriaMetrics` datasource (PromQL); the log rule queries `VictoriaLogs`
+  # (LogsQL). Recording rules from kube-prometheus-stack are gone (no vmalert), so expressions are inlined.
+  alerting:
+    contactpoints.yaml:
+      apiVersion: 1
+      contactPoints:
+        - orgId: 1
+          name: email
+          receivers:
+            - uid: email-default
+              type: email
+              settings:
+                addresses: you@example.com
+                singleEmail: true
+    policies.yaml:
+      apiVersion: 1
+      policies:
+        - orgId: 1
+          receiver: email
+          group_by: [alertname, namespace]
+          group_wait: 30s
+          group_interval: 5m
+          repeat_interval: 4h
+    rules.yaml:
+      apiVersion: 1
+      groups:
+        - orgId: 1
+          name: cluster-health
+          folder: raspi-cluster
+          interval: 1m
+          rules:
+            - uid: node-not-ready
+              title: Node NotReady
+              condition: C
+              for: 5m
+              labels: {severity: critical}
+              annotations:
+                summary: 'Node {{`{{ $labels.node }}`}} is NotReady'
+              noDataState: OK
+              execErrState: Error
+              data:
+                - refId: A
+                  relativeTimeRange: {from: 600, to: 0}
+                  datasourceUid: VictoriaMetrics
+                  model:
+                    refId: A
+                    instant: true
+                    expr: 'max by (node) (kube_node_status_condition{condition="Ready",status="true"} == bool 0)'
+                - refId: B
+                  relativeTimeRange: {from: 600, to: 0}
+                  datasourceUid: __expr__
+                  model: {refId: B, type: reduce, expression: A, reducer: last, datasource: {type: __expr__, uid: __expr__}}
+                - refId: C
+                  relativeTimeRange: {from: 600, to: 0}
+                  datasourceUid: __expr__
+                  model:
+                    refId: C
+                    type: threshold
+                    expression: B
+                    datasource: {type: __expr__, uid: __expr__}
+                    conditions:
+                      - type: query
+                        evaluator: {type: gt, params: [0]}
+            - uid: node-high-memory
+              title: Node high memory usage
+              condition: C
+              for: 10m
+              labels: {severity: warning}
+              annotations:
+                summary: 'Node {{`{{ $labels.instance }}`}} memory usage above 90%'
+              noDataState: OK
+              execErrState: Error
+              data:
+                - refId: A
+                  relativeTimeRange: {from: 600, to: 0}
+                  datasourceUid: VictoriaMetrics
+                  model:
+                    refId: A
+                    instant: true
+                    expr: '100 * (1 - node_memory_MemAvailable_bytes / node_memory_MemTotal_bytes)'
+                - refId: B
+                  relativeTimeRange: {from: 600, to: 0}
+                  datasourceUid: __expr__
+                  model: {refId: B, type: reduce, expression: A, reducer: last, datasource: {type: __expr__, uid: __expr__}}
+                - refId: C
+                  relativeTimeRange: {from: 600, to: 0}
+                  datasourceUid: __expr__
+                  model:
+                    refId: C
+                    type: threshold
+                    expression: B
+                    datasource: {type: __expr__, uid: __expr__}
+                    conditions:
+                      - type: query
+                        evaluator: {type: gt, params: [90]}
+            - uid: node-high-cpu
+              title: Node high CPU saturation
+              condition: C
+              for: 15m
+              labels: {severity: warning}
+              annotations:
+                summary: 'Node {{`{{ $labels.instance }}`}} CPU above 90%'
+              noDataState: OK
+              execErrState: Error
+              data:
+                - refId: A
+                  relativeTimeRange: {from: 600, to: 0}
+                  datasourceUid: VictoriaMetrics
+                  model:
+                    refId: A
+                    instant: true
+                    expr: '100 * (1 - avg by (instance) (rate(node_cpu_seconds_total{mode="idle"}[5m])))'
+                - refId: B
+                  relativeTimeRange: {from: 600, to: 0}
+                  datasourceUid: __expr__
+                  model: {refId: B, type: reduce, expression: A, reducer: last, datasource: {type: __expr__, uid: __expr__}}
+                - refId: C
+                  relativeTimeRange: {from: 600, to: 0}
+                  datasourceUid: __expr__
+                  model:
+                    refId: C
+                    type: threshold
+                    expression: B
+                    datasource: {type: __expr__, uid: __expr__}
+                    conditions:
+                      - type: query
+                        evaluator: {type: gt, params: [90]}
+            - uid: pod-crashloop
+              title: Pod CrashLoopBackOff
+              condition: C
+              for: 5m
+              labels: {severity: warning}
+              annotations:
+                summary: 'Pod {{`{{ $labels.namespace }}`}}/{{`{{ $labels.pod }}`}} is CrashLoopBackOff'
+              noDataState: OK
+              execErrState: Error
+              data:
+                - refId: A
+                  relativeTimeRange: {from: 600, to: 0}
+                  datasourceUid: VictoriaMetrics
+                  model:
+                    refId: A
+                    instant: true
+                    expr: 'max by (namespace, pod) (kube_pod_container_status_waiting_reason{reason="CrashLoopBackOff"})'
+                - refId: B
+                  relativeTimeRange: {from: 600, to: 0}
+                  datasourceUid: __expr__
+                  model: {refId: B, type: reduce, expression: A, reducer: last, datasource: {type: __expr__, uid: __expr__}}
+                - refId: C
+                  relativeTimeRange: {from: 600, to: 0}
+                  datasourceUid: __expr__
+                  model:
+                    refId: C
+                    type: threshold
+                    expression: B
+                    datasource: {type: __expr__, uid: __expr__}
+                    conditions:
+                      - type: query
+                        evaluator: {type: gt, params: [0]}
+            - uid: pvc-nearly-full
+              title: PVC nearly full
+              condition: C
+              for: 10m
+              labels: {severity: warning}
+              annotations:
+                summary: 'PVC {{`{{ $labels.namespace }}`}}/{{`{{ $labels.persistentvolumeclaim }}`}} above 85% used'
+              noDataState: OK
+              execErrState: Error
+              data:
+                - refId: A
+                  relativeTimeRange: {from: 600, to: 0}
+                  datasourceUid: VictoriaMetrics
+                  model:
+                    refId: A
+                    instant: true
+                    expr: '100 * kubelet_volume_stats_used_bytes / kubelet_volume_stats_capacity_bytes'
+                - refId: B
+                  relativeTimeRange: {from: 600, to: 0}
+                  datasourceUid: __expr__
+                  model: {refId: B, type: reduce, expression: A, reducer: last, datasource: {type: __expr__, uid: __expr__}}
+                - refId: C
+                  relativeTimeRange: {from: 600, to: 0}
+                  datasourceUid: __expr__
+                  model:
+                    refId: C
+                    type: threshold
+                    expression: B
+                    datasource: {type: __expr__, uid: __expr__}
+                    conditions:
+                      - type: query
+                        evaluator: {type: gt, params: [85]}
+            - uid: target-down
+              title: Scrape target down
+              condition: C
+              for: 10m
+              labels: {severity: warning}
+              annotations:
+                summary: 'Target {{`{{ $labels.job }}`}} / {{`{{ $labels.instance }}`}} is down'
+              noDataState: OK
+              execErrState: Error
+              data:
+                - refId: A
+                  relativeTimeRange: {from: 600, to: 0}
+                  datasourceUid: VictoriaMetrics
+                  model:
+                    refId: A
+                    instant: true
+                    expr: 'max by (job, instance) (up == bool 0)'
+                - refId: B
+                  relativeTimeRange: {from: 600, to: 0}
+                  datasourceUid: __expr__
+                  model: {refId: B, type: reduce, expression: A, reducer: last, datasource: {type: __expr__, uid: __expr__}}
+                - refId: C
+                  relativeTimeRange: {from: 600, to: 0}
+                  datasourceUid: __expr__
+                  model:
+                    refId: C
+                    type: threshold
+                    expression: B
+                    datasource: {type: __expr__, uid: __expr__}
+                    conditions:
+                      - type: query
+                        evaluator: {type: gt, params: [0]}
+    # Log-based alert in its OWN file so a VL-datasource model mismatch can't break the metrics rules
+    # above. VERIFY the query model against the live victoriametrics-logs-datasource at apply time (the
+    # plugin's alerting model field names can change between versions). See 16_grafana.md.
+    rules-logs.yaml:
+      apiVersion: 1
+      groups:
+        - orgId: 1
+          name: logs-health
+          folder: raspi-cluster
+          interval: 1m
+          rules:
+            - uid: high-error-log-rate
+              title: High error-log rate
+              condition: C
+              for: 5m
+              labels: {severity: warning}
+              annotations:
+                summary: 'More than 100 error logs in the last 5m across the cluster'
+              noDataState: OK
+              execErrState: Error
+              data:
+                - refId: A
+                  relativeTimeRange: {from: 300, to: 0}
+                  datasourceUid: VictoriaLogs
+                  model:
+                    refId: A
+                    queryType: stats
+                    expr: '(error OR level:error OR level:ERROR) | stats count() as logs'
+                - refId: B
+                  relativeTimeRange: {from: 300, to: 0}
+                  datasourceUid: __expr__
+                  model: {refId: B, type: reduce, expression: A, reducer: last, datasource: {type: __expr__, uid: __expr__}}
+                - refId: C
+                  relativeTimeRange: {from: 300, to: 0}
+                  datasourceUid: __expr__
+                  model:
+                    refId: C
+                    type: threshold
+                    expression: B
+                    datasource: {type: __expr__, uid: __expr__}
+                    conditions:
+                      - type: query
+                        evaluator: {type: gt, params: [100]}
 
   # Default ClusterIP Service on :80 -> container :3000 — what 07_monitoring_ingress' grafana backendRef
   # targets (name `grafana`, port 80).

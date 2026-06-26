@@ -1,5 +1,6 @@
 # Values for the 07_monitoring_ingress wrapper chart. SINGLE SOURCE OF TRUTH — ArgoCD (and any local
-# `helm template`) consume this. Mirrors 06_argocd_ingress, but list-valued for the two monitoring UIs.
+# `helm template`) consume this. Mirrors 06_argocd_ingress, but list-valued for the three monitoring UIs
+# (vmui, VictoriaLogs, Grafana).
 #
 # Each `hosts` entry fronts one UI on `host` through the shared Gateway, gated by Google SSO. The :443
 # listener for `host` must exist in 03_gateway's httpsHosts (name == listener `name`, hostname == `host`,
@@ -21,21 +22,23 @@ issuer: letsencrypt-staging
 routeLabelKey: sso
 sso: "example.com"
 
-# One entry per UI. backend.name/port are the stack's generated Services (verify:
-# kubectl get svc -n monitoring). Release name == Application name `kube-prometheus-stack`.
+# One entry per UI. backend.name/port are the operator-generated Services (verify:
+# kubectl get svc -n monitoring). vmui is served by VMSingle (:8428), the VictoriaLogs UI by VLSingle
+# (:9428, landing at /select/vmui/). Service names follow the operator pattern vmsingle-<cr> / vlsingle-<cr>
+# from 07_victoria_metrics_k8s_stack and 07_victoria_logs.
 hosts:
-  - name: prometheus
-    host: prometheus.example.com
-    tlsSecretName: prometheus-tls
+  - name: vmui
+    host: vmui.example.com
+    tlsSecretName: vmui-tls
     backend:
-      name: kube-prometheus-stack-prometheus
-      port: 9090
-  - name: alertmanager
-    host: alertmanager.example.com
-    tlsSecretName: alertmanager-tls
+      name: vmsingle-victoria-metrics-k8s-stack
+      port: 8428
+  - name: vlogs
+    host: vlogs.example.com
+    tlsSecretName: vlogs-tls
     backend:
-      name: kube-prometheus-stack-alertmanager
-      port: 9093
+      name: vlsingle-victoria-logs
+      port: 9428
   # Grafana (07_grafana) — its own login is disabled, so the `sso` label IS the only gate, same as the
   # other two. backend == the grafana/grafana chart's Service (release name `grafana`, default port 80).
   - name: grafana

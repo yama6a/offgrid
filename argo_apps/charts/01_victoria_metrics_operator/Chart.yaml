@@ -1,0 +1,22 @@
+apiVersion: v2
+name: victoria-metrics-operator
+description: >-
+  Wrapper chart for the VictoriaMetrics operator — the controller that reconciles BOTH the VM* CRs
+  (VMSingle/VMAgent/VMServiceScrape/VMPodScrape/VMRule/VMProbe) and the VL* CRs (VLSingle/VLAgent) the
+  wave-7 monitoring stack ships. Crucially it runs the prometheus-operator CONVERTER: it watches the
+  existing ServiceMonitor/PodMonitor/PrometheusRule/Probe objects (from cilium, argocd, cert-manager,
+  longhorn, sealed-secrets, …) and mints the VM* equivalents automatically — so no third-party scrape
+  config is rewritten during the migration off kube-prometheus-stack. CRDs are installed separately and
+  ahead of this (00_victoria_metrics_operator_crds, crds.enabled:false here). Single source of truth for
+  the operator version (this file) and all config (values.yaml, under the `victoria-metrics-operator:`
+  key). Delivered by ArgoCD via argo_apps/apps/01_victoria_metrics_operator.yaml — wave 1 (operator with
+  an admission webhook, alongside argocd / envoy-gateway; after its CRDs at wave 0, before the wave-7
+  CRs). See 15_monitoring.md.
+type: application
+version: 0.1.0                 # this wrapper chart's own version
+appVersion: "v0.72.0"         # victoria-metrics-operator version the pinned chart ships (mirrors the dep)
+
+dependencies:
+  - name: victoria-metrics-operator
+    version: "0.65.1"         # VictoriaMetrics/victoria-metrics-operator — THE single source for the pin
+    repository: https://victoriametrics.github.io/helm-charts/

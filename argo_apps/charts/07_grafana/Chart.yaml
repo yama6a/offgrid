@@ -2,14 +2,18 @@ apiVersion: v2
 name: grafana
 description: >-
   Wrapper chart for standalone Grafana on the Talos/Raspberry Pi 5 cluster — the dashboards/Explore UI
-  for the monitoring core. Single source of truth for the Grafana chart version (this file) and its
-  values (values.yaml, under the `grafana:` key). Grafana's OWN auth is off (anonymous Admin, no login
-  form) — the only gate is Google SSO at the shared Gateway, where the `sso: example.com` HTTPRoute
-  lives in 07_monitoring_ingress (same front door as the Prometheus/Alertmanager UIs). No persistence
-  (ephemeral pod); the Prometheus datasource + curated dashboards come from kube-prometheus-stack's
-  emitted ConfigMaps via the sidecar (search-all-namespaces). Delivered purely by ArgoCD (no imperative
-  bootstrap) via argo_apps/apps/07_grafana.yaml — wave 7, same as the stack it reads from
-  (07_kube_prometheus_stack) and its own edge route (07_monitoring_ingress). See 16_grafana.md.
+  AND the alerting owner for the monitoring core (no Alertmanager, no vmalert). Single source of truth
+  for the Grafana chart version (this file) and its values (values.yaml, under the `grafana:` key).
+  Grafana's OWN auth is off (anonymous Admin, no login form) — the only gate is Google SSO at the shared
+  Gateway, where the `sso: example.com` HTTPRoute lives in 07_monitoring_ingress (same front door as the
+  vmui/VictoriaLogs UIs). No persistence (ephemeral pod); the VictoriaMetrics + VictoriaLogs datasources
+  (pinned UIDs), the contact point / notification policy / alert rules, and the SMTP config are all
+  PROVISIONED as code here (the Gmail app-password comes from the sealed grafana-smtp Secret). Curated
+  dashboards still arrive as `grafana_dashboard` ConfigMaps via the sidecar (search-all-namespaces) from
+  07_victoria_metrics_k8s_stack. The VictoriaLogs datasource is the signed victoriametrics-logs-datasource
+  plugin (GF_INSTALL_PLUGINS). Delivered by ArgoCD via argo_apps/apps/07_grafana.yaml — wave 7, same as
+  the stacks it reads from (07_victoria_metrics_k8s_stack, 07_victoria_logs) and its own edge route
+  (07_monitoring_ingress). See 16_grafana.md.
 type: application
 version: 0.1.0                 # this wrapper chart's own version
 appVersion: "12.3.1"          # Grafana version the pinned chart ships (mirrors the dependency)

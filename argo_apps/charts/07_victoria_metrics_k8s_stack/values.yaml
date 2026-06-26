@@ -1,0 +1,197 @@
+# Values for the 07_victoria_metrics_k8s_stack wrapper chart. SINGLE SOURCE OF TRUTH — ArgoCD (and any
+# local `helm template`) consume this. Chart version pinned in Chart.yaml. See 15_monitoring.md.
+#
+# Everything under `victoria-metrics-k8s-stack:` is passed to the upstream subchart (key == dependency
+# name). Resource numbers are sized for 8GB Pi 5 nodes already running etcd + control plane + Cilium +
+# Longhorn. This is the drop-in replacement for the retired kube-prometheus-stack — same `monitoring`
+# namespace, same Talos control-plane scrape targets, same high-cardinality drops.
+victoria-metrics-k8s-stack:
+  # The VM operator runs STANDALONE (01_victoria_metrics_operator, wave 1) and reconciles the CRs this
+  # chart emits. Disable the bundled operator subchart so we don't run two operators or re-install CRDs.
+  victoria-metrics-operator:
+    enabled: false
+  # CRDs are owned by 00_victoria_metrics_operator_crds (wave 0); never let this chart manage them.
+  crds:
+    enabled: false
+    plain: false
+
+  # ---- metrics store -------------------------------------------------------------------------------
+  vmsingle:
+    enabled: true
+    spec:
+      retentionPeriod: "180d"        # 180 days of metrics. Bump together with the PVC size below.
+      replicaCount: 1
+      extraArgs:
+        # 60s halves sample volume vs 30s for negligible loss at homelab cardinality (vmagent also 60s).
+        dedup.minScrapeInterval: 60s
+      storage:
+        storageClassName: longhorn   # default global class, replica 3 (02_longhorn)
+        accessModes: ["ReadWriteOnce"]
+        resources:
+          requests:
+            storage: 50Gi
+      resources:
+        requests: {cpu: 250m, memory: 512Mi}
+        limits: {memory: 1500Mi}     # no CPU limit — avoid throttling merges/queries
+      # Reschedule fast on node loss instead of the default. Pair with Longhorn
+      # nodeDownPodDeletionPolicy=delete-statefulset-pod (02_longhorn). See 15_monitoring.md (failover).
+      tolerations:
+        - key: node.kubernetes.io/unreachable
+          operator: Exists
+          effect: NoExecute
+          tolerationSeconds: 30
+        - key: node.kubernetes.io/not-ready
+          operator: Exists
+          effect: NoExecute
+          tolerationSeconds: 30
+
+  # ---- scraper -------------------------------------------------------------------------------------
+  vmagent:
+    enabled: true
+    spec:
+      # Discover ALL VMServiceScrape/VMPodScrape/VMProbe across every namespace, regardless of labels —
+      # so the per-component scrapes (cilium, argocd, cert-manager, longhorn, sealed-secrets) AND the
+      # operator-converted ServiceMonitors are all picked up. This mirrors the old
+      # serviceMonitorSelectorNilUsesHelmValues:false behaviour.
+      selectAllByDefault: true
+      scrapeInterval: 60s
+      externalLabels:
+        cluster: raspi-cluster
+      extraArgs:
+        promscrape.streamParse: "true"
+      resources:
+        requests: {cpu: 100m, memory: 256Mi}
+        limits: {memory: 512Mi}
+
+  # ---- shape B: everything alerting/visualisation is OFF -------------------------------------------
+  vmalert:
+    enabled: false               # no rule evaluator — Grafana owns alerting (07_grafana).
+  alertmanager:
+    enabled: false               # no Alertmanager — Grafana owns notifications (07_grafana).
+  grafana:
+    enabled: false               # standalone Grafana is its own app (07_grafana).
+
+  # Default ALERTING/RECORDING rules are VMRules that only vmalert evaluates; with vmalert off they would
+  # be inert. Grafana alerts query raw metrics instead (recording-rule expressions inlined where needed).
+  defaultRules:
+    create: false
+
+  # Curated default dashboards — emitted as ConfigMaps labelled `grafana_dashboard` (the sync-job reads
+  # grafana.sidecar.dashboards.label, default `grafana_dashboard`) so the standalone Grafana sidecar
+  # (07_grafana, searchNamespace ALL) picks them up with zero rework. See 15_monitoring.md.
+  defaultDashboards:
+    enabled: true
+
+  # ---- exporters -----------------------------------------------------------------------------------
+  prometheus-node-exporter:
+    # CUTOVER GATE: kept OFF in the additive commit so it doesn't clash with the still-running
+    # kube-prometheus-stack node-exporter on hostPort 9100. The cutover commit (which `git rm`s
+    # kube-prometheus-stack) flips this to `true`. See 15_monitoring.md / the migration plan.
+    enabled: false
+    # DaemonSet must land on all 3 nodes. All-control-plane cluster, so tolerate everything rather than a
+    # control-plane nodeSelector (a node-role.kubernetes.io/control-plane:DoesNotExist selector would match
+    # ZERO nodes here).
+    tolerations:
+      - operator: Exists
+    resources:
+      requests: {cpu: 25m, memory: 32Mi}
+      limits: {memory: 64Mi}
+
+  kube-state-metrics:
+    enabled: true
+    resources:
+      requests: {cpu: 25m, memory: 64Mi}
+      limits: {memory: 128Mi}
+
+  # ---- Talos control-plane scrape targets ----------------------------------------------------------
+  # Talos binds kube-controller-manager / kube-scheduler / etcd metrics to localhost by DEFAULT; we expose
+  # them via Talos machine config (OUTSIDE ArgoCD — already applied, see 15_monitoring.md "control-plane
+  # scrape"): bind-address 0.0.0.0 for the two controllers, etcd listen-metrics-urls http://0.0.0.0:2381.
+  # `endpoints` are the control-plane node IPs (static, reserved — mirror 03_operating_system/03_config.sh
+  # CLUSTER_NODES); every node runs all three on this all-control-plane cluster.
+  kubeControllerManager:
+    enabled: true
+    endpoints: ["192.168.10.201", "192.168.10.202", "192.168.10.203"]
+    service:
+      enabled: true
+      port: 10257
+      targetPort: 10257
+    vmScrape:
+      spec:
+        endpoints:
+          - port: http-metrics
+            scheme: https
+            bearerTokenFile: /var/run/secrets/kubernetes.io/serviceaccount/token
+            tlsConfig:
+              insecureSkipVerify: true   # controller serves a self-signed cert on the metrics port
+        jobLabel: app.kubernetes.io/component
+        namespaceSelector:
+          matchNames: []
+  kubeScheduler:
+    enabled: true
+    endpoints: ["192.168.10.201", "192.168.10.202", "192.168.10.203"]
+    service:
+      enabled: true
+      port: 10259
+      targetPort: 10259
+    vmScrape:
+      spec:
+        endpoints:
+          - port: http-metrics
+            scheme: https
+            bearerTokenFile: /var/run/secrets/kubernetes.io/serviceaccount/token
+            tlsConfig:
+              insecureSkipVerify: true
+        jobLabel: app.kubernetes.io/component
+        namespaceSelector:
+          matchNames: []
+  kubeEtcd:
+    enabled: true
+    endpoints: ["192.168.10.201", "192.168.10.202", "192.168.10.203"]
+    service:
+      enabled: true
+      port: 2381   # Talos etcd listen-metrics-urls — plain HTTP, no auth
+      targetPort: 2381
+    vmScrape:
+      spec:
+        endpoints:
+          - port: http-metrics
+            scheme: http
+            # Drop etcd's request-latency histogram + gRPC server counters (top cardinality, low value).
+            metricRelabelConfigs:
+              - source_labels: [__name__]
+                action: drop
+                regex: "etcd_request_duration_seconds_bucket|grpc_server_(handled|started|msg_received|msg_sent)_total"
+        jobLabel: app.kubernetes.io/component
+        namespaceSelector:
+          matchNames: []
+  # Scrape the apiserver but DROP its big histograms (request/response/watch/flowcontrol/admission *_bucket)
+  # — the top cardinality hogs, and we don't run the apiserver latency SLOs. Keep apiserver_request_total.
+  kubeApiServer:
+    enabled: true
+    vmScrape:
+      spec:
+        endpoints:
+          - port: https
+            scheme: https
+            bearerTokenFile: /var/run/secrets/kubernetes.io/serviceaccount/token
+            tlsConfig:
+              caFile: /var/run/secrets/kubernetes.io/serviceaccount/ca.crt
+              serverName: kubernetes
+            metricRelabelConfigs:
+              - source_labels: [__name__]
+                action: drop
+                regex: "apiserver_(request_duration_seconds|request_sli_duration_seconds|request_slo_duration_seconds|request_body_size_bytes|response_sizes|watch_list_duration_seconds|watch_cache_read_wait_seconds|watch_events_sizes|flowcontrol_request_execution_seconds|flowcontrol_priority_level_request_utilization|flowcontrol_priority_level_seat_utilization|flowcontrol_request_wait_duration_seconds|flowcontrol_demand_seats|admission_controller_admission_duration_seconds|admission_webhook_admission_duration_seconds)_bucket"
+        jobLabel: component
+        namespaceSelector:
+          matchNames: [default]
+        selector:
+          matchLabels:
+            component: apiserver
+            provider: kubernetes
+  # CoreDNS on Talos exposes :9153 cluster-wide — keep the default scrape.
+  coreDns:
+    enabled: true
+  # Cilium replaces kube-proxy (kubeProxyReplacement) — there is no kube-proxy to scrape.
+  kubeProxy:
+    enabled: false

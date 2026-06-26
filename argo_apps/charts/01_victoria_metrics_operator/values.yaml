@@ -1,0 +1,39 @@
+# Values for the 01_victoria_metrics_operator wrapper chart. SINGLE SOURCE OF TRUTH — ArgoCD (and any
+# local `helm template`) consume this. Chart version pinned in Chart.yaml. See 15_monitoring.md.
+#
+# Everything under `victoria-metrics-operator:` is passed to the upstream victoria-metrics-operator
+# subchart (key == dependency name). The operator runs in the `monitoring` namespace and watches ALL
+# namespaces by default (watchNamespaces: []), so it reconciles VM*/VL* CRs and converts prometheus-
+# operator objects cluster-wide.
+victoria-metrics-operator:
+  # CRDs are installed separately, ahead of everything, by 00_victoria_metrics_operator_crds (wave 0).
+  # Disabling here only takes effect together with `plain: false` (the chart's documented requirement).
+  crds:
+    enabled: false
+    plain: false
+
+  # The prometheus-operator CONVERTER — the heart of the zero-rewrite migration.
+  operator:
+    # Keep the converter ON: ServiceMonitor -> VMServiceScrape, PodMonitor -> VMPodScrape,
+    # PrometheusRule -> VMRule, Probe -> VMProbe, continuously.
+    disable_prometheus_converter: false
+    # Stamp ArgoCD compare/sync-options (IgnoreExtraneous + Prune=false) on every converted object so
+    # ArgoCD never flags or prunes operator-created resources it doesn't see in git. This is what keeps
+    # the monitoring apps Synced/Healthy instead of fighting the operator. See 15_monitoring.md.
+    prometheus_converter_add_argocd_ignore_annotations: true
+    # Owner-reference converted objects to their source, so deleting a ServiceMonitor garbage-collects its
+    # VMServiceScrape — a clean cutover with no orphaned VM* copies when kube-prometheus-stack is removed.
+    enable_converter_ownership: true
+
+  # Validation webhook for VM*/VL* CR syntax. cert-manager is NOT used here (the operator mints its own
+  # self-signed CA and injects the caBundle); the Application ignoreDifferences that caBundle so it never
+  # shows perpetual OutOfSync (see 01_victoria_metrics_operator.yaml).
+  admissionWebhooks:
+    enabled: true
+    certManager:
+      enabled: false
+
+  # Modest footprint for an 8GB Pi 5 already running etcd + control plane + Cilium + Longhorn.
+  resources:
+    requests: {cpu: 50m, memory: 128Mi}
+    limits: {memory: 256Mi}

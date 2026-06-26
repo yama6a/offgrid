@@ -1,0 +1,6 @@
+dependencies:
+- name: victoria-metrics-operator-crds
+  repository: https://victoriametrics.github.io/helm-charts/
+  version: 0.12.0
+digest: sha256:ebf5e1310018e59584c30e05a09ac7a7575630dcc50fda28c28e79e7c9676faa
+generated: "2026-06-26T22:25:22.00355+02:00"

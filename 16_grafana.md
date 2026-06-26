@@ -1,5 +1,17 @@
 # 16 — Grafana
 
+> **2026-06 — Grafana now also OWNS alerting** (no Alertmanager, no vmalert). On top of dashboards it
+> provisions, as code: two **datasources** (VictoriaMetrics, type `prometheus`, uid `VictoriaMetrics`;
+> VictoriaLogs, the signed `victoriametrics-logs-datasource` plugin, uid `VictoriaLogs` — UIDs match the
+> k8s-stack defaults so synced dashboards resolve), a **contact point** (Gmail email), a **notification
+> policy**, and an **alert rule group** (node NotReady, high node mem/CPU, pod CrashLoopBackOff, PVC >85%,
+> target down, + a VictoriaLogs error-rate alert). The Gmail app-password is sealed by
+> `16_grafana_smtp/16_grafana_smtp.sh` → `grafana-smtp` Secret → `GF_SMTP_PASSWORD` (optional). Grafana
+> alert *rules* are file-provisioned (survive restart); alert *state* resets on restart (no PVC). The
+> datasources sidecar is OFF (datasources are provisioned directly); the **dashboards** sidecar stays ON
+> and ingests the k8s-stack's `grafana_dashboard` ConfigMaps. The note below predates the VM migration —
+> "Prometheus/Alertmanager UIs" now read **vmui/VictoriaLogs UIs**, and the datasource is VictoriaMetrics.
+
 Standalone **Grafana**, the dashboards/Explore UI for the monitoring core ([15_monitoring.md](15_monitoring.md)).
 The kube-prometheus-stack's bundled Grafana was left **off**, but the stack still emits its curated
 dashboard + datasource ConfigMaps — so Grafana lands here as its own app and the sidecar picks them up
