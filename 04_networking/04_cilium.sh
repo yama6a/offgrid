@@ -17,6 +17,10 @@
 # LB-IPAM + L2 announcements (replaces MetalLB), Hubble. (Cilium's gatewayAPI is OFF — the ingress
 # data plane is Envoy Gateway; see 11_envoy_gateway.md.)
 #
+# Also installs the prometheus-operator CRDs FIRST (rendered from argo_apps/charts/
+# 00_prometheus_operator_crds): 00_cilium enables a ServiceMonitor, and cilium's chart hard-fails if
+# the monitoring.coreos.com CRDs don't exist yet. ArgoCD's wave-0 CRD app adopts them later. See 15_monitoring.md.
+#
 # Uses NATIVE helm + kubectl (errors out if either is missing). Talks to the cluster
 # via the kubeconfig step 03 (03d) wrote to 03_operating_system/talos-cluster/kubeconfig.
 #
@@ -29,6 +33,7 @@ SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 # ---- knobs ------------------------------------------------------------------
 OUTDIR="${OUTDIR:-${SCRIPT_DIR}/../03_operating_system/talos-cluster}"  # talosconfig + kubeconfig (from 03d)
 CHART_DIR="${CHART_DIR:-${SCRIPT_DIR}/../argo_apps/charts/00_cilium}"   # the wrapper chart (Argo consumes it too)
+CRDS_CHART_DIR="${CRDS_CHART_DIR:-${SCRIPT_DIR}/../argo_apps/charts/00_prometheus_operator_crds}"  # monitoring CRDs (cilium's ServiceMonitor needs them)
 CONFIG_FILE="${CONFIG_FILE:-${SCRIPT_DIR}/config.sh}"                   # LB range knobs (LB_RANGE_START/STOP)
 RELEASE="cilium"
 NS="kube-system"
@@ -83,6 +88,32 @@ if LB_RANGE_START="$LB_RANGE_START" LB_RANGE_STOP="$LB_RANGE_STOP" \
   ok "LB range written to values.yaml (commit this so ArgoCD renders the same pool)"
 else
   bad "yq failed to write LB range into ${VALUES}"
+fi
+
+# === 0c. prometheus-operator CRDs (cilium's ServiceMonitor prerequisite) ======
+# 00_cilium's values enable prometheus.serviceMonitor — and cilium's chart HARD-FAILS at template
+# time if the monitoring.coreos.com CRDs are absent (validate.yaml), then couldn't apply the
+# ServiceMonitor anyway (its template is value-gated, not capability-gated). On a fresh cluster
+# nothing has installed those CRDs yet: ArgoCD's 00_prometheus_operator_crds app only lands at
+# step 05. So install them HERE, first — rendered from that SAME pinned chart (no version in this
+# script), server-side (the CRDs are huge), with NO helm release so ArgoCD's wave-0 app adopts them
+# with no churn. Idempotent; --force-conflicts so a re-run after ArgoCD has adopted them still applies.
+say "prometheus-operator CRDs (cilium ServiceMonitor prerequisite)"
+helm repo add prometheus-community https://prometheus-community.github.io/helm-charts >/dev/null 2>&1 || true
+helm repo update prometheus-community >/dev/null 2>&1 || helm repo update >/dev/null
+if helm dependency build "$CRDS_CHART_DIR" >/dev/null 2>&1 || helm dependency update "$CRDS_CHART_DIR" >/dev/null 2>&1; then
+  if helm template prometheus-operator-crds "$CRDS_CHART_DIR" | kubectl apply --server-side --force-conflicts -f - >/dev/null 2>&1; then
+    # wait for API discovery to register the new group/version, or cilium's render still won't see it.
+    if kubectl wait --for=condition=established crd/servicemonitors.monitoring.coreos.com --timeout=60s >/dev/null 2>&1; then
+      ok "monitoring.coreos.com CRDs applied + established (ServiceMonitor/Prometheus/…)"
+    else
+      bad "monitoring CRDs applied but not Established after 60s (cilium render may still fail)"
+    fi
+  else
+    bad "failed to apply prometheus-operator CRDs (kubectl apply --server-side)"
+  fi
+else
+  bad "helm dependency build/update failed for ${CRDS_CHART_DIR}"
 fi
 
 # === 1. resolve the cilium subchart ==========================================

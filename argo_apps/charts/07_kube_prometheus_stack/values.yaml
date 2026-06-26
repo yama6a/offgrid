@@ -13,7 +13,6 @@ kube-prometheus-stack:
   # CRDs are installed separately, ahead of everything, by 00_prometheus_operator_crds (wave 0).
   crds:
     enabled: false
-
   # Bundled Grafana stays OFF — a standalone Grafana lands later as its own app. But still emit the
   # stack's curated dashboard + datasource ConfigMaps (labelled grafana_dashboard / grafana_datasource)
   # so that future Grafana's sidecar picks them up with zero rework. See 15_monitoring.md.
@@ -21,11 +20,9 @@ kube-prometheus-stack:
     enabled: false
     forceDeployDashboards: true
     forceDeployDatasources: true
-
   # Cilium replaces kube-proxy (kubeProxyReplacement: true) — there is no kube-proxy to scrape.
   kubeProxy:
     enabled: false
-
   # --- Talos control-plane scrape targets -------------------------------------------------------
   # Talos binds kube-controller-manager / kube-scheduler / etcd metrics to localhost by DEFAULT, so
   # these are dead until exposed. We expose them via Talos machine config (talosctl, OUTSIDE ArgoCD —
@@ -43,7 +40,7 @@ kube-prometheus-stack:
       targetPort: 10257
     serviceMonitor:
       https: true
-      insecureSkipVerify: true   # the controller serves a self-signed cert on the metrics port
+      insecureSkipVerify: true # the controller serves a self-signed cert on the metrics port
   kubeScheduler:
     enabled: true
     endpoints: ["192.168.10.201", "192.168.10.202", "192.168.10.203"]
@@ -59,11 +56,10 @@ kube-prometheus-stack:
     endpoints: ["192.168.10.201", "192.168.10.202", "192.168.10.203"]
     service:
       enabled: true
-      port: 2381            # Talos etcd listen-metrics-urls — plain HTTP, no auth
+      port: 2381 # Talos etcd listen-metrics-urls — plain HTTP, no auth
       targetPort: 2381
     serviceMonitor:
       scheme: http
-
   prometheusOperator:
     admissionWebhooks:
       # The webhook validates PromQL rule syntax in PrometheusRule CRs. Its cert is minted by
@@ -73,9 +69,8 @@ kube-prometheus-stack:
       certManager:
         enabled: true
     resources:
-      requests: { cpu: 50m, memory: 64Mi }
-      limits:   { memory: 128Mi }
-
+      requests: {cpu: 50m, memory: 64Mi}
+      limits: {memory: 128Mi}
   prometheus:
     prometheusSpec:
       # Retention: 180d OR 16GiB, whichever hits first. 16GiB ≈ 80% of the 20Gi PVC — the size cap is
@@ -90,7 +85,6 @@ kube-prometheus-stack:
       enableAdminAPI: false
       externalLabels:
         cluster: raspi-cluster
-
       # Discover monitors/rules/probes/scrapeConfigs from ALL namespaces, regardless of this release's
       # labels — so the per-component ServiceMonitors (cilium, argocd, cert-manager, longhorn,
       # sealed-secrets) are scraped no matter where they live.
@@ -99,20 +93,17 @@ kube-prometheus-stack:
       ruleSelectorNilUsesHelmValues: false
       probeSelectorNilUsesHelmValues: false
       scrapeConfigSelectorNilUsesHelmValues: false
-
       storageSpec:
         volumeClaimTemplate:
           spec:
-            storageClassName: longhorn        # default global class, replica 3 (02_longhorn)
+            storageClassName: longhorn # default global class, replica 3 (02_longhorn)
             accessModes: ["ReadWriteOnce"]
             resources:
               requests:
                 storage: 20Gi
-
       resources:
-        requests: { cpu: 250m, memory: 1Gi }
-        limits:   { memory: 2Gi }             # no CPU limit — avoid throttling compaction/scrape
-
+        requests: {cpu: 250m, memory: 1Gi}
+        limits: {memory: 2Gi} # no CPU limit — avoid throttling compaction/scrape
       # Reschedule fast on node loss instead of the default 300s. Pair with Longhorn
       # nodeDownPodDeletionPolicy=delete-statefulset-pod (02_longhorn). See 15_monitoring.md (failover).
       tolerations:
@@ -124,7 +115,6 @@ kube-prometheus-stack:
           operator: Exists
           effect: NoExecute
           tolerationSeconds: 30
-
   alertmanager:
     alertmanagerSpec:
       storage:
@@ -136,23 +126,37 @@ kube-prometheus-stack:
               requests:
                 storage: 1Gi
       resources:
-        requests: { cpu: 25m, memory: 64Mi }
-        limits:   { memory: 128Mi }
+        requests: {cpu: 25m, memory: 64Mi}
+        limits: {memory: 128Mi}
+      secrets:
+        - alertmanager-smtp
     # Default receiver = null (no destination). 15_monitoring/15_alertmanager_secret.sh overwrites this
     # block: the EMAIL variant (with alertmanagerSpec.secrets: [alertmanager-smtp]) when creds are
     # sealed, or back to this null variant otherwise. Don't hand-edit — re-run the script.
     config:
+      global:
+        smtp_smarthost: smtp.gmail.com:587
+        smtp_from: you@example.com
+        smtp_auth_username: you@example.com
+        smtp_auth_password_file: /etc/alertmanager/secrets/alertmanager-smtp/password
+        smtp_require_tls: true
       route:
-        receiver: "null"
-        group_by: ['alertname', 'namespace']
+        receiver: email
+        group_by:
+          - alertname
+          - namespace
+        group_wait: 30s
+        group_interval: 5m
+        repeat_interval: 4h
       receivers:
-        - name: "null"
-
+        - name: email
+          email_configs:
+            - to: you@example.com
+              send_resolved: true
   kube-state-metrics:
     resources:
-      requests: { cpu: 25m, memory: 64Mi }
-      limits:   { memory: 128Mi }
-
+      requests: {cpu: 25m, memory: 64Mi}
+      limits: {memory: 128Mi}
   prometheus-node-exporter:
     # DaemonSet must land on all 3 nodes. This is an all-control-plane cluster, so tolerate everything
     # rather than a control-plane nodeSelector (a node-role.kubernetes.io/control-plane:DoesNotExist
@@ -160,5 +164,5 @@ kube-prometheus-stack:
     tolerations:
       - operator: Exists
     resources:
-      requests: { cpu: 25m, memory: 32Mi }
-      limits:   { memory: 64Mi }
+      requests: {cpu: 25m, memory: 32Mi}
+      limits: {memory: 64Mi}
