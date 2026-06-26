@@ -1,0 +1,38 @@
+# Values for the 07_monitoring_ingress wrapper chart. SINGLE SOURCE OF TRUTH — ArgoCD (and any local
+# `helm template`) consume this. Mirrors 06_argocd_ingress, but list-valued for the two monitoring UIs.
+#
+# Each `hosts` entry fronts one UI on `host` through the shared Gateway, gated by Google SSO. The :443
+# listener for `host` must exist in 03_gateway's httpsHosts (name == listener `name`, hostname == `host`,
+# tlsSecretName == `tlsSecretName`). Routes are labelled `sso: <sso>` so the matching 04_google_sso
+# SecurityPolicy attaches Google login + the allowlist. See 15_monitoring.md.
+
+# The shared Gateway + its namespace (where the Certificates + HTTPRoutes live). MUST match 03_gateway.
+gatewayName: shared-gateway
+gatewayNamespace: gateway
+
+# The namespace the backend Services live in (the stack's namespace). The ReferenceGrant lands here.
+backendNamespace: monitoring
+
+# Cert issuer (HTTP-01). STAGING for brand-new hosts; flip to letsencrypt-prod once each issues (these
+# are browser-facing UIs, so a trusted cert is wanted — example.com's HTTP-01 path is already validated).
+issuer: letsencrypt-staging
+
+# Route label that opts these hosts into SSO. `sso: <domain>` -> gated by that domain's SecurityPolicy.
+routeLabelKey: sso
+sso: "example.com"
+
+# One entry per UI. backend.name/port are the stack's generated Services (verify:
+# kubectl get svc -n monitoring). Release name == Application name `kube-prometheus-stack`.
+hosts:
+  - name: prometheus
+    host: prometheus.example.com
+    tlsSecretName: prometheus-tls
+    backend:
+      name: kube-prometheus-stack-prometheus
+      port: 9090
+  - name: alertmanager
+    host: alertmanager.example.com
+    tlsSecretName: alertmanager-tls
+    backend:
+      name: kube-prometheus-stack-alertmanager
+      port: 9093

@@ -1,0 +1,20 @@
+apiVersion: v2
+name: kube-prometheus-stack
+description: >-
+  Wrapper chart for the monitoring core — kube-prometheus-stack (Prometheus + Alertmanager +
+  node-exporter + kube-state-metrics, operator-managed), single-replica StatefulSets backed by
+  Longhorn. Bundled Grafana is OFF, but the stack still emits its curated dashboard + datasource
+  ConfigMaps for a future standalone Grafana. CRDs are installed separately (00_prometheus_operator_crds,
+  crds.enabled:false here). Single source of truth for the chart version (this file) and all config
+  (values.yaml, under the `kube-prometheus-stack:` key) — EXCEPT the Alertmanager receiver/secret block,
+  which 15_monitoring/15_alertmanager_secret.sh writes into values.yaml on demand (null receiver until
+  creds are sealed). Delivered by ArgoCD via argo_apps/apps/07_kube_prometheus_stack.yaml — wave 7
+  (after Longhorn/cert-manager wave 2; the CRDs are foundational at wave 0). See 15_monitoring.md.
+type: application
+version: 0.1.0                 # this wrapper chart's own version
+appVersion: "v0.92.0"         # prometheus-operator version the pinned chart ships (mirrors the dependency)
+
+dependencies:
+  - name: kube-prometheus-stack
+    version: "87.2.1"         # prometheus-community/kube-prometheus-stack — THE single source for the pin
+    repository: https://prometheus-community.github.io/helm-charts

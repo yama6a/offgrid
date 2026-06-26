@@ -36,9 +36,16 @@ argo-cd:
       timeout.reconciliation: 10s
       timeout.reconciliation.jitter: 2s
 
+  # --- Prometheus metrics: per-component metrics Service + ServiceMonitor. Discovered cluster-wide
+  # via the stack's serviceMonitorSelectorNilUsesHelmValues:false. CRDs exist from wave 0, before this
+  # wave-1 app. See 15_monitoring.md.
   # --- the reconciler: singleton StatefulSet, self-heals on restart --------------------------
   controller:
     replicas: 1
+    metrics:
+      enabled: true
+      serviceMonitor:
+        enabled: true
     resources:
       requests: { cpu: 100m, memory: 256Mi }
       limits:   { memory: 512Mi }
@@ -46,6 +53,10 @@ argo-cd:
   # --- manifest generation: 2 replicas on 2 nodes + PDB (stays up across a node drain) -------
   repoServer:
     replicas: 2
+    metrics:
+      enabled: true
+      serviceMonitor:
+        enabled: true
     pdb:
       enabled: true
       minAvailable: 1
@@ -56,6 +67,10 @@ argo-cd:
   # --- API/UI: 2 replicas on 2 nodes + PDB ---------------------------------------------------
   server:
     replicas: 2
+    metrics:
+      enabled: true
+      serviceMonitor:
+        enabled: true
     pdb:
       enabled: true
       minAvailable: 1
@@ -67,6 +82,10 @@ argo-cd:
   # (drop to 1 if RAM gets tight once Longhorn + monitoring land.)
   applicationSet:
     replicas: 2
+    metrics:
+      enabled: true
+      serviceMonitor:
+        enabled: true
     resources:
       requests: { cpu: 50m, memory: 128Mi }
       limits:   { memory: 256Mi }

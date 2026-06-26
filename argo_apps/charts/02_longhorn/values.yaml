@@ -20,6 +20,14 @@ longhorn:
     # Keep headroom on the Pi NVMes — don't schedule replicas onto a disk under 15% free.
     storageMinimalAvailablePercentage: 15
 
+    # When a node goes down, force-delete the StatefulSet pods bound to it so the scheduler can
+    # reschedule them onto a surviving node instead of waiting indefinitely for the dead node. Single-
+    # replica StatefulSets (Prometheus, Alertmanager — 07_kube_prometheus_stack) otherwise hang on a
+    # lost node; with replica-3 Longhorn volumes the rescheduled pod re-attaches from a surviving
+    # replica. The NICs on this cluster are flaky, so node loss is a real, recurring case. See
+    # 15_monitoring.md (failover).
+    nodeDownPodDeletionPolicy: delete-statefulset-pod
+
   persistence:
     # Longhorn is the cluster's only storage, so make it the default StorageClass. Flip to false
     # if you'd rather PVCs name `longhorn` explicitly.
@@ -30,3 +38,9 @@ longhorn:
   # sync waiting on its completion; version control already lives in git, so disable it.
   preUpgradeChecker:
     jobEnabled: false
+
+  # Create the Longhorn Manager ServiceMonitor so Prometheus scrapes storage metrics (volume health,
+  # capacity, replica state). CRDs exist from wave 0, before this wave-2 app. See 15_monitoring.md.
+  metrics:
+    serviceMonitor:
+      enabled: true

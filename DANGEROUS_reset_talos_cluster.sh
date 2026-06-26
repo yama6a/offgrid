@@ -1,5 +1,13 @@
 #!/usr/bin/env bash
-
+#
+# DANGEROUS — wipes the whole cluster back to maintenance, INCLUDING all persistent data.
+#
+# Wipes STATE + EPHEMERAL (Talos persistent state + k8s/etcd) AND `u-longhorn` (the dedicated Longhorn
+# user volume, /dev/nvme0n1p7 — provisioned by 03d). Keeps BOOT/EFI/META, so nodes reboot straight to
+# maintenance — NO reflash needed. Wiping Longhorn too means NO orphaned replica data ever survives a
+# reset: a rebuilt cluster always starts from a clean disk (the old volume CRs die with etcd anyway).
+# Recoverable state (k8s objects) comes back from git via ArgoCD; the Longhorn data is gone for good.
+#
 set -euo pipefail
 
 cd ./03_operating_system
@@ -8,7 +16,7 @@ OUTDIR="$PWD/talos-cluster"
 talosctl() { docker run --rm --network host -v "$OUTDIR:/work" -w /work \
   -e TALOSCONFIG=/work/talosconfig "ghcr.io/siderolabs/talosctl:v1.13.4" "$@"; }
 
-read -r -p ">> Destroy ENTIRE Talos Cluster? type YES: " ok
+read -r -p ">> Destroy ENTIRE Talos cluster AND wipe ALL Longhorn/PVC data (u-longhorn)? type YES: " ok
 [ "${ok}" = "YES" ] || { echo "skipped destruction (phew!)."; exit 0; }
 
 NODES=(192.168.10.201 192.168.10.202 192.168.10.203)
@@ -16,12 +24,17 @@ NODES=(192.168.10.201 192.168.10.202 192.168.10.203)
 # Reset every node at once — they're all being wiped + rebooted (graceful=false), so there's no
 # reason to serialize. Each runs in its own subshell/container; output is prefixed with the node IP
 # so the interleaved streams stay readable. PIPESTATUS[0] propagates talosctl's status past the sed.
-echo ">> resetting ${#NODES[@]} nodes in parallel -> maintenance"
+#
+# --system-labels-to-wipe takes partition labels resolved against each node's VolumeStatus (NOT a fixed
+# STATE/EPHEMERAL/META set): u-longhorn is the Longhorn user volume (03d UserVolumeConfig name `longhorn`
+# -> partition label `u-longhorn`). Wiping it here is what guarantees no orphaned replica data survives.
+# 03d re-creates the EPHEMERAL + u-longhorn partitions on the next config apply.
+echo ">> resetting ${#NODES[@]} nodes in parallel (STATE,EPHEMERAL,u-longhorn) -> maintenance"
 pids=()
 for ip in "${NODES[@]}"; do
   (
     talosctl reset -e "$ip" -n "$ip" \
-      --system-labels-to-wipe STATE,EPHEMERAL \
+      --system-labels-to-wipe STATE,EPHEMERAL,u-longhorn \
       --reboot --graceful=false 2>&1 | sed "s/^/[$ip] /"
     exit "${PIPESTATUS[0]}"
   ) &

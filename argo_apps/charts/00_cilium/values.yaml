@@ -22,10 +22,27 @@ cilium:
     # CRDs survive the removal (this app is prune:false) and Envoy Gateway adopts them via SSA.
     # See 11_envoy_gateway.md.
     enabled: false
+  # Expose agent + operator metrics and create their ServiceMonitors so Prometheus scrapes Cilium.
+  # The monitoring.coreos.com CRDs exist from wave 0 (00_prometheus_operator_crds) — same wave as this
+  # app — so on a cold boot these ServiceMonitors converge once the CRDs register. See 15_monitoring.md.
+  prometheus:
+    enabled: true
+    serviceMonitor:
+      enabled: true
+  operator:
+    prometheus:
+      enabled: true
+      serviceMonitor:
+        enabled: true
   hubble:
     enabled: true
     relay: {enabled: true}
     ui: {enabled: true}
+    # Hubble flow metrics (a lean set — keeps cardinality bounded on the Pis; add httpV2 if wanted).
+    metrics:
+      enabled: [dns, drop, tcp, flow, icmp, port-distribution]
+      serviceMonitor:
+        enabled: true
   # Talos-specific: it doesn't auto-mount cgroup v2, and the agent needs an explicit cap set.
   cgroup:
     autoMount: {enabled: false}

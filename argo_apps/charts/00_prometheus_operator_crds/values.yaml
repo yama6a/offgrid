@@ -1,0 +1,9 @@
+# Values for the 00_prometheus_operator_crds wrapper chart. SINGLE SOURCE OF TRUTH — ArgoCD (and any
+# local `helm template`) consume this. Chart version pinned in Chart.yaml. See 15_monitoring.md.
+#
+# Everything under `prometheus-operator-crds:` is passed to the upstream prometheus-operator-crds
+# subchart (key == dependency name). We want ALL CRDs — the stack and the per-component monitors use
+# the full set (Prometheus, Alertmanager, ServiceMonitor, PodMonitor, PrometheusRule, Probe,
+# ScrapeConfig). The upstream defaults already enable every CRD, so this block stays empty on purpose;
+# it's the documented place to disable an individual CRD later (e.g. `crds: { enabled: { Probe: false } }`).
+prometheus-operator-crds: {}

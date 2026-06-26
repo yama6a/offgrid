@@ -23,3 +23,9 @@ sealed-secrets:
   resources:
     requests: { cpu: 25m, memory: 64Mi }
     limits:   { memory: 128Mi }
+
+  # Create the controller's ServiceMonitor so Prometheus scrapes seal/unseal + key-age metrics.
+  # CRDs exist from wave 0, before this wave-2 app. See 15_monitoring.md.
+  metrics:
+    serviceMonitor:
+      enabled: true

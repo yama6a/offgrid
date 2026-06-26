@@ -16,6 +16,14 @@ cert-manager:
     # Issuer and Order CR down with them. `keep` leaves the CRDs in place on uninstall/prune.
     keep: true
 
+  # Expose controller metrics (default on) + create the ServiceMonitor so Prometheus scrapes
+  # cert-manager. NOTE the lowercase `servicemonitor` key — cert-manager spells it differently from
+  # most charts. CRDs exist from wave 0, before this wave-2 app. See 15_monitoring.md.
+  prometheus:
+    enabled: true
+    servicemonitor:
+      enabled: true
+
   # Modest footprint for a 3x 8GB Pi 5 cluster — three light components (controller, webhook,
   # cainjector). Defaults are generous; trim requests, keep memory limits to bound the webhook.
   resources:

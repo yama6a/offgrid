@@ -1,0 +1,18 @@
+# cert-manager mints one Certificate per UI (HTTP-01 via the Gateway) into the Secret each listener
+# (03_gateway httpsHosts) references. In the gateway namespace, alongside the Gateway + its TLS Secrets.
+# STAGING by default — flip .Values.issuer to letsencrypt-prod once they issue (browser-facing UIs).
+{{- range .Values.hosts }}
+---
+apiVersion: cert-manager.io/v1
+kind: Certificate
+metadata:
+  name: {{ .name }}
+  namespace: {{ $.Values.gatewayNamespace }}
+spec:
+  secretName: {{ .tlsSecretName | quote }}
+  dnsNames:
+    - {{ .host | quote }}
+  issuerRef:
+    name: {{ $.Values.issuer | quote }}
+    kind: ClusterIssuer
+{{- end }}

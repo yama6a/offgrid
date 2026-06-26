@@ -58,3 +58,10 @@ httpsHosts:
   - name: google-sso-yama-casa
     hostname: google-sso.yama.casa
     tlsSecretName: google-sso-yama-casa-tls
+  # monitoring UIs, fronted by Google SSO (07_monitoring_ingress)
+  - name: prometheus
+    hostname: prometheus.example.com
+    tlsSecretName: prometheus-tls
+  - name: alertmanager
+    hostname: alertmanager.example.com
+    tlsSecretName: alertmanager-tls

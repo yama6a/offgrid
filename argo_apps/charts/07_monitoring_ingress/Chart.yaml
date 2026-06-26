@@ -1,0 +1,13 @@
+apiVersion: v2
+name: monitoring-ingress
+description: >-
+  Exposes the Prometheus + Alertmanager UIs through the shared Gateway, fronted by Google SSO. The
+  stack itself is untouched — this is just the edge: per host a Certificate + an `sso`-labelled HTTPRoute
+  (so the 04_google_sso example.com SecurityPolicy gates it behind Google login + the allowlist) + one
+  ReferenceGrant letting those routes reach the monitoring Services cross-namespace. The UIs have NO
+  login of their own, so the SSO gate is the ONLY barrier — which is the point. The :443 listeners live
+  on the Gateway (03_gateway httpsHosts: prometheus, alertmanager). No upstream dependency, so no
+  Chart.lock. Delivered by ArgoCD via argo_apps/apps/07_monitoring_ingress.yaml — wave 7 (after the
+  gateway wave 3 + the SSO policy wave 4; same wave as the stack it fronts). See 15_monitoring.md.
+type: application
+version: 0.1.0
