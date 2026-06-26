@@ -47,8 +47,8 @@ argo-cd:
       serviceMonitor:
         enabled: true
     resources:
-      requests: { cpu: 100m, memory: 256Mi }
-      limits:   { memory: 512Mi }
+      requests: { cpu: 100m, memory: 512Mi }
+      limits:   { memory: 4Gi }
 
   # --- manifest generation: 2 replicas on 2 nodes + PDB (stays up across a node drain) -------
   repoServer:
