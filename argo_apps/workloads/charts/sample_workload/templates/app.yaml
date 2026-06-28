@@ -29,8 +29,17 @@ spec:
             # Make the chart's `app.port` authoritative (the app honours PORT; defaults to 8080).
             - name: PORT
               value: {{ .Values.app.port | quote }}
-            # The Postgres app-role password, from the CNPG operator-generated Secret in this namespace.
-            # Blank pgPasswordSecret => derive `<release>-cluster-app` (the cnpg/cluster fullname + -app).
+            # Postgres connection, fed to the app's DSNFromEnv() as discrete PG_* parts (it assembles +
+            # escapes the DSN itself — safer than passing a pre-built URL with the raw password). Points at
+            # THIS chart's CNPG cluster: the `<release>-cluster-rw` read-write Service in this namespace,
+            # with the initdb owner/database. PG_PASSWORD comes from the CNPG operator-generated Secret
+            # (blank pgPasswordSecret => derive `<release>-cluster-app`, the cnpg/cluster fullname + -app).
+            - name: PG_HOST
+              value: "{{ .Release.Name }}-cluster-rw.{{ .Release.Namespace }}.svc.cluster.local"
+            - name: PG_USER
+              value: {{ .Values.cluster.cluster.initdb.owner | quote }}
+            - name: PG_DATABASE
+              value: {{ .Values.cluster.cluster.initdb.database | quote }}
             - name: PG_PASSWORD
               valueFrom:
                 secretKeyRef:
