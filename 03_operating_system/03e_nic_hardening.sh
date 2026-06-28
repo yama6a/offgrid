@@ -33,8 +33,12 @@ KUBECTL_IMAGE="${KUBECTL_IMAGE:-registry.k8s.io/kubectl:v1.36.1}"   # ~match clu
 DEBUG_IMAGE="${DEBUG_IMAGE:-alpine:3.21}"  # probe pod; apk-installs ethtool
 WATCHDOG_TIMEOUT="${WATCHDOG_TIMEOUT:-15s}"  # desired; floored to 10s (Talos min); Pi hw max ~15s
 APPLY_MODE="${APPLY_MODE:-no-reboot}"      # never silently reboot control-plane nodes
-SETTLE_WAIT="${SETTLE_WAIT:-60}"           # secs to wait for the VIP/API to steady after the NIC reconfig
-SETTLE_STREAK="${SETTLE_STREAK:-5}"        # consecutive /readyz hits required (one success isn't enough)
+SETTLE_GRACE="${SETTLE_GRACE:-90}"         # secs to wait BEFORE probing — the NIC reconfig takes a while to
+                                           # kick in and bounce end0/the VIP; probing too early banks a false
+                                           # streak off the still-up old API and exits before the blip even hits
+SETTLE_WAIT="${SETTLE_WAIT:-180}"          # secs to poll for the VIP/API to steady (after the grace above)
+SETTLE_STREAK="${SETTLE_STREAK:-3}"        # consecutive /readyz hits required (one success isn't enough)
+SETTLE_INTERVAL="${SETTLE_INTERVAL:-10}"   # secs between /readyz probes — poll periodically, never blind-sleep
 # TSO / GSO / GRO -> their kernel netdev feature names (what EthernetConfig/EthernetStatus use).
 OFFLOAD_KEYS=(tx-tcp-segmentation tx-generic-segmentation rx-gro)
 PROBE_NS="kube-system"                     # Talos exempts kube-system from Pod Security
@@ -221,16 +225,22 @@ done
 # The EthernetConfig ring-resize re-inits the macb rings, which bounces end0's link for a few seconds —
 # and the control-plane VIP rides on end0. That blip is what made 04_cilium's kubectl/helm hit
 # "network is unreachable". The checks above confirm the CONFIG landed (talosctl hits node IPs direct),
-# NOT that the VIP/API is back. So poll the apiserver over the VIP until it answers SETTLE_STREAK times
-# in a row before exiting — one success isn't enough (a single good hit is what fooled 04). Tunable via
-# SETTLE_WAIT / SETTLE_STREAK.
+# NOT that the VIP/API is back.
+#
+# Two-stage settle: (1) a fixed GRACE wait first, because the reconfig can take a while to actually kick
+# in — probe immediately and you'd bank a streak off the OLD still-up API and exit before the blip hits.
+# (2) Then poll the apiserver over the VIP every SETTLE_INTERVAL until it answers SETTLE_STREAK times in a
+# row — one success isn't enough (a single good hit is what fooled 04). Tunable via
+# SETTLE_GRACE / SETTLE_WAIT / SETTLE_STREAK / SETTLE_INTERVAL.
+say "letting the NIC reconfig take effect before probing (grace ${SETTLE_GRACE}s)..."
+sleep "$SETTLE_GRACE"
 say "waiting for the control-plane API to be steady over the VIP (post-NIC-reconfig settle)"
 streak=0; deadline=$(( $(date +%s) + SETTLE_WAIT ))
 until [ "$streak" -ge "$SETTLE_STREAK" ]; do
   if kubectl get --raw='/readyz' >/dev/null 2>&1; then streak=$((streak+1)); else streak=0; fi
   [ "$streak" -ge "$SETTLE_STREAK" ] && break
   [ "$(date +%s)" -lt "$deadline" ] || break
-  printf '.'; sleep 2
+  printf '.'; sleep "$SETTLE_INTERVAL"
 done
 echo
 [ "$streak" -ge "$SETTLE_STREAK" ] \
