@@ -1,0 +1,30 @@
+# Values for the gateway_test wrapper chart. SINGLE SOURCE OF TRUTH — ArgoCD (and any local
+# `helm template`) consume this.
+#
+# Demo echo apps behind the shared Gateway, each rendering a Deployment + Service + Certificate +
+# HTTPRoute. For each app the Gateway must already terminate its hostname — i.e. there is a matching
+# 03_gateway httpsHosts entry where name == listenerName, hostname == host, tlsSecretName == tlsSecretName
+# (one Gateway + HTTP-01 = a listener per host; no wildcard without DNS-01). Set `sso` to an SSO domain to
+# protect an app (its route gets label sso:<domain>, picked up by the 04_google_sso policy); leave it
+# empty for an open app. See 13_gateway_test.md.
+
+gatewayName: shared-gateway
+namespace: gateway
+image: "traefik/whoami:v1.10.3"
+
+apps:
+  # The unprotected control — proves the raw HTTPS path; no sso label, so it stays open.
+  - name: gateway-test
+    host: gateway-test.example.com
+    listenerName: gateway-test
+    tlsSecretName: gateway-test-tls
+    issuer: letsencrypt-staging
+    sso: ""
+  # The protected demo — labelled sso:example.com, so the example.com SecurityPolicy (04_google_sso)
+  # gates it behind Google login + the example.com allowlist. Auth bounces via google-sso.example.com.
+  - name: gateway-test-sso
+    host: gateway-test-sso.example.com
+    listenerName: gateway-test-sso
+    tlsSecretName: gateway-test-sso-tls
+    issuer: letsencrypt-staging
+    sso: "example.com"

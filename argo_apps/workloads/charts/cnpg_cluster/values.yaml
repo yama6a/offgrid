@@ -1,0 +1,67 @@
+# Values for the cnpg_cluster wrapper chart. SINGLE SOURCE OF TRUTH — ArgoCD (and any local
+# `helm template`) consume this. Chart version pinned in Chart.yaml. See 17_cnpg.md for the why.
+#
+# The Cluster runs in its own `databases` namespace (CreateNamespace=true in the Application). The
+# CNPG operator (platform app 02_cnpg_operator) reconciles it; the Postgres pods run non-root (uid 26),
+# so the namespace stays restricted-compatible.
+#
+# NOTE on nesting: everything is under `cluster:` because that's the dependency NAME (cnpg/cluster).
+# The upstream chart ITSELF has a top-level `cluster:` map for the Cluster CR spec, hence the
+# `cluster.cluster.*` double key below — that's expected, not a typo.
+cluster:
+  # postgresql | postgis | timescaledb — plain Postgres here.
+  type: postgresql
+
+  # ---- the Cluster CR spec ----
+  cluster:
+    # 3 instances -> 1 primary + 2 streaming replicas, one per Pi node. HA comes from Postgres
+    # failover (a replica is promoted on node loss), which is why the storage below is single-replica.
+    instances: 3
+
+    storage:
+      # Dedicated single-replica Longhorn class (templates/storageclass-longhorn-single.yaml) — avoids
+      # 3x3 write amplification since Postgres already replicates across the 3 instances. See 17_cnpg.md.
+      storageClass: longhorn-single
+      size: 10Gi
+
+    # The chart's default anti-affinity spreads by `topology.kubernetes.io/zone`, but bare Pi nodes
+    # carry no zone label, so all 3 instances could land on one node. Spread by hostname instead so
+    # the 1 primary + 2 replicas occupy 3 distinct nodes (true node-loss HA, matching the storage).
+    affinity:
+      topologyKey: kubernetes.io/hostname
+
+    # Conservative footprint for the Pi 5s (8 GB RAM, lots already running). Per-instance.
+    resources:
+      requests:
+        cpu: 250m
+        memory: 256Mi
+      limits:
+        cpu: "1"
+        memory: 512Mi
+
+    # Tune Postgres to the 512Mi memory limit above.
+    postgresql:
+      parameters:
+        max_connections: "50"
+        shared_buffers: "128MB"
+
+    # Emit the Cluster's PodMonitor so vmagent scrapes per-instance Postgres metrics; the operator's
+    # PrometheusRule ships CNPG alerts. Both are auto-converted by the VM operator and discovered
+    # cluster-wide — wires into VictoriaMetrics with no extra config. See 15_monitoring.md.
+    monitoring:
+      enabled: true
+      podMonitor:
+        enabled: true
+      prometheusRule:
+        enabled: true
+
+    # Bootstrap an `app` database owned by an `app` role; the operator auto-generates the owner's
+    # credentials into a Secret (no sealed-secret needed for this demo cluster).
+    initdb:
+      database: app
+      owner: app
+
+  # No object-storage (Barman) backups in this pass — add later via the cnpg/plugin-barman-cloud and
+  # a sealed-secret for the S3 credentials. The cluster data still lives on Longhorn PVCs.
+  backups:
+    enabled: false

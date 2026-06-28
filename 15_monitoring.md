@@ -230,7 +230,7 @@ surviving replica (with replica 3, every node has one locally). Metrics are dura
 scrape window during reschedule.
 
 - The 30s `unreachable`/`not-ready` tolerations (stack values) + Longhorn
-  `nodeDownPodDeletionPolicy: delete-statefulset-pod` ([02_longhorn](argo_apps/charts/02_longhorn/values.yaml))
+  `nodeDownPodDeletionPolicy: delete-statefulset-pod` ([02_longhorn](argo_apps/platform/charts/02_longhorn/values.yaml))
   give **~1–2 min** recovery + a matching graph gap, then WAL replay (seconds at this cardinality).
 - **Without** those two settings it's ~5–6 min on a hard node failure. The NICs here are flaky
   ([06_nic_keeper.md](06_nic_keeper.md)), so node loss is a real recurring case — **verify the Longhorn

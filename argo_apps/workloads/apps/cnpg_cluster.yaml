@@ -1,0 +1,34 @@
+# ArgoCD Application for the CNPG Postgres Cluster (argo_apps/workloads/charts/cnpg_cluster/) — a
+# 3-instance HA Postgres (1 primary + 2 streaming replicas, one per Pi node) plus its dedicated
+# single-replica `longhorn-single` StorageClass. The CNPG operator (a platform app, wave 2) reconciles
+# it. See 17_cnpg.md.
+#
+# AUTOMATED (prune + selfHeal): drift auto-corrects. A prune is data-safe — the PVCs use the
+# `longhorn-single` class with reclaimPolicy: Retain, so removing the Cluster CR never destroys the
+# underlying Longhorn volumes.
+#
+# A WORKLOAD, not platform: lives in the workloads tree, which the root-of-roots only creates AFTER the
+# whole platform tree is Healthy. So the operator's Cluster CRD and Longhorn's CSI driver are guaranteed
+# present before this Cluster CR / StorageClass is applied — without any per-app sync-wave. Workloads
+# carry no wave and all reconcile in parallel. See 05_gitops.md.
+apiVersion: argoproj.io/v1alpha1
+kind: Application
+metadata:
+  name: cnpg-cluster
+  namespace: argocd
+spec:
+  project: default
+  source:
+    repoURL: https://github.com/yama6a/offgrid
+    targetRevision: HEAD
+    path: argo_apps/workloads/charts/cnpg_cluster
+  destination:
+    server: https://kubernetes.default.svc
+    namespace: databases
+  syncPolicy:
+    automated:
+      prune: true
+      selfHeal: true
+    syncOptions:
+      - CreateNamespace=true
+      - ServerSideApply=true   # the Cluster CR is large — SSA avoids the last-applied-annotation limit

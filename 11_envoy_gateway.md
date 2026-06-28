@@ -7,16 +7,16 @@ label** ([12_google_sso.md](12_google_sso.md)) — Cilium Gateway API has no per
 
 Delivered purely by ArgoCD:
 
-- `argo_apps/apps/01_envoy_gateway.yaml` — the Application, **sync-wave 1**.
-- `argo_apps/charts/01_envoy_gateway/` — the wrapper chart: the envoy-gateway controller (upstream
+- `argo_apps/platform/apps/01_envoy_gateway.yaml` — the Application, **sync-wave 1**.
+- `argo_apps/platform/charts/01_envoy_gateway/` — the wrapper chart: the envoy-gateway controller (upstream
   `gateway-helm`), the `eg` `GatewayClass`, and an `EnvoyProxy` that pins the LoadBalancer IP.
-- a one-line flip in `argo_apps/charts/00_cilium/values.yaml` (`gatewayAPI.enabled: false`) + removal
+- a one-line flip in `argo_apps/platform/charts/00_cilium/values.yaml` (`gatewayAPI.enabled: false`) + removal
   of the vendored Gateway API CRDs.
-- `argo_apps/charts/03_gateway/` retargeted to `gatewayClassName: eg` (it's now platform-only — Gateway
-  + listeners + issuers; the demo apps live in [05_gateway_test](13_gateway_test.md)).
+- `argo_apps/platform/charts/03_gateway/` retargeted to `gatewayClassName: eg` (it's now platform-only — Gateway
+  + listeners + issuers; the demo apps live in [gateway-test](13_gateway_test.md)).
 
 This step has **no imperative script** — the only manual action is generating the chart's `Chart.lock`
-(`helm dependency update argo_apps/charts/01_envoy_gateway` + commit), like the other dependency charts.
+(`helm dependency update argo_apps/platform/charts/01_envoy_gateway` + commit), like the other dependency charts.
 
 ## Why Envoy Gateway
 
@@ -32,7 +32,7 @@ the one thing that terminates and routes ingress.
 ### Cilium stops being the gateway; Envoy Gateway owns the Gateway API CRDs
 `cilium.gatewayAPI.enabled: false` drops the `cilium` `GatewayClass` and Cilium's gateway controller.
 Envoy Gateway's `gateway-helm` vendors the Gateway API CRDs (it ships **v1.5.1**, newer than the v1.4.1
-Cilium vendored), so we **remove** `argo_apps/charts/00_cilium/crds/gateway.networking.k8s.io_*.yaml`
+Cilium vendored), so we **remove** `argo_apps/platform/charts/00_cilium/crds/gateway.networking.k8s.io_*.yaml`
 and let Envoy Gateway be the single owner. The handover is safe: the Cilium app is `prune: false`, so
 dropping the CRD files never cascade-deletes the live CRDs; Envoy Gateway re-applies them via
 ServerSideApply and adopts field ownership. No Gateway/HTTPRoute is lost.
@@ -56,7 +56,7 @@ its `spec.addresses` request for the same IP. The IP must stay inside the LB-IPA
 The `gatewayHTTPRoute` solver is standard Gateway API — cert-manager creates a temporary HTTPRoute on
 the `:80` listener exactly as before, now served by Envoy Gateway. No ClusterIssuer change. The
 `03_gateway` chart's issuers + Gateway carry over untouched apart from the class (its demo apps have
-since moved to [`05_gateway_test`](13_gateway_test.md), and per-host certs/routes are owned by each app).
+since moved to [`gateway-test`](13_gateway_test.md), and per-host certs/routes are owned by each app).
 
 ### The `eg` GatewayClass + EnvoyProxy live in the controller chart
 `GatewayClass eg` (`controllerName: gateway.envoyproxy.io/gatewayclass-controller`) points its
@@ -66,7 +66,7 @@ the pinned-IP provider config. The shared Gateway (`03_gateway` chart) just sets
 
 ## Apply / verify
 
-1. Generate the lock and commit: `helm dependency update argo_apps/charts/01_envoy_gateway` then commit
+1. Generate the lock and commit: `helm dependency update argo_apps/platform/charts/01_envoy_gateway` then commit
    `Chart.lock` (the vendored `charts/*.tgz` is gitignored, reproduced from the lock — same as the other
    wrapper charts).
 2. `git add -A && git commit && git push`. ArgoCD brings up Envoy Gateway (wave 1), then the rest of the
@@ -79,7 +79,7 @@ Checks:
 - `kubectl -n envoy-gateway-system get pods` → controller Running; a data-plane `envoy-*` pod appears
   once the Gateway is programmed, and its Service has EXTERNAL-IP `192.168.100.10`.
 - `kubectl get clusterissuer` → both Ready; `kubectl -n gateway get certificate` issuing as before.
-- once the demo apps ([05_gateway_test](13_gateway_test.md)) sync,
+- once the demo apps ([gateway-test](13_gateway_test.md)) sync,
   `curl -kv https://gateway-test.<baseDomain>/` → the whoami echo (no auth — the unprotected control;
   `gateway-test-sso` gets SSO in step 12).
 

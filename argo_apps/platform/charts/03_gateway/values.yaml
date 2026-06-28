@@ -1,0 +1,71 @@
+# Values for the 03_gateway wrapper chart. SINGLE SOURCE OF TRUTH — ArgoCD (and any local
+# `helm template`) consume this. See 10_gateway.md for the why.
+#
+# This chart is the cluster's INGRESS PLATFORM only:
+#   1. the shared Gateway (one ingress point, pinned LB IP) on the Envoy Gateway `eg` class, and
+#   2. the Let's Encrypt ClusterIssuers that mint certs via HTTP-01 solved through that Gateway.
+# It owns NO apps. Each HTTPS host the Gateway terminates is just a listener entry in `httpsHosts`
+# below; the owning app ships its Certificate + HTTPRoute (+ workload) in its own wave: the demo apps
+# in gateway-test, the SSO callback hosts in 04_google_sso. See 10_gateway.md / 11_envoy_gateway.md.
+
+gateway:
+  name: shared-gateway
+  # Dedicated namespace. App HTTPRoutes attach cross-namespace (listener allowedRoutes.from: All),
+  # and the gateway's TLS Secrets live here too. Created via CreateNamespace in the Application.
+  namespace: gateway
+  # Envoy Gateway's class (registered by the 01_envoy_gateway chart). See 11_envoy_gateway.md.
+  className: eg
+  # Pinned LoadBalancer IP, from the Cilium LB-IPAM pool in 04_networking/config.sh (192.168.100.10-250).
+  # MUST sit inside that pool. The IP the old Pi forwards :80/:443 to. Requested via spec.addresses below
+  # AND the EnvoyProxy's lbipam.cilium.io/ips annotation (01_envoy_gateway chart). See 11_envoy_gateway.md.
+  loadBalancerIP: "192.168.100.10"
+# Primary domain (informational; 10_gateway/10_gateway.sh writes this AND acme.email here from
+# 10_gateway/config.sh via yq). Hostnames are spelled out explicitly in httpsHosts / per-app values
+# because the cluster now serves more than one domain.
+baseDomain: example.com
+acme:
+  # ACME registration email (account-level; LE expiry notices go here).
+  email: "letsencrypt@example.com"
+  # Two issuers: ALWAYS test a new host against staging first (generous limits, untrusted-but-harmless
+  # certs), then switch the host's Certificate to prod once issuance works. Prod has tight rate limits.
+  issuers:
+    - name: letsencrypt-staging
+      server: "https://acme-staging-v02.api.letsencrypt.org/directory"
+    - name: letsencrypt-prod
+      server: "https://acme-v02.api.letsencrypt.org/directory"
+# Every HTTPS host the shared Gateway terminates TLS for — one :443 listener per entry. Each references
+# a cert Secret that the OWNING app fills via HTTP-01 (apps own the Certificate + HTTPRoute + workload;
+# this list is only "which hostnames the Gateway terminates"). One Gateway + HTTP-01 means a listener
+# per host here — there is no wildcard listener without DNS-01, which we don't have. Coordination: an
+# app's HTTPRoute parentRef.sectionName must equal `name`, its hostname must equal `hostname`, and its
+# Certificate secretName must equal `tlsSecretName`. See 10_gateway.md.
+httpsHosts:
+  # demo apps (gateway-test)
+  - name: gateway-test
+    hostname: gateway-test.example.com
+    tlsSecretName: gateway-test-tls
+  - name: gateway-test-sso
+    hostname: gateway-test-sso.example.com
+    tlsSecretName: gateway-test-sso-tls
+  # the ArgoCD UI, fronted by Google SSO (06_argocd_ingress)
+  - name: argocd
+    hostname: argocd.example.com
+    tlsSecretName: argocd-tls
+  # SSO shared callback hosts (04_google_sso) — one per SSO domain (google-sso.<domain>)
+  - name: google-sso-example-com
+    hostname: google-sso.example.com
+    tlsSecretName: google-sso-example-com-tls
+  - name: google-sso-yama-casa
+    hostname: google-sso.yama.casa
+    tlsSecretName: google-sso-yama-casa-tls
+  # monitoring UIs, fronted by Google SSO (07_monitoring_ingress) — VictoriaMetrics vmui, VictoriaLogs UI
+  # and Grafana (replaced the retired Prometheus/Alertmanager UIs).
+  - name: vmui
+    hostname: vmui.example.com
+    tlsSecretName: vmui-tls
+  - name: vlogs
+    hostname: vlogs.example.com
+    tlsSecretName: vlogs-tls
+  - name: grafana
+    hostname: grafana.example.com
+    tlsSecretName: grafana-tls

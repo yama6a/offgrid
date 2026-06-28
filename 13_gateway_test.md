@@ -10,8 +10,9 @@ Throwaway `whoami` echo apps that exercise the shared Gateway end to end — **s
 
 Delivered purely by ArgoCD:
 
-- `argo_apps/apps/05_gateway_test.yaml` — the Application, **sync-wave 5**.
-- `argo_apps/charts/05_gateway_test/` — a generic `apps` list; each entry renders a Deployment +
+- `argo_apps/workloads/apps/gateway_test.yaml` — the Application. A **workload** (in the workloads tree),
+  so **no `NN_` number and no `sync-wave`** — see "Ordering" below.
+- `argo_apps/workloads/charts/gateway_test/` — a generic `apps` list; each entry renders a Deployment +
   Service + Certificate + HTTPRoute. No upstream dependency (first-party resources + a tiny Deployment),
   so no `Chart.lock`.
 
@@ -37,9 +38,9 @@ the Gateway listener references), and the `HTTPRoute` (`parentRefs.sectionName: 
 
 ### Why split out of `03_gateway`
 The Gateway platform (Gateway + listeners + issuers) is one concern; demo/echo apps are another. Keeping
-them apart means `03_gateway` reads as "the ingress," and apps — demo or real — live in their own waves.
-This chart is the template for *any* app behind the Gateway: workload + cert + route + (optional) `sso`
-label.
+them apart means `03_gateway` reads as "the ingress," and apps — demo or real — live in the **workloads
+tree**, gated behind the whole platform. This chart is the template for *any* app behind the Gateway:
+workload + cert + route + (optional) `sso` label.
 
 ### The listener still lives on the Gateway (the HTTP-01 coupling)
 One shared Gateway + per-host HTTP-01 (no wildcard without DNS-01) means **every HTTPS host needs a
@@ -49,18 +50,21 @@ matching entry in `03_gateway`'s `httpsHosts` (`name == listenerName`, `hostname
 cert+route+workload here. That's the price of one Gateway + HTTP-01; a wildcard cert via DNS-01 would
 remove it, but we don't have DNS-01.
 
-### Sync-wave 5 — after the Gateway *and* the SSO policies
-Wave 5 sits after the Gateway (wave 3 — its listeners must exist) **and** the SSO policies (wave 4 — so
-`gateway-test-sso` is guarded the instant its labelled route appears, never briefly exposed). There's no
-*hard* dependency that stalls a wave (the route is Healthy with or without the policy); wave 5 is the
-ordering guarantee that a protected route never goes live before its policy — the same principle as the
-sync-wave convention in [CLAUDE.md](CLAUDE.md).
+### Ordering — a workload, gated behind the whole platform
+These apps need the Gateway listeners (platform wave 3) **and** the SSO policies (platform wave 4) to
+already exist — otherwise `gateway-test-sso` could be briefly exposed before its `SecurityPolicy`
+attaches. As a **workload** it gets that for free: the root-of-roots only creates the workloads tree
+**after the entire platform is Synced + Healthy**, so the Gateway and the SSO policies are guaranteed
+present before this route appears. That's why it needs no per-app `sync-wave` — the platform→workloads
+gate is the single ordering guarantee. See the two-tree model in [05_gitops.md](05_gitops.md) /
+[CLAUDE.md](CLAUDE.md).
 
 ## Apply / verify
 
 1. Ensure each app's hostname has a `03_gateway` `httpsHosts` listener, public DNS → home router, and the
    old Pi forwarding `:80` to the Gateway IP so HTTP-01 issues its cert (see [10_gateway.md](10_gateway.md)).
-2. `git add -A && git commit && git push` — ArgoCD (wave 5) applies the demo apps.
+2. `git add -A && git commit && git push` — ArgoCD applies the demo apps via the workloads tree (once the
+   platform is Healthy).
 
 Checks:
 

@@ -6,7 +6,7 @@ watchdog); the three remaining failure modes have **no `EthernetConfig` field** 
 live agent. That agent is `nic-keeper` — one DaemonSet pod per rpi5 node, delivered by ArgoCD
 ([05_gitops.md](05_gitops.md)) at sync-wave 2.
 
-Chart: `argo_apps/charts/02_nic_keeper/` · Application: `argo_apps/apps/02_nic_keeper.yaml`.
+Chart: `argo_apps/platform/charts/02_nic_keeper/` · Application: `argo_apps/platform/apps/02_nic_keeper.yaml`.
 
 ## Problem
 

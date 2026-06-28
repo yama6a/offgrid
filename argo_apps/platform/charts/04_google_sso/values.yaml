@@ -1,0 +1,61 @@
+# Values for the 04_google_sso wrapper chart. SINGLE SOURCE OF TRUTH — ArgoCD (and any local
+# `helm template`) consume this.
+#
+# This chart is the OPTIONAL Google-SSO layer. Per SSO domain it ships:
+#   - a SecurityPolicy (templates/securitypolicy.yaml) attaching Google OIDC + an email allowlist to
+#     every HTTPRoute labelled `sso: <domain>`, and
+#   - the shared callback host google-sso.<domain> (templates/callbacks.yaml — its Certificate + an
+#     `sso`-labelled HTTPRoute, sharing one tiny backend) that is the single OIDC redirect target for
+#     that domain.
+# The callback host's :443 LISTENER lives on the Gateway (03_gateway httpsHosts) — listeners can only
+# live on the Gateway. So the domain list here MUST stay in step with 03_gateway's httpsHosts (one
+# `google-sso.<domain>` listener per domain). ONE Google OAuth client (clientID + sealed secret) is
+# shared across all domains; the allowlist is per-domain and INLINE (Envoy Gateway can't read
+# authorization values from a Secret). Only the client secret is sealed. See 12_google_sso.md.
+
+# Namespace the SecurityPolicies, callback hosts and the sealed Secret live in. MUST equal the namespace
+# of the routes they target (a SecurityPolicy selects routes in its own namespace) — all gateway routes
+# (callbacks here, demo apps in gateway-test) are in `gateway`.
+namespace: gateway
+# The shared Gateway the callback HTTPRoutes attach to. MUST match 03_gateway's gateway.name.
+gatewayName: shared-gateway
+# The label KEY a route opts in with; the VALUE is the route's domain (e.g. `sso: "example.com"`). MUST
+# match the key apps stamp on protected routes (the callbacks here + the demo apps in gateway-test).
+routeLabelKey: sso
+# The shared OIDC callback subdomain — the redirect target is `https://<authSubdomain>.<domain>/oauth2/callback`.
+# MUST match the `google-sso.<domain>` hostnames in 03_gateway's httpsHosts.
+authSubdomain: google-sso
+# Backend the callback hosts route to. Envoy intercepts /oauth2/callback before it reaches this, so it
+# only ever answers non-callback paths (behind SSO). One shared whoami for every domain's callback host.
+callbackImage: "traefik/whoami:v1.10.3"
+oidc:
+  # ONE Google OAuth client, shared across ALL domains (register one redirect URI per domain on it).
+  # NOT sensitive. Written by 12_google_sso/12_google_sso.sh. Placeholder denies login until set.
+  clientID: "000000000000-xxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxx.apps.googleusercontent.com"
+  # Sealed Secret holding the client secret under key `client-secret` (the key Envoy Gateway expects).
+  clientSecretName: google-oauth
+  # Cookie Envoy Gateway stores the Google ID token in; the jwt provider extracts the email claim from it
+  # (Google's access token is opaque, so the email lives in the ID token).
+  idTokenCookie: "google-id-token"
+  # Path the OIDC filter uses for ITS OWN logout — moved off the default /logout so it doesn't swallow a
+  # backend app's /logout (e.g. ArgoCD's). Applies to every domain's policy.
+  logoutPath: "/oauth2/sign_out"
+# One entry per SSO domain. `domain` becomes the label value, the cookieDomain, the google-sso.<domain>
+# redirect host, and (with `issuer`) the callback host's cert. `allowlist` is per-domain (inline; written
+# by the script — Deny is the default). This list MUST match the `google-sso.<domain>` entries in
+# 03_gateway's httpsHosts. The callback host cert uses `issuer` — keep it browser-trusted (prod) once the
+# domain's HTTP-01 path is validated, because the login flow redirects the browser THROUGH it.
+ssoDomains:
+  - domain: example.com
+    issuer: letsencrypt-staging
+    allowlist:
+      - you@example.com
+  - domain: yama.casa
+    issuer: letsencrypt-staging
+    allowlist:
+      - you@example.com
+      - user2@example.com
+      - user3@example.com
+      - user3@example.com
+      - user4@example.com
+      - user5@example.com

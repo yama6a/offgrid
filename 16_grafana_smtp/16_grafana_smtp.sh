@@ -13,7 +13,7 @@
 # 16_grafana.md), never echoed, never committed in plaintext.
 #
 # Written by this script (committable, no secrets in the values file):
-#   - argo_apps/charts/07_grafana/templates/grafana-smtp-sealedsecret.yaml   (the sealed app-password)
+#   - argo_apps/platform/charts/07_grafana/templates/grafana-smtp-sealedsecret.yaml   (the sealed app-password)
 #
 # Native kubeseal + kubectl (hard-fails if missing) — apply-to-cluster work is native, like 04/05/12/15.
 # Talks to the cluster via the step-03 kubeconfig (kubeseal fetches the controller's cert).
@@ -27,7 +27,7 @@ CONFIG_FILE="${CONFIG_FILE:-${SCRIPT_DIR}/config.sh}"
 
 # ---- knobs ------------------------------------------------------------------
 REPO_ROOT="${REPO_ROOT:-${SCRIPT_DIR}/..}"
-GRAFANA_CHART="${GRAFANA_CHART:-${REPO_ROOT}/argo_apps/charts/07_grafana}"                    # the wrapper chart
+GRAFANA_CHART="${GRAFANA_CHART:-${REPO_ROOT}/argo_apps/platform/charts/07_grafana}"                    # the wrapper chart
 SEALED_OUT="${SEALED_OUT:-${GRAFANA_CHART}/templates/grafana-smtp-sealedsecret.yaml}"         # sealed app-password (committed)
 OUTDIR="${OUTDIR:-${REPO_ROOT}/03_operating_system/talos-cluster}"                            # kubeconfig (from 03d); gitignored
 export KUBECONFIG="${KUBECONFIG:-${OUTDIR}/kubeconfig}"

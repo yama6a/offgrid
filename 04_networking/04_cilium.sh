@@ -6,7 +6,7 @@
 # proxy: disabled). One-time imperative bootstrap — the chicken-and-egg breaker,
 # since ArgoCD and everything else need pod networking to exist first.
 #
-# SINGLE SOURCE OF TRUTH is the wrapper chart at argo_apps/charts/00_cilium/:
+# SINGLE SOURCE OF TRUTH is the wrapper chart at argo_apps/platform/charts/00_cilium/:
 #   - Chart.yaml  pins the cilium chart version (dependency)
 #   - values.yaml holds the Talos-flavoured cilium values + the loadBalancer gate
 #   - templates/cilium-lb.yaml is the LB-IPAM pool + L2 policy
@@ -17,7 +17,7 @@
 # LB-IPAM + L2 announcements (replaces MetalLB), Hubble. (Cilium's gatewayAPI is OFF — the ingress
 # data plane is Envoy Gateway; see 11_envoy_gateway.md.)
 #
-# Also installs the prometheus-operator CRDs FIRST (rendered from argo_apps/charts/
+# Also installs the prometheus-operator CRDs FIRST (rendered from argo_apps/platform/charts/
 # 00_prometheus_operator_crds): 00_cilium enables a ServiceMonitor, and cilium's chart hard-fails if
 # the monitoring.coreos.com CRDs don't exist yet. ArgoCD's wave-0 CRD app adopts them later. See 15_monitoring.md.
 #
@@ -32,8 +32,8 @@ SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 
 # ---- knobs ------------------------------------------------------------------
 OUTDIR="${OUTDIR:-${SCRIPT_DIR}/../03_operating_system/talos-cluster}"  # talosconfig + kubeconfig (from 03d)
-CHART_DIR="${CHART_DIR:-${SCRIPT_DIR}/../argo_apps/charts/00_cilium}"   # the wrapper chart (Argo consumes it too)
-CRDS_CHART_DIR="${CRDS_CHART_DIR:-${SCRIPT_DIR}/../argo_apps/charts/00_prometheus_operator_crds}"  # monitoring CRDs (cilium's ServiceMonitor needs them)
+CHART_DIR="${CHART_DIR:-${SCRIPT_DIR}/../argo_apps/platform/charts/00_cilium}"   # the wrapper chart (Argo consumes it too)
+CRDS_CHART_DIR="${CRDS_CHART_DIR:-${SCRIPT_DIR}/../argo_apps/platform/charts/00_prometheus_operator_crds}"  # monitoring CRDs (cilium's ServiceMonitor needs them)
 CONFIG_FILE="${CONFIG_FILE:-${SCRIPT_DIR}/config.sh}"                   # LB range knobs (LB_RANGE_START/STOP)
 RELEASE="cilium"
 NS="kube-system"
@@ -59,7 +59,7 @@ say "prerequisites"
 command -v kubectl >/dev/null || die "kubectl not found on PATH — install it (https://kubernetes.io/docs/tasks/tools/)"
 command -v helm    >/dev/null || die "helm not found on PATH — install it (https://helm.sh/docs/intro/install/)"
 command -v yq      >/dev/null || die "yq not found on PATH — install it (https://github.com/mikefarah/yq, brew install yq)"
-[ -f "${CHART_DIR}/Chart.yaml" ] || die "no chart at ${CHART_DIR} (expected argo_apps/charts/00_cilium)"
+[ -f "${CHART_DIR}/Chart.yaml" ] || die "no chart at ${CHART_DIR} (expected argo_apps/platform/charts/00_cilium)"
 [ -f "$VALUES" ] || die "missing ${VALUES}"
 [ -f "$KUBECONFIG" ] || die "missing ${KUBECONFIG} — run step 03 (03d) first"
 ok "kubectl + helm + yq present, chart + values found"
@@ -197,7 +197,7 @@ echo "=============== summary: ${PASS} passed, ${FAIL} failed ==============="
 if [ "$FAIL" -eq 0 ]; then
   cat <<EOF
 Cilium is the CNI. Encryption (WireGuard), LB-IPAM/L2, Hubble are live. (Gateway API is Envoy Gateway, not Cilium.)
-Single source of truth: argo_apps/charts/00_cilium/ (Chart.yaml + values.yaml + templates/).
+Single source of truth: argo_apps/platform/charts/00_cilium/ (Chart.yaml + values.yaml + templates/).
 
 Next:
   - smoke-test a LoadBalancer:  kubectl create deploy nginx --image=nginx

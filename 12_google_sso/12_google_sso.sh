@@ -6,18 +6,18 @@
 # shared Google OAuth client-id + client-secret, and a SEPARATE email allowlist per SSO domain. Writes
 # the non-secret bits (clientID + per-domain allowlists) into the chart values and seals the client
 # SECRET into a committable SealedSecret. The SecurityPolicies are delivered purely by ArgoCD
-# (argo_apps/apps/04_google_sso.yaml, sync-wave 4). See 12_google_sso.md.
+# (argo_apps/platform/apps/04_google_sso.yaml, sync-wave 4). See 12_google_sso.md.
 #
 # INTERACTIVE: prompts for client-id, client-secret (hidden), and one allowlist per domain. No cookie
 # secret — Envoy Gateway signs its own session cookies. The redirectURL + cookieDomain are DERIVED in the
 # chart (google-sso.<domain> / <domain>), not written here. Re-run to rotate the secret or edit allowlists.
 #
 # SINGLE SOURCE OF TRUTH (read, not duplicated):
-#   - the SSO domains + seal target <- argo_apps/charts/04_google_sso/values.yaml (ssoDomains, namespace,
+#   - the SSO domains + seal target <- argo_apps/platform/charts/04_google_sso/values.yaml (ssoDomains, namespace,
 #     oidc.clientSecretName, authSubdomain)
 # Written by this script:
-#   - argo_apps/charts/04_google_sso/values.yaml  (oidc.clientID, ssoDomains[].allowlist)
-#   - argo_apps/charts/04_google_sso/templates/google-oauth-sealedsecret.yaml  (the sealed client secret)
+#   - argo_apps/platform/charts/04_google_sso/values.yaml  (oidc.clientID, ssoDomains[].allowlist)
+#   - argo_apps/platform/charts/04_google_sso/templates/google-oauth-sealedsecret.yaml  (the sealed client secret)
 #
 # Native kubeseal + kubectl + yq (hard-fails if missing) — apply-to-cluster work is native, like 04/05/07.
 # Talks to the cluster via the step-03 kubeconfig (kubeseal fetches the controller's cert).
@@ -31,8 +31,8 @@ CONFIG_FILE="${CONFIG_FILE:-${SCRIPT_DIR}/config.sh}"
 
 # ---- knobs ------------------------------------------------------------------
 REPO_ROOT="${REPO_ROOT:-${SCRIPT_DIR}/..}"
-GATEWAY_VALUES="${GATEWAY_VALUES:-${REPO_ROOT}/argo_apps/charts/03_gateway/values.yaml}"   # cross-check the domain list
-SSO_CHART="${SSO_CHART:-${REPO_ROOT}/argo_apps/charts/04_google_sso}"                      # the wrapper chart
+GATEWAY_VALUES="${GATEWAY_VALUES:-${REPO_ROOT}/argo_apps/platform/charts/03_gateway/values.yaml}"   # cross-check the domain list
+SSO_CHART="${SSO_CHART:-${REPO_ROOT}/argo_apps/platform/charts/04_google_sso}"                      # the wrapper chart
 SSO_VALUES="${SSO_VALUES:-${SSO_CHART}/values.yaml}"                                       # clientID/allowlists written here
 SEALED_OUT="${SEALED_OUT:-${SSO_CHART}/templates/google-oauth-sealedsecret.yaml}"         # sealed client secret (committed)
 OUTDIR="${OUTDIR:-${REPO_ROOT}/03_operating_system/talos-cluster}"                         # kubeconfig (from 03d); gitignored

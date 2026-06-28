@@ -17,7 +17,7 @@ committed `SealedSecret` is permanently undecryptable.
 
 ## The wrapper chart
 
-Single source of truth is the wrapper chart at `argo_apps/charts/02_sealed_secrets/` (same pattern as
+Single source of truth is the wrapper chart at `argo_apps/platform/charts/02_sealed_secrets/` (same pattern as
 `00_cilium` / `01_argocd`):
 
 | Path          | Holds                                                                                    |
@@ -26,15 +26,15 @@ Single source of truth is the wrapper chart at `argo_apps/charts/02_sealed_secre
 | `values.yaml` | all config under the `sealed-secrets:` key — `fullnameOverride`, logging, resources.     |
 | `Chart.lock`  | pins the resolved dependency; **must be committed** (ArgoCD's repo-server runs `helm dependency build`). |
 
-Generate/refresh the lock with `helm dependency update argo_apps/charts/02_sealed_secrets` and commit
+Generate/refresh the lock with `helm dependency update argo_apps/platform/charts/02_sealed_secrets` and commit
 it (the vendored `charts/*.tgz` is gitignored — reproduced from the lock, same as the other charts).
 
 ## Where it sits — wave 2, same as nic-keeper
 
 The [`nic-keeper`](06_nic_keeper.md) DaemonSet and this controller are **independent leaves** — neither
 depends on the other — so they share **sync-wave `2`**. Per [CLAUDE.md](CLAUDE.md) the `NN` prefix on
-an app *is* its wave, so both carry the `02_` prefix (`argo_apps/apps/02_nic_keeper.yaml` and
-`argo_apps/apps/02_sealed_secrets.yaml`); the dir/file names stay distinct and `ls argo_apps/apps/`
+an app *is* its wave, so both carry the `02_` prefix (`argo_apps/platform/apps/02_nic_keeper.yaml` and
+`argo_apps/platform/apps/02_sealed_secrets.yaml`); the dir/file names stay distinct and `ls argo_apps/platform/apps/`
 still reads in deploy order. Wave 2 is the "after the platform (CNI + ArgoCD) is in place" slot.
 
 > Note on numbering: the argo-app `NN` is the **sync-wave**; the top-level `.md` files (this is `07`)
@@ -95,7 +95,7 @@ sealed for. Use `--scope namespace-wide` / `cluster-wide` only when you delibera
 
 - **Generate + commit `Chart.lock` before the app syncs.** Unlike `01_argocd` (whose lock is generated
   by its bootstrap script), this app has no imperative step — so run `helm dependency update
-  argo_apps/charts/02_sealed_secrets` yourself and commit the lock, or the `sealed-secrets` app shows
+  argo_apps/platform/charts/02_sealed_secrets` yourself and commit the lock, or the `sealed-secrets` app shows
   `OutOfSync` with a `helm dependency build` error (same failure mode as a missing cilium/argocd lock).
 - **Push before you expect a sync.** ArgoCD reads git, not local disk — commit *and push*
   `argo_apps/**` (incl. `Chart.lock`) or the root app reports `ComparisonError`.

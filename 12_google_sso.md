@@ -8,11 +8,11 @@ Proven on `gateway-test-sso.example.com` (protected) vs `gateway-test.example.co
 
 Delivered (mostly) by ArgoCD:
 
-- `argo_apps/apps/04_google_sso.yaml` — the Application, **sync-wave 4**.
-- `argo_apps/charts/04_google_sso/` — one `SecurityPolicy` **per domain**, the per-domain
+- `argo_apps/platform/apps/04_google_sso.yaml` — the Application, **sync-wave 4**.
+- `argo_apps/platform/charts/04_google_sso/` — one `SecurityPolicy` **per domain**, the per-domain
   `google-sso.<domain>` callback hosts (each a `Certificate` + an `sso:`-labelled `HTTPRoute`, sharing
   one tiny backend), and the shared sealed client secret. No upstream dependency, so no `Chart.lock`.
-- the `httpsHosts` list in `argo_apps/charts/03_gateway/` — the `:443` **listener** for each
+- the `httpsHosts` list in `argo_apps/platform/charts/03_gateway/` — the `:443` **listener** for each
   `google-sso.<domain>` (listeners can only live on the Gateway; the cert + route live in 04 above).
 - `12_google_sso/12_google_sso.sh` — interactive: shared client-id/secret once, an allowlist per domain.
 
@@ -109,7 +109,7 @@ Checks:
 
 - `kubectl -n gateway get securitypolicy` → `google-sso-<slug>` per domain, `Accepted=True` (not Accepted
   ⇒ the client-secret Secret is missing — run the script + push).
-- Browse `https://gateway-test-sso.example.com/` (the protected demo from [05_gateway_test](13_gateway_test.md))
+- Browse `https://gateway-test-sso.example.com/` (the protected demo from [gateway-test](13_gateway_test.md))
   → Google login → bounce through `google-sso.example.com` → an allowlisted account reaches whoami; a
   non-listed one is denied.
 - `https://gateway-test.example.com/` → whoami, no login (the open control).

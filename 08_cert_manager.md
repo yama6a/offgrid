@@ -16,7 +16,7 @@ It's a plain wave-2 ArgoCD app — there is no out-of-band step at all.
 
 ## The wrapper chart
 
-Single source of truth is the wrapper chart at `argo_apps/charts/02_cert_manager/` (same pattern as
+Single source of truth is the wrapper chart at `argo_apps/platform/charts/02_cert_manager/` (same pattern as
 `00_cilium` / `01_argocd` / `02_sealed_secrets`):
 
 | Path          | Holds                                                                                                                      |
@@ -25,7 +25,7 @@ Single source of truth is the wrapper chart at `argo_apps/charts/02_cert_manager
 | `values.yaml` | all config under the `cert-manager:` key — CRD handling, resources, the (commented) future Gateway feature gate.           |
 | `Chart.lock`  | pins the resolved dependency; **must be committed** (ArgoCD's repo-server runs `helm dependency build`).                   |
 
-Generate/refresh the lock with `helm dependency update argo_apps/charts/02_cert_manager` and commit it
+Generate/refresh the lock with `helm dependency update argo_apps/platform/charts/02_cert_manager` and commit it
 (the vendored `charts/*.tgz` is gitignored — reproduced from the lock, same as the other charts).
 
 ### CRDs — installed by the chart, kept on prune
@@ -41,8 +41,8 @@ posture Cilium takes (there via `prune: false`; here, more narrowly, via `crds.k
 cert-manager, [`nic-keeper`](06_nic_keeper.md) and [`sealed-secrets`](07_sealed_secrets.md) are
 **independent leaves** — none depends on the others — so they share **sync-wave `2`**. Per
 [CLAUDE.md](CLAUDE.md) the `NN` prefix on an app *is* its wave, so all three carry the `02_` prefix
-(`argo_apps/apps/02_cert_manager.yaml`, `…/02_nic_keeper.yaml`, `…/02_sealed_secrets.yaml`); the
-dir/file names stay distinct and `ls argo_apps/apps/` still reads in deploy order. Wave 2 is the
+(`argo_apps/platform/apps/02_cert_manager.yaml`, `…/02_nic_keeper.yaml`, `…/02_sealed_secrets.yaml`); the
+dir/file names stay distinct and `ls argo_apps/platform/apps/` still reads in deploy order. Wave 2 is the
 "after the platform (CNI + ArgoCD) is in place" slot.
 
 > Note on numbering: the argo-app `NN` is the **sync-wave**; the top-level `.md` files (this is `08`)
@@ -80,8 +80,8 @@ actual Gateway, and staging-vs-prod. Those land together in the follow-up step t
 
 ```bash
 # the lock resolves exactly as ArgoCD's repo-server will (proves sync won't break):
-helm dependency build argo_apps/charts/02_cert_manager
-helm template argo_apps/charts/02_cert_manager | head   # renders controller + webhook + cainjector + CRDs
+helm dependency build argo_apps/platform/charts/02_cert_manager
+helm template argo_apps/platform/charts/02_cert_manager | head   # renders controller + webhook + cainjector + CRDs
 
 # after commit/push — the root app picks up 02_cert_manager.yaml and syncs at wave 2:
 kubectl -n cert-manager get pods                 # controller / webhook / cainjector Running
@@ -114,7 +114,7 @@ kubectl delete ns certtest                         # clean up
 ## Caveats
 
 - **Generate + commit `Chart.lock` before the app syncs.** Like `sealed-secrets`, this app has no
-  imperative bootstrap step — so run `helm dependency update argo_apps/charts/02_cert_manager`
+  imperative bootstrap step — so run `helm dependency update argo_apps/platform/charts/02_cert_manager`
   yourself and commit the lock, or the `cert-manager` app shows `OutOfSync` with a `helm dependency
   build` error (same failure mode as a missing cilium/argocd/sealed-secrets lock).
 - **Push before you expect a sync.** ArgoCD reads git, not local disk — commit *and push*

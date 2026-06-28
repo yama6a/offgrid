@@ -13,7 +13,7 @@ prerequisite that lives in the Talos config (the kubelet bind-mount, below).
 
 ## The wrapper chart
 
-Single source of truth is the wrapper chart at `argo_apps/charts/02_longhorn/` (same pattern as
+Single source of truth is the wrapper chart at `argo_apps/platform/charts/02_longhorn/` (same pattern as
 `00_cilium` / `01_argocd` / `02_sealed_secrets` / `02_cert_manager`):
 
 | Path          | Holds                                                                                                       |
@@ -22,7 +22,7 @@ Single source of truth is the wrapper chart at `argo_apps/charts/02_longhorn/` (
 | `values.yaml` | all config under the `longhorn:` key — data path, replica count, default StorageClass, pre-upgrade hook.    |
 | `Chart.lock`  | pins the resolved dependency; **must be committed** (ArgoCD's repo-server runs `helm dependency build`).     |
 
-Generate/refresh the lock with `helm dependency update argo_apps/charts/02_longhorn` and commit it (the
+Generate/refresh the lock with `helm dependency update argo_apps/platform/charts/02_longhorn` and commit it (the
 vendored `charts/*.tgz` is gitignored — reproduced from the lock, same as the other charts).
 
 ### Version — `1.12.0`, the latest stable
@@ -143,8 +143,8 @@ All under the `longhorn:` key in `values.yaml`:
 Longhorn, [`nic-keeper`](06_nic_keeper.md), [`sealed-secrets`](07_sealed_secrets.md) and
 [`cert-manager`](08_cert_manager.md) are **independent leaves** — none depends on the others — so they share
 **sync-wave `2`**. Per [CLAUDE.md](CLAUDE.md) the `NN` prefix *is* the wave, so all four carry the `02_` prefix
-(`argo_apps/apps/02_longhorn.yaml`, `…/02_nic_keeper.yaml`, …); the dir/file names stay distinct and
-`ls argo_apps/apps/` still reads in deploy order. Wave 2 is the "after the platform (CNI + ArgoCD) is in place"
+(`argo_apps/platform/apps/02_longhorn.yaml`, `…/02_nic_keeper.yaml`, …); the dir/file names stay distinct and
+`ls argo_apps/platform/apps/` still reads in deploy order. Wave 2 is the "after the platform (CNI + ArgoCD) is in place"
 slot — Longhorn only needs the CNI (wave 0) for pod networking.
 
 > Note on numbering: the argo-app `NN` is the **sync-wave**; the top-level `.md` files (this is `09`) follow
@@ -165,8 +165,8 @@ Longhorn needs **privileged** Pod Security; Talos applies `baseline` by default,
 talosctl -n 192.168.10.201 read /proc/mounts | grep longhorn     # /var/mnt/longhorn present
 
 # the lock resolves exactly as ArgoCD's repo-server will (proves sync won't break):
-helm dependency build argo_apps/charts/02_longhorn
-helm template argo_apps/charts/02_longhorn | head                 # renders manager / driver / CSI / CRDs
+helm dependency build argo_apps/platform/charts/02_longhorn
+helm template argo_apps/platform/charts/02_longhorn | head                 # renders manager / driver / CSI / CRDs
 
 # after commit/push — the root app picks up 02_longhorn.yaml and syncs at wave 2:
 kubectl -n longhorn-system get pods                               # longhorn-manager on all 3 nodes + CSI Running
@@ -210,7 +210,7 @@ kubectl delete pod lh-smoke && kubectl delete pvc lh-smoke   # clean up
   Longhorn manager starts but every node's disk is unschedulable — the app looks Healthy yet no volume can
   schedule.
 - **Generate + commit `Chart.lock` before the app syncs.** This app has no imperative bootstrap step — run
-  `helm dependency update argo_apps/charts/02_longhorn` yourself and commit the lock, or the `longhorn` app
+  `helm dependency update argo_apps/platform/charts/02_longhorn` yourself and commit the lock, or the `longhorn` app
   shows `OutOfSync` with a `helm dependency build` error (same failure mode as a missing cilium/argocd lock).
 - **Push before you expect a sync.** ArgoCD reads git, not local disk — commit *and push* `argo_apps/**` (incl.
   `Chart.lock`) or the root app reports `ComparisonError`.

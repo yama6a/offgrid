@@ -6,7 +6,7 @@ itself** from a wrapper chart in this repo, **adopts** the already-running Ciliu
 every later app (the [`nic-keeper` recovery DaemonSet](06_nic_keeper.md), etcd snapshots, monitoring, Longhorn, workloads). **`05_argocd.sh`**
 does the one-time bootstrap.
 
-The **single source of truth** is the wrapper Helm chart at `argo_apps/charts/01_argocd/`. `05_argocd.sh` just installs
+The **single source of truth** is the wrapper Helm chart at `argo_apps/platform/charts/01_argocd/`. `05_argocd.sh` just installs
 that chart by hand, then hands off to git: ArgoCD adopts the same release (same chart, namespace, release name, values →
 Argo sees it in-sync rather than fighting it) and self-manages from then on. Nothing — no version, no values — is defined
 in the script. The chart:
@@ -17,38 +17,57 @@ in the script. The chart:
 | `values.yaml`        | the **HA-lite values** (under the `argo-cd:` key) — see below.                                  |
 | `Chart.lock`         | pins the resolved dependency; **must be committed** (ArgoCD's repo-server needs it — see below). |
 
-## The `argo_apps/` app-of-apps model
+## The `argo_apps/` app-of-apps model — two trees, gated
 
 ```
 argo_apps/
-  root-app.yaml          # the app-of-apps ROOT (applied once by 05_argocd.sh)
-  apps/                  # root watches this dir (directory.recurse) — one Application per app
-    00_cilium.yaml       #   adopts Cilium      (auto-sync, no selfHeal)  — wave 0
-    01_argocd.yaml       #   ArgoCD self-manage (automated)               — wave 1
-  charts/                # the wrapper charts the Applications point at
-    00_cilium/           #   step 04's chart
-    01_argocd/           #   this step's chart
+  root.yaml              # the ROOT-OF-ROOTS (applied once by 05_argocd.sh); recurses roots/
+  roots/
+    0_platform.yaml      #   Application "platform"  (sync-wave 0) — recurses platform/apps
+    1_workloads.yaml     #   Application "workloads" (sync-wave 1) — recurses workloads/apps
+  platform/
+    apps/                #   one Application per platform app (numbered = wave)
+      00_cilium.yaml     #     adopts Cilium      (auto-sync, no selfHeal)  — wave 0
+      01_argocd.yaml     #     ArgoCD self-manage (automated)               — wave 1
+    charts/              #   the wrapper charts those Applications point at
+      00_cilium/         #     step 04's chart
+      01_argocd/         #     this step's chart
+  workloads/
+    apps/                #   one Application per workload (un-numbered, wave-less)
+      cnpg_cluster.yaml
+      gateway_test.yaml
+    charts/
+      cnpg_cluster/
+      gateway_test/
 ```
 
-- **`root-app.yaml`** is an Application that recurses `argo_apps/apps/` and manages every child Application it finds.
-- Each child Application points at a wrapper chart under `argo_apps/charts/`.
-- **Add a new app** = drop a wrapper chart under `argo_apps/charts/NN_name/` + an Application manifest under
-  `argo_apps/apps/NN_name.yaml`, then commit & push. The root picks it up on its next reconcile. (The `NN` prefix **is**
-  the app's `sync-wave` number — keep the filename, the chart dir, and the annotation in agreement. See the convention
-  below.)
+- **`root.yaml`** is the root-of-roots: it recurses `argo_apps/roots/` and manages the two child root Applications it
+  finds. Their sync-waves gate the bootstrap — it creates **`platform`** (wave 0), waits for it to be **Healthy** (which
+  aggregates the health of every platform app), then creates **`workloads`** (wave 1). So workloads never reconcile
+  against missing CRDs/namespaces on a cold boot.
+- Each child Application points at a wrapper chart under its own tree's `charts/`.
+- **Add a PLATFORM app** = drop a wrapper chart under `argo_apps/platform/charts/NN_name/` + an Application manifest under
+  `argo_apps/platform/apps/NN_name.yaml`, then commit & push. (The `NN` prefix **is** the app's `sync-wave` number — keep
+  the filename, the chart dir, and the annotation in agreement. See the convention below.)
+- **Add a WORKLOAD** = drop a wrapper chart under `argo_apps/workloads/charts/name/` + an Application manifest under
+  `argo_apps/workloads/apps/name.yaml` — **no number, no `sync-wave`**. Workloads all reconcile in parallel once platform
+  is Healthy. (If a workload depends on *another workload*, it belongs in platform instead.)
 
-### sync-wave convention
+### sync-wave convention (within the platform tree)
 
-Ordering across apps is `argocd.argoproj.io/sync-wave` (lower = earlier; the root waits for a wave to be **Synced +
-Healthy** before creating the next). **The `NN` prefix on each `apps/NN_*.yaml` file equals its wave number** — one
-glance at the dir listing tells you the order.
+Ordering across platform apps is `argocd.argoproj.io/sync-wave` (lower = earlier; the platform root waits for a wave to be
+**Synced + Healthy** before creating the next). **The `NN` prefix on each `platform/apps/NN_*.yaml` file equals its wave
+number** — one glance at the dir listing tells you the order. The single platform→workloads boundary is enforced once, by
+the wave on the two roots — not by per-app waves.
 
 - **Cilium = wave `0`.** The CNI underpins everything, so it goes first. This is only safe because the Cilium app
   **auto-syncs**: it reaches Healthy on its own, the wave clears, and the root proceeds. A *manual* app at wave 0 would
   start **OutOfSync** and stall forever, **blocking the root from ever creating the later-wave apps** (including
-  `argocd`). That's the trap to avoid: **never put a manual-sync app at an earlier wave than apps that depend on it.**
+  `argocd`). That's the trap to avoid: **never put a manual-sync app at an earlier wave than apps that depend on it.** The
+  same rule scales up to the roots: a perpetually-OutOfSync platform app keeps the `platform` root from going Healthy,
+  which stalls the `workloads` root forever — so keep every platform app auto-syncing.
 - **ArgoCD = wave `1`.** Adopts the already-running, self-managed ArgoCD once the CNI is in.
-- **Future** managed apps go at wave **`2`+**, so they reconcile after the platform (CNI + engine) is in place.
+- **Later** platform apps go at wave **`2`+**, so they reconcile after the platform (CNI + engine) is in place.
 - **Caveat:** if you break-glass-fix Cilium out of band and *don't* commit the fix, its app sits OutOfSync at wave 0 and
   can block later waves on the next root sync. Always commit the fix back to git.
 
@@ -94,7 +113,7 @@ The 2-replica components carry `global.topologySpreadConstraints` (`maxSkew 1`, 
 
 This repo is **public**, so ArgoCD clones it **anonymously** over HTTPS — no credential needed by default. Anonymous
 `git ls-remote` is git smart-HTTP, **not** the REST API, so the 10s poll stays well under GitHub's limits (rationale
-in `argo_apps/charts/01_argocd/values.yaml`).
+in `argo_apps/platform/charts/01_argocd/values.yaml`).
 
 For a **private** repo (or to lift the anonymous rate limit), `05_argocd.sh` **seeds a credential**: at hand-off it
 **prompts** for a **fine-grained, read-only, single-repo PAT** (input hidden) — leave it empty for a public repo — then
@@ -129,18 +148,18 @@ talos-phase scripts (03a–03e). Talks to the cluster via `03_operating_system/t
    GitOps layer needs a working pod network).
 2. **Vendors** the argo-cd subchart: `helm dependency build` (falls back to `helm dependency update`, which generates
    `Chart.lock` on first run — commit it).
-3. `helm upgrade --install argocd argo_apps/charts/01_argocd -n argocd --create-namespace --reset-values --wait` —
+3. `helm upgrade --install argocd argo_apps/platform/charts/01_argocd -n argocd --create-namespace --reset-values --wait` —
    release `argocd` / namespace `argocd` so the self-managed Application adopts THIS release.
 4. Waits for the controller / repo-server / server to roll out.
 5. **Hands off**: resolves the repo to poll (`$REPO_URL`, else the git `origin` remote as a prompt default) and pins it
-   into `root-app.yaml`; **optionally seeds a `GIT_TOKEN` repository credential** (see [Git auth](#git-auth)); then,
+   into `root.yaml`; **optionally seeds a `GIT_TOKEN` repository credential** (see [Git auth](#git-auth)); then,
    after a "did you push?" check (ArgoCD reads git, not local disk), `kubectl apply` the root app. The root creates
    `cilium` (wave 0) which auto-adopts, then `argocd` (wave 1) which self-adopts — both Synced, no clicks.
 6. Waits for `root` + `argocd` to be **Synced/Healthy**, then prints the admin password + port-forward command.
 
 ```bash
 # 1) generate + commit the argo-cd Chart.lock (first time only), commit the new files, and PUSH:
-helm dependency update argo_apps/charts/01_argocd
+helm dependency update argo_apps/platform/charts/01_argocd
 git add argo_apps 05_gitops 03_operating_system.md && git commit -m "step 05: ArgoCD" && git push
 
 # 2) bootstrap:
@@ -158,7 +177,7 @@ kubectl -n argocd port-forward svc/argocd-server 8080:80
 - **Push before you hand off.** ArgoCD clones the **public** repo — anything not committed *and pushed* is invisible to
   the root app, which then shows `ComparisonError: path does not exist`. The script prompts; re-running after pushing is
   safe (`ASSUME_PUSHED=1` skips the prompt).
-- **Self-management is real.** Once the `argocd` app is Synced, changes to `argo_apps/charts/01_argocd/values.yaml` are
+- **Self-management is real.** Once the `argocd` app is Synced, changes to `argo_apps/platform/charts/01_argocd/values.yaml` are
   applied by ArgoCD to itself on push. A bad value can disrupt ArgoCD briefly; it self-heals, and `05_argocd.sh` remains
   break-glass (re-run to force the release back to the chart).
 - **The leftover Helm release secret** (`sh.helm.release.v1.argocd.*` in `argocd`) from the by-hand install is harmless;
@@ -169,7 +188,7 @@ kubectl -n argocd port-forward svc/argocd-server 8080:80
 - **`argocd` app stuck `ComparisonError` / "app path does not exist"** → the files aren't on the remote. Commit & push
   `argo_apps/**` (incl. `Chart.lock`), then re-sync.
 - **`argocd` app `OutOfSync` with a `helm dependency build` error** → `Chart.lock` isn't committed (or is stale). Run
-  `helm dependency update argo_apps/charts/01_argocd`, commit the lock, re-sync.
+  `helm dependency update argo_apps/platform/charts/01_argocd`, commit the lock, re-sync.
 - **`cilium` app `OutOfSync`** → it auto-syncs, so this means live drift (a break-glass `04_cilium.sh` fix not yet in
   git, or `Chart.lock`/CRD issues). With `selfHeal` off Argo won't self-correct — commit the fix to git, then it reconciles.
 - **`server`/`repo-server` pods pending** → the `DoNotSchedule` topology spread needs 2 schedulable nodes free; check

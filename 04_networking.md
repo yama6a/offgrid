@@ -8,7 +8,7 @@ nodes to **Ready**.
 This is the **one component installed imperatively** — everything after it is GitOps. The cluster has no working pod
 network until it lands, so ArgoCD (and CoreDNS, and every workload) depend on it.
 
-The **single source of truth** is the wrapper Helm chart at `argo_apps/charts/00_cilium/`. `04_cilium.sh` just installs
+The **single source of truth** is the wrapper Helm chart at `argo_apps/platform/charts/00_cilium/`. `04_cilium.sh` just installs
 that chart; ArgoCD later **adopts** the same release (same chart, namespace, release name, values → Argo sees it in-sync
 rather than fighting it). Nothing — no version, no CRD list, no values — is defined in the script. The chart:
 
@@ -47,9 +47,9 @@ Uses **native `helm` + `kubectl`** (errors out if either is missing) — unlike 
 (03a–03e). Talks to the cluster via `03_operating_system/talos-cluster/kubeconfig` (written by 03d). Idempotent
 (re-run safe).
 
-1. `helm dependency build argo_apps/charts/00_cilium` — pulls the pinned `cilium/cilium` subchart into `charts/`
+1. `helm dependency build argo_apps/platform/charts/00_cilium` — pulls the pinned `cilium/cilium` subchart into `charts/`
    (falls back to `helm dependency update` to generate `Chart.lock` on first run).
-2. `helm upgrade --install cilium argo_apps/charts/00_cilium --wait` — installs Cilium with the chart's values. They
+2. `helm upgrade --install cilium argo_apps/platform/charts/00_cilium --wait` — installs Cilium with the chart's values. They
    are Talos-flavoured: KubePrism endpoint, kube-proxy replacement, WireGuard, L2 announcements, Hubble, and the
    Talos-mandatory `cgroup` (no auto-mount) + `securityContext` capability blocks. Cilium's `gatewayAPI` is **off** —
    the ingress data plane is Envoy Gateway (see [11_envoy_gateway.md](11_envoy_gateway.md)), so no Gateway API CRDs

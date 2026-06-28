@@ -6,7 +6,7 @@
 # every SealedSecret committed to this repo. LOSE THIS KEY AND EVERY SEALED SECRET IS UNRECOVERABLE,
 # so this dumps it to the gitignored 03_operating_system/talos-cluster/ dir (alongside the kubeconfig
 # / talosconfig), where it is NEVER committed. The controller is delivered by ArgoCD as a wave-2 app
-# (argo_apps/charts/02_sealed_secrets/); this is the out-of-band custody step. See 07_sealed_secrets.md.
+# (argo_apps/platform/charts/02_sealed_secrets/); this is the out-of-band custody step. See 07_sealed_secrets.md.
 #
 # The controller generates the key on first start and ROTATES it ~monthly, KEEPING old keys (so older
 # SealedSecrets still decrypt). We therefore back up ALL secrets carrying the sealed-secrets-key label,

@@ -6,10 +6,10 @@
 # (Cilium). This is the LAST component installed imperatively: ArgoCD then manages itself and
 # every later app from argo_apps/. One-time bootstrap; re-run safe (helm upgrade --install).
 #
-# SINGLE SOURCE OF TRUTH is the wrapper chart at argo_apps/charts/01_argocd/:
+# SINGLE SOURCE OF TRUTH is the wrapper chart at argo_apps/platform/charts/01_argocd/:
 #   - Chart.yaml  pins the argo-cd chart version (dependency on argoproj/argo-helm)
 #   - values.yaml holds the HA-lite values (under the `argo-cd:` key)
-# This script just installs THAT chart by hand, then applies argo_apps/root-app.yaml so ArgoCD
+# This script just installs THAT chart by hand, then applies argo_apps/root.yaml so ArgoCD
 # adopts the same release and self-manages from git. No versions or values live here. See 05_gitops.md.
 #
 # What it does:
@@ -28,8 +28,8 @@ SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 
 # ---- knobs ------------------------------------------------------------------
 OUTDIR="${OUTDIR:-${SCRIPT_DIR}/../03_operating_system/talos-cluster}"   # talosconfig + kubeconfig (from 03d)
-CHART_DIR="${CHART_DIR:-${SCRIPT_DIR}/../argo_apps/charts/01_argocd}"    # the wrapper chart (Argo consumes it too)
-ROOT_APP="${ROOT_APP:-${SCRIPT_DIR}/../argo_apps/root-app.yaml}"         # the app-of-apps root
+CHART_DIR="${CHART_DIR:-${SCRIPT_DIR}/../argo_apps/platform/charts/01_argocd}"    # the wrapper chart (Argo consumes it too)
+ROOT_APP="${ROOT_APP:-${SCRIPT_DIR}/../argo_apps/root.yaml}"            # the root-of-roots (recurses argo_apps/roots/)
 RELEASE="argocd"
 NS="argocd"
 REPO_ARGO="https://argoproj.github.io/argo-helm"
@@ -47,7 +47,7 @@ ok()  { printf '  \033[32m[PASS]\033[0m %s\n' "$1"; PASS=$((PASS+1)); }
 bad() { printf '  \033[31m[FAIL]\033[0m %s\n' "$1"; FAIL=$((FAIL+1)); }
 
 # normalize an scp/ssh git remote to an anonymous-friendly https URL (https URLs pass through), and
-# strip a trailing .git so root-app.yaml + the seeded creds match the committed manifests (which omit
+# strip a trailing .git so root.yaml + the seeded creds match the committed manifests (which omit
 # it) — otherwise this re-derives the origin's .git form and rewrites it back in on every run. ArgoCD
 # normalizes .git internally, so the suffix is cosmetic; we keep one canonical (no-.git) form.
 normalize_repo_url() {
@@ -78,7 +78,7 @@ wait_app() {  # $1=app name  $2=timeout secs
 say "prerequisites"
 command -v kubectl >/dev/null || die "kubectl not found on PATH — install it (https://kubernetes.io/docs/tasks/tools/)"
 command -v helm    >/dev/null || die "helm not found on PATH — install it (https://helm.sh/docs/intro/install/)"
-[ -f "${CHART_DIR}/Chart.yaml" ] || die "no chart at ${CHART_DIR} (expected argo_apps/charts/01_argocd)"
+[ -f "${CHART_DIR}/Chart.yaml" ] || die "no chart at ${CHART_DIR} (expected argo_apps/platform/charts/01_argocd)"
 [ -f "${ROOT_APP}" ] || die "no root app at ${ROOT_APP}"
 [ -f "$KUBECONFIG" ] || die "missing ${KUBECONFIG} — run step 03 (03d) first"
 kubectl get nodes >/dev/null 2>&1 || die "kubectl can't reach the API via ${KUBECONFIG}"
@@ -104,7 +104,7 @@ if [ "$LOCK_BEFORE" -eq 0 ] && [ -f "${CHART_DIR}/Chart.lock" ]; then
 fi
 
 # === 2. install / upgrade ArgoCD =============================================
-# Release name + namespace MUST match argo_apps/apps/01_argocd.yaml so the self-managed
+# Release name + namespace MUST match argo_apps/platform/apps/01_argocd.yaml so the self-managed
 # Application adopts THIS release (no churn). --reset-values recomputes from the chart's
 # values.yaml each run (same reasoning as 04_cilium.sh).
 say "helm upgrade --install ${RELEASE} (namespace ${NS})"
@@ -128,10 +128,10 @@ kubectl -n "$NS" rollout status deploy/argocd-server --timeout=180s >/dev/null 2
 # ArgoCD reads from GIT, not local disk. The root app (and the argocd self-app) point at paths
 # under argo_apps/ in the PUBLIC repo — they must be committed AND pushed first, or the apps show
 # a ComparisonError ("path does not exist"). Re-running this script after pushing is safe.
-say "handing off to GitOps (kubectl apply root-app)"
+say "handing off to GitOps (kubectl apply root)"
 REPO_ROOT="$(git -C "$SCRIPT_DIR" rev-parse --show-toplevel 2>/dev/null || echo "")"
 
-# Resolve the repo ArgoCD polls and pin it into root-app.yaml. Priority: $REPO_URL env, else the
+# Resolve the repo ArgoCD polls and pin it into root.yaml. Priority: $REPO_URL env, else the
 # git 'origin' remote (offered as a default you can override), else whatever's already in the file.
 if [ -z "$REPO_URL" ]; then
   inferred=""
@@ -142,12 +142,13 @@ if [ -z "$REPO_URL" ]; then
   [ -z "$REPO_URL" ] && REPO_URL="$inferred"
 fi
 [ -n "$REPO_URL" ] || die "no repo URL given and none could be inferred (set REPO_URL=... and re-run)"
-# Idempotent: a no-op when the URL already matches. Only the root app — child apps under apps/ also
-# carry a repoURL; if you point at a fork, rewrite those too (see 05_gitops.md).
+# Idempotent: a no-op when the URL already matches. Only the root-of-roots — the child roots under
+# argo_apps/roots/ AND every app under argo_apps/{platform,workloads}/apps/ also carry a repoURL; if
+# you point at a fork, rewrite those too (see 05_gitops.md).
 # Temp-file rewrite (no `sed -i`): portable across BSD sed and GNU sed (Homebrew gnu-sed on PATH).
 RA_TMP="$(mktemp)" || die "mktemp failed"
 if sed -E "s|^([[:space:]]*repoURL:[[:space:]]*).*|\1${REPO_URL}|" "$ROOT_APP" > "$RA_TMP" && mv "$RA_TMP" "$ROOT_APP"; then
-  ok "root-app repoURL -> ${REPO_URL}"
+  ok "root repoURL -> ${REPO_URL}"
 else
   rm -f "$RA_TMP"
   bad "could not rewrite repoURL in ${ROOT_APP}"
@@ -210,7 +211,7 @@ else
   echo "   no PAT entered -> ArgoCD clones ${REPO_URL} anonymously (fine for a PUBLIC repo)"
 fi
 
-kubectl apply -f "$ROOT_APP" >/dev/null 2>&1 && ok "root-app applied" || bad "kubectl apply root-app failed"
+kubectl apply -f "$ROOT_APP" >/dev/null 2>&1 && ok "root applied" || bad "kubectl apply root failed"
 
 # === 5. wait for self-management to settle ===================================
 # Sync-wave order: cilium (wave 0) auto-adopts -> Healthy, then the root creates argocd (wave 1),
@@ -237,9 +238,10 @@ echo ""
 echo "=============== summary: ${PASS} passed, ${FAIL} failed ==============="
 if [ "$FAIL" -eq 0 ]; then
   cat <<EOF
-ArgoCD is up and self-managed from argo_apps/charts/01_argocd/. The app-of-apps root watches
-argo_apps/apps/ — add a new app by dropping a wrapper chart under argo_apps/charts/ and an
-Application manifest under argo_apps/apps/. See 05_gitops.md.
+ArgoCD is up and self-managed from argo_apps/platform/charts/01_argocd/. The root-of-roots
+(argo_apps/root.yaml) watches argo_apps/roots/ and creates the platform root, then the workloads root
+once platform is Healthy. Add a PLATFORM app under argo_apps/platform/{charts,apps}/ (NN_ = sync-wave);
+add a WORKLOAD under argo_apps/workloads/{charts,apps}/ (no number, no wave). See 05_gitops.md.
 EOF
 else
   echo "Some checks failed. If helm timed out, re-run (idempotent). If apps show ComparisonError,"

@@ -5,12 +5,12 @@
 # Propagates the step-10 knobs (Let's Encrypt email + base domain) from config.sh into the gateway
 # wrapper chart's values.yaml, so the shell side and ArgoCD render the SAME values. This step has NO
 # imperative cluster bootstrap — the Gateway + ClusterIssuers (+ the gateway-test echo app) are
-# delivered purely by ArgoCD from argo_apps/charts/03_gateway/ (Application: argo_apps/apps/
+# delivered purely by ArgoCD from argo_apps/platform/charts/03_gateway/ (Application: argo_apps/platform/apps/
 # 03_gateway.yaml, sync-wave 3). See 10_gateway.md.
 #
 # SINGLE SOURCE OF TRUTH:
 #   - config.sh (here)                       -> LE_EMAIL + BASE_DOMAIN (the shell side)
-#   - argo_apps/charts/03_gateway/values.yaml -> everything ArgoCD renders
+#   - argo_apps/platform/charts/03_gateway/values.yaml -> everything ArgoCD renders
 # This script writes the former into the latter (yq). No values are hardcoded in this script.
 #
 # Idempotent: re-run safely (it only rewrites the two values).
@@ -22,7 +22,7 @@ set -uo pipefail
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 
 # ---- knobs ------------------------------------------------------------------
-CHART_DIR="${CHART_DIR:-${SCRIPT_DIR}/../argo_apps/charts/03_gateway}"   # the wrapper chart (Argo consumes it too)
+CHART_DIR="${CHART_DIR:-${SCRIPT_DIR}/../argo_apps/platform/charts/03_gateway}"   # the wrapper chart (Argo consumes it too)
 CONFIG_FILE="${CONFIG_FILE:-${SCRIPT_DIR}/config.sh}"                    # LE_EMAIL + BASE_DOMAIN knobs
 
 # config.sh is the source of truth for the shell side; we write it into the chart's values.yaml below.
@@ -42,7 +42,7 @@ bad() { printf '  \033[31m[FAIL]\033[0m %s\n' "$1"; FAIL=$((FAIL+1)); }
 # === 0. prereqs ==============================================================
 say "prerequisites"
 command -v yq >/dev/null || die "yq not found on PATH — install it (https://github.com/mikefarah/yq, brew install yq)"
-[ -f "${CHART_DIR}/Chart.yaml" ] || die "no chart at ${CHART_DIR} (expected argo_apps/charts/03_gateway)"
+[ -f "${CHART_DIR}/Chart.yaml" ] || die "no chart at ${CHART_DIR} (expected argo_apps/platform/charts/03_gateway)"
 [ -f "$VALUES" ] || die "missing ${VALUES}"
 [ -n "${LE_EMAIL}" ]    || die "LE_EMAIL is empty (set it in ${CONFIG_FILE} or the environment)"
 [ -n "${BASE_DOMAIN}" ] || die "BASE_DOMAIN is empty (set it in ${CONFIG_FILE} or the environment)"
@@ -73,11 +73,11 @@ echo "=============== summary: ${PASS} passed, ${FAIL} failed ==============="
 if [ "$FAIL" -eq 0 ]; then
   cat <<EOF
 values.yaml now carries email=${LE_EMAIL}, baseDomain=${BASE_DOMAIN}.
-Single source of truth: 10_gateway/config.sh -> argo_apps/charts/03_gateway/values.yaml (ArgoCD renders it).
+Single source of truth: 10_gateway/config.sh -> argo_apps/platform/charts/03_gateway/values.yaml (ArgoCD renders it).
 
 Next:
   - git add -A && git commit && git push   # ArgoCD (wave 3) applies the Gateway + ClusterIssuers only
-    (the demo apps are 05_gateway_test, the SSO callback hosts 04_google_sso — each owns its cert+route)
+    (the demo apps are gateway-test, the SSO callback hosts 04_google_sso — each owns its cert+route)
   - watch the Gateway:  kubectl -n gateway get gateway shared-gateway   # PROGRAMMED=True, pinned LB IP
   - the per-host listeners stay not-Ready until their apps' certs issue (HTTP-01) — expected. See 10_gateway.md.
 EOF

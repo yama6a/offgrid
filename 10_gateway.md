@@ -8,14 +8,14 @@ The Gateway runs on the **Envoy Gateway `eg` class** (the data plane + class com
 This chart is the ingress **platform only — it owns no apps**. It declares the Gateway, the list of
 HTTPS hostnames the Gateway terminates TLS for (one `:443` listener each), and the ClusterIssuers. Each
 app brings its own `Certificate` + `HTTPRoute` (+ workload) in a later wave: the demo apps in
-[`05_gateway_test`](13_gateway_test.md), the SSO callback hosts in [`04_google_sso`](12_google_sso.md),
+[`gateway-test`](13_gateway_test.md), the SSO callback hosts in [`04_google_sso`](12_google_sso.md),
 real apps in their own charts.
 
 Delivered purely by ArgoCD:
 
-- `argo_apps/apps/03_gateway.yaml` — the Application, **sync-wave 3**.
-- `argo_apps/charts/03_gateway/` — the wrapper chart (Gateway + `httpsHosts` listeners + ClusterIssuers).
-- plus a one-line enablement (`enableGatewayAPI: true`) in `argo_apps/charts/02_cert_manager/values.yaml`.
+- `argo_apps/platform/apps/03_gateway.yaml` — the Application, **sync-wave 3**.
+- `argo_apps/platform/charts/03_gateway/` — the wrapper chart (Gateway + `httpsHosts` listeners + ClusterIssuers).
+- plus a one-line enablement (`enableGatewayAPI: true`) in `argo_apps/platform/charts/02_cert_manager/values.yaml`.
 
 And one bootstrap helper (no cluster apply — values propagation only):
 
@@ -70,7 +70,7 @@ The listener can only live on the one Gateway resource, so `httpsHosts` enumerat
 the app's own chart/wave. Coordination across charts (the price of one Gateway + per-host HTTP-01): an
 app's `HTTPRoute.parentRefs.sectionName` must equal the `httpsHosts` entry's `name`, its `hostname` must
 equal `hostname`, and its `Certificate.secretName` must equal `tlsSecretName`. The demo apps live in
-[`05_gateway_test`](13_gateway_test.md); the `google-sso.<domain>` callback hosts in
+[`gateway-test`](13_gateway_test.md); the `google-sso.<domain>` callback hosts in
 [`04_google_sso`](12_google_sso.md).
 
 ### Email + base domain are config.sh-driven

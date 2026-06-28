@@ -14,8 +14,8 @@ OIDC, no RBAC). You log in twice — Google, then the ArgoCD admin you already u
 
 Delivered purely by ArgoCD:
 
-- `argo_apps/apps/06_argocd_ingress.yaml` — the Application, **sync-wave 6**.
-- `argo_apps/charts/06_argocd_ingress/` — a `Certificate` + an `sso`-labelled `HTTPRoute` (cross-namespace
+- `argo_apps/platform/apps/06_argocd_ingress.yaml` — the Application, **sync-wave 6**.
+- `argo_apps/platform/charts/06_argocd_ingress/` — a `Certificate` + an `sso`-labelled `HTTPRoute` (cross-namespace
   backendRef to `argocd-server`) + a `ReferenceGrant`. No `Chart.lock`.
 - the `argocd` entry in `03_gateway`'s `httpsHosts` — the `:443` listener for `argocd.example.com`.
 
