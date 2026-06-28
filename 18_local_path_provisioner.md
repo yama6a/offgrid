@@ -26,11 +26,11 @@ The `longhorn-single` StorageClass (and its template in the CNPG chart) is remov
 
 ## Why local-path-provisioner (and not TopoLVM / OpenEBS LVM)
 
-| Option | Capacity-aware? | Enforces PVC size? | Talos fit | Verdict |
-|--------|-----------------|--------------------|-----------|---------|
-| **local-path-provisioner** | no | no (thin/grow-on-write) | trivial — just a Deployment + hostPath PVs | **chosen** |
-| TopoLVM | yes (scheduler) | yes (each PV is an LV) | needs a *raw* Talos volume + lvmd DaemonSet + a VG to manage | rejected — complexity |
-| OpenEBS LVM LocalPV | yes | yes | same raw-VG requirement as TopoLVM | rejected — no edge over TopoLVM here |
+| Option                     | Capacity-aware? | Enforces PVC size?      | Talos fit                                                    | Verdict                              |
+|----------------------------|-----------------|-------------------------|--------------------------------------------------------------|--------------------------------------|
+| **local-path-provisioner** | no              | no (thin/grow-on-write) | trivial — just a Deployment + hostPath PVs                   | **chosen**                           |
+| TopoLVM                    | yes (scheduler) | yes (each PV is an LV)  | needs a *raw* Talos volume + lvmd DaemonSet + a VG to manage | rejected — complexity                |
+| OpenEBS LVM LocalPV        | yes             | yes                     | same raw-VG requirement as TopoLVM                           | rejected — no edge over TopoLVM here |
 
 The capacity-awareness and size-enforcement that TopoLVM/OpenEBS-LVM buy are **largely moot on this
 cluster**: hostname anti-affinity puts exactly **one** CNPG instance per node, on a **dedicated 50 GiB
@@ -65,10 +65,10 @@ node-local storage, where `Immediate` would bind a PV to an arbitrary node befor
 Two things in [`03d`](03_operating_system.md) (`03_config.sh` + `03d_talos_cluster_config.sh`), the same
 shape as Longhorn's:
 
-| Requirement | Where |
-|-------------|-------|
+| Requirement                                                               | Where                                                                                            |
+|---------------------------------------------------------------------------|--------------------------------------------------------------------------------------------------|
 | Dedicated fixed-size XFS volume at `/var/mnt/cnpg` (50 GiB, `min == max`) | `03d` `volumes.yaml` (`UserVolumeConfig` `cnpg`); size knob `CNPG_VOLUME_SIZE` in `03_config.sh` |
-| **kubelet bind-mount of `/var/mnt/cnpg`** | `03d` `cp-patch.yaml` (`machine.kubelet.extraMounts`) |
+| **kubelet bind-mount of `/var/mnt/cnpg`**                                 | `03d` `cp-patch.yaml` (`machine.kubelet.extraMounts`)                                            |
 
 The partition layout per node is now: `EPHEMERAL` (64 GiB) → `cnpg` (50 GiB, fixed) → `longhorn` (the
 remainder). The `cnpg` volume is `min == max` so it's a fixed slice that can't grow into Longhorn's
