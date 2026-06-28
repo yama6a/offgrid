@@ -4,7 +4,7 @@
 #
 # Propagates the step-10 knobs (Let's Encrypt email + base domain) from config.sh into the gateway
 # wrapper chart's values.yaml, so the shell side and ArgoCD render the SAME values. This step has NO
-# imperative cluster bootstrap — the Gateway + ClusterIssuers (+ the gateway-test echo app) are
+# imperative cluster bootstrap — the Gateway + ClusterIssuers (+ the sample app (sample-workload)) are
 # delivered purely by ArgoCD from argo_apps/platform/charts/03_gateway/ (Application: argo_apps/platform/apps/
 # 03_gateway.yaml, sync-wave 3). See 10_gateway.md.
 #
@@ -77,7 +77,7 @@ Single source of truth: 10_gateway/config.sh -> argo_apps/platform/charts/03_gat
 
 Next:
   - git add -A && git commit && git push   # ArgoCD (wave 3) applies the Gateway + ClusterIssuers only
-    (the demo apps are gateway-test, the SSO callback hosts 04_google_sso — each owns its cert+route)
+    (the sample app is sample-workload, the SSO callback hosts 04_google_sso — each owns its cert+route)
   - watch the Gateway:  kubectl -n gateway get gateway shared-gateway   # PROGRAMMED=True, pinned LB IP
   - the per-host listeners stay not-Ready until their apps' certs issue (HTTP-01) — expected. See 10_gateway.md.
 EOF

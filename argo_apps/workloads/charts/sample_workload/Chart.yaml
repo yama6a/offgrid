@@ -1,0 +1,25 @@
+apiVersion: v2
+name: sample-workload
+description: >-
+  The cluster's end-to-end sample workload — merges the old gateway-test demo and the cnpg-cluster
+  Postgres into ONE chart. Ships a sample app (ghcr.io/yama6a/pi5-k8s-sample-app) wired to its own
+  CloudNativePG Postgres (the `app` role's password injected as PG_PASSWORD from the operator-generated
+  `<release>-cluster-app` Secret), exposed on two hosts that exercise the ingress end to end:
+  sample-workload.example.com (OPEN — the unprotected control) and sample-workload-sso.example.com
+  (PROTECTED — its HTTPRoute is labelled sso:<domain> so the platform 04_google_sso SecurityPolicy
+  attaches Google SSO). The app + its Postgres Cluster (+ the generated password Secret) live in the
+  `sample-workload` namespace; each host owns its own Gateway + :443 listener (merged onto the one Envoy
+  via mergeGateways), in the `gateway` namespace, reaching the app cross-namespace via a ReferenceGrant.
+  Wraps the upstream cnpg/cluster dependency (the Cluster CR) on the node-local `local-path` class
+  (platform app 02_local_path_provisioner), reconciled by the CNPG operator (platform app
+  02_cnpg_operator). Single source of truth for the cluster chart version (this file) and all values
+  (values.yaml). A WORKLOAD: delivered purely by ArgoCD via argo_apps/workloads/apps/sample_workload.yaml
+  — no sync-wave; the workloads tree is only created after the whole platform (operator CRDs + local-path
+  class + Gateway + SSO policies) is Healthy. See 13_sample_workload.md, 17_cnpg.md, 18_local_path_provisioner.md.
+type: application
+version: 0.1.0                 # this wrapper chart's own version
+
+dependencies:
+  - name: cluster
+    version: "0.7.0"          # cnpg/cluster chart — THE single source for the pin
+    repository: https://cloudnative-pg.github.io/charts

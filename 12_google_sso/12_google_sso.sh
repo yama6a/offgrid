@@ -168,8 +168,8 @@ Next:
   - git add -A && git commit && git push   # ArgoCD (wave 4) unseals the secret + applies the policies
   - for EACH domain's callback host (${AUTH_SUBDOMAIN}.<domain>) AND each protected app host: point public
     DNS at the home router + forward :80 to the Gateway IP on the old Pi so cert-manager's HTTP-01 issues.
-  - test:  open https://gateway-test-sso.example.com/  -> Google login; only example.com's allowlist passes.
-           (gateway-test.example.com stays OPEN — no sso label.)
+  - test:  open https://sample-workload-sso.example.com/  -> Google login; only example.com's allowlist passes.
+           (sample-workload.example.com stays OPEN — no sso label.)
   - protect another host: label its HTTPRoute \`sso: <its-domain>\`. No Google change if that domain is
     already configured; a NEW domain = add it to BOTH charts' domain lists + register one more redirect URI.
   - re-run this script to rotate the client secret or edit any allowlist.

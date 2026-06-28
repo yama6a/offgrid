@@ -13,7 +13,7 @@ Delivered purely by ArgoCD:
 - a one-line flip in `argo_apps/platform/charts/00_cilium/values.yaml` (`gatewayAPI.enabled: false`) + removal
   of the vendored Gateway API CRDs.
 - `argo_apps/platform/charts/03_gateway/` retargeted to `gatewayClassName: eg` (it's now platform-only — Gateway
-  + listeners + issuers; the demo apps live in [gateway-test](13_gateway_test.md)).
+  + listeners + issuers; the sample workload lives in [sample-workload](13_sample_workload.md)).
 
 This step has **no imperative script** — the only manual action is generating the chart's `Chart.lock`
 (`helm dependency update argo_apps/platform/charts/01_envoy_gateway` + commit), like the other dependency charts.
@@ -66,8 +66,8 @@ annotation pins the IP alone. The IP must stay inside the LB-IPAM pool (`192.168
 ### cert-manager HTTP-01 is unaffected
 The `gatewayHTTPRoute` solver is standard Gateway API — cert-manager creates a temporary HTTPRoute on
 the `:80` listener exactly as before, now served by Envoy Gateway. No ClusterIssuer change. The
-`03_gateway` chart's issuers + Gateway carry over untouched apart from the class (its demo apps have
-since moved to [`gateway-test`](13_gateway_test.md), and per-host certs/routes are owned by each app).
+`03_gateway` chart's issuers + Gateway carry over untouched apart from the class (its sample workload has
+since moved to [`sample-workload`](13_sample_workload.md), and per-host certs/routes are owned by each app).
 
 ### The `eg` GatewayClass + EnvoyProxy live in the controller chart
 `GatewayClass eg` (`controllerName: gateway.envoyproxy.io/gatewayclass-controller`) points its
@@ -90,9 +90,9 @@ Checks:
 - `kubectl -n envoy-gateway-system get pods` → controller Running; a data-plane `envoy-*` pod appears
   once the Gateway is programmed, and its Service has EXTERNAL-IP `192.168.100.10`.
 - `kubectl get clusterissuer` → both Ready; `kubectl -n gateway get certificate` issuing as before.
-- once the demo apps ([gateway-test](13_gateway_test.md)) sync,
-  `curl -kv https://gateway-test.<baseDomain>/` → the whoami echo (no auth — the unprotected control;
-  `gateway-test-sso` gets SSO in step 12).
+- once the sample workload ([sample-workload](13_sample_workload.md)) syncs,
+  `curl -kv https://sample-workload.<baseDomain>/` → the sample app (no auth — the unprotected control;
+  `sample-workload-sso` gets SSO in step 12).
 
 ## Caveats
 
@@ -116,4 +116,4 @@ Checks:
 ## Next step
 
 [12_google_sso.md](12_google_sso.md) — the `SecurityPolicy` that attaches Google SSO to labelled routes,
-proven on `gateway-test-sso`.
+proven on `sample-workload-sso`.

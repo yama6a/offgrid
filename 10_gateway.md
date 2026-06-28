@@ -8,8 +8,8 @@ The Gateway runs on the **Envoy Gateway `eg` class** (the data plane + class com
 This chart is the ACME ingress **platform only — it owns no apps and no `:443` listeners**. It declares
 the `shared-gateway` reduced to its **`:80` HTTP listener** (the cert-issuance entry point) and the
 ClusterIssuers. Each app now ships its **own Gateway** (a single `:443` listener) **plus** its
-`Certificate` + `HTTPRoute` (+ workload) in a later wave: the demo apps in
-[`gateway-test`](13_gateway_test.md), the SSO callback hosts in [`04_google_sso`](12_google_sso.md),
+`Certificate` + `HTTPRoute` (+ workload) in a later wave: the sample workload in
+[`sample-workload`](13_sample_workload.md), the SSO callback hosts in [`04_google_sso`](12_google_sso.md),
 argocd in [`06_argocd_ingress`](14_argocd_ingress.md), the monitoring UIs in `07_monitoring_ingress`,
 real apps in their own charts. Every one of those Gateways is folded onto **one** Envoy + LoadBalancer
 via Envoy Gateway's `mergeGateways` (see [11_envoy_gateway.md](11_envoy_gateway.md)), so the cluster
@@ -76,8 +76,8 @@ namespace (so the SSO `SecurityPolicy` label-selection and the ReferenceGrants a
 onto the one Envoy. Adding a host is now a **one-place edit** in the app's chart — no `httpsHosts` entry
 to keep in step here. That host's `:443` listener sits **not-Ready until its cert is issued** (needs the
 host to resolve + the old Pi to forward `:80`), but under merge listeners are independent — one app's
-missing cert never blocks another, nor the platform. The demo apps live in
-[`gateway-test`](13_gateway_test.md); the `google-sso.<domain>` callback hosts in
+missing cert never blocks another, nor the platform. The sample workload lives in
+[`sample-workload`](13_sample_workload.md); the `google-sso.<domain>` callback hosts in
 [`04_google_sso`](12_google_sso.md); argocd in [`06_argocd_ingress`](14_argocd_ingress.md); the
 monitoring UIs in `07_monitoring_ingress`.
 
@@ -120,7 +120,7 @@ network. It owns no CRDs, so a prune never cascade-deletes one.
 Checks:
 
 - `kubectl -n gateway get gateway` → `shared-gateway` `PROGRAMMED=True` immediately, plus one per-app
-  Gateway per host (argocd, vmui, vlogs, grafana, google-sso-*, gateway-test*) — all with address
+  Gateway per host (argocd, vmui, vlogs, grafana, google-sso-*, sample-workload*) — all with address
   `192.168.100.10` (merge gives every Gateway the shared Service's IP).
 - `kubectl get svc -n envoy-gateway-system` → **one** Envoy `LoadBalancer` Service (`envoy-eg-<hash>`)
   with EXTERNAL-IP `192.168.100.10` (mergeGateways → a single shared data plane).
@@ -130,8 +130,8 @@ Checks:
 
 ## Next step
 
-Apps attach by merging their own Gateway onto this one's Envoy. The demo echo apps are
-[13_gateway_test.md](13_gateway_test.md); optional Google SSO is [12_google_sso.md](12_google_sso.md).
+Apps attach by merging their own Gateway onto this one's Envoy. The sample workload is
+[13_sample_workload.md](13_sample_workload.md); optional Google SSO is [12_google_sso.md](12_google_sso.md).
 Per real app/host: ship its **own `Gateway`** (one `:443` listener) **plus** its `Certificate` +
 `HTTPRoute` (+ workload) in its own chart — one place, no edit here. The forced http→https redirect is
 still deferred — a `RequestRedirect` HTTPRoute on this chart's `:80` listener.

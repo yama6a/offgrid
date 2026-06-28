@@ -1,5 +1,5 @@
 # Vendored from rancher/local-path-provisioner v0.0.36, parameterized from values.yaml.
-# This is the class CNPG points at (workloads/charts/cnpg_cluster). Node-local: a PV lives only on the
+# This is the class CNPG points at (workloads/charts/sample_workload). Node-local: a PV lives only on the
 # node where its consumer pod is scheduled, hence WaitForFirstConsumer. Not the cluster default —
 # Longhorn keeps that; CNPG opts in by name. See 18_local_path_provisioner.md.
 apiVersion: storage.k8s.io/v1

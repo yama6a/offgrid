@@ -15,13 +15,13 @@
 
 # Namespace the SecurityPolicies, callback hosts and the sealed Secret live in. MUST equal the namespace
 # of the routes they target (a SecurityPolicy selects routes in its own namespace) — all gateway routes
-# (callbacks here, demo apps in gateway-test) are in `gateway`.
+# (callbacks here, the sample workload in sample-workload) are in `gateway`.
 namespace: gateway
 # The GatewayClass for each per-domain callback Gateway (templates/gateway.yaml). MUST match the `eg`
 # class the 01_envoy_gateway chart registers.
 gatewayClassName: eg
 # The label KEY a route opts in with; the VALUE is the route's domain (e.g. `sso: "example.com"`). MUST
-# match the key apps stamp on protected routes (the callbacks here + the demo apps in gateway-test).
+# match the key apps stamp on protected routes (the callbacks here + the sample workload in sample-workload).
 routeLabelKey: sso
 # The shared OIDC callback subdomain — the redirect target is `https://<authSubdomain>.<domain>/oauth2/callback`.
 # Each domain's callback Gateway listener terminates `<authSubdomain>.<domain>`.

@@ -1,0 +1,53 @@
+# The sample app — a single Deployment + Service in this chart's release namespace (sample-workload),
+# alongside the CNPG Cluster and its operator-generated password Secret. PG_PASSWORD is injected from
+# that Secret (`<release>-cluster-app`, key `password`) so the app can connect to its Postgres. Both
+# ingress hosts (open + SSO) route to this one Service. See 13_sample_workload.md.
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: {{ .Values.app.name }}
+  namespace: {{ .Release.Namespace }}
+  labels:
+    app: {{ .Values.app.name }}
+spec:
+  replicas: {{ .Values.app.replicas }}
+  selector:
+    matchLabels:
+      app: {{ .Values.app.name }}
+  template:
+    metadata:
+      labels:
+        app: {{ .Values.app.name }}
+    spec:
+      containers:
+        - name: app
+          image: {{ .Values.app.image | quote }}
+          ports:
+            - name: http
+              containerPort: {{ .Values.app.port }}
+          env:
+            # Make the chart's `app.port` authoritative (the app honours PORT; defaults to 8080).
+            - name: PORT
+              value: {{ .Values.app.port | quote }}
+            # The Postgres app-role password, from the CNPG operator-generated Secret in this namespace.
+            # Blank pgPasswordSecret => derive `<release>-cluster-app` (the cnpg/cluster fullname + -app).
+            - name: PG_PASSWORD
+              valueFrom:
+                secretKeyRef:
+                  name: {{ .Values.app.pgPasswordSecret | default (printf "%s-cluster-app" .Release.Name) }}
+                  key: {{ .Values.app.pgPasswordKey }}
+          resources:
+            {{- toYaml .Values.app.resources | nindent 12 }}
+---
+apiVersion: v1
+kind: Service
+metadata:
+  name: {{ .Values.app.name }}
+  namespace: {{ .Release.Namespace }}
+spec:
+  selector:
+    app: {{ .Values.app.name }}
+  ports:
+    - name: http
+      port: {{ .Values.app.port }}
+      targetPort: http

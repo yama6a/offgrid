@@ -11,6 +11,6 @@
 # ACME registration email for the Let's Encrypt ClusterIssuers (account-level; expiry notices here).
 LE_EMAIL="${LE_EMAIL:-letsencrypt@example.com}"
 # Base domain for cluster-hosted app hostnames. Host names are derived as <subdomain>.<baseDomain>,
-# e.g. the gateway-test echo app becomes gateway-test.${BASE_DOMAIN}.
+# e.g. the sample app becomes sample-workload.${BASE_DOMAIN}.
 BASE_DOMAIN="${BASE_DOMAIN:-example.com}"
 # -----------------------------------------------------------------------------

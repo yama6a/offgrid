@@ -8,7 +8,7 @@
 # Everything under `cloudnative-pg:` is passed to the upstream cnpg/cloudnative-pg subchart (key == dependency name).
 cloudnative-pg:
   # The operator chart bundles + installs the CNPG CRDs (Cluster, Backup, ScheduledBackup, ...). No
-  # separate wave-0 CRD app is needed: the cnpg_cluster workload is in the workloads tree, which the
+  # separate wave-0 CRD app is needed: the sample_workload workload is in the workloads tree, which the
   # root-of-roots only creates after the whole platform is Healthy, so these CRDs are registered before
   # the Cluster CR is ever applied. (ServerSideApply in the Application handles the large CRD manifests.)
   crds:
@@ -21,7 +21,7 @@ cloudnative-pg:
     podMonitorEnabled: true
 
   # Modest footprint for the single controller pod on the Pi 5s — it only reconciles, the DB work
-  # lives in the Postgres pods (the cnpg_cluster workload).
+  # lives in the Postgres pods (the sample_workload workload).
   resources:
     requests:
       cpu: 100m

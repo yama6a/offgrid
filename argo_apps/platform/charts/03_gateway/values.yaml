@@ -6,7 +6,7 @@
 #      attach here; the http->https redirect lands here later), on the Envoy Gateway `eg` class, and
 #   2. the Let's Encrypt ClusterIssuers that mint certs via HTTP-01 solved through that :80 listener.
 # It owns NO apps and NO :443 listeners. Each HTTPS host is now a per-app Gateway (its own :443 listener
-# + Certificate + HTTPRoute) shipped by the owning chart — the demo apps in gateway-test, the SSO callback
+# + Certificate + HTTPRoute) shipped by the owning chart — the sample workload in sample-workload, the SSO callback
 # hosts in 04_google_sso, argocd in 06, the monitoring UIs in 07. All merged onto one Envoy via
 # mergeGateways (01_envoy_gateway). See 10_gateway.md / 11_envoy_gateway.md.
 

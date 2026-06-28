@@ -34,11 +34,9 @@ argo_apps/
       01_argocd/         #     this step's chart
   workloads/
     apps/                #   one Application per workload (un-numbered, wave-less)
-      cnpg_cluster.yaml
-      gateway_test.yaml
+      sample_workload.yaml
     charts/
-      cnpg_cluster/
-      gateway_test/
+      sample_workload/   #     the sample app + its CNPG Postgres + open/SSO ingress
 ```
 
 - **`root.yaml`** is the root-of-roots: it recurses `argo_apps/roots/` and manages the two child root Applications it

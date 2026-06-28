@@ -46,7 +46,7 @@ grow to fill the whole 50 GiB partition. That's contained to the partition; rely
 alerts. If real reservation + online auto-grow ("1 GiB then grow") is ever needed, that's the signal to
 revisit TopoLVM.
 
-> Because the PVC size is a no-op here, [`cnpg_cluster`'s](17_cnpg.md) `storage.size` is set to the
+> Because the PVC size is a no-op here, [`sample_workload`'s](17_cnpg.md) `storage.size` is set to the
 > honest partition budget (`45Gi`, ~50 GiB minus XFS headroom) purely so the number stays sane if the
 > class is ever swapped for an enforcing one — it is **not** a limit. CNPG requires the field, so it
 > can't simply be dropped.
