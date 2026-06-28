@@ -5,16 +5,21 @@ the **cert-issuance wiring** (Let's Encrypt ClusterIssuers that solve HTTP-01 *t
 The Gateway runs on the **Envoy Gateway `eg` class** (the data plane + class come from the
 `01_envoy_gateway` app — see [11_envoy_gateway.md](11_envoy_gateway.md)).
 
-This chart is the ingress **platform only — it owns no apps**. It declares the Gateway, the list of
-HTTPS hostnames the Gateway terminates TLS for (one `:443` listener each), and the ClusterIssuers. Each
-app brings its own `Certificate` + `HTTPRoute` (+ workload) in a later wave: the demo apps in
+This chart is the ACME ingress **platform only — it owns no apps and no `:443` listeners**. It declares
+the `shared-gateway` reduced to its **`:80` HTTP listener** (the cert-issuance entry point) and the
+ClusterIssuers. Each app now ships its **own Gateway** (a single `:443` listener) **plus** its
+`Certificate` + `HTTPRoute` (+ workload) in a later wave: the demo apps in
 [`gateway-test`](13_gateway_test.md), the SSO callback hosts in [`04_google_sso`](12_google_sso.md),
-real apps in their own charts.
+argocd in [`06_argocd_ingress`](14_argocd_ingress.md), the monitoring UIs in `07_monitoring_ingress`,
+real apps in their own charts. Every one of those Gateways is folded onto **one** Envoy + LoadBalancer
+via Envoy Gateway's `mergeGateways` (see [11_envoy_gateway.md](11_envoy_gateway.md)), so the cluster
+still has a **single ingress point on the pinned IP** — but the platform Gateway no longer depends on any
+app's cert.
 
 Delivered purely by ArgoCD:
 
 - `argo_apps/platform/apps/03_gateway.yaml` — the Application, **sync-wave 3**.
-- `argo_apps/platform/charts/03_gateway/` — the wrapper chart (Gateway + `httpsHosts` listeners + ClusterIssuers).
+- `argo_apps/platform/charts/03_gateway/` — the wrapper chart (the `:80` Gateway + ClusterIssuers).
 - plus a one-line enablement (`enableGatewayAPI: true`) in `argo_apps/platform/charts/02_cert_manager/values.yaml`.
 
 And one bootstrap helper (no cluster apply — values propagation only):
@@ -46,38 +51,41 @@ Two landmines on the old Pi when forwarding `:80`:
 
 ## Decisions
 
-### One shared Gateway, pinned IP
-A single `Gateway` (`shared-gateway`, namespace `gateway`) is the cluster's lone ingress. Apps attach
-`HTTPRoute`s to it cross-namespace (`listener.allowedRoutes.namespaces.from: All`). Envoy Gateway
-materialises it as a data-plane Envoy Deployment + `LoadBalancer` Service, pinned to **`192.168.100.10`**
-(the start of the Cilium LB-IPAM pool from `04_networking/config.sh`) via the EnvoyProxy
-`lbipam.cilium.io/ips` annotation **and** the Gateway's `spec.addresses` — both honoured by Cilium
-LB-IPAM. This is the fixed IP the old Pi forwards to; keep it stable. (Pinning mechanism lives in the
-`01_envoy_gateway` chart — see [11_envoy_gateway.md](11_envoy_gateway.md).)
+### One Envoy + one pinned IP, many Gateways (mergeGateways)
+The cluster has **one ingress point** — a single data-plane Envoy + `LoadBalancer` Service pinned to
+**`192.168.100.10`** (the start of the Cilium LB-IPAM pool from `04_networking/config.sh`) — but it is
+fed by **many Gateways**, not one. Envoy Gateway's `mergeGateways: true` (on the `eg` class's EnvoyProxy)
+collapses every `eg` Gateway onto that single Envoy/Service. The IP is pinned **solely** by the EnvoyProxy
+`lbipam.cilium.io/ips` annotation now — per-Gateway `spec.addresses` is dropped (it would conflict on the
+one shared Service under merge). This is the fixed IP the old Pi forwards to; keep it stable. (The merge
+flag + pinning live in the `01_envoy_gateway` chart — see [11_envoy_gateway.md](11_envoy_gateway.md).)
 
-### Listeners: always-on `:80`, one `:443` per host
-The `:80` HTTP listener needs no cert and serves both pre-HTTPS jobs: cert-manager's HTTP-01 solver
-routes attach here, and the future forced http→https redirect is a `RequestRedirect` HTTPRoute on this
-same listener. Then **one HTTPS `:443` listener per entry in `.Values.httpsHosts`** — a flat list of
-`{name, hostname, tlsSecretName}`. Each terminates TLS for a hostname using a cert Secret an app fills
-via HTTP-01, so a listener sits **not-Ready until that cert is issued** (needs the host to resolve + the
-old Pi to forward `:80`). One Gateway + HTTP-01 means **a listener per host** — there is no wildcard
-listener without DNS-01, which we don't have.
+### This chart's Gateway: the `:80` ACME listener only
+`shared-gateway` now owns just the `:80` HTTP listener — no cert, no `:443`. It serves both pre-HTTPS
+jobs: cert-manager's HTTP-01 solver routes attach here (the ClusterIssuers point at `shared-gateway` by
+name), and the future forced http→https redirect is a `RequestRedirect` HTTPRoute on this same listener.
+With no cert refs it is **Programmed immediately**, independent of any app — the platform Gateway is no
+longer held back by app issuance. (One Gateway + HTTP-01 still means a `:443` listener per host overall —
+there's no wildcard without DNS-01, which we don't have — but those `:443` listeners now live on the
+per-app Gateways below, not here.)
 
-### The Gateway owns no apps — only listeners
-The listener can only live on the one Gateway resource, so `httpsHosts` enumerates every hostname
-(demo, SSO callbacks, real apps). But the *app* — its `Certificate` + `HTTPRoute` + workload — lives in
-the app's own chart/wave. Coordination across charts (the price of one Gateway + per-host HTTP-01): an
-app's `HTTPRoute.parentRefs.sectionName` must equal the `httpsHosts` entry's `name`, its `hostname` must
-equal `hostname`, and its `Certificate.secretName` must equal `tlsSecretName`. The demo apps live in
+### Apps own their Gateway + listener + cert + route
+Each HTTPS host is now self-contained in its app's chart: its **own `Gateway`** with a single `:443`
+listener, its `Certificate`, and its `HTTPRoute` (parentRef → its own Gateway). All in the `gateway`
+namespace (so the SSO `SecurityPolicy` label-selection and the ReferenceGrants are unchanged), all merged
+onto the one Envoy. Adding a host is now a **one-place edit** in the app's chart — no `httpsHosts` entry
+to keep in step here. That host's `:443` listener sits **not-Ready until its cert is issued** (needs the
+host to resolve + the old Pi to forward `:80`), but under merge listeners are independent — one app's
+missing cert never blocks another, nor the platform. The demo apps live in
 [`gateway-test`](13_gateway_test.md); the `google-sso.<domain>` callback hosts in
-[`04_google_sso`](12_google_sso.md).
+[`04_google_sso`](12_google_sso.md); argocd in [`06_argocd_ingress`](14_argocd_ingress.md); the
+monitoring UIs in `07_monitoring_ingress`.
 
 ### Email + base domain are config.sh-driven
 Per [CLAUDE.md](CLAUDE.md), no values are hardcoded in scripts. `10_gateway/config.sh` holds `LE_EMAIL`
 and `BASE_DOMAIN`; `10_gateway.sh` writes them into the chart's `values.yaml` (`acme.email`,
 `baseDomain`) with `yq`. `baseDomain` is now informational (the cluster serves more than one domain, so
-hostnames are spelled out explicitly in `httpsHosts` and per-app values). Commit the rewritten
+hostnames are spelled out explicitly in each app's per-app values). Commit the rewritten
 `values.yaml` so ArgoCD renders the same.
 
 ### Staging + prod ClusterIssuers
@@ -107,19 +115,23 @@ network. It owns no CRDs, so a prune never cascade-deletes one.
 2. Per host (demo, SSO, real app): point the hostname's public DNS at the home router and forward `:80`
    for it to the Gateway IP on the old Pi (`allowACMEByPass=true` + a `Host(...)` HTTP router) so
    cert-manager's HTTP-01 challenge can reach the cluster. Until then that host's `Certificate` + its
-   `:443` listener stay not-Ready — expected, and it blocks nothing.
+   own Gateway's `:443` listener stay not-Ready — expected, and it blocks nothing.
 
 Checks:
 
-- `kubectl -n gateway get gateway shared-gateway` → `PROGRAMMED=True`, address `192.168.100.10`.
-- `kubectl get svc -n gateway` → the Envoy Gateway `LoadBalancer` Service has EXTERNAL-IP `192.168.100.10`.
+- `kubectl -n gateway get gateway` → `shared-gateway` `PROGRAMMED=True` immediately, plus one per-app
+  Gateway per host (argocd, vmui, vlogs, grafana, google-sso-*, gateway-test*) — all with address
+  `192.168.100.10` (merge gives every Gateway the shared Service's IP).
+- `kubectl get svc -n envoy-gateway-system` → **one** Envoy `LoadBalancer` Service (`envoy-eg-<hash>`)
+  with EXTERNAL-IP `192.168.100.10` (mergeGateways → a single shared data plane).
 - `kubectl get clusterissuer` → both `letsencrypt-staging` / `letsencrypt-prod` show `READY=True`.
-- listeners show `Ready` only once their app's cert is issued (per-host) — not-Ready before that is
-  expected, not an error.
+- A per-app Gateway's `:443` listener shows `Ready` only once its cert is issued — not-Ready before that
+  is expected, not an error, and isolated to that Gateway.
 
 ## Next step
 
-Apps attach here. The demo echo apps are [13_gateway_test.md](13_gateway_test.md); optional Google SSO is
-[12_google_sso.md](12_google_sso.md). Per real app/host: add a `httpsHosts` entry (the listener), and
-ship its `Certificate` + `HTTPRoute` (+ workload) in its own chart. The forced http→https redirect is
-still deferred — a `RequestRedirect` HTTPRoute on the `:80` listener.
+Apps attach by merging their own Gateway onto this one's Envoy. The demo echo apps are
+[13_gateway_test.md](13_gateway_test.md); optional Google SSO is [12_google_sso.md](12_google_sso.md).
+Per real app/host: ship its **own `Gateway`** (one `:443` listener) **plus** its `Certificate` +
+`HTTPRoute` (+ workload) in its own chart — one place, no edit here. The forced http→https redirect is
+still deferred — a `RequestRedirect` HTTPRoute on this chart's `:80` listener.

@@ -15,12 +15,15 @@ metadata:
   name: l2-default
 spec:
   loadBalancerIPs: true
-  # Also announce externalIPs. The shared Gateway's IP is BOTH an LB-IPAM ingress IP (lbipam annotation)
-  # AND a spec.externalIP (Envoy Gateway copies the Gateway's spec.addresses onto the Service). When one
-  # IP is both, Cilium creates a single frontend typed `ExternalIPs`, which loadBalancerIPs:true alone
-  # does NOT announce — and the type can land differently across restarts, so the LB IP silently stops
-  # being ARP-announced (no lease, gateway unreachable) on a reschedule/rebuild. Announcing both makes it
-  # deterministic. See 04_networking.md.
+  # Also announce externalIPs (defensive). The merged Envoy Service gets 192.168.100.10 as an LB-IPAM
+  # ingress IP via the EnvoyProxy `lbipam.cilium.io/ips` annotation — loadBalancerIPs:true announces that.
+  # We KEEP externalIPs:true as a safety net: historically the Gateway's spec.addresses also surfaced the
+  # IP as a spec.externalIP (Envoy Gateway copied it onto the Service), and when one IP is both, Cilium
+  # creates a single frontend typed `ExternalIPs` that loadBalancerIPs:true alone does NOT announce — and
+  # the type could land differently across restarts, silently dropping the ARP announcement on a
+  # reschedule/rebuild. Since the mergeGateways migration we no longer set spec.addresses (the annotation
+  # is the sole IP authority), so that ExternalIPs frontend shouldn't recur — but announcing both stays
+  # deterministic and costs nothing. See 04_networking.md.
   externalIPs: true
   interfaces:
     - ^end0$

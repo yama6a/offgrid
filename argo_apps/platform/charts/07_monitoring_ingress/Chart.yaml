@@ -1,13 +1,13 @@
 apiVersion: v2
 name: monitoring-ingress
 description: >-
-  Exposes the VictoriaMetrics vmui, VictoriaLogs UI and Grafana through the shared Gateway, fronted by
-  Google SSO. The stacks themselves are untouched — this is just the edge: per host a Certificate + an
-  `sso`-labelled HTTPRoute (so the 04_google_sso example.com SecurityPolicy gates it behind Google login +
-  the allowlist) + one ReferenceGrant letting those routes reach the monitoring Services cross-namespace.
-  vmui and the VictoriaLogs UI have NO login of their own (and Grafana's is disabled), so the SSO gate is
-  the ONLY barrier — which is the point. The :443 listeners live on the Gateway (03_gateway httpsHosts:
-  vmui, vlogs, grafana). No upstream dependency, so no Chart.lock. Delivered by ArgoCD via
+  Exposes the VictoriaMetrics vmui, VictoriaLogs UI and Grafana, each through its own Gateway (all merged
+  onto the one Envoy), fronted by Google SSO. The stacks themselves are untouched — this is just the edge:
+  per host its own Gateway + :443 listener, a Certificate + an `sso`-labelled HTTPRoute (so the
+  04_google_sso example.com SecurityPolicy gates it behind Google login + the allowlist) + one
+  ReferenceGrant letting those routes reach the monitoring Services cross-namespace. vmui and the
+  VictoriaLogs UI have NO login of their own (and Grafana's is disabled), so the SSO gate is the ONLY
+  barrier — which is the point. Each :443 listener lives on its UI's own Gateway. No upstream dependency, so no Chart.lock. Delivered by ArgoCD via
   argo_apps/apps/07_monitoring_ingress.yaml — wave 7 (after the gateway wave 3 + the SSO policy wave 4;
   same wave as the stacks it fronts). See 15_monitoring.md.
 type: application

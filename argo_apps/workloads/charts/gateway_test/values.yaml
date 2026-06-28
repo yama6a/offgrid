@@ -1,14 +1,13 @@
 # Values for the gateway_test wrapper chart. SINGLE SOURCE OF TRUTH — ArgoCD (and any local
 # `helm template`) consume this.
 #
-# Demo echo apps behind the shared Gateway, each rendering a Deployment + Service + Certificate +
-# HTTPRoute. For each app the Gateway must already terminate its hostname — i.e. there is a matching
-# 03_gateway httpsHosts entry where name == listenerName, hostname == host, tlsSecretName == tlsSecretName
-# (one Gateway + HTTP-01 = a listener per host; no wildcard without DNS-01). Set `sso` to an SSO domain to
-# protect an app (its route gets label sso:<domain>, picked up by the 04_google_sso policy); leave it
-# empty for an open app. See 13_gateway_test.md.
+# Demo echo apps, each rendering its OWN Gateway + :443 listener (templates/gateway.yaml) plus a
+# Deployment + Service + Certificate + HTTPRoute — the whole stack in one place, all merged onto the one
+# Envoy via mergeGateways. Per app the Gateway/listener is named after `name`/`listenerName`, terminates
+# `host`, and uses `tlsSecretName`. Set `sso` to an SSO domain to protect an app (its route gets label
+# sso:<domain>, picked up by the 04_google_sso policy); leave it empty for an open app. See 13_gateway_test.md.
 
-gatewayName: shared-gateway
+gatewayClassName: eg
 namespace: gateway
 image: "traefik/whoami:v1.10.3"
 

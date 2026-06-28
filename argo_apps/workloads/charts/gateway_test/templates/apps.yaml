@@ -1,8 +1,9 @@
 {{- range .Values.apps }}
 ---
 # {{ .name }} — a whoami echo on {{ .host }}{{ if .sso }} (PROTECTED by SSO domain {{ .sso }}){{ else }} (OPEN — no sso label){{ end }}.
-# Deployment + Service + Certificate + HTTPRoute, all in the gateway namespace. Its :443 listener lives
-# on the Gateway (03_gateway httpsHosts: {{ .listenerName }}); this ships the cert + route + workload.
+# Deployment + Service + Certificate + HTTPRoute + its own Gateway (templates/gateway.yaml), all in the
+# gateway namespace. Its :443 listener lives on that per-app Gateway (merged onto the one Envoy); this
+# chart now ships the whole stack — workload + cert + route + gateway — in one place.
 apiVersion: apps/v1
 kind: Deployment
 metadata:
@@ -43,8 +44,8 @@ spec:
       port: 80
       targetPort: http
 ---
-# cert-manager mints this (HTTP-01 via the Gateway) into the Secret the {{ .listenerName }} listener
-# (03_gateway httpsHosts) references.
+# cert-manager mints this (HTTP-01 via the shared :80 listener) into the Secret this app's own Gateway
+# listener ({{ .listenerName }}, templates/gateway.yaml) references.
 apiVersion: cert-manager.io/v1
 kind: Certificate
 metadata:
@@ -72,7 +73,7 @@ metadata:
   {{- end }}
 spec:
   parentRefs:
-    - name: {{ $.Values.gatewayName }}
+    - name: {{ .name }}                       # this app's own Gateway (templates/gateway.yaml)
       namespace: {{ $.Values.namespace }}
       sectionName: {{ .listenerName }}
   hostnames:

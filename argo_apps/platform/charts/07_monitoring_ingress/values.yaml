@@ -2,13 +2,14 @@
 # `helm template`) consume this. Mirrors 06_argocd_ingress, but list-valued for the three monitoring UIs
 # (vmui, VictoriaLogs, Grafana).
 #
-# Each `hosts` entry fronts one UI on `host` through the shared Gateway, gated by Google SSO. The :443
-# listener for `host` must exist in 03_gateway's httpsHosts (name == listener `name`, hostname == `host`,
-# tlsSecretName == `tlsSecretName`). Routes are labelled `sso: <sso>` so the matching 04_google_sso
-# SecurityPolicy attaches Google login + the allowlist. See 15_monitoring.md.
+# Each `hosts` entry fronts one UI on `host` through its OWN Gateway (a single :443 listener named after
+# the entry, merged onto the one Envoy via mergeGateways), gated by Google SSO. Routes are labelled
+# `sso: <sso>` so the matching 04_google_sso SecurityPolicy attaches Google login + the allowlist.
+# See 15_monitoring.md.
 
-# The shared Gateway + its namespace (where the Certificates + HTTPRoutes live). MUST match 03_gateway.
-gatewayName: shared-gateway
+# The class for each per-UI Gateway + the namespace everything (Gateways, Certificates, HTTPRoutes) lives
+# in. Each UI's Gateway/listener is named after its `hosts` entry `name` (== HTTPRoute sectionName).
+gatewayClassName: eg
 gatewayNamespace: gateway
 
 # The namespace the backend Services live in (the stack's namespace). The ReferenceGrant lands here.

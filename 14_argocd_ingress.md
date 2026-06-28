@@ -1,6 +1,6 @@
 # 14 — ArgoCD UI behind Google SSO
 
-Expose the **ArgoCD UI** through the shared Gateway, fronted by the same Google SSO we built in
+Expose the **ArgoCD UI** through its own Gateway (folded onto the one Envoy via `mergeGateways`), fronted by the same Google SSO we built in
 [12_google_sso.md](12_google_sso.md) — **without** touching ArgoCD's own auth. Two independent layers:
 
 ```
@@ -15,9 +15,9 @@ OIDC, no RBAC). You log in twice — Google, then the ArgoCD admin you already u
 Delivered purely by ArgoCD:
 
 - `argo_apps/platform/apps/06_argocd_ingress.yaml` — the Application, **sync-wave 6**.
-- `argo_apps/platform/charts/06_argocd_ingress/` — a `Certificate` + an `sso`-labelled `HTTPRoute` (cross-namespace
-  backendRef to `argocd-server`) + a `ReferenceGrant`. No `Chart.lock`.
-- the `argocd` entry in `03_gateway`'s `httpsHosts` — the `:443` listener for `argocd.example.com`.
+- `argo_apps/platform/charts/06_argocd_ingress/` — its own `argocd` `Gateway` (a single `:443` listener for
+  `argocd.example.com`) + a `Certificate` + an `sso`-labelled `HTTPRoute` (cross-namespace backendRef to
+  `argocd-server`) + a `ReferenceGrant`. No `Chart.lock`.
 
 ## Why it's almost free
 `argocd.example.com` is a subdomain of `example.com`, so the **existing** example.com `SecurityPolicy`,
@@ -29,8 +29,8 @@ you're already signed into another `*.example.com` app the Google step is silent
 
 ### ArgoCD is untouched — the gate is purely at the edge
 ArgoCD keeps `server.insecure: true` (it already does — [05_gitops.md](05_gitops.md)) and serves HTTP on
-`argocd-server:80`; the Gateway terminates TLS. We add only the Certificate + HTTPRoute + ReferenceGrant.
-`01_argocd` doesn't change.
+`argocd-server:80`; the Gateway terminates TLS. We add only the `argocd` Gateway + Certificate + HTTPRoute +
+ReferenceGrant. `01_argocd` doesn't change.
 
 ### Route in `gateway` ns + cross-namespace backendRef
 A `SecurityPolicy` selects routes in its own namespace, so the route lives in `gateway` (under the
@@ -43,7 +43,8 @@ policy now sets `logoutPath: /oauth2/sign_out` so the gate doesn't swallow ArgoC
 field on the shared policy; harmless for the other example.com apps.)
 
 ### Sync-wave 6
-After the gateway (wave 3 — the `argocd` listener) and the SSO policy (wave 4 — so the UI is gated the
+After the gateway (wave 3 — for the `eg` GatewayClass + ClusterIssuers this chart's own `argocd` Gateway and
+Certificate need) and the SSO policy (wave 4 — so the UI is gated the
 instant its labelled route appears). `ServerSideDiff` so the Gateway API resources don't show perpetual
 OutOfSync.
 

@@ -10,10 +10,10 @@ Delivered (mostly) by ArgoCD:
 
 - `argo_apps/platform/apps/04_google_sso.yaml` — the Application, **sync-wave 4**.
 - `argo_apps/platform/charts/04_google_sso/` — one `SecurityPolicy` **per domain**, the per-domain
-  `google-sso.<domain>` callback hosts (each a `Certificate` + an `sso:`-labelled `HTTPRoute`, sharing
-  one tiny backend), and the shared sealed client secret. No upstream dependency, so no `Chart.lock`.
-- the `httpsHosts` list in `argo_apps/platform/charts/03_gateway/` — the `:443` **listener** for each
-  `google-sso.<domain>` (listeners can only live on the Gateway; the cert + route live in 04 above).
+  `google-sso.<domain>` callback hosts (each its **own** `Gateway` with a single `:443` listener, a
+  `Certificate`, and an `sso:`-labelled `HTTPRoute` whose `parentRef` points at that per-domain Gateway,
+  sharing one tiny backend), and the shared sealed client secret. No upstream dependency, so no `Chart.lock`.
+  Every per-domain Gateway folds onto the one Envoy via Envoy Gateway's `mergeGateways: true`.
 - `12_google_sso/12_google_sso.sh` — interactive: shared client-id/secret once, an allowlist per domain.
 
 Builds on [11_envoy_gateway.md](11_envoy_gateway.md) — `SecurityPolicy` is Envoy Gateway's CRD.
@@ -48,7 +48,7 @@ That's why the unit of configuration is the **domain**, never the app:
 | You add… | Google Console | Cluster |
 |---|---|---|
 | a subdomain/app on an existing domain | nothing | label its route `sso: "<domain>"` |
-| a brand-new root domain | +1 redirect URI (`google-sso.<newdomain>/oauth2/callback`) | a `domains` entry in **both** charts (below) + an allowlist |
+| a brand-new root domain | +1 redirect URI (`google-sso.<newdomain>/oauth2/callback`) | one `ssoDomains` entry here (below) — ships its own Gateway+listener+cert+route — + an allowlist |
 
 ## Decisions
 
@@ -63,14 +63,14 @@ A single OAuth client (one `clientID` + one sealed `client-secret`) serves all d
 under the consent screen's *Authorized domains*. `redirectURL` and `cookieDomain` are **derived** in the
 chart from the domain — the script never writes them.
 
-### The shared callback host needs real plumbing — split across two charts
-`google-sso.<domain>` must be an `HTTPRoute` on the Gateway for Envoy Gateway to intercept
-`/oauth2/callback` there, and it's HTTPS, so it needs a listener + cert. This chart (`04_google_sso`)
-ships the `Certificate` + the `sso:`-labelled `HTTPRoute` (per domain, sharing **one tiny whoami
-backend** — the callback path never reaches it). The `:443` **listener** for `google-sso.<domain>` can
-only live on the Gateway, so it's an entry in `03_gateway`'s `httpsHosts`. So **two lists must agree**:
-`httpsHosts` (03, the listeners) and `ssoDomains` (04, the policies + callback certs/routes) — the script
-warns if they drift, and a missing listener means that domain's login 404s.
+### The shared callback host needs real plumbing — all in this one chart
+`google-sso.<domain>` must be an `HTTPRoute` for Envoy Gateway to intercept `/oauth2/callback` there,
+and it's HTTPS, so it needs a listener + cert. This chart (`04_google_sso`) ships **all** of it per
+domain: its **own** `Gateway` with a single `:443` listener (`templates/gateway.yaml`, named
+`google-sso-<slug>`), the `Certificate`, and the `sso:`-labelled `HTTPRoute` — whose `parentRef` points
+at that per-domain Gateway — sharing **one tiny whoami backend** (the callback path never reaches it).
+Every per-domain Gateway merges onto the single Envoy via Envoy Gateway's `mergeGateways: true`, so a new
+domain is a **one-place edit here** — no `03_gateway` change.
 
 ### The allowlist is INLINE and per-domain (only the client secret is sealed)
 Envoy Gateway's `authorization` takes the allowed emails as inline literals — they can't come from a
@@ -120,15 +120,16 @@ Checks:
 ## Adding apps / domains
 
 - **Another app on an existing domain** → label its `HTTPRoute` `sso: "<domain>"`. Done.
-- **A new domain** → add a `{name, hostname, tlsSecretName}` listener entry to `httpsHosts` (03) for
-  `google-sso.<newdomain>` **and** a `{domain, issuer, allowlist}` entry to `ssoDomains` (04), register
-  one redirect URI (`google-sso.<newdomain>/oauth2/callback`) on the OAuth client, and re-run the script.
+- **A new domain** → add a `{domain, issuer, allowlist}` entry to `ssoDomains` (04) — that one entry
+  renders its own Gateway + `:443` listener + cert + callback route for `google-sso.<newdomain>`, no
+  `03_gateway` change — register one redirect URI (`google-sso.<newdomain>/oauth2/callback`) on the OAuth
+  client, and re-run the script.
 
 ## Caveats
 
 - **Run the script before expecting protection** — no sealed secret ⇒ policies don't attach ⇒ routes open.
-- **Keep the two lists in sync** — a `google-sso.<domain>` listener in `httpsHosts` (03) for every
-  `ssoDomains` entry (04). The script warns on drift.
+- **A new domain is a one-place edit** — an `ssoDomains` entry (04) renders its own callback
+  Gateway + `:443` listener + cert + route; no separate `03_gateway` listener to keep in sync.
 - **Changing `cookieDomain` on a live policy** requires clearing browser cookies first, or stale
   host-scoped cookies take precedence and break the flow.
 - **Publish the OAuth consent screen** — in "Testing" only listed test users can log in, regardless of

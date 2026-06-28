@@ -1,0 +1,26 @@
+# This app's own Gateway — a single :443 HTTPS listener terminating TLS for the ArgoCD UI host with the
+# cert this chart mints. Folded onto the cluster's one Envoy + LB IP by mergeGateways (01_envoy_gateway),
+# so it shares the single ingress point without its own LoadBalancer. Lives in the gateway namespace so
+# the HTTPRoute (also gateway ns) attaches same-namespace and the 04_google_sso SecurityPolicy still
+# selects it by label. The listener is not-Ready only until cert-manager issues the cert — that wait now
+# lives on THIS Gateway, not the shared one. See 14_argocd_ingress.md.
+apiVersion: gateway.networking.k8s.io/v1
+kind: Gateway
+metadata:
+  name: {{ .Values.gatewayName }}
+  namespace: {{ .Values.gatewayNamespace }}
+spec:
+  gatewayClassName: {{ .Values.gatewayClassName }}
+  listeners:
+    - name: {{ .Values.listenerName }}
+      protocol: HTTPS
+      port: 443
+      hostname: {{ .Values.host | quote }}
+      tls:
+        mode: Terminate
+        certificateRefs:
+          - kind: Secret
+            name: {{ .Values.tlsSecretName | quote }}
+      allowedRoutes:
+        namespaces:
+          from: Same

@@ -1,14 +1,16 @@
 apiVersion: v2
 name: gateway
 description: >-
-  Wrapper chart for the cluster's INGRESS PLATFORM (no apps): a single shared Gateway on the Envoy
-  Gateway `eg` class (pinned LB-IPAM IP), a flat `httpsHosts` list of the hostnames it terminates TLS
-  for (one :443 listener each), and the Let's Encrypt ClusterIssuers (staging + prod) that cert-manager
-  uses to mint certs via HTTP-01 solved THROUGH that Gateway. Apps own their own Certificate + HTTPRoute
-  (+ workload) elsewhere — demo apps in gateway-test, SSO callback hosts in 04_google_sso. Pins NO
-  upstream dependency (first-party CRs), so there is no Chart.lock. Single source of truth for the
-  gateway IP, ACME config and base domain (values.yaml; email + baseDomain written by
-  10_gateway/10_gateway.sh). Delivered purely by ArgoCD via argo_apps/apps/03_gateway.yaml — wave 3
-  (after the `eg` class wave 1 + cert-manager wave 2). See 10_gateway.md.
+  Wrapper chart for the cluster's ACME INGRESS PLATFORM (no apps, no :443 listeners): the shared-gateway
+  Gateway reduced to its :80 HTTP listener ONLY (cert-manager HTTP-01 solver routes attach here; the
+  http->https redirect lands here later) on the Envoy Gateway `eg` class, plus the Let's Encrypt
+  ClusterIssuers (staging + prod) that cert-manager uses to mint certs via HTTP-01 solved THROUGH that
+  :80 listener. Each HTTPS host is now a per-app Gateway (its own :443 listener + Certificate + HTTPRoute)
+  owned by the app's chart — demo apps in gateway-test, SSO callbacks in 04_google_sso, argocd in 06, the
+  monitoring UIs in 07 — all merged onto one Envoy via mergeGateways (01_envoy_gateway). With no cert
+  refs the shared-gateway is Programmed immediately, independent of any app. Pins NO upstream dependency
+  (first-party CRs), so there is no Chart.lock. Single source of truth for ACME config and base domain
+  (values.yaml; email + baseDomain written by 10_gateway/10_gateway.sh). Delivered purely by ArgoCD via
+  argo_apps/apps/03_gateway.yaml — wave 3 (after the `eg` class wave 1 + cert-manager wave 2). See 10_gateway.md.
 type: application
 version: 0.1.0                 # this wrapper chart's own version

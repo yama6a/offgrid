@@ -1,15 +1,24 @@
-# Provider config for every Gateway of the `eg` class. Its one job here: pin the data-plane Envoy's
-# LoadBalancer Service to the LB-IPAM IP, exactly as the old Cilium Gateway was pinned via
-# spec.addresses. Cilium LB-IPAM honours the `lbipam.cilium.io/ips` annotation (Cilium >= 1.15); the
-# Gateway's own spec.addresses (03_gateway chart) requests the same IP, belt-and-suspenders. This is
-# the fixed IP the old Raspberry Pi forwards :80/:443 to — keep it inside the pool (192.168.100.10-250,
-# from 04_networking/config.sh) and stable. See 11_envoy_gateway.md.
+# Provider config for every Gateway of the `eg` class (the GatewayClass parametersRef points here). Two jobs:
+#
+#   1. mergeGateways — collapse EVERY Gateway of the `eg` class onto ONE Envoy Deployment + ONE
+#      LoadBalancer Service. This is what lets each app own its own Gateway (its own :443 listener + cert)
+#      while the cluster keeps a single ingress point on one pinned IP. Without it, Envoy Gateway spawns
+#      one Envoy + one LoadBalancer Service PER Gateway, so N app Gateways would each demand the pinned IP
+#      and fight over it. The merge constraint is global uniqueness of (port, protocol, hostname) across
+#      all merged listeners — our hostnames are all distinct, so there's no collision. See 11_envoy_gateway.md.
+#   2. Pin that one shared Service to the LB-IPAM IP via the `lbipam.cilium.io/ips` annotation (Cilium
+#      LB-IPAM honours it on >= 1.15). This is now the SOLE authority for the IP — per-Gateway
+#      spec.addresses is dropped (it would conflict on the one shared Service under merge). The fixed IP
+#      the old Raspberry Pi forwards :80/:443 to — keep it inside the pool (192.168.100.10-250, from
+#      04_networking/config.sh) and stable.
 apiVersion: gateway.envoyproxy.io/v1alpha1
 kind: EnvoyProxy
 metadata:
   name: {{ .Values.envoyProxy.name }}
   namespace: {{ .Values.envoyProxy.namespace }}
 spec:
+  # All `eg`-class Gateways share one data plane (one Envoy + one LB Service). See the header comment.
+  mergeGateways: true
   provider:
     type: Kubernetes
     kubernetes:

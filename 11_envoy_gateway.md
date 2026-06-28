@@ -44,13 +44,24 @@ whose `enableGatewayAPI` wants the Gateway API CRDs present when its controller 
 share a wave (distinct dir names), as the wave-2 leaves already do; ArgoCD is already running and
 self-managing, so it creates the `envoy-gateway` child app fine.
 
+### Per-app Gateways merged onto one Envoy (`mergeGateways: true`)
+Each app now owns its **own** Gateway with a single `:443` listener; `shared-gateway` keeps only the
+`:80` HTTP listener (cert-manager HTTP-01 + redirects). By default Envoy Gateway spawns **one Envoy
+Deployment + one LoadBalancer Service per Gateway** — which would hand out a fresh external IP per app.
+Setting `mergeGateways: true` on the `EnvoyProxy` collapses **every** Gateway of the `eg` class onto a
+**single** Envoy Deployment and a **single** LoadBalancer Service, so the split into per-app Gateways
+still presents **one ingress point on one pinned IP**. It's the precondition for both the per-app split
+and the single-annotation IP pinning below.
+
 ### Pinning the LoadBalancer IP (unchanged externally)
-The old Pi forwards `:80`/`:443` to a fixed IP — it must stay `192.168.100.10`. Envoy Gateway creates a
-`LoadBalancer` Service for the data-plane Envoy; we pin it two ways (belt-and-suspenders): the
-`EnvoyProxy` provider config sets `provider.kubernetes.envoyService.annotations:
-{ lbipam.cilium.io/ips: 192.168.100.10 }` (Cilium LB-IPAM honours it on >= 1.15), and the Gateway keeps
-its `spec.addresses` request for the same IP. The IP must stay inside the LB-IPAM pool
-(`192.168.100.10-250`, from `04_networking/config.sh`).
+The old Pi forwards `:80`/`:443` to a fixed IP — it must stay `192.168.100.10`. Under `mergeGateways`
+there is exactly **one** data-plane `LoadBalancer` Service for the whole `eg` class, and the `EnvoyProxy`
+provider config is its **sole** IP authority: `provider.kubernetes.envoyService.annotations:
+{ lbipam.cilium.io/ips: 192.168.100.10 }` (Cilium LB-IPAM honours it on >= 1.15). The old
+belt-and-suspenders per-Gateway `spec.addresses` request is **dropped everywhere** — with the class
+collapsed onto one Service, multiple Gateways each asserting an address on it would conflict, so the
+annotation pins the IP alone. The IP must stay inside the LB-IPAM pool (`192.168.100.10-250`, from
+`04_networking/config.sh`).
 
 ### cert-manager HTTP-01 is unaffected
 The `gatewayHTTPRoute` solver is standard Gateway API — cert-manager creates a temporary HTTPRoute on
@@ -95,8 +106,12 @@ Checks:
 - **Free the pinned IP at cutover.** Cilium created `cilium-gateway-shared-gateway` (LoadBalancer, IP
   `.10`) for the old Gateway. With Cilium's gateway controller disabled nothing reconciles that Service,
   so it can **linger and hold `192.168.100.10`**, blocking Envoy Gateway's new Service from getting it.
-  If the EG Service stays `<pending>` on the IP, delete the orphan once:
-  `kubectl -n gateway delete svc cilium-gateway-shared-gateway`. One-off, apply-time only.
+  Flipping `mergeGateways` likewise makes Envoy Gateway tear down its old per-Gateway data-plane Services
+  and recreate a single merged one under the per-class name (`envoy-gateway-system/envoy-eg-<hash>`), so a
+  stale per-Gateway EG Service can also hold the IP. After the change, verify **exactly one** `LoadBalancer`
+  Service holds `192.168.100.10`; if any orphan (Cilium's or a stale per-Gateway EG one) still holds it,
+  delete it so LB-IPAM reassigns — e.g. `kubectl -n gateway delete svc cilium-gateway-shared-gateway`.
+  One-off, apply-time only.
 
 ## Next step
 

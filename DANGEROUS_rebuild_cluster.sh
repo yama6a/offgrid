@@ -145,11 +145,15 @@ else
 
   deadline=$(( $(date +%s) + INGRESS_WAIT )); remaining=""; lbip=""
   while :; do
-    lbip="$(kubectl get gateway "$INGRESS_GW_NAME" -n "$INGRESS_GW_NS" \
-            -o jsonpath='{.status.addresses[0].value}' 2>/dev/null)"
+    # Under mergeGateways every `eg` Gateway shares one LB Service, so each Gateway's status carries the
+    # same address — read it from whichever Gateway in the ns has one (shared-gateway is now :80-only).
+    lbip="$(kubectl get gateway -n "$INGRESS_GW_NS" \
+            -o jsonpath='{range .items[*]}{.status.addresses[0].value}{"\n"}{end}' 2>/dev/null | grep -m1 .)"
     if [ -n "$INGRESS_HOSTS" ]; then hosts="$INGRESS_HOSTS"; else
-      hosts="$(kubectl get gateway "$INGRESS_GW_NAME" -n "$INGRESS_GW_NS" \
-               -o jsonpath='{range .spec.listeners[?(@.protocol=="HTTPS")]}{.hostname}{"\n"}{end}' 2>/dev/null \
+      # HTTPS hosts now live on the per-app Gateways (shared-gateway has none), so enumerate the HTTPS
+      # listeners across ALL Gateways in the ns, not just shared-gateway.
+      hosts="$(kubectl get gateway -n "$INGRESS_GW_NS" \
+               -o jsonpath='{range .items[*].spec.listeners[?(@.protocol=="HTTPS")]}{.hostname}{"\n"}{end}' 2>/dev/null \
                | sort -u | tr '\n' ' ')"
     fi
     if [ -n "$lbip" ] && [ -n "${hosts// }" ]; then

@@ -12,7 +12,7 @@ metadata:
     {{ $.Values.routeLabelKey }}: {{ $.Values.sso | quote }}
 spec:
   parentRefs:
-    - name: {{ $.Values.gatewayName }}
+    - name: {{ .name }}                       # this UI's own Gateway (templates/gateway.yaml)
       namespace: {{ $.Values.gatewayNamespace }}
       sectionName: {{ .name }}
   hostnames:

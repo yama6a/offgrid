@@ -1,6 +1,6 @@
-# cert-manager mints this (HTTP-01 via the Gateway) into the Secret the `argocd` listener (03_gateway
-# httpsHosts) references. In the gateway namespace, alongside the Gateway + its TLS Secrets. STAGING by
-# default — flip .Values.issuer to letsencrypt-prod once it issues (the UI wants a browser-trusted cert).
+# cert-manager mints this (HTTP-01 via the shared :80 listener) into the Secret this chart's own Gateway
+# listener (templates/gateway.yaml) references. In the gateway namespace, alongside that Gateway. STAGING
+# by default — flip .Values.issuer to letsencrypt-prod once it issues (the UI wants a browser-trusted cert).
 apiVersion: cert-manager.io/v1
 kind: Certificate
 metadata:

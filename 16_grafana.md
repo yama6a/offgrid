@@ -59,10 +59,11 @@ Prometheus/Alertmanager UIs, which also have no login of their own.
 
 ### Exposure reuses 07_monitoring_ingress
 Grafana is just one more host on the existing monitoring edge: a `grafana` entry in
-`07_monitoring_ingress/values.yaml` renders the Certificate (HTTP-01), the `sso`-labelled HTTPRoute, and
-extends the cross-namespace ReferenceGrant to the `grafana` Service — no template changes. The matching
-`:443` listener is the `grafana` entry added to `03_gateway`'s `httpsHosts`. `letsencrypt-staging` until
-the cert issues, then flip the shared `issuer` in `07_monitoring_ingress` to `letsencrypt-prod`.
+`07_monitoring_ingress/values.yaml` renders its own `grafana` Gateway (a single `:443` listener, folded
+onto the one Envoy via `mergeGateways`), the Certificate (HTTP-01), the `sso`-labelled HTTPRoute, and
+extends the cross-namespace ReferenceGrant to the `grafana` Service — no template changes.
+`letsencrypt-staging` until the cert issues, then flip the shared `issuer` in `07_monitoring_ingress` to
+`letsencrypt-prod`.
 
 ### sync-wave 7
 Same wave as the stack it reads ConfigMaps from (`07_kube_prometheus_stack`) and its own edge route

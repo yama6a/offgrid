@@ -1,11 +1,14 @@
-# The cluster's single shared ingress Gateway. Envoy Gateway (the `eg` class) materialises this as a
-# data-plane Envoy Deployment + LoadBalancer Service, pinned to .Values.gateway.loadBalancerIP via the
-# EnvoyProxy annotation (01_envoy_gateway chart) and the spec.addresses below.
+# The platform's ACME ingress Gateway. Envoy Gateway (the `eg` class, mergeGateways: true) folds this
+# and every per-app Gateway onto ONE data-plane Envoy + LoadBalancer Service, pinned to the LB-IPAM IP
+# by the EnvoyProxy `lbipam.cilium.io/ips` annotation (01_envoy_gateway chart) — that annotation is the
+# sole IP authority now, so this Gateway carries no spec.addresses (it would conflict on the shared
+# Service under merge).
 #
-# An always-on HTTP :80 listener serves cert-manager's HTTP-01 ACME challenges (solver HTTPRoutes attach
-# here) and, later, the forced http->https redirect. Then one HTTPS :443 listener per entry in
-# .Values.httpsHosts — each terminates TLS for a hostname using a cert Secret the owning app fills via
-# HTTP-01, so a listener stays not-Ready until that cert is issued. See 10_gateway.md.
+# This Gateway owns ONLY the always-on HTTP :80 listener: cert-manager's HTTP-01 ACME solver routes
+# attach here (the ClusterIssuers below point at it by name) and, later, the forced http->https redirect.
+# It has NO :443 listeners and NO cert refs, so it is Programmed immediately and its health no longer
+# depends on any app's cert. Each app now owns its OWN Gateway with a single :443 listener (its cert +
+# route + listener live together in the app's chart). See 10_gateway.md.
 apiVersion: gateway.networking.k8s.io/v1
 kind: Gateway
 metadata:
@@ -13,9 +16,6 @@ metadata:
   namespace: {{ .Values.gateway.namespace }}
 spec:
   gatewayClassName: {{ .Values.gateway.className }}
-  addresses:
-    - type: IPAddress
-      value: {{ .Values.gateway.loadBalancerIP | quote }}
   listeners:
     - name: http
       protocol: HTTP
@@ -25,17 +25,3 @@ spec:
       allowedRoutes:
         namespaces:
           from: All
-    {{- range .Values.httpsHosts }}
-    - name: {{ .name }}
-      protocol: HTTPS
-      port: 443
-      hostname: {{ .hostname | quote }}
-      tls:
-        mode: Terminate
-        certificateRefs:
-          - kind: Secret
-            name: {{ .tlsSecretName | quote }}
-      allowedRoutes:
-        namespaces:
-          from: All
-    {{- end }}

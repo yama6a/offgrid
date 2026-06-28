@@ -1,0 +1,29 @@
+{{- range .Values.apps }}
+---
+# {{ .name }}'s own Gateway — a single :443 HTTPS listener terminating TLS for {{ .host }} with the cert
+# this chart mints. Folded onto the cluster's one Envoy + LB IP by mergeGateways (01_envoy_gateway), so
+# the demo app owns its full ingress (gateway + listener + cert + route + workload) without its own
+# LoadBalancer. In the gateway namespace so the HTTPRoute attaches same-namespace and{{ if .sso }} the
+# 04_google_sso SecurityPolicy still selects it by the `sso: {{ .sso }}` label{{ else }} no SSO gate applies{{ end }}.
+# See 13_gateway_test.md.
+apiVersion: gateway.networking.k8s.io/v1
+kind: Gateway
+metadata:
+  name: {{ .name }}
+  namespace: {{ $.Values.namespace }}
+spec:
+  gatewayClassName: {{ $.Values.gatewayClassName }}
+  listeners:
+    - name: {{ .listenerName }}
+      protocol: HTTPS
+      port: 443
+      hostname: {{ .host | quote }}
+      tls:
+        mode: Terminate
+        certificateRefs:
+          - kind: Secret
+            name: {{ .tlsSecretName | quote }}
+      allowedRoutes:
+        namespaces:
+          from: Same
+{{- end }}

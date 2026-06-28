@@ -1,12 +1,12 @@
 apiVersion: v2
 name: argocd-ingress
 description: >-
-  Exposes the ArgoCD UI through the shared Gateway, fronted by Google SSO. ArgoCD itself is untouched
-  (still local-admin, server.insecure) — this only adds the edge: a Certificate + an `sso`-labelled
-  HTTPRoute (so the 04_google_sso example.com SecurityPolicy gates it behind Google login + the
-  allowlist) + a ReferenceGrant letting that route reach `argocd-server` cross-namespace. Two auth
-  layers: Google (outer network gate) then the ArgoCD admin login (inner). The :443 listener lives on
-  the Gateway (03_gateway httpsHosts: argocd). No upstream dependency, so no Chart.lock. Delivered by
+  Exposes the ArgoCD UI through its own Gateway (merged onto the one Envoy), fronted by Google SSO.
+  ArgoCD itself is untouched (still local-admin, server.insecure) — this only adds the edge: its own
+  Gateway + :443 listener, a Certificate + an `sso`-labelled HTTPRoute (so the 04_google_sso example.com
+  SecurityPolicy gates it behind Google login + the allowlist) + a ReferenceGrant letting that route
+  reach `argocd-server` cross-namespace. Two auth layers: Google (outer network gate) then the ArgoCD
+  admin login (inner). The :443 listener lives on this chart's own Gateway. No upstream dependency, so no Chart.lock. Delivered by
   ArgoCD via argo_apps/apps/06_argocd_ingress.yaml — wave 6 (after the gateway wave 3 + the SSO policy
   wave 4). The `argocd` CLI does NOT work through the SSO gate — use port-forward for the CLI (also the
   break-glass). See 14_argocd_ingress.md.
