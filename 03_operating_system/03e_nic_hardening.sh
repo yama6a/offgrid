@@ -33,6 +33,8 @@ KUBECTL_IMAGE="${KUBECTL_IMAGE:-registry.k8s.io/kubectl:v1.36.1}"   # ~match clu
 DEBUG_IMAGE="${DEBUG_IMAGE:-alpine:3.21}"  # probe pod; apk-installs ethtool
 WATCHDOG_TIMEOUT="${WATCHDOG_TIMEOUT:-15s}"  # desired; floored to 10s (Talos min); Pi hw max ~15s
 APPLY_MODE="${APPLY_MODE:-no-reboot}"      # never silently reboot control-plane nodes
+SETTLE_WAIT="${SETTLE_WAIT:-60}"           # secs to wait for the VIP/API to steady after the NIC reconfig
+SETTLE_STREAK="${SETTLE_STREAK:-5}"        # consecutive /readyz hits required (one success isn't enough)
 # TSO / GSO / GRO -> their kernel netdev feature names (what EthernetConfig/EthernetStatus use).
 OFFLOAD_KEYS=(tx-tcp-segmentation tx-generic-segmentation rx-gro)
 PROBE_NS="kube-system"                     # Talos exempts kube-system from Pod Security
@@ -215,7 +217,27 @@ for ip in "${NODES_ARR[@]}"; do
   fi
 done
 
-# === 6. summary ==============================================================
+# === 6. wait for the network to settle before handing off to 04 ===============
+# The EthernetConfig ring-resize re-inits the macb rings, which bounces end0's link for a few seconds —
+# and the control-plane VIP rides on end0. That blip is what made 04_cilium's kubectl/helm hit
+# "network is unreachable". The checks above confirm the CONFIG landed (talosctl hits node IPs direct),
+# NOT that the VIP/API is back. So poll the apiserver over the VIP until it answers SETTLE_STREAK times
+# in a row before exiting — one success isn't enough (a single good hit is what fooled 04). Tunable via
+# SETTLE_WAIT / SETTLE_STREAK.
+say "waiting for the control-plane API to be steady over the VIP (post-NIC-reconfig settle)"
+streak=0; deadline=$(( $(date +%s) + SETTLE_WAIT ))
+until [ "$streak" -ge "$SETTLE_STREAK" ]; do
+  if kubectl get --raw='/readyz' >/dev/null 2>&1; then streak=$((streak+1)); else streak=0; fi
+  [ "$streak" -ge "$SETTLE_STREAK" ] && break
+  [ "$(date +%s)" -lt "$deadline" ] || break
+  printf '.'; sleep 2
+done
+echo
+[ "$streak" -ge "$SETTLE_STREAK" ] \
+  && ok  "control-plane API steady over the VIP (${SETTLE_STREAK}x consecutive /readyz)" \
+  || bad "API not steady ${SETTLE_STREAK}x within ${SETTLE_WAIT}s — let the NIC/VIP settle before running 04"
+
+# === 7. summary ==============================================================
 echo ""
 echo "=============== summary: ${PASS} passed, ${FAIL} failed ==============="
 if [ "$FAIL" -eq 0 ]; then

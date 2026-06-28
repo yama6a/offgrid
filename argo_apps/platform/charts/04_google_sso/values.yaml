@@ -40,6 +40,16 @@ oidc:
   # Path the OIDC filter uses for ITS OWN logout — moved off the default /logout so it doesn't swallow a
   # backend app's /logout (e.g. ArgoCD's). Applies to every domain's policy.
   logoutPath: "/oauth2/sign_out"
+  # Keep a login session valid for a DAY without re-auth. Without refreshToken the session dies when
+  # Google's ~1h id token expires (Envoy honours the IdP's expiry; defaultTokenTTL only applies when the
+  # IdP omits one, which Google never does). refreshToken makes Envoy silently renew the id/access token
+  # using Google's refresh token; sessionTTL caps how long that renew-without-re-login lasts (Google's
+  # refresh token is opaque/non-JWT, so this value governs it — EG default is 1 week). See 12_google_sso.md.
+  # NOTE: Google only ISSUES a refresh token when the auth request carries access_type=offline; if sessions
+  # still drop at ~1h after this, that's the cause (revoke the app at myaccount.google.com + re-login to
+  # force a fresh consent, or confirm EG is sending offline access).
+  refreshToken: true
+  sessionTTL: "24h"
 # One entry per SSO domain. `domain` becomes the label value, the cookieDomain, the google-sso.<domain>
 # redirect host, and (with `issuer`) the callback host's cert. `allowlist` is per-domain (inline; written
 # by the script — Deny is the default). This list MUST match the `google-sso.<domain>` entries in

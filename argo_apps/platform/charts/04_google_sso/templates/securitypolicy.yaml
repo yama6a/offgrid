@@ -37,6 +37,10 @@ spec:
     cookieDomain: {{ .domain | quote }}
     cookieNames:
       idToken: {{ $.Values.oidc.idTokenCookie | quote }}
+    # Silently renew the id/access token so a session survives past Google's ~1h id-token expiry, up to
+    # defaultRefreshTokenTTL (sessionTTL). Without this the user is bounced back to Google every hour.
+    refreshToken: {{ $.Values.oidc.refreshToken }}
+    defaultRefreshTokenTTL: {{ $.Values.oidc.sessionTTL | quote }}
     scopes:
       - openid
       - email

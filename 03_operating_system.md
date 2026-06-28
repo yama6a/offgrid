@@ -341,12 +341,23 @@ What it does:
 5. **Verifies** against the authoritative resources, per node, polled (the apply is async):
    `EthernetStatus` → offloads off + rings at max; `WatchdogTimerStatus` → armed with the
    set timeout. It **never triggers the watchdog.**
-6. **Cleans up** the probe pod.
+6. **Waits for the network to settle.** The `EthernetConfig` ring-resize re-inits the `macb`
+   rings, which **bounces `end0`'s link for a few seconds** — and the control-plane VIP rides on
+   `end0`. The verify in (5) only proves the *config* landed (`talosctl` hits node IPs directly),
+   not that the **VIP is reachable again**; that blip is exactly what made a following `04_cilium`
+   run hit `dial 192.168.100.1:6443: network is unreachable`. So before exiting, 03e polls the
+   apiserver over the VIP (`kubectl get --raw=/readyz`) and requires **`SETTLE_STREAK` (default 5)
+   consecutive** OKs within `SETTLE_WAIT` (default 60s) — one success isn't enough (a single good
+   hit is what fooled 04). A non-steady API fails the step, so `DANGEROUS_rebuild_cluster.sh`
+   **aborts at 03e** instead of cascading a confusing failure into 04.
+7. **Cleans up** the probe pod.
 
 **Reading the output:** `[PASS]`/`[FAIL]` per check, then `summary: N passed, M failed`.
 Exit 0 = all green. A `[FAIL]` on `patch` mentioning *reboot* means the change wanted a
 reboot (it refused) — investigate before forcing. A watchdog `[FAIL]` usually means the
-timeout exceeded the hardware max → lower `WATCHDOG_TIMEOUT`.
+timeout exceeded the hardware max → lower `WATCHDOG_TIMEOUT`. A `[FAIL]` on the **settle** check
+means the VIP/API didn't steady within `SETTLE_WAIT` — let the NIC/control-plane settle (or raise
+`SETTLE_WAIT`) before running 04, rather than pushing on into a flaky API.
 
 ### Runtime — the recovery DaemonSet (`nic-keeper`, GitOps)
 
