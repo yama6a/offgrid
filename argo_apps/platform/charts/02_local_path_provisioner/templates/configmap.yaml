@@ -1,0 +1,42 @@
+# Vendored from rancher/local-path-provisioner v0.0.36 (deploy/local-path-storage.yaml).
+# config.json: every node provisions PVs under .Values.dataPath on its OWN disk (node-local, via the
+# DEFAULT_PATH_FOR_NON_LISTED_NODES catch-all). setup/teardown: the helper-pod scripts that mkdir/rm
+# the per-volume dir. helperPod.yaml: the spec the provisioner stamps out to run those scripts.
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: local-path-config
+  namespace: {{ .Release.Namespace }}
+data:
+  config.json: |-
+    {
+            "nodePathMap":[
+            {
+                    "node":"DEFAULT_PATH_FOR_NON_LISTED_NODES",
+                    "paths":["{{ .Values.dataPath }}"]
+            }
+            ]
+    }
+  setup: |-
+    #!/bin/sh
+    set -eu
+    mkdir -m 0777 -p "$VOL_DIR"
+  teardown: |-
+    #!/bin/sh
+    set -eu
+    rm -rf "$VOL_DIR"
+  helperPod.yaml: |-
+    apiVersion: v1
+    kind: Pod
+    metadata:
+      name: helper-pod
+    spec:
+      priorityClassName: system-node-critical
+      tolerations:
+        - key: node.kubernetes.io/disk-pressure
+          operator: Exists
+          effect: NoSchedule
+      containers:
+      - name: helper-pod
+        image: {{ .Values.helperImage.repository }}:{{ .Values.helperImage.tag }}
+        imagePullPolicy: IfNotPresent

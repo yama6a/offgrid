@@ -4,7 +4,8 @@ The cluster had **no persistent storage** — no default `StorageClass`, so noth
 PVC. [Longhorn](https://longhorn.io) fills that gap: cloud-native distributed block storage that replicates
 each volume across nodes. It's wired to the **dedicated XFS `longhorn` user volume** that
 [`03d`](03_operating_system.md) already carves out of each NVMe (the rest of the disk after the 64 GiB
-EPHEMERAL cap), mounted at `/var/mnt/longhorn`.
+EPHEMERAL cap and the fixed 50 GiB [`cnpg`](18_local_path_provisioner.md) volume), mounted at
+`/var/mnt/longhorn`.
 
 Like [`nic-keeper`](06_nic_keeper.md), [`sealed-secrets`](07_sealed_secrets.md) and
 [`cert-manager`](08_cert_manager.md), this is **not** an imperative bootstrap (unlike Cilium or ArgoCD,
@@ -16,11 +17,11 @@ prerequisite that lives in the Talos config (the kubelet bind-mount, below).
 Single source of truth is the wrapper chart at `argo_apps/platform/charts/02_longhorn/` (same pattern as
 `00_cilium` / `01_argocd` / `02_sealed_secrets` / `02_cert_manager`):
 
-| Path          | Holds                                                                                                       |
-|---------------|-------------------------------------------------------------------------------------------------------------|
-| `Chart.yaml`  | the **Longhorn chart version** (`1.12.0`, app `v1.12.0`), a dependency on the `charts.longhorn.io` repo.     |
-| `values.yaml` | all config under the `longhorn:` key — data path, replica count, default StorageClass, pre-upgrade hook.    |
-| `Chart.lock`  | pins the resolved dependency; **must be committed** (ArgoCD's repo-server runs `helm dependency build`).     |
+| Path          | Holds                                                                                                    |
+|---------------|----------------------------------------------------------------------------------------------------------|
+| `Chart.yaml`  | the **Longhorn chart version** (`1.12.0`, app `v1.12.0`), a dependency on the `charts.longhorn.io` repo. |
+| `values.yaml` | all config under the `longhorn:` key — data path, replica count, default StorageClass, pre-upgrade hook. |
+| `Chart.lock`  | pins the resolved dependency; **must be committed** (ArgoCD's repo-server runs `helm dependency build`). |
 
 Generate/refresh the lock with `helm dependency update argo_apps/platform/charts/02_longhorn` and commit it (the
 vendored `charts/*.tgz` is gitignored — reproduced from the lock, same as the other charts).
@@ -41,13 +42,13 @@ low-power nodes anyway. Revisit only if the upstream ARM64/NVMe issue is fixed.
 Longhorn on Talos (an immutable OS) needs several host-level things. Three were already in place from step 03;
 the fourth is added here.
 
-| Requirement | Status | Where |
-|-------------|--------|-------|
-| `iscsi-tools` extension (iscsid for PV operations) | ✅ baked | `03_config.sh` `ISCSI_EXT`, image built in `03a` |
-| `util-linux-tools` extension (nsenter/fstrim) | ✅ baked | `03_config.sh` `UTIL_EXT` |
-| **4K kernel pages** (XFS won't mount on 16K) | ✅ built | `03_operating_system.md` ("4K kernel pages") |
-| Dedicated XFS volume at `/var/mnt/longhorn` | ✅ provisioned | `03d` `volumes.yaml` (`UserVolumeConfig` `longhorn`) |
-| **kubelet bind-mount of `/var/mnt/longhorn`** | ➕ **added here** | `03d` `cp-patch.yaml` (`machine.kubelet.extraMounts`) |
+| Requirement                                        | Status           | Where                                                 |
+|----------------------------------------------------|------------------|-------------------------------------------------------|
+| `iscsi-tools` extension (iscsid for PV operations) | ✅ baked          | `03_config.sh` `ISCSI_EXT`, image built in `03a`      |
+| `util-linux-tools` extension (nsenter/fstrim)      | ✅ baked          | `03_config.sh` `UTIL_EXT`                             |
+| **4K kernel pages** (XFS won't mount on 16K)       | ✅ built          | `03_operating_system.md` ("4K kernel pages")          |
+| Dedicated XFS volume at `/var/mnt/longhorn`        | ✅ provisioned    | `03d` `volumes.yaml` (`UserVolumeConfig` `longhorn`)  |
+| **kubelet bind-mount of `/var/mnt/longhorn`**      | ➕ **added here** | `03d` `cp-patch.yaml` (`machine.kubelet.extraMounts`) |
 
 ### Why the kubelet extraMount is required
 
@@ -62,7 +63,7 @@ machine:
       - destination: /var/mnt/longhorn
         type: bind
         source: /var/mnt/longhorn
-        options: [bind, rshared, rw]
+        options: [ bind, rshared, rw ]
 ```
 
 `rshared` lets Longhorn's per-replica sub-mounts propagate back to the host. This matches the official
@@ -99,12 +100,24 @@ unschedulable/missing).
 
 ## Storage layout & the "auto-expanding partition" question
 
-The `longhorn` volume in `03d`'s `volumes.yaml` is `minSize: 50GiB` with **no `maxSize`**:
+The `longhorn` volume in `03d`'s `volumes.yaml` is `minSize: 50GiB` with **no `maxSize`**, and now sits
+*after* a fixed-size `cnpg` sibling (the [local-path](18_local_path_provisioner.md) partition):
 
 ```yaml
 apiVersion: v1alpha1
 kind: UserVolumeConfig
-name: longhorn
+name: cnpg            # fixed 50 GiB slice for CNPG's local-path storage (min == max)
+provisioning:
+  diskSelector:
+    match: disk.transport == "nvme"
+  minSize: 50GiB
+  maxSize: 50GiB
+filesystem:
+  type: xfs
+---
+apiVersion: v1alpha1
+kind: UserVolumeConfig
+name: longhorn        # no maxSize -> claims whatever is left
 provisioning:
   diskSelector:
     match: disk.transport == "nvme"
@@ -113,13 +126,14 @@ filesystem:
   type: xfs
 ```
 
-No `maxSize` means Talos grows it **once, at provision time**, to claim all NVMe space left after the 64 GiB
-EPHEMERAL cap. The result is a **stable, fixed-size XFS filesystem** — *not* a partition that keeps growing on
-demand at runtime. That distinction matters for Longhorn: it reads a disk's capacity via `statfs` and schedules
-replicas against it, so a fixed filesystem is exactly what it wants. A genuinely runtime-growing/thin-provisioned
-backing store could mislead Longhorn's capacity accounting — but that's not what we have here. **So no
-partition-size change was needed; `volumes.yaml` stays as-is.** Longhorn auto-creates its default disk at
-`/var/mnt/longhorn` on every node and reports `~disk − 64 GiB` of capacity.
+No `maxSize` means Talos grows `longhorn` **once, at provision time**, to claim all NVMe space left after the
+64 GiB EPHEMERAL cap **and the 50 GiB `cnpg` volume**. The result is a **stable, fixed-size XFS filesystem** —
+*not* a partition that keeps growing on demand at runtime. That distinction matters for Longhorn: it reads a
+disk's capacity via `statfs` and schedules replicas against it, so a fixed filesystem is exactly what it wants.
+A genuinely runtime-growing/thin-provisioned backing store could mislead Longhorn's capacity accounting — but
+that's not what we have here. Longhorn auto-creates its default disk at `/var/mnt/longhorn` on every node and
+reports `~disk − 64 GiB − 50 GiB` of capacity. (The `cnpg` volume is `min == max` precisely so CNPG's
+local-path data can never grow into Longhorn's space — see [18_local_path_provisioner.md](18_local_path_provisioner.md).)
 
 ## Values worth calling out
 

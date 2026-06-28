@@ -39,7 +39,7 @@ talosctl() {
 }
 
 # Working vars from shared config (IFACE is used directly).
-CLUSTER="$CLUSTER_NAME"; DISK="$INSTALL_DISK"; EPHEMERAL="$EPHEMERAL_SIZE"; VIP="$CLUSTER_VIP"
+CLUSTER="$CLUSTER_NAME"; DISK="$INSTALL_DISK"; EPHEMERAL="$EPHEMERAL_SIZE"; VIP="$CLUSTER_VIP"; CNPG_SIZE="$CNPG_VOLUME_SIZE"
 HOSTNAMES=(); IPS=()
 for e in "${CLUSTER_NODES[@]}"; do HOSTNAMES+=("${e%%:*}"); IPS+=("${e##*:}"); done
 
@@ -65,12 +65,19 @@ machine:
     # mounted at /var/mnt/longhorn on the host. Talos runs the kubelet in a container and does NOT
     # auto-propagate /var/mnt mounts into it, so Longhorn's pods can't see the disk without this
     # explicit bind. rshared lets Longhorn's per-replica sub-mounts propagate back to the host.
-    # See 09_longhorn.md.
+    # The 'cnpg' mount is the same idea for the local-path-provisioner that backs CNPG (off Longhorn):
+    # its helper pods + the hostPath PVs both resolve /var/mnt/cnpg against the kubelet's view, so the
+    # bind is required too; plain rw suffices (no sub-mount propagation like Longhorn).
+    # See 09_longhorn.md and 18_local_path_provisioner.md.
     extraMounts:
       - destination: /var/mnt/longhorn
         type: bind
         source: /var/mnt/longhorn
         options: [bind, rshared, rw]
+      - destination: /var/mnt/cnpg
+        type: bind
+        source: /var/mnt/cnpg
+        options: [bind, rw]
   features:
     kubePrism:
       enabled: true
@@ -93,7 +100,10 @@ cluster:
 ${CERTSANS}
 EOF
 
-# 3. Partition layout (extra config documents): cap EPHEMERAL, rest -> Longhorn
+# 3. Partition layout (extra config documents): cap EPHEMERAL, carve a fixed-size 'cnpg' volume,
+#    then 'longhorn' takes the remainder. The 'cnpg' volume is min==max (a fixed slice) so CNPG's
+#    local-path storage can't grow into Longhorn's space; 'longhorn' has no maxSize so it grows once
+#    at provision time to claim whatever is left. See 09_longhorn.md / 18_local_path_provisioner.md.
 cat > "${OUTDIR}/volumes.yaml" <<EOF
 ---
 apiVersion: v1alpha1
@@ -103,6 +113,17 @@ provisioning:
   diskSelector:
     match: disk.transport == "nvme"
   maxSize: ${EPHEMERAL}
+---
+apiVersion: v1alpha1
+kind: UserVolumeConfig
+name: cnpg
+provisioning:
+  diskSelector:
+    match: disk.transport == "nvme"
+  minSize: ${CNPG_SIZE}
+  maxSize: ${CNPG_SIZE}
+filesystem:
+  type: xfs
 ---
 apiVersion: v1alpha1
 kind: UserVolumeConfig

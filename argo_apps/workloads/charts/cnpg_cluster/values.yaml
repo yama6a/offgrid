@@ -14,19 +14,25 @@ cluster:
 
   # ---- the Cluster CR spec ----
   cluster:
-    # 3 instances -> 1 primary + 2 streaming replicas, one per Pi node. HA comes from Postgres
-    # failover (a replica is promoted on node loss), which is why the storage below is single-replica.
-    instances: 3
+    # 2 instances -> 1 primary + 1 streaming replica, on 2 distinct Pi nodes. HA comes from Postgres
+    # failover (the replica is promoted on node loss), not the storage. 2 is enough here: losing 2 of 3
+    # nodes breaks the cluster in many other ways anyway. See 18_local_path_provisioner.md.
+    instances: 2
 
     storage:
-      # Dedicated single-replica Longhorn class (templates/storageclass-longhorn-single.yaml) — avoids
-      # 3x3 write amplification since Postgres already replicates across the 3 instances. See 17_cnpg.md.
-      storageClass: longhorn-single
-      size: 10Gi
+      # Node-local storage on the dedicated /var/mnt/cnpg partition (platform app
+      # 02_local_path_provisioner). Postgres is the ONLY replication layer now — no Longhorn engine/CSI
+      # in the data path, and the partition is isolated from Longhorn's. See 18_local_path_provisioner.md.
+      storageClass: local-path
+      # REQUIRED by the CNPG Cluster CR, but a NO-OP under local-path: local-path neither reserves nor
+      # enforces this — it just makes a directory, and Postgres reads statfs on the mount (the whole
+      # ~50Gi partition). Set to the honest partition budget (minus XFS headroom) so it stays sane if
+      # the class is ever swapped for an enforcing one (Longhorn/TopoLVM). It is NOT a real limit.
+      size: 45Gi
 
     # The chart's default anti-affinity spreads by `topology.kubernetes.io/zone`, but bare Pi nodes
-    # carry no zone label, so all 3 instances could land on one node. Spread by hostname instead so
-    # the 1 primary + 2 replicas occupy 3 distinct nodes (true node-loss HA, matching the storage).
+    # carry no zone label, so both instances could land on one node. Spread by hostname instead so the
+    # primary + replica occupy 2 distinct nodes (true node-loss HA — required for node-local storage).
     affinity:
       topologyKey: kubernetes.io/hostname
 
@@ -62,6 +68,8 @@ cluster:
       owner: app
 
   # No object-storage (Barman) backups in this pass — add later via the cnpg/plugin-barman-cloud and
-  # a sealed-secret for the S3 credentials. The cluster data still lives on Longhorn PVCs.
+  # a sealed-secret for the S3 credentials. Until then durability rests on Postgres replication across
+  # the 2 instances + the local-path class's Retain policy; node-local storage means a lost instance is
+  # rebuilt from a surviving one via streaming replication.
   backups:
     enabled: false

@@ -1,16 +1,16 @@
 # ArgoCD Application for the CNPG Postgres Cluster (argo_apps/workloads/charts/cnpg_cluster/) — a
-# 3-instance HA Postgres (1 primary + 2 streaming replicas, one per Pi node) plus its dedicated
-# single-replica `longhorn-single` StorageClass. The CNPG operator (a platform app, wave 2) reconciles
-# it. See 17_cnpg.md.
+# 2-instance HA Postgres (1 primary + 1 streaming replica, on two distinct Pi nodes) on the node-local
+# `local-path` StorageClass (platform app 02_local_path_provisioner). The CNPG operator (a platform app,
+# wave 2) reconciles it. See 17_cnpg.md and 18_local_path_provisioner.md.
 #
-# AUTOMATED (prune + selfHeal): drift auto-corrects. A prune is data-safe — the PVCs use the
-# `longhorn-single` class with reclaimPolicy: Retain, so removing the Cluster CR never destroys the
-# underlying Longhorn volumes.
+# AUTOMATED (prune + selfHeal): drift auto-corrects. A prune is data-safe — the PVCs use the `local-path`
+# class with reclaimPolicy: Retain, so removing the Cluster CR never destroys the underlying node-local
+# volumes (the dirs under /var/mnt/cnpg persist).
 #
 # A WORKLOAD, not platform: lives in the workloads tree, which the root-of-roots only creates AFTER the
-# whole platform tree is Healthy. So the operator's Cluster CRD and Longhorn's CSI driver are guaranteed
-# present before this Cluster CR / StorageClass is applied — without any per-app sync-wave. Workloads
-# carry no wave and all reconcile in parallel. See 05_gitops.md.
+# whole platform tree is Healthy. So the operator's Cluster CRD and the local-path class are guaranteed
+# present before this Cluster CR is applied — without any per-app sync-wave. Workloads carry no wave and
+# all reconcile in parallel. See 05_gitops.md.
 apiVersion: argoproj.io/v1alpha1
 kind: Application
 metadata:

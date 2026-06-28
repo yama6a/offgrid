@@ -1,16 +1,16 @@
 apiVersion: v2
 name: cnpg-cluster
 description: >-
-  Wrapper chart for a CloudNativePG Postgres Cluster on the Talos/Raspberry Pi 5 cluster — a 3-instance
-  HA Postgres (1 primary + 2 streaming replicas, one per Pi node) provisioned by the CNPG operator
-  (platform app 02_cnpg_operator). Carries both the upstream cnpg/cluster dependency (the Cluster CR) AND
-  a first-party template: the dedicated `longhorn-single` StorageClass the database runs on. Postgres
-  replicates at the DB layer, so its PVCs use a single Longhorn replica (numberOfReplicas: 1) to avoid
-  stacking Longhorn HA on Postgres HA (3x3 = 9x write amplification). Single source of truth for the
-  cluster chart version (this file) and its values (values.yaml, under the `cluster:` key). A WORKLOAD:
-  delivered purely by ArgoCD via argo_apps/workloads/apps/cnpg_cluster.yaml — no sync-wave; the workloads
-  tree is only created after the whole platform (operator CRDs + Longhorn CSI) is Healthy. No object-store
-  backups in this pass. See 17_cnpg.md.
+  Wrapper chart for a CloudNativePG Postgres Cluster on the Talos/Raspberry Pi 5 cluster — a 2-instance
+  HA Postgres (1 primary + 1 streaming replica, on two distinct Pi nodes) provisioned by the CNPG operator
+  (platform app 02_cnpg_operator). Wraps the upstream cnpg/cluster dependency (the Cluster CR), pointed at
+  the node-local `local-path` class (platform app 02_local_path_provisioner) so Postgres' own streaming
+  replication is the only replication layer — no Longhorn engine/CSI in the data path, on a partition
+  isolated from Longhorn's. Single source of truth for the cluster chart version (this file) and its
+  values (values.yaml, under the `cluster:` key). A WORKLOAD: delivered purely by ArgoCD via
+  argo_apps/workloads/apps/cnpg_cluster.yaml — no sync-wave; the workloads tree is only created after the
+  whole platform (operator CRDs + local-path class) is Healthy. No object-store backups in this pass.
+  See 17_cnpg.md and 18_local_path_provisioner.md.
 type: application
 version: 0.1.0                 # this wrapper chart's own version
 

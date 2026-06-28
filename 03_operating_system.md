@@ -249,8 +249,11 @@ picked `192.168.100.1` for the VIP.
    in `03_config.sh`), and the **Cilium prep** — `cluster.network.cni.name: none`,
    `cluster.proxy.disabled: true` (Cilium does kube-proxy replacement), and `machine.features.kubePrism.enabled: true`
    (Cilium's API endpoint at `localhost:7445`; default-on in 1.13, set explicitly here to document the dependency).
-4. Appends the **partition layout**: `EPHEMERAL` capped (default 64 GiB) + a `longhorn` user volume taking the rest of
-   the NVMe (`/var/mnt/longhorn`, sits empty until step 04).
+4. Appends the **partition layout**: `EPHEMERAL` capped (default 64 GiB) + a fixed-size `cnpg` user volume
+   (default 50 GiB, `min == max`, at `/var/mnt/cnpg` — node-local storage for CloudNativePG via
+   [local-path-provisioner](18_local_path_provisioner.md)) + a `longhorn` user volume taking the rest of the NVMe
+   (`/var/mnt/longhorn`). Both `/var/mnt` paths also get a `kubelet.extraMounts` bind so the containerized kubelet
+   can see them. Sit empty until their apps sync (step 04+).
 5. `apply-config` to each node — only the hostname differs.
 6. **Waits for every node to reboot back into its configured state** (polls the secure Talos API per node, up to 5 min
    each) — so the bootstrap prompt only appears once the nodes are actually ready, no guessing.

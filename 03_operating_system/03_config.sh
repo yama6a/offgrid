@@ -66,7 +66,8 @@ EXPECT_CMDLINE="console=ttyAMA0,115200"  # rpi5 overlay signature in the kernel 
 CLUSTER_NAME="home-pi"                # talosctl gen config cluster name
 CLUSTER_VIP="192.168.100.1"          # control-plane VIP (unused IP, outside your DHCP pool)
 INSTALL_DISK="/dev/${EXPECT_DISK}"   # nvme0n1 -> /dev/nvme0n1
-EPHEMERAL_SIZE="64GiB"               # EPHEMERAL cap; rest of the NVMe -> longhorn user volume
+EPHEMERAL_SIZE="64GiB"               # EPHEMERAL cap; rest of the NVMe -> cnpg (fixed) + longhorn (the remainder)
+CNPG_VOLUME_SIZE="50GiB"             # fixed-size 'cnpg' user volume (local-path-provisioner backs CNPG here, off Longhorn). See 18_local_path_provisioner.md
 IFACE="${EXPECT_NIC}"                # wired NIC the VIP binds to (dhcp + vip)
 # Node label node.kubernetes.io/instance-type, stamped via machine.nodeLabels in 03d. Lets the
 # nic-keeper DaemonSet (06_nic_keeper.md) target rpi5 hardware only, so a future non-rpi5 node

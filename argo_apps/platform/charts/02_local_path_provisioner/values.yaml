@@ -1,0 +1,38 @@
+# Values for the 02_local_path_provisioner wrapper chart. SINGLE SOURCE OF TRUTH — ArgoCD (and any
+# local `helm template`) consume this. Version pinned in Chart.yaml (appVersion). See
+# 18_local_path_provisioner.md for the why.
+#
+# Unlike the other platform charts this does NOT pull an upstream subchart — there's no maintained
+# public Helm repo for local-path-provisioner, so its manifests are vendored under templates/ and
+# parameterized from here. Runs in its own `local-path-storage` namespace (CreateNamespace=true in the
+# Application). PSA: the provisioner + its helper pods only need `baseline` (hostPath is allowed under
+# baseline; nothing runs privileged), which is Talos' default — so no privileged label is needed.
+
+image:
+  repository: docker.io/rancher/local-path-provisioner
+  tag: v0.0.36                  # mirrors Chart.yaml appVersion
+  pullPolicy: IfNotPresent
+
+# The busybox image the provisioner spawns as a short-lived helper pod to mkdir/rm the volume dirs
+# on the target node. Multi-arch (works on arm64). Pinned for reproducibility.
+helperImage:
+  repository: docker.io/library/busybox
+  tag: "1.37"
+
+# Where PVs are physically created on each node. This is the dedicated, fixed-size XFS 'cnpg' user
+# volume from 03d (mounted at /var/mnt/cnpg, exposed to the kubelet by 03d's extraMount). Node-local:
+# every node uses this same path for its OWN disk (NOT a shared filesystem).
+dataPath: /var/mnt/cnpg
+
+storageClass:
+  name: local-path
+  # NOT the cluster default — Longhorn stays the default class; CNPG opts in by name.
+  defaultClass: false
+  # WaitForFirstConsumer is mandatory for true node-local storage: the volume only exists on one node,
+  # so the scheduler must place the pod first (honoring CNPG's hostname anti-affinity) and provision
+  # the volume on that node. (Longhorn's class can use Immediate because its CSI is network-reachable.)
+  volumeBindingMode: WaitForFirstConsumer
+  # Retain so deleting a PVC/Cluster never silently destroys DB data (matches the old longhorn-single
+  # rationale). NOTE: local-path's reclaim runs the teardown script (rm -rf $VOL_DIR) only on Delete;
+  # with Retain the host dir under /var/mnt/cnpg is left behind — clean up manually to reclaim space.
+  reclaimPolicy: Retain
