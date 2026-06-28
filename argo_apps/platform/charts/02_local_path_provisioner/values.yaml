@@ -5,8 +5,9 @@
 # Unlike the other platform charts this does NOT pull an upstream subchart — there's no maintained
 # public Helm repo for local-path-provisioner, so its manifests are vendored under templates/ and
 # parameterized from here. Runs in its own `local-path-storage` namespace (CreateNamespace=true in the
-# Application). PSA: the provisioner + its helper pods only need `baseline` (hostPath is allowed under
-# baseline; nothing runs privileged), which is Talos' default — so no privileged label is needed.
+# Application). PSA: the provisioner Deployment runs unprivileged, but its helper pods mount the node
+# data path as a `hostPath` volume — FORBIDDEN under `baseline` (Talos' default) — so the namespace is
+# labelled `privileged` via managedNamespaceMetadata in the Application (like longhorn).
 
 image:
   repository: docker.io/rancher/local-path-provisioner

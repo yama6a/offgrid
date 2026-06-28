@@ -12,9 +12,11 @@
 # *cluster* that consumes the local-path class is a workload, only created once the whole platform is
 # Healthy, so any platform wave is early enough — wave 2 keeps it with the storage leaves.
 #
-# No privileged PSA needed: the provisioner + its helper pods only require `baseline` (hostPath is
-# permitted under baseline, nothing runs privileged), which is Talos' default — so unlike longhorn this
-# app needs no managedNamespaceMetadata.
+# Privileged PSA IS required: the provisioner Deployment itself runs unprivileged, but the short-lived
+# helper pods it stamps out to mkdir/rm the per-volume dirs mount the node's data path as a `hostPath`
+# volume — and hostPath is FORBIDDEN under `baseline`, which is Talos' cluster-wide default. So like
+# longhorn, the namespace must be labelled `privileged` (managedNamespaceMetadata below) or the helper
+# pods are rejected at admission and PVC provisioning fails with a PodSecurity "baseline" violation.
 apiVersion: argoproj.io/v1alpha1
 kind: Application
 metadata:
@@ -32,6 +34,14 @@ spec:
     server: https://kubernetes.default.svc
     namespace: local-path-storage
   syncPolicy:
+    # The provisioner's helper pods mount a hostPath volume, which `baseline` (Talos' default) forbids.
+    # CreateNamespace makes the namespace; this stamps the enforce label on it so the helper pods are
+    # admitted. Mirrors longhorn.
+    managedNamespaceMetadata:
+      labels:
+        pod-security.kubernetes.io/enforce: privileged
+        pod-security.kubernetes.io/warn: privileged
+        pod-security.kubernetes.io/audit: privileged
     automated:
       prune: true
       selfHeal: true

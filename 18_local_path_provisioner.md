@@ -114,10 +114,13 @@ Platform, **sync-wave 2**, alongside [longhorn](09_longhorn.md) / [cnpg-operator
 consumes the `local-path` class is a [workload](17_cnpg.md) (un-numbered, wave-less), only created once
 the whole platform is Healthy — so wave 2 is comfortably early enough for the class to exist first.
 
-**syncPolicy: `automated {prune: true, selfHeal: true}` + `CreateNamespace=true`** — a safe leaf. It owns
-no CRDs, so SSA isn't needed (unlike longhorn/cert-manager). **No privileged PSA**: the provisioner and
-its helper pods only need `baseline` (hostPath is allowed under baseline, nothing runs privileged), which
-is Talos' default — so no `managedNamespaceMetadata` (unlike Longhorn).
+**syncPolicy: `automated {prune: true, selfHeal: true}` + `CreateNamespace=true` + `managedNamespaceMetadata`** —
+a safe leaf. It owns no CRDs, so SSA isn't needed (unlike longhorn/cert-manager). **Privileged PSA IS
+required** (like Longhorn): the provisioner Deployment runs unprivileged, but the short-lived helper pods it
+stamps out to mkdir/rm the per-volume dirs mount the node data path as a `hostPath` volume — and hostPath is
+**forbidden under `baseline`**, which is Talos' cluster-wide default. So `managedNamespaceMetadata` labels the
+`local-path-storage` namespace `pod-security.kubernetes.io/enforce: privileged`; without it the helper pods are
+rejected at admission and PVC provisioning fails with `violates PodSecurity "baseline": hostPath volumes`.
 
 ## Verifying it
 

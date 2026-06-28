@@ -10,8 +10,12 @@
 # orphaned (google-oauth, alertmanager-smtp, …). See 07_sealed_secrets.md.
 #
 # On a fresh rebuild the controller is delivered by ArgoCD (wave 2), so it may not be up yet — this WAITS
-# for it (up to WAIT secs) before applying. Applying the old key after the controller already minted a
-# new one is fine: on restart the controller loads ALL labelled keys, so old + new are both available.
+# for it (up to WAIT secs) before applying. The fresh controller mints its OWN key on first start; we
+# apply the backup key, then DELETE that freshly-minted key. This matters: sealed-secrets seals NEW
+# secrets with the key whose cert has the latest NotBefore, and the minted key's NotBefore (rebuild time)
+# outranks the restored backup key's — so if we left it, every secret sealed AFTER the rebuild would be
+# bound to an ephemeral key that the next wipe destroys (the recurring "grafana won't unseal" bug).
+# Removing it leaves the backup key as the only — hence active — sealing key.
 #
 # Uses NATIVE kubectl (errors out if missing). Talks to the cluster via the step-03 kubeconfig.
 # Idempotent: re-run safely (kubectl apply + a restart).
@@ -24,6 +28,7 @@ SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 OUTDIR="${OUTDIR:-${SCRIPT_DIR}/../03_operating_system/talos-cluster}"        # talosconfig + kubeconfig (from 03d); gitignored
 NS="${NS:-sealed-secrets}"                                                    # controller namespace
 CONTROLLER_LABEL="${CONTROLLER_LABEL:-app.kubernetes.io/name=sealed-secrets}" # the controller pods
+KEY_LABEL="${KEY_LABEL:-sealedsecrets.bitnami.com/sealed-secrets-key}"        # label the controller stamps on its key Secrets
 BACKUP_FILE="${BACKUP_FILE:-${OUTDIR}/sealed-secrets-master.key}"             # the backup 07_backup wrote
 WAIT="${WAIT:-900}"                                                           # secs to wait for the controller (ArgoCD wave 2)
 export KUBECONFIG="${KUBECONFIG:-${OUTDIR}/kubeconfig}"                       # the 03d kubeconfig (points at the VIP)
@@ -65,6 +70,29 @@ if kubectl apply -f "$BACKUP_FILE" >/dev/null 2>&1; then
   ok "key Secret(s) applied"
 else
   bad "kubectl apply failed — key NOT restored"
+fi
+
+# === 2b. delete the fresh controller's own key (anything NOT in the backup) ===
+# The fresh controller minted a key on first start; left in place it OUTRANKS the restored backup key as
+# the active sealing key (newer cert NotBefore), so post-rebuild seals bind to an ephemeral key the next
+# wipe destroys. Delete every labelled key whose name isn't in the backup, leaving the backup key(s) as
+# the only — hence active — sealing key. (kubectl reads the names straight from the backup file.)
+say "removing any key the fresh controller minted (not in the backup)"
+backup_keys="$(kubectl create --dry-run=client -f "$BACKUP_FILE" -o name 2>/dev/null | sed 's#^.*/##')"
+if [ -z "$backup_keys" ]; then
+  bad "could not read key names from ${BACKUP_FILE} — left foreign keys in place (active sealing key may be ephemeral)"
+else
+  removed=0
+  for s in $(kubectl get secret -n "$NS" -l "$KEY_LABEL" -o name 2>/dev/null); do
+    name="${s#secret/}"
+    grep -qx "$name" <<<"$backup_keys" && continue           # a backup key — keep it
+    if kubectl delete -n "$NS" "$s" >/dev/null 2>&1; then
+      printf '  removed foreign key %s\n' "$name"; removed=$((removed+1))
+    else
+      bad "could not delete foreign key ${name} — it may still win as the active sealing key"
+    fi
+  done
+  ok "foreign keys removed (${removed}); the backup key is now the active sealing key"
 fi
 
 # === 3. restart the controller so it loads the restored key ==================
