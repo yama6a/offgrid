@@ -91,6 +91,38 @@ victoria-metrics-k8s-stack:
   # (07_grafana, searchNamespace ALL) picks them up with zero rework. See 15_monitoring.md.
   defaultDashboards:
     enabled: true
+    # Per-dashboard pruning. Keys are the dashboard SOURCE names (the `...-dashboard-<key>` ConfigMap
+    # suffix the sync-job emits); `enabled: false` tells the sync-job to skip that dashboard. We drop the
+    # kube-mixin / node-exporter / prometheus dashboards that are either irrelevant here (Windows, AIX,
+    # macOS, multi-cluster) or redundant with the curated Views/System set we keep. What stays: the
+    # Kubernetes Views/System dashboards, kubelet, Networking Cluster + Namespace(Pods), node-exporter
+    # "Full"/"Nodes", persistent-volumes, and the VictoriaMetrics dashboards.
+    dashboards:
+      etcd: {enabled: false}                                  # etcd
+      apiserver: {enabled: false}                             # Kubernetes / API server
+      controller-manager: {enabled: false}                    # Kubernetes / Controller Manager
+      scheduler: {enabled: false}                             # Kubernetes / Scheduler
+      k8s-resources-multicluster: {enabled: false}            # Compute Resources / Multi-Cluster
+      k8s-resources-cluster: {enabled: false}                 # Compute Resources / Cluster
+      k8s-resources-namespace: {enabled: false}               # Compute Resources / Namespace (Pods)
+      k8s-resources-workloads-namespace: {enabled: false}     # Compute Resources / Namespace (Workloads)
+      k8s-resources-node: {enabled: false}                    # Compute Resources / Node (Pods)
+      k8s-resources-nodes-overview: {enabled: false}          # Compute Resources / Nodes Overview
+      k8s-resources-pod: {enabled: false}                     # Compute Resources / Pod
+      k8s-resources-workload: {enabled: false}                # Compute Resources / Workload
+      k8s-resources-windows-cluster: {enabled: false}         # Compute Resources / Cluster(Windows)
+      k8s-resources-windows-pod: {enabled: false}             # Compute Resources / Pod(Windows)
+      k8s-windows-cluster-rsrc-use: {enabled: false}          # USE Method / Cluster(Windows)
+      k8s-windows-node-rsrc-use: {enabled: false}             # USE Method / Node(Windows)
+      namespace-by-workload: {enabled: false}                 # Networking / Namespace (Workload)
+      pod-total: {enabled: false}                             # Networking / Pod
+      workload-total: {enabled: false}                        # Networking / Workload
+      node-cluster-rsrc-use: {enabled: false}                 # Node Exporter / USE Method / Cluster
+      node-rsrc-use: {enabled: false}                         # Node Exporter / USE Method / Node
+      nodes-aix: {enabled: false}                             # Node Exporter / AIX
+      nodes-darwin: {enabled: false}                          # Node Exporter / MacOS
+      prometheus: {enabled: false}                            # Prometheus / Overview
+      prometheus-remote-write: {enabled: false}               # Prometheus / Remote Write
 
   # ---- exporters -----------------------------------------------------------------------------------
   prometheus-node-exporter:
