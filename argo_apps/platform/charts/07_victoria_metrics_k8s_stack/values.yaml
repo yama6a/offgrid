@@ -69,6 +69,51 @@ victoria-metrics-k8s-stack:
         - sourceLabels: [__name__]
           action: drop
           regex: "grpc_server_(handled|started|msg_received|msg_sent)_total"
+        # Tier-1 cardinality noise emitted across many jobs (or by a job with no per-target drop block):
+        #   flag                       — one series per command-line flag of every VM component, value always 1.
+        #   kubernetes_feature_enabled — one series per apiserver/kubelet feature-gate; static config dump.
+        #   kube_pod_tolerations       — toleration inventory per pod (kube-state-metrics); `kubectl` it instead.
+        #   container_tasks_state      — per-container task counts by state (kubelet/cAdvisor); pod health
+        #                                already comes from kube_pod_status_*.
+        - sourceLabels: [__name__]
+          action: drop
+          regex: "flag|kubernetes_feature_enabled|kube_pod_tolerations|container_tasks_state"
+        # Go runtime GC/scheduler histograms + the GC-pause summary — per-bucket detail for EVERY Go target,
+        # never queried. Deliberately KEEPS go_sched_latencies_seconds_bucket (used by the VM dashboards) and
+        # all the cheap go_memstats_*/go_goroutines scalars.
+        - sourceLabels: [__name__]
+          action: drop
+          regex: "go_(gc_pauses_seconds|gc_heap_allocs_by_size_bytes|gc_heap_frees_by_size_bytes|sched_pauses_stopping_gc_seconds|sched_pauses_stopping_other_seconds|sched_pauses_total_gc_seconds|sched_pauses_total_other_seconds)_(bucket|count|sum)|go_gc_duration_seconds(_count|_sum)?"
+        # ---- Tier-2 drops: controller/storage/CNI internals, unreferenced by any VMRule or dashboard ----
+        # Longhorn manager's REST-client + workqueue latency/queue internals. Storage HEALTH metrics
+        # (longhorn_volume_*, longhorn_node_*, longhorn_backup_*) are untouched — this is only the
+        # controller's own client/queue plumbing.
+        - sourceLabels: [__name__]
+          action: drop
+          regex: "longhorn_rest_client_.*|longhorn_workqueue_.*"
+        # Cilium agent/operator internal latency histograms (hive jobs, k8s-client, endpoint regen, k8s
+        # workqueue, conntrack GC, policy/identity timers...). Drops only *_bucket — every cilium_*_total
+        # dataplane / policy / drop counter stays.
+        - sourceLabels: [__name__]
+          action: drop
+          regex: "cilium_.*_bucket"
+        # Generic controller queue/REST histograms emitted by MANY jobs (apiserver, argocd, cert-manager,
+        # cnpg, kubelet). Buckets only — KEEPS workqueue_depth, rest_client_requests_total and
+        # rest_client_request_duration_seconds_bucket (all queried).
+        - sourceLabels: [__name__]
+          action: drop
+          regex: "workqueue_queue_duration_seconds_bucket|workqueue_work_duration_seconds_bucket|rest_client_request_size_bytes_bucket|rest_client_response_size_bytes_bucket|rest_client_rate_limiter_duration_seconds_bucket"
+        # cAdvisor per-container detail we never chart: blkio, load-avg, user/system CPU split, fd count,
+        # health-state, last-seen, start-time, memory-failure counts. The core container_cpu_usage_seconds_total
+        # / container_memory_working_set_bytes / container_network_* / container_memory_{rss,swap,cache} stay.
+        - sourceLabels: [__name__]
+          action: drop
+          regex: "container_memory_failures_total|container_blkio_device_usage_total|container_cpu_load_average_10s|container_cpu_load_d_average_10s|container_cpu_system_seconds_total|container_cpu_user_seconds_total|container_file_descriptors|container_health_state|container_last_seen|container_start_time_seconds"
+        # kubelet probe-latency histograms + node-exporter NFS client counters (no RWX/share-manager volumes
+        # exist in this cluster). Probe success/failure is still visible via kube_pod_status_* and events.
+        - sourceLabels: [__name__]
+          action: drop
+          regex: "prober_probe_total|prober_probe_duration_seconds_(bucket|count|sum)|node_nfs_requests_total"
       resources:
         requests: {cpu: 100m, memory: 256Mi}
         limits: {memory: 512Mi}
@@ -227,6 +272,25 @@ victoria-metrics-k8s-stack:
               - source_labels: [__name__]
                 action: drop
                 regex: "apiserver_(request_duration_seconds|request_sli_duration_seconds|request_slo_duration_seconds|request_body_size_bytes|response_sizes|watch_list_duration_seconds|watch_cache_read_wait_seconds|watch_events_sizes|flowcontrol_request_execution_seconds|flowcontrol_priority_level_request_utilization|flowcontrol_priority_level_seat_utilization|flowcontrol_request_wait_duration_seconds|flowcontrol_demand_seats|admission_controller_admission_duration_seconds|admission_webhook_admission_duration_seconds)_bucket|etcd_request_duration_seconds_bucket"
+              # Tier-1 apiserver-sourced noise: etcd watch-bookmark counter, the watch-cache capacity gauge,
+              # and the OpenAPI v2/v3 schema-regeneration counters (irrelevant on a stable cluster).
+              - source_labels: [__name__]
+                action: drop
+                regex: "etcd_bookmark_total|watch_cache_capacity|apiextensions_openapi_v(2|3)_regeneration_count"
+              # apiserver "deep internals" — watch-cache / storage-list / cache-list inventories, request &
+              # response body sizes, SLI-duration and long-running gauges. Unreferenced by every VMRule and
+              # dashboard, incl. k8s_system_apisrv (which uses only apiserver_request_total + the
+              # request_duration_seconds _count/_sum). The matching *_bucket histograms are already dropped
+              # by the rule above; this clears the surviving _count/_sum/_total remnants and gauge inventories.
+              - source_labels: [__name__]
+                action: drop
+                regex: "apiserver_watch_cache_.*|apiserver_watch_events_.*|apiserver_watch_list_duration_seconds_(count|sum)|apiserver_storage_list_.*|apiserver_cache_list_.*|apiserver_storage_objects|apiserver_resource_objects|apiserver_resource_size_estimate_bytes|apiserver_response_sizes_(count|sum)|apiserver_request_body_size_bytes_(count|sum)|apiserver_request_sli_duration_seconds_(count|sum)|apiserver_longrunning_requests|apiserver_storage_consistency_checks_total|apiserver_storage_transformation_duration_seconds_(bucket|count|sum)"
+              # etcd request detail — the apiserver's CLIENT-side etcd op counter + latency _count/_sum (the
+              # matching _bucket is already dropped by the first rule). etcd's own SERVER metrics
+              # (etcd_server_*, etcd_disk_*, etcd_mvcc_* from the kubeEtcd job) are untouched.
+              - source_labels: [__name__]
+                action: drop
+                regex: "etcd_requests_total|etcd_request_duration_seconds_(count|sum)"
         jobLabel: component
         namespaceSelector:
           matchNames: [default]
@@ -240,3 +304,26 @@ victoria-metrics-k8s-stack:
   # Cilium replaces kube-proxy (kubeProxyReplacement) — there is no kube-proxy to scrape.
   kubeProxy:
     enabled: false
+
+# ---- edge / ingress (folded in from the retired 07_monitoring_ingress) -------------------------------
+# Exposes the VictoriaMetrics vmui on `host` through its OWN Gateway (a single :443 listener, merged onto
+# the one Envoy via mergeGateways in 01_envoy_gateway), gated by Google SSO: the HTTPRoute is labelled
+# `sso: <sso>` so the 04_google_sso SecurityPolicy attaches Google login + the allowlist. vmui has NO
+# login of its own, so this SSO gate is the only barrier — which is the point. The Gateway/listener/cert/
+# route are named `vmui`; the ReferenceGrant lands in the backend namespace as gateway-routes-to-vmui.
+# `issuer` is STAGING until the cert issues — flip to letsencrypt-prod then. See 15_monitoring.md.
+ingress:
+  name: vmui
+  gatewayClassName: eg
+  gatewayNamespace: gateway
+  host: vmui.example.com
+  tlsSecretName: vmui-tls
+  issuer: letsencrypt-staging
+  routeLabelKey: sso
+  sso: "example.com"
+  # The operator-generated VMSingle Service (verify: kubectl get svc -n monitoring). vmui is served by
+  # VMSingle on :8428; the name follows the operator pattern vmsingle-<cr>.
+  backend:
+    name: vmsingle-victoria-metrics-k8s-stack
+    namespace: monitoring
+    port: 8428

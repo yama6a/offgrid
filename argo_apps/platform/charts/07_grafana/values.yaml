@@ -14,8 +14,9 @@ grafana:
   persistence:
     enabled: false
 
-  # Grafana's OWN auth is OFF — the gateway Google SSO allowlist (07_monitoring_ingress' `sso: example.com`
-  # route + the 04_google_sso SecurityPolicy) is the only barrier, exactly like the vmui/VictoriaLogs UIs.
+  # Grafana's OWN auth is OFF — the gateway Google SSO allowlist (this chart's own `sso: example.com` edge
+  # route, see the `ingress:` block below, + the 04_google_sso SecurityPolicy) is the only barrier, exactly
+  # like the vmui/VictoriaLogs UIs.
   # Every request arrives already authenticated at the edge, so we serve it as an anonymous Admin: no
   # second login, full functionality. dotted keys (`auth.anonymous` etc.) are grafana.ini SECTION names.
   grafana.ini:
@@ -358,8 +359,8 @@ grafana:
                       - type: query
                         evaluator: {type: gt, params: [100]}
 
-  # Default ClusterIP Service on :80 -> container :3000 — what 07_monitoring_ingress' grafana backendRef
-  # targets (name `grafana`, port 80).
+  # Default ClusterIP Service on :80 -> container :3000 — what this chart's own grafana edge backendRef
+  # targets (the `ingress:` block below; name `grafana`, port 80).
   service:
     enabled: true
     type: ClusterIP
@@ -377,3 +378,26 @@ grafana:
       memory: 128Mi
     limits:
       memory: 1Gi
+
+# ---- edge / ingress (folded in from the retired 07_monitoring_ingress) -------------------------------
+# Exposes Grafana on `host` through its OWN Gateway (a single :443 listener, merged onto the one Envoy via
+# mergeGateways in 01_envoy_gateway), gated by Google SSO: the HTTPRoute is labelled `sso: <sso>` so the
+# 04_google_sso SecurityPolicy attaches Google login + the allowlist. Grafana's own login is disabled
+# (anonymous Admin), so this SSO gate is the ONLY barrier — same as the vmui/VictoriaLogs UIs. The
+# Gateway/listener/cert/route are named `grafana`; the ReferenceGrant lands in the backend namespace as
+# gateway-routes-to-grafana. `issuer` is STAGING until the cert issues — flip to letsencrypt-prod then.
+# See 16_grafana.md.
+ingress:
+  name: grafana
+  gatewayClassName: eg
+  gatewayNamespace: gateway
+  host: grafana.example.com
+  tlsSecretName: grafana-tls
+  issuer: letsencrypt-staging
+  routeLabelKey: sso
+  sso: "example.com"
+  # The grafana/grafana chart's Service (release name `grafana`, default ClusterIP on :80 -> :3000).
+  backend:
+    name: grafana
+    namespace: monitoring
+    port: 80

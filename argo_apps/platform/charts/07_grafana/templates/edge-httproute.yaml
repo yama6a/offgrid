@@ -1,0 +1,24 @@
+# Routes this UI's host to its in-cluster Service (cross-namespace, via the ReferenceGrant below). In the
+# gateway namespace so the 04_google_sso SecurityPolicy (also gateway ns) selects it by the `sso: <domain>`
+# label — that's the ONLY auth gate in front of this UI (it has no login of its own; Grafana's is disabled).
+{{- with .Values.ingress }}
+apiVersion: gateway.networking.k8s.io/v1
+kind: HTTPRoute
+metadata:
+  name: {{ .name }}
+  namespace: {{ .gatewayNamespace }}
+  labels:
+    {{ .routeLabelKey }}: {{ .sso | quote }}
+spec:
+  parentRefs:
+    - name: {{ .name }}                       # this UI's own Gateway (templates/edge-gateway.yaml)
+      namespace: {{ .gatewayNamespace }}
+      sectionName: {{ .name }}
+  hostnames:
+    - {{ .host | quote }}
+  rules:
+    - backendRefs:
+        - name: {{ .backend.name }}
+          namespace: {{ .backend.namespace }}
+          port: {{ .backend.port }}
+{{- end }}

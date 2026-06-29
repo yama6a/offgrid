@@ -10,8 +10,9 @@ the `shared-gateway` reduced to its **`:80` HTTP listener** (the cert-issuance e
 ClusterIssuers. Each app now ships its **own Gateway** (a single `:443` listener) **plus** its
 `Certificate` + `HTTPRoute` (+ workload) in a later wave: the sample workload in
 [`sample-workload`](13_sample_workload.md), the SSO callback hosts in [`04_google_sso`](12_google_sso.md),
-argocd in [`06_argocd_ingress`](14_argocd_ingress.md), the monitoring UIs in `07_monitoring_ingress`,
-real apps in their own charts. Every one of those Gateways is folded onto **one** Envoy + LoadBalancer
+argocd in [`06_argocd_ingress`](14_argocd_ingress.md), the monitoring UIs each in their own stack chart
+(`07_grafana`, `07_victoria_logs`, `07_victoria_metrics_k8s_stack`), real apps in their own charts. Every
+one of those Gateways is folded onto **one** Envoy + LoadBalancer
 via Envoy Gateway's `mergeGateways` (see [11_envoy_gateway.md](11_envoy_gateway.md)), so the cluster
 still has a **single ingress point on the pinned IP** — but the platform Gateway no longer depends on any
 app's cert.
@@ -79,7 +80,7 @@ host to resolve + the old Pi to forward `:80`), but under merge listeners are in
 missing cert never blocks another, nor the platform. The sample workload lives in
 [`sample-workload`](13_sample_workload.md); the `google-sso.<domain>` callback hosts in
 [`04_google_sso`](12_google_sso.md); argocd in [`06_argocd_ingress`](14_argocd_ingress.md); the
-monitoring UIs in `07_monitoring_ingress`.
+monitoring UIs each in their own stack chart (`07_grafana`, `07_victoria_logs`, `07_victoria_metrics_k8s_stack`).
 
 ### Email + base domain are config.sh-driven
 Per [CLAUDE.md](CLAUDE.md), no values are hardcoded in scripts. `10_gateway/config.sh` holds `LE_EMAIL`

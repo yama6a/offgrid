@@ -1,18 +1,19 @@
 # ArgoCD Application for standalone Grafana (argo_apps/charts/07_grafana/) — the dashboards UI for the
 # monitoring core. The grafana/grafana chart (no CRDs); its sidecar ingests kube-prometheus-stack's
 # emitted datasource + dashboard ConfigMaps (search-all-namespaces). Grafana's own auth is off
-# (anonymous Admin); the only gate is Google SSO at the shared Gateway, via the `sso: example.com`
-# HTTPRoute in 07_monitoring_ingress. No persistence. See 16_grafana.md.
+# (anonymous Admin); the only gate is Google SSO at the shared Gateway, via this chart's own
+# `sso: example.com` HTTPRoute (templates/edge-*.yaml). No persistence. See 16_grafana.md.
 #
 # AUTOMATED (prune + selfHeal): a leaf workload in the `monitoring` namespace — it can't cut the cluster
 # off its network, and it owns no CRDs.
 #
-# sync-wave "7": same wave as the stack it reads ConfigMaps from (07_kube_prometheus_stack) and its own
-# edge route (07_monitoring_ingress). The sidecar is a continuous watcher, so no hard "after the stack"
-# ordering is needed; co-locating here also lets the monitoring-ingress HTTPRoute's backendRef resolve
-# the instant the grafana Service appears, instead of sitting ResolvedRefs:False across a wave boundary.
-# The namespace is labelled privileged exactly like 07_kube_prometheus_stack (idempotent if the stack
-# created `monitoring` first); ServerSideApply for parity with the other monitoring apps.
+# sync-wave "7": same wave as the stack it reads ConfigMaps from (07_victoria_metrics_k8s_stack). The
+# sidecar is a continuous watcher, so no hard "after the stack" ordering is needed. This app now also owns
+# its own edge (folded in from the retired 07_monitoring_ingress): co-locating the HTTPRoute here lets its
+# backendRef resolve the instant the grafana Service appears, instead of sitting ResolvedRefs:False across
+# a wave boundary. The namespace is labelled privileged exactly like the stack (idempotent if the stack
+# created `monitoring` first); ServerSideApply for parity with the other monitoring apps. ServerSideDiff so
+# server-defaulted Gateway API fields on the edge resources don't show perpetual OutOfSync.
 apiVersion: argoproj.io/v1alpha1
 kind: Application
 metadata:
@@ -20,6 +21,7 @@ metadata:
   namespace: argocd
   annotations:
     argocd.argoproj.io/sync-wave: "7"
+    argocd.argoproj.io/compare-options: ServerSideDiff=true
 spec:
   project: default
   source:
@@ -28,6 +30,9 @@ spec:
     path: argo_apps/platform/charts/07_grafana
   destination:
     server: https://kubernetes.default.svc
+    # Grafana lands in `monitoring`; its edge resources set their own metadata.namespace — the Gateway/
+    # Certificate/HTTPRoute in `gateway`, the ReferenceGrant in `monitoring`. The default AppProject permits
+    # all three, so this multi-namespace app is fine.
     namespace: monitoring
   syncPolicy:
     managedNamespaceMetadata:

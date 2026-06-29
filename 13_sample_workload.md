@@ -33,7 +33,8 @@ Delivered purely by ArgoCD:
 
 So this is a deliberately **multi-namespace** Application. The HTTPRoutes (in `gateway`) reach the app
 Service (in `sample-workload`) via a `ReferenceGrant` in `sample-workload` — the same cross-namespace
-pattern `06_argocd_ingress` / `07_monitoring_ingress` use.
+pattern `06_argocd_ingress` and the monitoring stacks (`07_grafana`, `07_victoria_logs`,
+`07_victoria_metrics_k8s_stack`) use.
 
 ## The PG_PASSWORD wiring
 

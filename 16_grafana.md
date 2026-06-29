@@ -57,20 +57,20 @@ the SSO allowlist gets full Grafana admin (edit/delete dashboards, add datasourc
 small, trusted allowlist; the gateway allowlist is the real boundary. Identical posture to the
 Prometheus/Alertmanager UIs, which also have no login of their own.
 
-### Exposure reuses 07_monitoring_ingress
-Grafana is just one more host on the existing monitoring edge: a `grafana` entry in
-`07_monitoring_ingress/values.yaml` renders its own `grafana` Gateway (a single `:443` listener, folded
-onto the one Envoy via `mergeGateways`), the Certificate (HTTP-01), the `sso`-labelled HTTPRoute, and
-extends the cross-namespace ReferenceGrant to the `grafana` Service — no template changes.
-`letsencrypt-staging` until the cert issues, then flip the shared `issuer` in `07_monitoring_ingress` to
-`letsencrypt-prod`.
+### Exposure ships inside this chart
+The Grafana edge now lives in the **`07_grafana` chart itself** (folded in from the retired standalone
+`07_monitoring_ingress`): the `ingress:` block in `values.yaml` + `templates/edge-*.yaml` render its own
+`grafana` Gateway (a single `:443` listener, folded onto the one Envoy via `mergeGateways`), the Certificate
+(HTTP-01), the `sso`-labelled HTTPRoute, and a cross-namespace ReferenceGrant to the `grafana` Service —
+exactly the same per-UI pattern the vmui/vlogs UIs ship in their own stacks. `letsencrypt-staging` until the
+cert issues, then flip `ingress.issuer` in this chart's `values.yaml` to `letsencrypt-prod`.
 
 ### sync-wave 7
-Same wave as the stack it reads ConfigMaps from (`07_kube_prometheus_stack`) and its own edge route
-(`07_monitoring_ingress`). The sidecar is a continuous watcher, so no hard "after the stack" ordering is
-needed; co-locating at wave 7 also lets the monitoring-ingress HTTPRoute's `backendRef` resolve the
-instant the `grafana` Service appears, instead of sitting `ResolvedRefs:False` across a wave boundary.
-The `NN` prefix == the wave, so the app/chart are `07_grafana` (a third wave-7 app).
+Same wave as the stack it reads ConfigMaps from (`07_victoria_metrics_k8s_stack`) and the other two
+monitoring stacks. The sidecar is a continuous watcher, so no hard "after the stack" ordering is needed;
+shipping the edge in this same app also lets its HTTPRoute's `backendRef` resolve the instant the `grafana`
+Service appears, instead of sitting `ResolvedRefs:False` across a wave boundary. The `NN` prefix == the
+wave, so the app/chart are `07_grafana` (a third wave-7 app).
 
 ## Apply / verify
 
@@ -85,7 +85,7 @@ The `NN` prefix == the wave, so the app/chart are `07_grafana` (a third wave-7 a
 6. Browse `https://grafana.example.com` → **Google SSO login** first (allowlist enforced); after login,
    Grafana opens straight into the UI with **no Grafana login** (anonymous Admin). Connections → Data
    sources shows Prometheus; the stack's curated dashboards are listed.
-7. Once the staging cert issues, flip `07_monitoring_ingress` `issuer` to `letsencrypt-prod`, push, and
+7. Once the staging cert issues, flip this chart's `ingress.issuer` to `letsencrypt-prod`, push, and
    re-verify the cert is trusted.
 
 ## Caveats

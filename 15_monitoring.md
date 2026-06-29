@@ -43,10 +43,14 @@ cluster, so a `node-role.kubernetes.io/control-plane: DoesNotExist` selector wou
 
 **Wave consolidation.** Only three waves are touched: **0** = CRDs (`00_prometheus_operator_crds` preserved
 + `00_victoria_metrics_operator_crds`, both prune:false); **1** = the VM operator (admission webhook); **7**
-= everything data-plane (`07_victoria_metrics_k8s_stack`, `07_victoria_logs`, `07_grafana`,
-`07_monitoring_ingress`) together, so co-wave apps never artificially block each other. By the time the root
-reaches wave 7 the operator (wave 1) is long Healthy, so its webhook validates the VMSingle/VLSingle/VMAgent
-CRs; brief cross-app `ResolvedRefs:False` / datasource-down states self-clear.
+= everything data-plane (`07_victoria_metrics_k8s_stack`, `07_victoria_logs`, `07_grafana`) together. Each of
+those three **also owns its own edge** — the per-UI `Gateway` + `Certificate` + `sso`-labelled `HTTPRoute` +
+`ReferenceGrant` live in the same chart as the Service they front (`ingress:` block in each `values.yaml`,
+`templates/edge-*.yaml`), folded in from the retired standalone `07_monitoring_ingress`. Shipping the route
+beside its backend means its `backendRef` resolves the instant the Service appears, and co-wave apps never
+artificially block each other. By the time the root reaches wave 7 the operator (wave 1) is long Healthy, so
+its webhook validates the VMSingle/VLSingle/VMAgent CRs; brief cross-app `ResolvedRefs:False` /
+datasource-down states self-clear.
 
 **Talos control-plane scrapes.** kube-controller-manager (:10257, https, self-signed → insecureSkipVerify),
 kube-scheduler (:10259, same), etcd (:2381, plain http — Talos `listen-metrics-urls`) are exposed via Talos
@@ -74,7 +78,7 @@ app (v0.92.0) is **kept** — it is the converter's source; do not remove it.
 
 ### Cutover (CRD-safe)
 
-1. Land waves 0–1 (VM CRDs + operator) and the wave-7 VM/VL/grafana/ingress apps additively; confirm
+1. Land waves 0–1 (VM CRDs + operator) and the wave-7 VM/VL/grafana apps (each carrying its own edge) additively; confirm
    `kubectl get vmservicescrape,vmpodscrape -A` shows a converted equivalent for every pre-existing
    ServiceMonitor/PodMonitor. The VM stack's node-exporter is gated OFF here
    (`prometheus-node-exporter.enabled: false`) so it doesn't clash with the still-running kube-prometheus
@@ -334,9 +338,10 @@ label-driven Google SSO ([12_google_sso.md](12_google_sso.md)).
 Grafana now lands as its own wave-7 app — see **[16_grafana.md](16_grafana.md)**. Standalone
 `grafana/grafana` chart, the sidecar ingests the datasource/dashboard ConfigMaps this stack emits
 (`grafana_datasource: "1"` / `grafana_dashboard: "1"`, search-all-namespaces). No persistence; Grafana's
-own login is **off** (anonymous Admin) and the only gate is the Google SSO front door, reusing
-`07_monitoring_ingress` for the `grafana.example.com` host (cert + `sso`-labelled HTTPRoute) and
-its **own** `grafana` Gateway (a single `:443` listener, folded onto the one Envoy via `mergeGateways`).
+own login is **off** (anonymous Admin) and the only gate is the Google SSO front door — the `grafana.example.com`
+host's cert + `sso`-labelled HTTPRoute and its **own** `grafana` Gateway (a single `:443` listener, folded
+onto the one Envoy via `mergeGateways`) now ship **inside the `07_grafana` chart itself** (`ingress:` block +
+`templates/edge-*.yaml`), same as the vmui/vlogs UIs do in their stacks.
 
 ## Apply / verify
 

@@ -1,0 +1,18 @@
+# Lets this UI's HTTPRoute (in the gateway namespace) reference its Service in the backend namespace.
+# Cross-namespace backendRefs require a ReferenceGrant in the BACKEND's namespace.
+{{- with .Values.ingress }}
+apiVersion: gateway.networking.k8s.io/v1beta1
+kind: ReferenceGrant
+metadata:
+  name: gateway-routes-to-{{ .name }}
+  namespace: {{ .backend.namespace }}
+spec:
+  from:
+    - group: gateway.networking.k8s.io
+      kind: HTTPRoute
+      namespace: {{ .gatewayNamespace }}
+  to:
+    - group: ""
+      kind: Service
+      name: {{ .backend.name }}
+{{- end }}

@@ -10,7 +10,7 @@
 vlsingle:
   # CR name -> the operator names the Service `vlsingle-<name>` on :9428 (the collector remoteWrite target
   # and the vlogs UI backend both reference it). Keep in step with victoria-logs-collector.remoteWrite and
-  # 07_monitoring_ingress.
+  # the `ingress.backend` block below.
   name: victoria-logs
   namespace: monitoring
   # Logs are bulkier than metrics, so they get their OWN, shorter window (metrics are 180d). 60d here.
@@ -43,3 +43,26 @@ victoria-logs-collector:
   resources:
     requests: {cpu: 25m, memory: 64Mi}
     limits: {memory: 128Mi}
+
+# ---- edge / ingress (folded in from the retired 07_monitoring_ingress) -------------------------------
+# Exposes the VictoriaLogs UI on `host` through its OWN Gateway (a single :443 listener, merged onto the
+# one Envoy via mergeGateways in 01_envoy_gateway), gated by Google SSO: the HTTPRoute is labelled
+# `sso: <sso>` so the 04_google_sso SecurityPolicy attaches Google login + the allowlist. The VictoriaLogs
+# UI has NO login of its own, so this SSO gate is the only barrier. The Gateway/listener/cert/route are
+# named `vlogs`; the ReferenceGrant lands in the backend namespace as gateway-routes-to-vlogs. `issuer`
+# is STAGING until the cert issues — flip to letsencrypt-prod then. See 15_monitoring.md.
+ingress:
+  name: vlogs
+  gatewayClassName: eg
+  gatewayNamespace: gateway
+  host: vlogs.example.com
+  tlsSecretName: vlogs-tls
+  issuer: letsencrypt-staging
+  routeLabelKey: sso
+  sso: "example.com"
+  # The operator-generated VLSingle Service (verify: kubectl get svc -n monitoring). The UI is served by
+  # VLSingle on :9428 (landing at /select/vmui/); the name follows the operator pattern vlsingle-<cr>.
+  backend:
+    name: vlsingle-victoria-logs
+    namespace: monitoring
+    port: 9428
