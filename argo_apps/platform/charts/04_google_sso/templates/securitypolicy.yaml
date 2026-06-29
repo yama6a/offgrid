@@ -59,10 +59,11 @@ spec:
           type: RegularExpression
           value: {{ . | quote }}
     {{- end }}
+    # Minimal scopes: `openid` (required to get an ID token) + `email` (the only claim we authorize
+    # on). No `profile` — its name/picture claims go unused and just inflate the ID token / its cookie.
     scopes:
       - openid
       - email
-      - profile
 
   jwt:
     providers:
