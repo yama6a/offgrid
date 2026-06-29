@@ -12,6 +12,12 @@ argo-cd:
   # component's labelSelector automatically. Singletons (controller, redis) satisfy it trivially.
   # maxSkew 1 + DoNotSchedule over 3 nodes => the 2 replicas land on 2 distinct nodes.
   global:
+    # ArgoCD is ~90% of all cluster log volume at INFO — the controller's per-app reconcile churn
+    # ("Refreshing app status", "Reconciliation completed") and the repo-server's per-GenerateManifest
+    # gRPC call tracing. WARN cuts essentially all of it; sync/compare FAILURES still log at warn/error,
+    # and the sync audit trail lives in the ArgoCD UI/API + Application status.
+    logging:
+      level: warn
     topologySpreadConstraints:
       - maxSkew: 1
         topologyKey: kubernetes.io/hostname

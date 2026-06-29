@@ -20,6 +20,11 @@ grafana:
   # Every request arrives already authenticated at the edge, so we serve it as an anonymous Admin: no
   # second login, full functionality. dotted keys (`auth.anonymous` etc.) are grafana.ini SECTION names.
   grafana.ini:
+    # Quiet Grafana's INFO chatter (per-poll "Plugin Request Completed" datasource calls, cleanup &
+    # update-check). WARN keeps errors. No HTTP access logs lost — inbound traffic is logged by the
+    # envoy gateway, which stays at INFO on purpose.
+    log:
+      level: warn
     server:
       domain: grafana.example.com
       root_url: https://grafana.example.com

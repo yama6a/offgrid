@@ -21,6 +21,14 @@ envoyProxy:
 
 # Everything under `gateway-helm:` is passed to the upstream gateway-helm subchart (key == dep name).
 gateway-helm:
+  # Quiet the envoy-gateway CONTROLLER's xDS reconcile INFO logs (this is the control plane, not the
+  # data-plane proxy). WARN keeps routing/translation errors. The per-Gateway Envoy PROXY access logs
+  # (the `envoy` containers — our HTTP request/response logs) are emitted separately and stay untouched.
+  config:
+    envoyGateway:
+      logging:
+        level:
+          default: warn
   deployment:
     envoyGateway:
       # Trim the controller's footprint for a 3x 8GB Pi 5 cluster (chart default limit is 1Gi).
