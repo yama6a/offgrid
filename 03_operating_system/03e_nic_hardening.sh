@@ -22,23 +22,22 @@
 #
 set -uo pipefail
 
-# All shared config (TALOSCTL_VERSION, EXPECT_NIC, ...) lives in 03_config.sh.
+# All shared config (TALOSCTL_VERSION, EXPECT_NIC, ...) lives in lib/config.sh.
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
-source "${SCRIPT_DIR}/03_config.sh"
+source "${SCRIPT_DIR}/../lib/common.sh"
 
 # ---- knobs ------------------------------------------------------------------
-IFACE="${IFACE:-${EXPECT_NIC}}"            # wired NIC to harden (end0)
-OUTDIR="${OUTDIR:-${SCRIPT_DIR}/talos-cluster}"   # talosconfig + kubeconfig live here
-KUBECTL_IMAGE="${KUBECTL_IMAGE:-registry.k8s.io/kubectl:v1.36.1}"   # ~match cluster
-DEBUG_IMAGE="${DEBUG_IMAGE:-alpine:3.21}"  # probe pod; apk-installs ethtool
-WATCHDOG_TIMEOUT="${WATCHDOG_TIMEOUT:-15s}"  # desired; floored to 10s (Talos min); Pi hw max ~15s
-APPLY_MODE="${APPLY_MODE:-no-reboot}"      # never silently reboot control-plane nodes
-SETTLE_GRACE="${SETTLE_GRACE:-90}"         # secs to wait BEFORE probing — the NIC reconfig takes a while to
+OUTDIR="${CLUSTER_DIR}"                    # talosconfig + kubeconfig live here (the lib's talosctl() mounts it); IFACE comes from config.sh
+KUBECTL_IMAGE="registry.k8s.io/kubectl:v1.36.1"   # ~match cluster
+DEBUG_IMAGE="alpine:3.21"                  # probe pod; apk-installs ethtool
+WATCHDOG_TIMEOUT="15s"                     # floored to 10s (Talos min); Pi hw max ~15s
+APPLY_MODE="no-reboot"                     # never silently reboot control-plane nodes
+SETTLE_GRACE=90                            # secs to wait BEFORE probing — the NIC reconfig takes a while to
                                            # kick in and bounce end0/the VIP; probing too early banks a false
                                            # streak off the still-up old API and exits before the blip even hits
-SETTLE_WAIT="${SETTLE_WAIT:-180}"          # secs to poll for the VIP/API to steady (after the grace above)
-SETTLE_STREAK="${SETTLE_STREAK:-3}"        # consecutive /readyz hits required (one success isn't enough)
-SETTLE_INTERVAL="${SETTLE_INTERVAL:-10}"   # secs between /readyz probes — poll periodically, never blind-sleep
+SETTLE_WAIT=180                            # secs to poll for the VIP/API to steady (after the grace above)
+SETTLE_STREAK=3                            # consecutive /readyz hits required (one success isn't enough)
+SETTLE_INTERVAL=10                         # secs between /readyz probes — poll periodically, never blind-sleep
 # TSO / GSO / GRO -> their kernel netdev feature names (what EthernetConfig/EthernetStatus use).
 OFFLOAD_KEYS=(tx-tcp-segmentation tx-generic-segmentation rx-gro)
 PROBE_NS="kube-system"                     # Talos exempts kube-system from Pod Security
@@ -46,14 +45,8 @@ PROBE_POD="nic-hw-probe"
 PATCH_FILE="nic-hardening-patch.yaml"      # written into OUTDIR (=/work in the container)
 # -----------------------------------------------------------------------------
 
-say() { printf '\n\033[1;36m>> %s\033[0m\n' "$*"; }
-die() { printf '\033[1;31mERROR: %s\033[0m\n' "$*" >&2; exit 1; }
-PASS=0; FAIL=0
-ok()  { printf '  \033[32m[PASS]\033[0m %s\n' "$1"; PASS=$((PASS+1)); }
-bad() { printf '  \033[31m[FAIL]\033[0m %s\n' "$1"; FAIL=$((FAIL+1)); }
-
-talosctl() { docker run --rm -i --network host -v "${OUTDIR}:/work" -w /work \
-  -e TALOSCONFIG=/work/talosconfig "ghcr.io/siderolabs/talosctl:${TALOSCTL_VERSION}" "$@"; }
+# dockerized kubectl pinned ~to the cluster version, mounting the talos-cluster dir.
+# (talosctl() is the lib's dockerized wrapper, which mounts the same CLUSTER_DIR as /work.)
 kubectl()  { docker run --rm -i --network host -v "${OUTDIR}:/work" \
   -e KUBECONFIG=/work/kubeconfig "${KUBECTL_IMAGE}" "$@"; }
 
@@ -71,7 +64,7 @@ feat_fixed()  { grep -qE "^[[:space:]]*$2:[[:space:]]+(on|off)[[:space:]]+\[fixe
 
 # === 0. prereqs ==============================================================
 say "checking prerequisites"
-command -v docker >/dev/null || die "docker not found"
+require docker
 docker info >/dev/null 2>&1 || die "docker not responding (start Rancher/Docker Desktop)"
 [ -f "${OUTDIR}/talosconfig" ] || die "missing ${OUTDIR}/talosconfig — run 03d first"
 [ -f "${OUTDIR}/kubeconfig" ]  || die "missing ${OUTDIR}/kubeconfig — run 03d first"
@@ -83,7 +76,7 @@ read -ra NODES_ARR <<< "${ENDPOINTS:-${NODES:-}}"
 if [ "${#NODES_ARR[@]}" -eq 0 ]; then
   read -r -p ">> node IP(s), space-separated: " line; read -ra NODES_ARR <<< "$line"
 fi
-[ "${#NODES_ARR[@]}" -gt 0 ] || die "no nodes (set endpoints in talosconfig / NODES in 03_config.sh)"
+[ "${#NODES_ARR[@]}" -gt 0 ] || die "no nodes (set endpoints in talosconfig / CLUSTER_NODES in config.sh)"
 echo "   nodes: ${NODES_ARR[*]}"
 NODE0_IP="${NODES_ARR[0]}"
 
@@ -230,8 +223,8 @@ done
 # Two-stage settle: (1) a fixed GRACE wait first, because the reconfig can take a while to actually kick
 # in — probe immediately and you'd bank a streak off the OLD still-up API and exit before the blip hits.
 # (2) Then poll the apiserver over the VIP every SETTLE_INTERVAL until it answers SETTLE_STREAK times in a
-# row — one success isn't enough (a single good hit is what fooled 04). Tunable via
-# SETTLE_GRACE / SETTLE_WAIT / SETTLE_STREAK / SETTLE_INTERVAL.
+# row — one success isn't enough (a single good hit is what fooled 04). Adjust the SETTLE_* knobs at
+# the top of this script if your network settles slower.
 say "letting the NIC reconfig take effect before probing (grace ${SETTLE_GRACE}s)..."
 sleep "$SETTLE_GRACE"
 say "waiting for the control-plane API to be steady over the VIP (post-NIC-reconfig settle)"
@@ -248,8 +241,7 @@ echo
   || bad "API not steady ${SETTLE_STREAK}x within ${SETTLE_WAIT}s — let the NIC/VIP settle before running 04"
 
 # === 7. summary ==============================================================
-echo ""
-echo "=============== summary: ${PASS} passed, ${FAIL} failed ==============="
+summary
 if [ "$FAIL" -eq 0 ]; then
   echo "NIC machine-config defences applied + verified. Next (deferred, ArgoCD):"
   echo "  EEE-off + link-watchdog + 'ss -K' DaemonSet — see 03_operating_system.md."

@@ -25,26 +25,15 @@
 set -uo pipefail
 
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
-CONFIG_FILE="${CONFIG_FILE:-${SCRIPT_DIR}/config.sh}"
-# shellcheck source=config.sh
-[ -f "$CONFIG_FILE" ] && . "$CONFIG_FILE"
+source "${SCRIPT_DIR}/../lib/common.sh"
 
 # ---- knobs ------------------------------------------------------------------
-REPO_ROOT="${REPO_ROOT:-${SCRIPT_DIR}/..}"
-GATEWAY_VALUES="${GATEWAY_VALUES:-${REPO_ROOT}/argo_apps/platform/charts/03_gateway/values.yaml}"   # cross-check the domain list
-SSO_CHART="${SSO_CHART:-${REPO_ROOT}/argo_apps/platform/charts/04_google_sso}"                      # the wrapper chart
-SSO_VALUES="${SSO_VALUES:-${SSO_CHART}/values.yaml}"                                       # clientID/allowlists written here
-SEALED_OUT="${SEALED_OUT:-${SSO_CHART}/templates/google-oauth-sealedsecret.yaml}"         # sealed client secret (committed)
-OUTDIR="${OUTDIR:-${REPO_ROOT}/03_operating_system/talos-cluster}"                         # kubeconfig (from 03d); gitignored
-export KUBECONFIG="${KUBECONFIG:-${OUTDIR}/kubeconfig}"
+GATEWAY_VALUES="${REPO_ROOT}/argo_apps/platform/charts/03_gateway/values.yaml"   # cross-check the domain list
+SSO_CHART="${REPO_ROOT}/argo_apps/platform/charts/04_google_sso"                 # the wrapper chart
+SSO_VALUES="${SSO_CHART}/values.yaml"                                            # clientID/allowlists written here
+SEALED_OUT="${SSO_CHART}/templates/google-oauth-sealedsecret.yaml"              # sealed client secret (committed)
+CLIENT_SECRET_KEY="client-secret"   # Secret data key EG's OIDC clientSecret expects (fixed by Envoy Gateway)
 # -----------------------------------------------------------------------------
-
-say()  { printf '\n\033[1;36m>> %s\033[0m\n' "$*"; }
-die()  { printf '\033[1;31mERROR: %s\033[0m\n' "$*" >&2; exit 1; }
-warn() { printf '  \033[33m[warn]\033[0m %s\n' "$*"; }
-PASS=0; FAIL=0
-ok()  { printf '  \033[32m[PASS]\033[0m %s\n' "$1"; PASS=$((PASS+1)); }
-bad() { printf '  \033[31m[FAIL]\033[0m %s\n' "$1"; FAIL=$((FAIL+1)); }
 
 # normalize a comma-separated email string -> newline list (lowercased, whitespace-stripped, validated).
 # sed strips whitespace PER LINE so it can't eat the newlines tr just made (tr -d would).
@@ -52,13 +41,11 @@ normalize_emails() { printf '%s' "$1" | tr ',' '\n' | tr 'A-Z' 'a-z' | sed -E 's
 
 # === 0. prereqs ==============================================================
 say "prerequisites"
-command -v kubeseal >/dev/null || die "kubeseal not found on PATH — install it (brew install kubeseal)"
-command -v kubectl  >/dev/null || die "kubectl not found on PATH — install it (https://kubernetes.io/docs/tasks/tools/)"
-command -v yq       >/dev/null || die "yq not found on PATH — install it (brew install yq)"
-[ -f "$KUBECONFIG" ]     || die "missing ${KUBECONFIG} — run step 03 (03d) first"
+require kubeseal kubectl yq
+use_kubeconfig
 [ -f "$SSO_VALUES" ]     || die "missing ${SSO_VALUES} — the 04_google_sso chart should ship it"
-kubectl get nodes >/dev/null 2>&1 || die "kubectl can't reach the API via ${KUBECONFIG}"
-kubectl get pods -n "$SS_CONTROLLER_NS" -l app.kubernetes.io/name=sealed-secrets >/dev/null 2>&1 \
+assert_api
+kubectl get pods -n "$SS_CONTROLLER_NS" -l "$SS_POD_SELECTOR" >/dev/null 2>&1 \
   || die "sealed-secrets controller not reachable in ns/${SS_CONTROLLER_NS} — is step 07 synced? (kubectl -n ${SS_CONTROLLER_NS} get pods)"
 ok "kubeseal/kubectl/yq present, API + sealed-secrets controller reachable"
 
@@ -133,32 +120,10 @@ done
 # the manifest locally; kubeseal encrypts it against THIS cluster's controller key. Strict scope binds it
 # to exactly ${SEAL_NAME}/${SEAL_NAMESPACE}. The same Secret is referenced by every domain's policy.
 say "sealing client secret -> ${SEALED_OUT}"
-mkdir -p "$(dirname "$SEALED_OUT")"
-if kubectl create secret generic "$SEAL_NAME" -n "$SEAL_NAMESPACE" \
-      --dry-run=client -o yaml \
-      --from-literal="${CLIENT_SECRET_KEY}=${CLIENT_SECRET}" \
-   | kubeseal --controller-namespace "$SS_CONTROLLER_NS" --controller-name "$SS_CONTROLLER_NAME" \
-       --format yaml --scope strict > "${SEALED_OUT}.tmp" 2>/dev/null; then
-  mv "${SEALED_OUT}.tmp" "$SEALED_OUT"
-  ok "SealedSecret written (overwritten if it existed)"
-else
-  rm -f "${SEALED_OUT}.tmp"
-  bad "kubeseal failed — SealedSecret NOT written (controller name/ns right? sealed-secrets/${SS_CONTROLLER_NS})"
-fi
+seal_secret "$SEAL_NAME" "$SEAL_NAMESPACE" "$CLIENT_SECRET_KEY" "$CLIENT_SECRET" "$SEALED_OUT"
 
-# === 6. sanity-check the sealed output =======================================
-say "verifying the sealed output"
-if [ -s "$SEALED_OUT" ]; then
-  grep -q 'kind: SealedSecret' "$SEALED_OUT" && ok "contains kind: SealedSecret" || bad "not a SealedSecret manifest"
-  grep -q "$CLIENT_SECRET_KEY" "$SEALED_OUT" && ok "encryptedData has ${CLIENT_SECRET_KEY}" || bad "encryptedData missing ${CLIENT_SECRET_KEY}"
-  grep -q "$CLIENT_SECRET" "$SEALED_OUT" && bad "PLAINTEXT client secret found in output — DO NOT COMMIT" || ok "no plaintext secret in output"
-else
-  bad "sealed output is empty/missing"
-fi
-
-# === 7. summary ==============================================================
-echo ""
-echo "=============== summary: ${PASS} passed, ${FAIL} failed ==============="
+# === 6. summary ==============================================================
+summary
 if [ "$FAIL" -eq 0 ]; then
   echo "Google SSO configured for ${#DOMAINS[@]} domain(s). Register these redirect URIs on the OAuth client:"
   for d in "${DOMAINS[@]}"; do echo "  https://${AUTH_SUBDOMAIN}.${d}/oauth2/callback"; done

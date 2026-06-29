@@ -15,21 +15,21 @@
 set -euo pipefail
 
 # Config (OUT_DIR, RAW_XZ — the compressed raw image from 03a_talos_image_builder.sh)
-# lives in 03_config.sh. Override RAW_XZ to flash a specific build.
+# lives in lib/config.sh. Override RAW_XZ to flash a specific build.
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
-source "${SCRIPT_DIR}/03_config.sh"
+source "${SCRIPT_DIR}/../lib/common.sh"
 
-command -v xz >/dev/null || { echo "ERROR: xz not found (brew install xz)"; exit 1; }
-[ -f "$RAW_XZ" ] || {
-  echo "ERROR: image not found: $RAW_XZ"
-  echo "       build it first:  ./03a_talos_image_builder.sh"
-  exit 1
-}
+# The staged image from 03a (OUT_DIR comes from the shared build-cache key in config.sh). Override
+# RAW_XZ to flash a specific build. Filename matches 03a's IMAGE_NAME.
+RAW_XZ="${RAW_XZ:-${OUT_DIR}/metal-arm64-rpi5.raw.xz}"
+
+require xz
+[ -f "$RAW_XZ" ] || die "image not found: $RAW_XZ — build it first: ./03a_talos_image_builder.sh"
 
 # Decompress next to the .xz (only when missing or stale).
 RAW="${RAW_XZ%.xz}"
 if [ ! -f "$RAW" ] || [ "$RAW_XZ" -nt "$RAW" ]; then
-  echo ">> decompressing -> $RAW"
+  say "decompressing -> $RAW"
   xz -dkf "$RAW_XZ"
 fi
 ls -lh "$RAW"
@@ -41,22 +41,22 @@ diskutil list
 
 # 2. Pick the NVMe's WHOLE-DISK id (e.g. /dev/disk6 — NOT /dev/disk6s1)
 read -r -p ">> enter NVMe disk id (e.g. /dev/disk6): " DISK
-diskutil info "${DISK}" >/dev/null 2>&1 || { echo "ERROR: '${DISK}' is not a disk"; exit 1; }
+diskutil info "${DISK}" >/dev/null 2>&1 || die "'${DISK}' is not a disk"
 
 # 3. Confirm — this erases the entire drive
 diskutil info "${DISK}" | grep -E 'Device / Media Name|Disk Size|Protocol|Removable' || true
-read -r -p ">> ERASE ${DISK} and write Talos? type YES: " ok
-[ "${ok}" = "YES" ] || { echo "aborted."; exit 1; }
+read -r -p ">> ERASE ${DISK} and write Talos? type YES: " confirm
+[ "${confirm}" = "YES" ] || { echo "aborted."; exit 1; }
 
 # 4. Unmount, then write to the raw device (/dev/rdiskN is much faster on macOS)
 RDISK="/dev/r${DISK##*/}"
 diskutil unmountDisk "${DISK}"
-echo ">> writing to ${RDISK} ... (press Ctrl-T for progress)"
+say "writing to ${RDISK} ... (press Ctrl-T for progress)"
 sudo dd if="${RAW}" of="${RDISK}" bs=4M
 sync
 
 # 5. Eject so the drive is safe to pull
 diskutil eject "${DISK}"
-echo ">> Done. ${DISK} ejected."
-echo ">> Next: slot the SSD into a Pi, power on with NO SD card -> Talos boots into maintenance mode."
-echo ">>   then repeat this script for each remaining drive."
+say "Done. ${DISK} ejected."
+echo "   Next: slot the SSD into a Pi, power on with NO SD card -> Talos boots into maintenance mode."
+echo "   then repeat this script for each remaining drive."

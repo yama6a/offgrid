@@ -23,34 +23,21 @@
 set -uo pipefail
 
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
-CONFIG_FILE="${CONFIG_FILE:-${SCRIPT_DIR}/config.sh}"
-# shellcheck source=config.sh
-[ -f "$CONFIG_FILE" ] && . "$CONFIG_FILE"
+source "${SCRIPT_DIR}/../lib/common.sh"
 
 # ---- knobs ------------------------------------------------------------------
-REPO_ROOT="${REPO_ROOT:-${SCRIPT_DIR}/..}"
-STACK_CHART="${STACK_CHART:-${REPO_ROOT}/argo_apps/charts/07_kube_prometheus_stack}"   # the wrapper chart
-STACK_VALUES="${STACK_VALUES:-${STACK_CHART}/values.yaml}"                             # config block written here
-SEALED_OUT="${SEALED_OUT:-${STACK_CHART}/templates/alertmanager-smtp-sealedsecret.yaml}"  # sealed app-password (committed)
-VALUES_KEY="${VALUES_KEY:-kube-prometheus-stack}"                                     # top-level subchart key
+STACK_CHART="${REPO_ROOT}/argo_apps/charts/07_kube_prometheus_stack"   # the wrapper chart
+STACK_VALUES="${STACK_CHART}/values.yaml"                             # config block written here
+SEALED_OUT="${STACK_CHART}/templates/alertmanager-smtp-sealedsecret.yaml"  # sealed app-password (committed)
+VALUES_KEY="kube-prometheus-stack"                                   # top-level subchart key
+SMTP_SECRET_NAME="alertmanager-smtp"                                 # the Secret the Alertmanager pod mounts
 # where the Secret is mounted inside the Alertmanager pod (alertmanagerSpec.secrets -> this dir):
 SECRET_MOUNT="/etc/alertmanager/secrets/${SMTP_SECRET_NAME}/${SMTP_SECRET_KEY}"
-OUTDIR="${OUTDIR:-${REPO_ROOT}/03_operating_system/talos-cluster}"                     # kubeconfig (from 03d); gitignored
-export KUBECONFIG="${KUBECONFIG:-${OUTDIR}/kubeconfig}"
 # -----------------------------------------------------------------------------
-
-say()  { printf '\n\033[1;36m>> %s\033[0m\n' "$*"; }
-die()  { printf '\033[1;31mERROR: %s\033[0m\n' "$*" >&2; exit 1; }
-warn() { printf '  \033[33m[warn]\033[0m %s\n' "$*"; }
-PASS=0; FAIL=0
-ok()  { printf '  \033[32m[PASS]\033[0m %s\n' "$1"; PASS=$((PASS+1)); }
-bad() { printf '  \033[31m[FAIL]\033[0m %s\n' "$1"; FAIL=$((FAIL+1)); }
 
 # === 0. prereqs ==============================================================
 say "prerequisites"
-command -v kubeseal >/dev/null || die "kubeseal not found on PATH — install it (brew install kubeseal)"
-command -v kubectl  >/dev/null || die "kubectl not found on PATH — install it (https://kubernetes.io/docs/tasks/tools/)"
-command -v yq       >/dev/null || die "yq not found on PATH — install it (brew install yq)"
+require kubeseal kubectl yq
 [ -f "$STACK_VALUES" ] || die "missing ${STACK_VALUES} — the 07_kube_prometheus_stack chart should ship it"
 yq -e ".[\"${VALUES_KEY}\"]" "$STACK_VALUES" >/dev/null 2>&1 \
   || die "no .${VALUES_KEY} key in ${STACK_VALUES} — wrong file?"
@@ -77,26 +64,14 @@ if [ -n "$SMTP_USERNAME" ] && [ -n "$SMTP_PASSWORD" ]; then
   say "credentials given -> EMAIL receiver"
 
   # controller must be reachable to seal against this cluster's key.
-  kubectl get nodes >/dev/null 2>&1 || die "kubectl can't reach the API via ${KUBECONFIG} — run step 03 first"
-  kubectl get pods -n "$SS_CONTROLLER_NS" -l app.kubernetes.io/name=sealed-secrets >/dev/null 2>&1 \
+  use_kubeconfig
+  assert_api
+  kubectl get pods -n "$SS_CONTROLLER_NS" -l "$SS_POD_SELECTOR" >/dev/null 2>&1 \
     || die "sealed-secrets controller not reachable in ns/${SS_CONTROLLER_NS} — is step 07 synced?"
 
-  # seal the app-password (key ${SMTP_SECRET_KEY}) -> ${SMTP_SECRET_NAME} in ${MONITORING_NS}. --dry-run
-  # builds the Secret locally; kubeseal encrypts it against the controller; strict scope binds it to
-  # exactly that name+namespace. Overwrites any existing sealed file.
+  # seal the app-password (key ${SMTP_SECRET_KEY}) -> ${SMTP_SECRET_NAME} in ${MONITORING_NS}.
   say "sealing app-password -> ${SEALED_OUT}"
-  mkdir -p "$(dirname "$SEALED_OUT")"
-  if kubectl create secret generic "$SMTP_SECRET_NAME" -n "$MONITORING_NS" \
-        --dry-run=client -o yaml \
-        --from-literal="${SMTP_SECRET_KEY}=${SMTP_PASSWORD}" \
-     | kubeseal --controller-namespace "$SS_CONTROLLER_NS" --controller-name "$SS_CONTROLLER_NAME" \
-         --format yaml --scope strict > "${SEALED_OUT}.tmp" 2>/dev/null; then
-    mv "${SEALED_OUT}.tmp" "$SEALED_OUT"
-    ok "SealedSecret written (overwritten if it existed)"
-  else
-    rm -f "${SEALED_OUT}.tmp"
-    bad "kubeseal failed — SealedSecret NOT written (controller sealed-secrets/${SS_CONTROLLER_NS} up?)"
-  fi
+  seal_secret "$SMTP_SECRET_NAME" "$MONITORING_NS" "$SMTP_SECRET_KEY" "$SMTP_PASSWORD" "$SEALED_OUT"
 
   # write the EMAIL variant into the stack values. Mount the secret + an email receiver that reads the
   # password from the mounted file (never inlined). 4h repeat_interval = sane re-notify cadence.
@@ -130,11 +105,7 @@ if [ -n "$SMTP_USERNAME" ] && [ -n "$SMTP_PASSWORD" ]; then
     bad "yq failed to write the email config"
   fi
 
-  # never commit a plaintext secret.
-  if [ -s "$SEALED_OUT" ]; then
-    grep -q 'kind: SealedSecret' "$SEALED_OUT" && ok "output is a SealedSecret" || bad "not a SealedSecret manifest"
-    grep -qF "$SMTP_PASSWORD" "$SEALED_OUT" && bad "PLAINTEXT password in output — DO NOT COMMIT" || ok "no plaintext password in output"
-  fi
+  # seal_secret already verified the sealed file; also ensure no plaintext leaked into the values file.
   grep -qF "$SMTP_PASSWORD" "$STACK_VALUES" && bad "PLAINTEXT password in values.yaml — DO NOT COMMIT" || ok "no plaintext password in values.yaml"
 
 # === 2b. NULL path: delete the sealed file + write the null receiver =========
@@ -168,8 +139,7 @@ else
 fi
 
 # === 3. summary ==============================================================
-echo ""
-echo "=============== summary: ${PASS} passed, ${FAIL} failed ==============="
+summary
 if [ "$FAIL" -eq 0 ]; then
   cat <<EOF
 Alertmanager wiring updated in ${STACK_VALUES}.

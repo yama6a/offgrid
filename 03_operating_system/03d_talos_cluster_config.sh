@@ -13,30 +13,20 @@
 # Requires: docker, with host networking enabled in Docker Desktop
 #           (Settings -> Resources -> Network -> Enable host networking).
 #
-# Cluster name, VIP, disk, NIC, and the node list all come from 03_config.sh.
+# Cluster name, VIP, disk, NIC, and the node list all come from lib/config.sh.
 #
 set -euo pipefail
 
-# All config (talosctl version, CLUSTER_*, INSTALL_DISK, IFACE, CLUSTER_NODES) in 03_config.sh.
+# All config (talosctl version, CLUSTER_*, INSTALL_DISK, IFACE, CLUSTER_NODES) in lib/config.sh.
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
-source "${SCRIPT_DIR}/03_config.sh"
+source "${SCRIPT_DIR}/../lib/common.sh"
 
-command -v docker >/dev/null || { echo "ERROR: docker not found"; exit 1; }
+require docker
 
-# Generated configs live next to this script, regardless of where it's invoked from.
-OUTDIR="${SCRIPT_DIR}/talos-cluster"
+# Generated configs live in the canonical talos-cluster dir (CLUSTER_DIR, from the lib). The lib's
+# talosctl() mounts it as /work, so the paths passed below are relative to /work (= ${OUTDIR} on the host).
+OUTDIR="${CLUSTER_DIR}"
 mkdir -p "${OUTDIR}"
-
-# Dockerized talosctl: OUTDIR mounted as /work, its talosconfig used, host network.
-# Paths passed to talosctl below are relative to /work (= ${OUTDIR} on the host).
-talosctl() {
-  docker run --rm \
-    --network host \
-    -v "${OUTDIR}:/work" \
-    -w /work \
-    -e TALOSCONFIG=/work/talosconfig \
-    "ghcr.io/siderolabs/talosctl:${TALOSCTL_VERSION}" "$@"
-}
 
 # Working vars from shared config (IFACE is used directly).
 CLUSTER="$CLUSTER_NAME"; DISK="$INSTALL_DISK"; EPHEMERAL="$EPHEMERAL_SIZE"; VIP="$CLUSTER_VIP"; CNPG_SIZE="$CNPG_VOLUME_SIZE"
@@ -148,13 +138,13 @@ cat "${OUTDIR}/volumes.yaml" >> "${OUTDIR}/cp.yaml"
 #     it blocks until the node is genuinely back in maintenance. nc gates the call so we don't hang on a
 #     node mid-reboot. On a first install (straight off 03b) the nodes are already in maintenance, so
 #     this returns immediately.
-echo ">> waiting for nodes in maintenance (up to 5 min each)..."
+say "waiting for nodes in maintenance (up to 5 min each)..."
 for i in "${!IPS[@]}"; do
   ip="${IPS[$i]}"; host="${HOSTNAMES[$i]}"
   printf '   %-8s %-15s ' "$host" "$ip"
   deadline=$(( $(date +%s) + 300 ))
   until nc -z -G2 "$ip" "$API_PORT" >/dev/null 2>&1 && talosctl -e "$ip" -n "$ip" version --insecure >/dev/null 2>&1; do
-    [ "$(date +%s)" -lt "$deadline" ] || { echo "TIMEOUT"; echo "ERROR: ${ip} not in maintenance after 300s — check its console/power"; exit 1; }
+    [ "$(date +%s)" -lt "$deadline" ] || { echo "TIMEOUT"; die "${ip} not in maintenance after 300s — check its console/power"; }
     printf '.'; sleep 5
   done
   echo "ready"
@@ -166,7 +156,7 @@ done
 #    setting both errors with "static hostname is already set in v1alpha1 config".
 for i in "${!IPS[@]}"; do
   ip="${IPS[$i]}"; host="${HOSTNAMES[$i]}"
-  echo ">> applying config to ${host} (${ip})"
+  say "applying config to ${host} (${ip})"
   talosctl apply-config --insecure -n "${ip}" -f cp.yaml \
     -p @cp-patch.yaml \
     -p '{"apiVersion":"v1alpha1","kind":"HostnameConfig","hostname":"'"${host}"'","auto":"off"}'
@@ -181,15 +171,14 @@ talosctl config node "${IPS[0]}"
 #    *securely* with our PKI, so a secure `version` (no --insecure) succeeding is the
 #    ready signal — a maintenance-mode node only answers --insecure. Beats guessing a
 #    fixed wait. nc gates the call so we don't hang on a node that's mid-reboot.
-echo
-echo ">> waiting for nodes to reboot into their configured state (up to 5 min each)..."
+say "waiting for nodes to reboot into their configured state (up to 5 min each)..."
 sleep 10   # let the reboots actually begin (avoids a false 'ready' before reboot)
 for i in "${!IPS[@]}"; do
   ip="${IPS[$i]}"; host="${HOSTNAMES[$i]}"
   printf '   %-8s %-15s ' "$host" "$ip"
   deadline=$(( $(date +%s) + 300 ))
   until nc -z -G2 "$ip" "$API_PORT" >/dev/null 2>&1 && talosctl -e "$ip" -n "$ip" version >/dev/null 2>&1; do
-    [ "$(date +%s)" -lt "$deadline" ] || { echo "TIMEOUT"; echo "ERROR: ${ip} never came back — check its console/power"; exit 1; }
+    [ "$(date +%s)" -lt "$deadline" ] || { echo "TIMEOUT"; die "${ip} never came back — check its console/power"; }
     printf '.'; sleep 5
   done
   echo "ready"
@@ -203,11 +192,10 @@ talosctl bootstrap -n "${IPS[0]}"
 sleep 10
 
 # 9. Wait for the cluster, then fetch kubeconfig (-> ${OUTDIR}/kubeconfig)
-echo ">> waiting for cluster health (a few minutes)..."
-talosctl health --wait-timeout 10m || echo "(health timed out — verify with kubectl below)"
+say "waiting for cluster health (a few minutes)..."
+talosctl health --wait-timeout 10m || warn "health timed out — verify with kubectl below"
 talosctl kubeconfig .
-echo
-echo ">> Done."
-echo ">> talosconfig: ${OUTDIR}/talosconfig   (export TALOSCONFIG=${OUTDIR}/talosconfig)"
-echo ">> kubeconfig:  ${OUTDIR}/kubeconfig    (export KUBECONFIG=${OUTDIR}/kubeconfig && kubectl get nodes -o wide)"
-echo ">> cp ~/.kube/config ~/.kube/config.bak && KUBECONFIG=\"${SCRIPT_DIR}/talos-cluster/kubeconfig:${HOME}/.kube/config\" kubectl config view --flatten > /tmp/kc && mv /tmp/kc ~/.kube/config"
+say "Done."
+echo "   talosconfig: ${OUTDIR}/talosconfig   (export TALOSCONFIG=${OUTDIR}/talosconfig)"
+echo "   kubeconfig:  ${OUTDIR}/kubeconfig    (export KUBECONFIG=${OUTDIR}/kubeconfig && kubectl get nodes -o wide)"
+echo "   cp ~/.kube/config ~/.kube/config.bak && KUBECONFIG=\"${SCRIPT_DIR}/talos-cluster/kubeconfig:${HOME}/.kube/config\" kubectl config view --flatten > /tmp/kc && mv /tmp/kc ~/.kube/config"

@@ -23,31 +23,24 @@
 set -uo pipefail
 
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+source "${SCRIPT_DIR}/../lib/common.sh"
 
 # ---- knobs ------------------------------------------------------------------
-OUTDIR="${OUTDIR:-${SCRIPT_DIR}/../03_operating_system/talos-cluster}"        # talosconfig + kubeconfig (from 03d); gitignored
-NS="${NS:-sealed-secrets}"                                                    # controller namespace
-CONTROLLER_LABEL="${CONTROLLER_LABEL:-app.kubernetes.io/name=sealed-secrets}" # the controller pods
-KEY_LABEL="${KEY_LABEL:-sealedsecrets.bitnami.com/sealed-secrets-key}"        # label the controller stamps on its key Secrets
-BACKUP_FILE="${BACKUP_FILE:-${OUTDIR}/sealed-secrets-master.key}"             # the backup 07_backup wrote
-WAIT="${WAIT:-900}"                                                           # secs to wait for the controller (ArgoCD wave 2)
-export KUBECONFIG="${KUBECONFIG:-${OUTDIR}/kubeconfig}"                       # the 03d kubeconfig (points at the VIP)
+NS="$SS_CONTROLLER_NS"                                                        # controller namespace
+CONTROLLER_LABEL="$SS_POD_SELECTOR"                                          # the controller pods
+KEY_LABEL="$SS_KEY_LABEL"                                                     # label the controller stamps on its key Secrets
+BACKUP_FILE="${CLUSTER_DIR}/sealed-secrets-master.key"                       # the backup 07_backup wrote
+WAIT=900                                                                     # secs to wait for the controller (ArgoCD wave 2)
 # -----------------------------------------------------------------------------
-
-say() { printf '\n\033[1;36m>> %s\033[0m\n' "$*"; }
-die() { printf '\033[1;31mERROR: %s\033[0m\n' "$*" >&2; exit 1; }
-PASS=0; FAIL=0
-ok()  { printf '  \033[32m[PASS]\033[0m %s\n' "$1"; PASS=$((PASS+1)); }
-bad() { printf '  \033[31m[FAIL]\033[0m %s\n' "$1"; FAIL=$((FAIL+1)); }
 
 # === 0. prereqs ==============================================================
 say "prerequisites"
-command -v kubectl >/dev/null || die "kubectl not found on PATH — install it (https://kubernetes.io/docs/tasks/tools/)"
-[ -f "$KUBECONFIG" ]  || die "missing ${KUBECONFIG} — run step 03 (03d) first"
+require kubectl
+use_kubeconfig
 [ -f "$BACKUP_FILE" ] || die "no backup at ${BACKUP_FILE} — run 07_backup_sealed_secrets_key.sh first (while a cluster holding the key is up), or re-seal instead (12_google_sso, 15_monitoring)"
 [ -s "$BACKUP_FILE" ] || die "backup ${BACKUP_FILE} is empty — do not trust it"
 grep -q 'kind: Secret' "$BACKUP_FILE" 2>/dev/null || die "backup ${BACKUP_FILE} has no 'kind: Secret' — wrong/corrupt file"
-kubectl get nodes >/dev/null 2>&1 || die "kubectl can't reach the API via ${KUBECONFIG}"
+assert_api
 ok "kubectl present, API reachable, backup looks valid"
 
 # === 1. wait for the sealed-secrets controller (ArgoCD wave 2) ===============
@@ -56,7 +49,7 @@ deadline=$(( $(date +%s) + WAIT ))
 until kubectl get pods -n "$NS" -l "$CONTROLLER_LABEL" 2>/dev/null | grep -q ' Running'; do
   if [ "$(date +%s)" -ge "$deadline" ]; then
     bad "controller not Running after ${WAIT}s — is ArgoCD past wave 2? (kubectl -n ${NS} get pods)"
-    echo ""; echo "=============== summary: ${PASS} passed, ${FAIL} failed ==============="; exit 1
+    summary; exit 1
   fi
   printf '.'; sleep 5
 done
@@ -105,8 +98,7 @@ fi
 kubectl wait --for=condition=Ready pod -n "$NS" -l "$CONTROLLER_LABEL" --timeout=120s >/dev/null 2>&1 || true
 
 # === 4. summary ==============================================================
-echo ""
-echo "=============== summary: ${PASS} passed, ${FAIL} failed ==============="
+summary
 if [ "$FAIL" -eq 0 ]; then
   cat <<EOF
 Sealed Secrets master key restored from:

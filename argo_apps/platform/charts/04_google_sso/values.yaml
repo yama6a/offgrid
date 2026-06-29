@@ -51,6 +51,18 @@ oidc:
   # force a fresh consent, or confirm EG is sending offline access).
   refreshToken: true
   sessionTTL: "24h"
+  # Lifetime of the per-flow CSRF (OauthNonce-<uid>.<nonce>) + PKCE (CodeVerifier.<nonce>) cookies the
+  # OIDC filter mints when it starts a login. A flow that never reaches /oauth2/callback orphans them
+  # for this long; EG's default is 10m. Kept short so any leftovers drain quickly.
+  csrfTokenTTL: "5m"
+  # Sec-Fetch-Mode values that get a 401 instead of a 302→Google. Browsers tag real page navigations
+  # `navigate` (omitted here, so those still redirect to login) and everything else — XHR/fetch
+  # (`cors`/`no-cors`/`same-origin`) and websockets (`websocket`) — with these. Those requests can't
+  # follow a redirect to render Google's login page, so without this each one initiates an OIDC flow
+  # that never completes and leaks an OauthNonce/CodeVerifier cookie; a logged-out SPA (Grafana Live's
+  # /api/live/ws, ArgoCD's polling) piles them up until Envoy rejects the request with
+  # http2.too_many_headers (browser shows ERR_HTTP2_PROTOCOL_ERROR). Empty string disables denyRedirect.
+  denyRedirectSecFetchMode: "cors|no-cors|same-origin|websocket"
 # One entry per SSO domain. `domain` becomes the label value, the cookieDomain, the google-sso.<domain>
 # redirect host, and (with `issuer`) the callback host's cert. `allowlist` is per-domain (inline; written
 # by the script — Deny is the default). Each entry renders its own callback Gateway + :443 listener +

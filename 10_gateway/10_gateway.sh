@@ -20,32 +20,21 @@
 set -uo pipefail
 
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+source "${SCRIPT_DIR}/../lib/common.sh"
 
 # ---- knobs ------------------------------------------------------------------
-CHART_DIR="${CHART_DIR:-${SCRIPT_DIR}/../argo_apps/platform/charts/03_gateway}"   # the wrapper chart (Argo consumes it too)
-CONFIG_FILE="${CONFIG_FILE:-${SCRIPT_DIR}/config.sh}"                    # LE_EMAIL + BASE_DOMAIN knobs
-
-# config.sh is the source of truth for the shell side; we write it into the chart's values.yaml below.
-# Sourced before its own knobs so an inline `BASE_DOMAIN=... ./10_gateway.sh` env override still wins
-# (the ${VAR:-default} form inside config.sh).
-# shellcheck source=config.sh
-[ -f "$CONFIG_FILE" ] && . "$CONFIG_FILE"
+CHART_DIR="${REPO_ROOT}/argo_apps/platform/charts/03_gateway"   # the wrapper chart (Argo consumes it too)
 VALUES="${CHART_DIR}/values.yaml"
+# LE_EMAIL + BASE_DOMAIN come from config.sh via the lib; we write them into values.yaml below.
 # -----------------------------------------------------------------------------
-
-say() { printf '\n\033[1;36m>> %s\033[0m\n' "$*"; }
-die() { printf '\033[1;31mERROR: %s\033[0m\n' "$*" >&2; exit 1; }
-PASS=0; FAIL=0
-ok()  { printf '  \033[32m[PASS]\033[0m %s\n' "$1"; PASS=$((PASS+1)); }
-bad() { printf '  \033[31m[FAIL]\033[0m %s\n' "$1"; FAIL=$((FAIL+1)); }
 
 # === 0. prereqs ==============================================================
 say "prerequisites"
-command -v yq >/dev/null || die "yq not found on PATH — install it (https://github.com/mikefarah/yq, brew install yq)"
+require yq
 [ -f "${CHART_DIR}/Chart.yaml" ] || die "no chart at ${CHART_DIR} (expected argo_apps/platform/charts/03_gateway)"
 [ -f "$VALUES" ] || die "missing ${VALUES}"
-[ -n "${LE_EMAIL}" ]    || die "LE_EMAIL is empty (set it in ${CONFIG_FILE} or the environment)"
-[ -n "${BASE_DOMAIN}" ] || die "BASE_DOMAIN is empty (set it in ${CONFIG_FILE} or the environment)"
+[ -n "${LE_EMAIL}" ]    || die "LE_EMAIL is empty (set it in config.sh or the environment)"
+[ -n "${BASE_DOMAIN}" ] || die "BASE_DOMAIN is empty (set it in config.sh or the environment)"
 ok "yq present, chart + values found, knobs set"
 
 # === 1. write LE email + base domain from config.sh into values.yaml =========
@@ -68,12 +57,11 @@ got_domain="$(yq -r '.baseDomain' "$VALUES" 2>/dev/null)"
 [ "$got_domain" = "$BASE_DOMAIN" ] && ok "baseDomain == ${BASE_DOMAIN}" || bad "baseDomain is '${got_domain}', expected '${BASE_DOMAIN}'"
 
 # === 3. summary ==============================================================
-echo ""
-echo "=============== summary: ${PASS} passed, ${FAIL} failed ==============="
+summary
 if [ "$FAIL" -eq 0 ]; then
   cat <<EOF
 values.yaml now carries email=${LE_EMAIL}, baseDomain=${BASE_DOMAIN}.
-Single source of truth: 10_gateway/config.sh -> argo_apps/platform/charts/03_gateway/values.yaml (ArgoCD renders it).
+Single source of truth: config.sh -> argo_apps/platform/charts/03_gateway/values.yaml (ArgoCD renders it).
 
 Next:
   - git add -A && git commit && git push   # ArgoCD (wave 3) applies the Gateway + ClusterIssuers only

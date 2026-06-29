@@ -29,36 +29,27 @@ set -uo pipefail
 
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 cd "$SCRIPT_DIR"   # the reset script cd's into ./03_operating_system relative to here
+source "${SCRIPT_DIR}/lib/common.sh"   # say/die/warn/ok + CLUSTER_DIR + CLUSTER_NODES from config.sh
 
 # ---- knobs ------------------------------------------------------------------
-RESET="${RESET:-${SCRIPT_DIR}/DANGEROUS_reset_talos_cluster.sh}"
-RESTORE="${RESTORE:-${SCRIPT_DIR}/07_sealed_secrets/07_restore_sealed_secrets_key.sh}"
-STEP_03_DIR="${STEP_03_DIR:-${SCRIPT_DIR}/03_operating_system}"
-STEP_04_DIR="${STEP_04_DIR:-${SCRIPT_DIR}/04_networking}"
-STEP_05_DIR="${STEP_05_DIR:-${SCRIPT_DIR}/05_gitops}"
-CONFIG_FILE="${CONFIG_FILE:-${STEP_03_DIR}/03_config.sh}"
-KUBECONFIG_FILE="${KUBECONFIG_FILE:-${STEP_03_DIR}/talos-cluster/kubeconfig}"
+RESET="${SCRIPT_DIR}/DANGEROUS_reset_talos_cluster.sh"
+RESTORE="${SCRIPT_DIR}/07_sealed_secrets/07_restore_sealed_secrets_key.sh"
+STEP_03_DIR="${SCRIPT_DIR}/03_operating_system"
+STEP_04_DIR="${SCRIPT_DIR}/04_networking"
+STEP_05_DIR="${SCRIPT_DIR}/05_gitops"
+KUBECONFIG_FILE="${CLUSTER_DIR}/kubeconfig"
+INGRESS_GW_NS="gateway"                        # namespace of the shared Gateway
+INGRESS_GW_NAME="shared-gateway"               # name of the shared Gateway
+# operational knobs — overridable per-run for this orchestrator:
 COMMIT_MSG="${COMMIT_MSG:-rebuild: sync working tree before cluster rebuild}"
 INGRESS_WAIT="${INGRESS_WAIT:-900}"            # max secs to wait for the ingress to actually serve (HTTP-01 issuance is slow)
 INGRESS_HOSTS="${INGRESS_HOSTS:-}"             # space-separated hosts to check; empty = derive from the Gateway's HTTPS listeners
-INGRESS_GW_NS="${INGRESS_GW_NS:-gateway}"      # namespace of the shared Gateway
-INGRESS_GW_NAME="${INGRESS_GW_NAME:-shared-gateway}"  # name of the shared Gateway
 # -----------------------------------------------------------------------------
 
-say()  { printf '\n\033[1;36m>> %s\033[0m\n' "$*"; }
-die()  { printf '\033[1;31mERROR: %s\033[0m\n' "$*" >&2; exit 1; }
-warn() { printf '  \033[33m[warn]\033[0m %s\n' "$*"; }
-ok()   { printf '  \033[32m[ok]\033[0m %s\n' "$*"; }
-
 # === prereqs =================================================================
-command -v docker  >/dev/null || die "docker not found on PATH (and it needs host networking enabled)"
-command -v git     >/dev/null || die "git not found on PATH"
-command -v kubectl >/dev/null || die "kubectl not found on PATH"
-[ -f "$RESET" ]       || die "missing ${RESET}"
-[ -f "$RESTORE" ]     || die "missing ${RESTORE}"
-[ -f "$CONFIG_FILE" ] || die "missing ${CONFIG_FILE}"
-# shellcheck source=03_operating_system/03_config.sh
-source "$CONFIG_FILE"
+require docker git kubectl
+[ -f "$RESET" ]   || die "missing ${RESET}"
+[ -f "$RESTORE" ] || die "missing ${RESTORE}"
 IPS=(); for e in "${CLUSTER_NODES[@]}"; do IPS+=("${e##*:}"); done
 
 # === confirm (the ONLY destructive prompt — the reset's own prompt is auto-answered) ===

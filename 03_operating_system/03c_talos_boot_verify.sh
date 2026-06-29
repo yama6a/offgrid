@@ -3,7 +3,7 @@
 # 03c_talos_boot_verify.sh  (macOS)
 #
 # Run AFTER flashing (03b_talos_image_flasher.sh) and booting each Pi from NVMe
-# with no SD card. Checks the nodes in NODES (03_config.sh) in MAINTENANCE mode
+# with no SD card. Checks the nodes in NODES (config.sh) in MAINTENANCE mode
 # (pre-cluster, so `--insecure`), and inspects the output for correctness —
 # printing PASS/FAIL per check and an overall summary.
 #
@@ -15,27 +15,29 @@
 #
 set -u
 
-# All config (talosctl version, API port, NODES, the EXPECT_* checks) lives in 03_config.sh.
+# All config (talosctl version, API port, NODES, the EXPECT_* checks) lives in lib/config.sh.
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
-source "${SCRIPT_DIR}/03_config.sh"
+source "${SCRIPT_DIR}/../lib/common.sh"
 
-# talosctl via the official container (reliable on macOS).
+# ---- 03c-only boot-verify expectations --------------------------------------
+EXPECT_TALOS="$TALOS_VERSION"                # our build's Talos version (a local "-dirty" build matches too)
+EXPECT_CMDLINE="console=ttyAMA0,115200"      # rpi5 overlay signature in the kernel cmdline
+# -----------------------------------------------------------------------------
+
+# talosctl via the official container, INSECURE + no talosconfig (maintenance mode, reliable on macOS).
+# Distinct from the lib's talosctl() (which mounts the cluster talosconfig) — these nodes aren't a cluster yet.
 tctl() {
   docker run --rm --network host "ghcr.io/siderolabs/talosctl:${TALOSCTL_VERSION}" "$@"
 }
 
-PASS=0; FAIL=0
-ok()   { printf '  \033[32m[PASS]\033[0m %s\n' "$1"; PASS=$((PASS+1)); }
-bad()  { printf '  \033[31m[FAIL]\033[0m %s\n' "$1"; FAIL=$((FAIL+1)); }
-
 # prereqs
-docker info >/dev/null 2>&1 || { echo "ERROR: docker not running (needed for the talosctl container)"; exit 1; }
-echo ">> pulling ghcr.io/siderolabs/talosctl:${TALOSCTL_VERSION} (first run only)"
+docker info >/dev/null 2>&1 || die "docker not running (needed for the talosctl container)"
+say "pulling ghcr.io/siderolabs/talosctl:${TALOSCTL_VERSION} (first run only)"
 docker pull -q "ghcr.io/siderolabs/talosctl:${TALOSCTL_VERSION}" >/dev/null
 
-# nodes to check (from NODES in 03_config.sh)
+# nodes to check (from NODES in config.sh)
 read -ra IPS <<< "$NODES"
-[ "${#IPS[@]}" -gt 0 ] || { echo "ERROR: no nodes set — edit NODES in 03_config.sh"; exit 1; }
+[ "${#IPS[@]}" -gt 0 ] || die "no nodes set — edit CLUSTER_NODES in config.sh"
 
 for ip in "${IPS[@]}"; do
   echo ""
@@ -103,8 +105,7 @@ for ip in "${IPS[@]}"; do
   fi
 done
 
-echo ""
-echo "=============== summary: ${PASS} passed, ${FAIL} failed ==============="
+summary
 if [ "$FAIL" -eq 0 ]; then
   echo "All nodes good. Next: cluster bring-up — ./03d_talos_cluster_config.sh"
 else

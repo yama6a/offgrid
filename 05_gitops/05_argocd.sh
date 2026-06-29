@@ -25,26 +25,19 @@
 set -uo pipefail
 
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+source "${SCRIPT_DIR}/../lib/common.sh"
 
 # ---- knobs ------------------------------------------------------------------
-OUTDIR="${OUTDIR:-${SCRIPT_DIR}/../03_operating_system/talos-cluster}"   # talosconfig + kubeconfig (from 03d)
-CHART_DIR="${CHART_DIR:-${SCRIPT_DIR}/../argo_apps/platform/charts/01_argocd}"    # the wrapper chart (Argo consumes it too)
-ROOT_APP="${ROOT_APP:-${SCRIPT_DIR}/../argo_apps/root.yaml}"            # the root-of-roots (recurses argo_apps/roots/)
+CHART_DIR="${REPO_ROOT}/argo_apps/platform/charts/01_argocd"    # the wrapper chart (Argo consumes it too)
+ROOT_APP="${REPO_ROOT}/argo_apps/root.yaml"        # the root-of-roots (recurses argo_apps/roots/)
 RELEASE="argocd"
 NS="argocd"
 REPO_ARGO="https://argoproj.github.io/argo-helm"
-HELM_TIMEOUT="${HELM_TIMEOUT:-8m}"                 # 3x Pi 5 image pulls can be slow
-ASSUME_PUSHED="${ASSUME_PUSHED:-0}"                # set 1 to skip the "did you push?" prompt
+HELM_TIMEOUT="8m"                                  # 3x Pi 5 image pulls can be slow
+ASSUME_PUSHED="${ASSUME_PUSHED:-0}"                # set 1 to skip the "did you push?" prompt (automation)
 REPO_URL="${REPO_URL:-}"                           # repo ArgoCD polls; empty => inferred from git origin + prompted
 GIT_TOKEN="${GIT_TOKEN:-}"                          # PRIVATE-repo read-only PAT; normally PROMPTED — pre-set only to skip the prompt (automation)
-export KUBECONFIG="${OUTDIR}/kubeconfig"           # the 03d kubeconfig (points at the VIP)
 # -----------------------------------------------------------------------------
-
-say() { printf '\n\033[1;36m>> %s\033[0m\n' "$*"; }
-die() { printf '\033[1;31mERROR: %s\033[0m\n' "$*" >&2; exit 1; }
-PASS=0; FAIL=0
-ok()  { printf '  \033[32m[PASS]\033[0m %s\n' "$1"; PASS=$((PASS+1)); }
-bad() { printf '  \033[31m[FAIL]\033[0m %s\n' "$1"; FAIL=$((FAIL+1)); }
 
 # normalize an scp/ssh git remote to an anonymous-friendly https URL (https URLs pass through), and
 # strip a trailing .git so root.yaml + the seeded creds match the committed manifests (which omit
@@ -76,12 +69,11 @@ wait_app() {  # $1=app name  $2=timeout secs
 
 # === 0. prereqs ==============================================================
 say "prerequisites"
-command -v kubectl >/dev/null || die "kubectl not found on PATH — install it (https://kubernetes.io/docs/tasks/tools/)"
-command -v helm    >/dev/null || die "helm not found on PATH — install it (https://helm.sh/docs/intro/install/)"
+require kubectl helm
 [ -f "${CHART_DIR}/Chart.yaml" ] || die "no chart at ${CHART_DIR} (expected argo_apps/platform/charts/01_argocd)"
 [ -f "${ROOT_APP}" ] || die "no root app at ${ROOT_APP}"
-[ -f "$KUBECONFIG" ] || die "missing ${KUBECONFIG} — run step 03 (03d) first"
-kubectl get nodes >/dev/null 2>&1 || die "kubectl can't reach the API via ${KUBECONFIG}"
+use_kubeconfig
+assert_api
 # ArgoCD (and everything else) needs Cilium's pod network — step 04 must have run.
 kubectl -n kube-system get ds/cilium >/dev/null 2>&1 || die "Cilium not found — run step 04 (04_cilium.sh) first"
 ok "kubectl + helm present, API reachable, chart + root app found, Cilium up"
@@ -100,7 +92,7 @@ fi
 if [ "$LOCK_BEFORE" -eq 0 ] && [ -f "${CHART_DIR}/Chart.lock" ]; then
   say "NOTE: Chart.lock was just generated — COMMIT it"
   echo "   ArgoCD's repo-server runs 'helm dependency build', which REQUIRES a committed Chart.lock."
-  echo "   git add ${CHART_DIR#${SCRIPT_DIR}/../}/Chart.lock"
+  echo "   git add ${CHART_DIR#${REPO_ROOT}/}/Chart.lock"
 fi
 
 # === 2. install / upgrade ArgoCD =============================================
@@ -129,7 +121,6 @@ kubectl -n "$NS" rollout status deploy/argocd-server --timeout=180s >/dev/null 2
 # under argo_apps/ in the PUBLIC repo — they must be committed AND pushed first, or the apps show
 # a ComparisonError ("path does not exist"). Re-running this script after pushing is safe.
 say "handing off to GitOps (kubectl apply root)"
-REPO_ROOT="$(git -C "$SCRIPT_DIR" rev-parse --show-toplevel 2>/dev/null || echo "")"
 
 # Resolve the repo ArgoCD polls and pin it into root.yaml. Priority: $REPO_URL env, else the
 # git 'origin' remote (offered as a default you can override), else whatever's already in the file.
@@ -234,8 +225,7 @@ cat <<EOF
    All apps auto-adopt their running releases — nothing to click.
 EOF
 
-echo ""
-echo "=============== summary: ${PASS} passed, ${FAIL} failed ==============="
+summary
 if [ "$FAIL" -eq 0 ]; then
   cat <<EOF
 ArgoCD is up and self-managed from argo_apps/platform/charts/01_argocd/. The root-of-roots

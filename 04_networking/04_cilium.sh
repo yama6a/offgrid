@@ -29,39 +29,25 @@
 set -uo pipefail
 
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+source "${SCRIPT_DIR}/../lib/common.sh"
 
 # ---- knobs ------------------------------------------------------------------
-OUTDIR="${OUTDIR:-${SCRIPT_DIR}/../03_operating_system/talos-cluster}"  # talosconfig + kubeconfig (from 03d)
-CHART_DIR="${CHART_DIR:-${SCRIPT_DIR}/../argo_apps/platform/charts/00_cilium}"   # the wrapper chart (Argo consumes it too)
-CRDS_CHART_DIR="${CRDS_CHART_DIR:-${SCRIPT_DIR}/../argo_apps/platform/charts/00_prometheus_operator_crds}"  # monitoring CRDs (cilium's ServiceMonitor needs them)
-CONFIG_FILE="${CONFIG_FILE:-${SCRIPT_DIR}/config.sh}"                   # LB range knobs (LB_RANGE_START/STOP)
+CHART_DIR="${REPO_ROOT}/argo_apps/platform/charts/00_cilium"   # the wrapper chart (Argo consumes it too)
+CRDS_CHART_DIR="${REPO_ROOT}/argo_apps/platform/charts/00_prometheus_operator_crds"  # monitoring CRDs (cilium's ServiceMonitor needs them)
 RELEASE="cilium"
 NS="kube-system"
-API_WAIT="${API_WAIT:-300}"                        # secs to wait for the API to answer (the VIP lags the 03e reboot)
-export KUBECONFIG="${OUTDIR}/kubeconfig"          # the 03d kubeconfig (points at the VIP)
-
-# LB-IPAM range lives in config.sh (single source of truth for the shell side); we write it into
-# the chart's values.yaml below so ArgoCD renders the same pool. Sourced before its own knobs so
-# an inline `LB_RANGE_START=... ./04_cilium.sh` env override still wins (the ${VAR:-default} form).
-# shellcheck source=config.sh
-[ -f "$CONFIG_FILE" ] && . "$CONFIG_FILE"
+API_WAIT=300                                       # secs to wait for the API to answer (the VIP lags the 03e reboot)
 VALUES="${CHART_DIR}/values.yaml"
+# LB-IPAM range (LB_RANGE_START/STOP) comes from config.sh via the lib; we write it into the chart's
+# values.yaml below so ArgoCD renders the same pool.
 # -----------------------------------------------------------------------------
-
-say() { printf '\n\033[1;36m>> %s\033[0m\n' "$*"; }
-die() { printf '\033[1;31mERROR: %s\033[0m\n' "$*" >&2; exit 1; }
-PASS=0; FAIL=0
-ok()  { printf '  \033[32m[PASS]\033[0m %s\n' "$1"; PASS=$((PASS+1)); }
-bad() { printf '  \033[31m[FAIL]\033[0m %s\n' "$1"; FAIL=$((FAIL+1)); }
 
 # === 0. prereqs ==============================================================
 say "prerequisites"
-command -v kubectl >/dev/null || die "kubectl not found on PATH — install it (https://kubernetes.io/docs/tasks/tools/)"
-command -v helm    >/dev/null || die "helm not found on PATH — install it (https://helm.sh/docs/intro/install/)"
-command -v yq      >/dev/null || die "yq not found on PATH — install it (https://github.com/mikefarah/yq, brew install yq)"
+require kubectl helm yq
 [ -f "${CHART_DIR}/Chart.yaml" ] || die "no chart at ${CHART_DIR} (expected argo_apps/platform/charts/00_cilium)"
 [ -f "$VALUES" ] || die "missing ${VALUES}"
-[ -f "$KUBECONFIG" ] || die "missing ${KUBECONFIG} — run step 03 (03d) first"
+use_kubeconfig
 ok "kubectl + helm + yq present, chart + values found"
 
 # The API/VIP can take a minute or two to answer right after 03e (the NIC-hardening reboot), so
@@ -192,8 +178,7 @@ done
 [ "$pool_ok" -eq 0 ] && ok "LB-IPAM pool present" || bad "LB-IPAM pool missing"
 
 # === 6. summary ==============================================================
-echo ""
-echo "=============== summary: ${PASS} passed, ${FAIL} failed ==============="
+summary
 if [ "$FAIL" -eq 0 ]; then
   cat <<EOF
 Cilium is the CNI. Encryption (WireGuard), LB-IPAM/L2, Hubble are live. (Gateway API is Envoy Gateway, not Cilium.)

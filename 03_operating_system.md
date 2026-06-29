@@ -69,7 +69,7 @@ the upstream RP1 patches that let step 04 disable EEE on the NIC.
 ## The build
 
 Script: **`03a_talos_image_builder.sh`** (macOS, Apple Silicon). All config (version knobs, kernel ref, registry,
-extensions, output path) lives in **`03_config.sh`**, shared by all the step-03 scripts. A clean run builds and
+extensions, output path) lives in **`lib/config.sh`**, shared by all the step-03 scripts. A clean run builds and
 validates; it exits non-zero if anything goes wrong.
 
 What it does: spins up a local registry + a mergeop-capable buildx builder -> clones and checks out `talos-builder` ->
@@ -127,7 +127,7 @@ cache the kernel layer.
 The build pushes to a **local registry (`localhost:5010`)** — enough for building and validating.
 
 The NVMe gets flashed exactly once (initial install); after that, Talos upgrades are atomic A/B over the network with no
-reflash. Bumping Talos = re-run the builder with updated version knobs in `03_config.sh`. If a rebase fails, the script
+reflash. Bumping Talos = re-run the builder with updated version knobs in `lib/config.sh`. If a rebase fails, the script
 will tell you. The kernel layer caches, so a userspace-only Talos bump skips the long compile. A network upgrade does
 need the installer image somewhere the nodes can pull from (e.g. a registry they can reach) — not set up here.
 
@@ -163,12 +163,12 @@ maintenance mode (no role assigned yet).
 
 ## Boot & verify (per node)
 
-Script: **`03c_talos_boot_verify.sh`** — reads the node IPs from `NODES` in `03_config.sh` and runs the checklist below
+Script: **`03c_talos_boot_verify.sh`** — reads the node IPs from `NODES` in `lib/config.sh` and runs the checklist below
 against each (maintenance mode, `--insecure`), **inspecting** each output and printing PASS/FAIL + a summary. It uses
 the talosctl container (sidesteps the macOS gotcha below); `ping`/`nc` run natively.
 
 ```bash
-./03c_talos_boot_verify.sh        # checks the nodes listed in 03_config.sh
+./03c_talos_boot_verify.sh        # checks the nodes listed in lib/config.sh
 ```
 
 What it checks per node:
@@ -208,7 +208,7 @@ is **off** (`proxy.disabled: true`) — both are replaced by **Cilium** in [step
 nodes are control-plane **and** schedulable. Nodes come up **NotReady** until Cilium lands — that's expected, not a
 fault.
 
-> The cluster name, VIP, install disk, NIC, and the node list (hostname + IP per node) all live in `03_config.sh` —
+> The cluster name, VIP, install disk, NIC, and the node list (hostname + IP per node) all live in `lib/config.sh` —
 > nothing is hardcoded in the script. Edit them there to match your network.
 
 ### Router reservations (manual, once)
@@ -240,13 +240,13 @@ picked `192.168.100.1` for the VIP.
 ### What `03d_talos_cluster_config.sh` does
 
 1. Reads cluster name, install disk, EPHEMERAL cap, NIC, the **VIP**, and each node's hostname + **IP** from
-   `03_config.sh`, prints a summary, and waits for a `YES` confirmation.
+   `lib/config.sh`, prints a summary, and waits for a `YES` confirmation.
 2. `talosctl gen config` — secrets + base machine config, API endpoint = the VIP. (The base would default to Flannel;
    the patch below turns the CNI off so Cilium can take over.)
 3. Applies a control-plane patch to every node: the **VIP** bound to the wired NIC, `allowSchedulingOnControlPlanes:
    true`, `certSANs` (VIP + node IPs), the node label `machine.nodeLabels: node.kubernetes.io/instance-type=rpi5`
    (so the `nic-keeper` DaemonSet targets rpi5 hardware only — see [06_nic_keeper.md](06_nic_keeper.md); `NODE_INSTANCE_TYPE`
-   in `03_config.sh`), and the **Cilium prep** — `cluster.network.cni.name: none`,
+   in `lib/config.sh`), and the **Cilium prep** — `cluster.network.cni.name: none`,
    `cluster.proxy.disabled: true` (Cilium does kube-proxy replacement), and `machine.features.kubePrism.enabled: true`
    (Cilium's API endpoint at `localhost:7445`; default-on in 1.13, set explicitly here to document the dependency).
 4. Appends the **partition layout**: `EPHEMERAL` capped (default 64 GiB) + a fixed-size `cnpg` user volume
@@ -261,7 +261,7 @@ picked `192.168.100.1` for the VIP.
 8. Waits for health, writes `kubeconfig`.
 
 > **NIC selector:** the VIP is bound to `interface: end0` (the Pi 5 wired NIC) rather than `physical: true`, so it can
-> never latch onto WiFi. Confirm the name on a live node with `talosctl get links` if unsure (`IFACE` in `03_config.sh`,
+> never latch onto WiFi. Confirm the name on a live node with `talosctl get links` if unsure (`IFACE` in `lib/config.sh`,
 > default `end0`).
 
 ### Run
@@ -270,7 +270,7 @@ picked `192.168.100.1` for the VIP.
 ./03d_talos_cluster_config.sh
 ```
 
-All values come from `03_config.sh`; review the printed summary, then type `YES`. After `apply-config` the nodes
+All values come from `lib/config.sh`; review the printed summary, then type `YES`. After `apply-config` the nodes
 reboot — the script **waits for each to come back up** (polling the secure API) and only then asks you to confirm the
 bootstrap. No manual stopwatch.
 

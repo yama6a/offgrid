@@ -20,22 +20,32 @@
 #
 set -euo pipefail
 
-# All config (versions, kernel ref, extensions, registry, paths) lives in 03_config.sh.
+# All config (versions, kernel ref, extensions, registry, paths) lives in lib/config.sh.
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
-source "${SCRIPT_DIR}/03_config.sh"
+source "${SCRIPT_DIR}/../lib/common.sh"
 
 BUILDER_REPO="https://github.com/talos-rpi5/talos-builder.git"
 WORK="${BUILD_DIR}/talos-builder"
 CHK="${WORK}/checkouts"
-say() { printf '\n\033[1;36m>> %s\033[0m\n' "$*"; }
-die() { printf '\033[1;31mERROR: %s\033[0m\n' "$*" >&2; exit 1; }
+
+# ---- build infra (03a-only — not shared config) -----------------------------
+GMAKE="/opt/homebrew/opt/make/libexec/gnubin/make"  # GNU make >= 4 (system make is 3.81)
+REGISTRY_PORT="5010"                       # 5001 is often taken by kind
+REGISTRY_HOST="localhost:${REGISTRY_PORT}" # local build registry
+REGISTRY_USER="talos-rpi5"                 # path component in the local registry
+REGISTRY_NAME="talos-registry"             # registry container name
+BUILDER_NAME="talos-bx"                    # docker-container buildx builder (mergeop-capable)
+SRCSERVER_NAME="talos-srcserver"           # local HTTP server for the (non-byte-stable) kernel tarball
+SRCSERVER_PORT="8099"
+IMAGE_NAME="metal-arm64-rpi5.raw.xz"       # staged image filename (rpi5/grub imager emits .raw.xz; matches 03b's RAW_XZ default)
+# -----------------------------------------------------------------------------
 
 # === 0. prereqs ==============================================================
 say "checking prerequisites"
-[ "$(uname -m)" = "arm64" ] || echo "WARN: not arm64 — the kernel build will be emulated and very slow"
+[ "$(uname -m)" = "arm64" ] || warn "not arm64 — the kernel build will be emulated and very slow"
 [ -x "$GMAKE" ] || die "GNU make >= 4 not found at $GMAKE (brew install make)"
 "$GMAKE" --version | head -1 | grep -qE 'GNU Make (4|5|6)' || die "need GNU make >= 4"
-for t in docker zstd xz jq curl go; do command -v "$t" >/dev/null || die "$t not found"; done
+require docker zstd xz jq curl go
 docker info >/dev/null 2>&1 || die "docker not responding (start Rancher/Docker Desktop)"
 export PATH="/opt/homebrew/opt/make/libexec/gnubin:${PATH}"   # so make / $(MAKE) == gmake 4.x
 mkdir -p "$BUILD_DIR" "$OUT_DIR"

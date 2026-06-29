@@ -203,7 +203,7 @@ Sized for 8GB Pi 5s already running etcd + control plane + Cilium + Longhorn. No
 Talos binds kube-controller-manager / kube-scheduler / etcd metrics to **localhost** by default, so
 those targets are dead until exposed. We keep their ServiceMonitors **enabled** (`endpoints` = the
 control-plane node IPs `192.168.10.201-203`, static/reserved — mirrors
-[03_config.sh](03_operating_system/03_config.sh) `CLUSTER_NODES`; all-control-plane cluster, so every
+[lib/config.sh](lib/config.sh) `CLUSTER_NODES`; all-control-plane cluster, so every
 node runs all three) and expose the metrics with a Talos machine-config patch:
 
 ```yaml
@@ -243,7 +243,7 @@ scrape window during reschedule.
 ## Alertmanager email (reusable bootstrap)
 
 The alert destination is a **runtime choice**, kept out of git. `15_monitoring/15_alertmanager_secret.sh`
-([config.sh](15_monitoring/config.sh) holds the non-secret knobs):
+([lib/config.sh](lib/config.sh) holds the non-secret knobs):
 
 ```bash
 KUBECONFIG=03_operating_system/talos-cluster/kubeconfig ./15_monitoring/15_alertmanager_secret.sh

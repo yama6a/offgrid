@@ -24,26 +24,19 @@
 set -uo pipefail
 
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+source "${SCRIPT_DIR}/../lib/common.sh"
 
 # ---- knobs ------------------------------------------------------------------
-OUTDIR="${OUTDIR:-${SCRIPT_DIR}/../03_operating_system/talos-cluster}"   # talosconfig + kubeconfig (from 03d); gitignored
-NS="${NS:-sealed-secrets}"                                              # controller namespace (Application destination)
-KEY_LABEL="${KEY_LABEL:-sealedsecrets.bitnami.com/sealed-secrets-key}"  # label the controller stamps on its key Secrets
-BACKUP_FILE="${BACKUP_FILE:-${OUTDIR}/sealed-secrets-master.key}"       # where the backup lands (gitignored dir)
-export KUBECONFIG="${OUTDIR}/kubeconfig"                                # the 03d kubeconfig (points at the VIP)
+NS="$SS_CONTROLLER_NS"                                          # controller namespace (Application destination)
+KEY_LABEL="$SS_KEY_LABEL"                                       # label the controller stamps on its key Secrets
+BACKUP_FILE="${CLUSTER_DIR}/sealed-secrets-master.key"          # where the backup lands (gitignored dir)
 # -----------------------------------------------------------------------------
-
-say() { printf '\n\033[1;36m>> %s\033[0m\n' "$*"; }
-die() { printf '\033[1;31mERROR: %s\033[0m\n' "$*" >&2; exit 1; }
-PASS=0; FAIL=0
-ok()  { printf '  \033[32m[PASS]\033[0m %s\n' "$1"; PASS=$((PASS+1)); }
-bad() { printf '  \033[31m[FAIL]\033[0m %s\n' "$1"; FAIL=$((FAIL+1)); }
 
 # === 0. prereqs ==============================================================
 say "prerequisites"
-command -v kubectl >/dev/null || die "kubectl not found on PATH — install it (https://kubernetes.io/docs/tasks/tools/)"
-[ -f "$KUBECONFIG" ] || die "missing ${KUBECONFIG} — run step 03 (03d) first"
-kubectl get nodes >/dev/null 2>&1 || die "kubectl can't reach the API via ${KUBECONFIG}"
+require kubectl
+use_kubeconfig
+assert_api
 ok "kubectl present, API reachable"
 
 # === 1. find the controller's key Secret(s) ==================================
@@ -53,9 +46,7 @@ say "looking for key Secrets in ns/${NS} (label ${KEY_LABEL})"
 KEYS="$(kubectl get secret -n "$NS" -l "$KEY_LABEL" -o name 2>/dev/null)"
 if [ -z "$KEYS" ]; then
   bad "no Secrets with label ${KEY_LABEL} in ns/${NS} — is the controller running? (kubectl -n ${NS} get pods)"
-  echo ""
-  echo "=============== summary: ${PASS} passed, ${FAIL} failed ==============="
-  exit 1
+  summary; exit 1
 fi
 KEY_COUNT="$(printf '%s\n' "$KEYS" | grep -c .)"
 ok "found ${KEY_COUNT} key Secret(s)"
@@ -63,7 +54,7 @@ ok "found ${KEY_COUNT} key Secret(s)"
 # === 2. dump to the gitignored backup file ===================================
 # `-o yaml` of the labelled Secrets is the official restore-able form (re-applied with kubectl apply).
 say "writing backup -> ${BACKUP_FILE}"
-mkdir -p "$OUTDIR"
+mkdir -p "$CLUSTER_DIR"
 if kubectl get secret -n "$NS" -l "$KEY_LABEL" -o yaml > "$BACKUP_FILE" 2>/dev/null; then
   chmod 600 "$BACKUP_FILE"
   ok "key(s) written and chmod 600"
@@ -78,8 +69,7 @@ grep -q 'kind: Secret' "$BACKUP_FILE" 2>/dev/null \
   && ok "backup contains Secret manifests" || bad "backup does not contain 'kind: Secret'"
 
 # === 4. summary ==============================================================
-echo ""
-echo "=============== summary: ${PASS} passed, ${FAIL} failed ==============="
+summary
 if [ "$FAIL" -eq 0 ]; then
   cat <<EOF
 Sealed Secrets master key backed up to:

@@ -41,6 +41,24 @@ spec:
     # defaultRefreshTokenTTL (sessionTTL). Without this the user is bounced back to Google every hour.
     refreshToken: {{ $.Values.oidc.refreshToken }}
     defaultRefreshTokenTTL: {{ $.Values.oidc.sessionTTL | quote }}
+    {{- with $.Values.oidc.csrfTokenTTL }}
+    # Lifetime of the per-flow CSRF (OauthNonce) + PKCE (CodeVerifier) cookies. A failed/abandoned
+    # flow orphans them for this long; keep it short so leftovers drain fast (EG default is 10m).
+    csrfTokenTTL: {{ . | quote }}
+    {{- end }}
+    {{- with $.Values.oidc.denyRedirectSecFetchMode }}
+    # Return 401 instead of a 302→Google for non-navigational requests (XHR/fetch/websocket). Such a
+    # request can't render Google's login page, so the OIDC flow it kicks off never completes — and
+    # every attempt leaks an OauthNonce/CodeVerifier cookie. A logged-out SPA (Grafana Live's
+    # /api/live/ws, ArgoCD's polling) spams these until the crumbled HTTP/2 cookie count crosses
+    # Envoy's max_headers_count and the stream is reset (http2.too_many_headers -> ERR_HTTP2_PROTOCOL_ERROR).
+    # Only real navigations (Sec-Fetch-Mode: navigate) should redirect to login.
+    denyRedirect:
+      headers:
+        - name: Sec-Fetch-Mode
+          type: RegularExpression
+          value: {{ . | quote }}
+    {{- end }}
     scopes:
       - openid
       - email
