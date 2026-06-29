@@ -21,7 +21,7 @@
 # This script does NOT back up the sealed-secrets key — doing it here would risk overwriting a good
 # backup with the about-to-be-wiped cluster's key. Back up DELIBERATELY beforehand
 # (07_sealed_secrets/07_backup_sealed_secrets_key.sh) so step 6 has something to restore; with no backup,
-# step 6 fails cleanly and you re-seal instead (12_google_sso, 15_monitoring) + commit/push.
+# step 6 fails cleanly and you re-seal instead (12_google_sso, 16_grafana_smtp) + commit/push.
 #
 # Needs Docker (host networking), git, kubectl.
 #
@@ -61,8 +61,8 @@ This will DESTROY and REBUILD the entire Talos cluster:
   flow  : commit+push -> reset -> 03d -> 03e -> 04 -> 05 -> restore sealed-secrets key
           (ArgoCD then redeploys cilium/cert-manager/longhorn/gateway/SSO/monitoring from git)
 
-Have a CURRENT sealed-secrets key backup (07_backup_sealed_secrets_key.sh) — else SSO + Alertmanager
-email won't decrypt until you re-seal (12_google_sso, 15_monitoring).
+Have a CURRENT sealed-secrets key backup (07_backup_sealed_secrets_key.sh) — else SSO + Grafana
+email won't decrypt until you re-seal (12_google_sso, 16_grafana_smtp).
 EOF
 read -r -p ">> type REBUILD to proceed: " ans
 [ "$ans" = "REBUILD" ] || { echo "aborted (phew!)."; exit 0; }
@@ -173,7 +173,7 @@ envoy-gateway, gateway, SSO, monitoring). Watch it:
 Notes:
   - If the key restore (STEP 6) didn't run, do it once sealed-secrets is up
     (./07_sealed_secrets/07_restore_sealed_secrets_key.sh), or re-seal with 12_google_sso +
-    15_monitoring and commit+push.
+    16_grafana_smtp and commit+push.
   - TLS certs re-issue via HTTP-01; first issuance takes a few minutes. If you've rebuilt repeatedly,
     validate hosts on letsencrypt-staging before flipping to prod (tight rate limits).
 EOF

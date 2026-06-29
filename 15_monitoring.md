@@ -240,35 +240,18 @@ scrape window during reschedule.
   ([06_nic_keeper.md](06_nic_keeper.md)), so node loss is a real recurring case — **verify the Longhorn
   policy is applied**: `kubectl -n longhorn-system get settings.longhorn.io node-down-pod-deletion-policy`.
 
-## Alertmanager email (reusable bootstrap)
+## Alert notifications (Grafana-owned)
 
-The alert destination is a **runtime choice**, kept out of git. `15_monitoring/15_alertmanager_secret.sh`
-([lib/config.sh](lib/config.sh) holds the non-secret knobs):
+The VM stack runs **no Alertmanager** (`07_victoria_metrics_k8s_stack` sets `alertmanager.enabled:
+false`) — **Grafana owns notifications**. vmalert evaluates the rules; firing alerts go to Grafana's
+built-in alerting, which sends the email. The reusable, secret-free email bootstrap therefore lives
+with Grafana: seal the Gmail app-password with `16_grafana_smtp/16_grafana_smtp.sh` and test from the
+Grafana UI — see [16_grafana.md](16_grafana.md). The SMTP host/user/from are non-secret in
+`07_grafana`'s `values.yaml`; the password is the sealed `grafana-smtp` Secret.
 
-```bash
-KUBECONFIG=03_operating_system/talos-cluster/kubeconfig ./15_monitoring/15_alertmanager_secret.sh
-```
-
-- **With creds** (Gmail address + app-password): seals the password into
-  `argo_apps/charts/07_kube_prometheus_stack/templates/alertmanager-smtp-sealedsecret.yaml` (strict
-  scope, ns `monitoring`, key `password`) and `yq`-writes the **email** receiver into the stack
-  `values.yaml` (`alertmanagerSpec.secrets: [alertmanager-smtp]` + an `email_configs` receiver reading
-  `/etc/alertmanager/secrets/alertmanager-smtp/password`, `repeat_interval: 4h`).
-- **Without creds**: typed-confirm, **deletes** the sealed file, writes the **null** receiver (alerting
-  has no destination). Idempotent — re-run to rotate, change recipient, or disable.
-
-Then `git commit && push`; ArgoCD (wave 7) applies the config and the controller
-([07_sealed_secrets.md](07_sealed_secrets.md)) unseals the password into Secret `alertmanager-smtp`.
-
-> **Gmail App Password**: a 16-char password (needs 2-Step Verification; the Security-menu entry is
-> hidden — use the direct link <https://myaccount.google.com/apppasswords>). It is **revoked when the
-> Google account password changes**. Not your account password.
-
-Test end-to-end after sync:
-```bash
-kubectl -n monitoring exec alertmanager-kube-prometheus-stack-alertmanager-0 -c alertmanager -- \
-  amtool alert add testalert --alertmanager.url=http://localhost:9093   # expect an email within ~30s
-```
+> Historical: monitoring used to run kube-prometheus-stack's Alertmanager via a dedicated
+> `15_monitoring/15_alertmanager_secret.sh` (sealing an `alertmanager-smtp` Secret). That was retired
+> in the VictoriaMetrics cutover when Grafana took over notifications — script and Secret are gone.
 
 ## ServiceMonitors per component
 
@@ -346,7 +329,7 @@ onto the one Envoy via `mergeGateways`) now ship **inside the `07_grafana` chart
 ## Apply / verify
 
 1. (Optional but recommended) apply the Talos CP-metrics patch (above) so control-plane targets come up.
-2. Run `15_monitoring/15_alertmanager_secret.sh` (or skip for a null receiver).
+2. Seal the Grafana SMTP app-password with `16_grafana_smtp/16_grafana_smtp.sh` (or skip — email just stays off). See [16_grafana.md](16_grafana.md).
 3. Add A-records `prometheus.`/`alertmanager.example.com` → router (the `*.example.com` forward covers
    `:80`/`:443`).
 4. `git add -A && git commit && git push`. ArgoCD rolls the waves: CRDs (0) → component monitors (0–2) →
