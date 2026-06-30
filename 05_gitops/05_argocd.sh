@@ -35,7 +35,7 @@ NS="argocd"
 REPO_ARGO="https://argoproj.github.io/argo-helm"
 HELM_TIMEOUT="8m"                                  # 3x Pi 5 image pulls can be slow
 GIT_TOKEN=""                                       # PRIVATE-repo read-only PAT (the ONLY secret) — filled by the prompt below
-# REPO_URL (the repo ArgoCD polls) is config — see lib/config.sh.
+# REPO_URL (the repo ArgoCD polls) is config — see .env.
 # -----------------------------------------------------------------------------
 
 # wait until an ArgoCD Application reports Synced + Healthy (or time out)
@@ -106,8 +106,8 @@ kubectl -n "$NS" rollout status deploy/argocd-server --timeout=180s >/dev/null 2
 # a ComparisonError ("path does not exist"). Re-running this script after pushing is safe.
 say "handing off to GitOps (kubectl apply root)"
 
-# The repo ArgoCD polls comes from lib/config.sh (REPO_URL); pin it into root.yaml below.
-[ -n "$REPO_URL" ] || die "REPO_URL is empty — set it in lib/config.sh"
+# The repo ArgoCD polls comes from .env (REPO_URL); pin it into root.yaml below.
+[ -n "$REPO_URL" ] || die "REPO_URL is empty — set it in .env"
 # Idempotent: a no-op when the URL already matches. Only the root-of-roots — the child roots under
 # argo_apps/roots/ AND every app under argo_apps/{platform,workloads}/apps/ also carry a repoURL; if
 # you point at a fork, rewrite those too (see 05_gitops.md).

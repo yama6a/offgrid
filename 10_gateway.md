@@ -25,7 +25,7 @@ Delivered purely by ArgoCD:
 
 And one bootstrap helper (no cluster apply — values propagation only):
 
-- `lib/config.sh` — knobs `LE_EMAIL` + `BASE_DOMAIN` (env-overridable).
+- `.env` — knobs `LE_EMAIL` + `BASE_DOMAIN`.
 - `10_gateway/10_gateway.sh` — writes those into the chart's `values.yaml` (`acme.email` + `baseDomain`)
   via `yq`, so the shell side and ArgoCD render the same. Non-interactive.
 
@@ -54,7 +54,7 @@ Two landmines on the old Pi when forwarding `:80`:
 
 ### One Envoy + one pinned IP, many Gateways (mergeGateways)
 The cluster has **one ingress point** — a single data-plane Envoy + `LoadBalancer` Service pinned to
-**`192.168.100.10`** (the start of the Cilium LB-IPAM pool from `lib/config.sh`) — but it is
+**`192.168.100.10`** (the start of the Cilium LB-IPAM pool from `.env`) — but it is
 fed by **many Gateways**, not one. Envoy Gateway's `mergeGateways: true` (on the `eg` class's EnvoyProxy)
 collapses every `eg` Gateway onto that single Envoy/Service. The IP is pinned **solely** by the EnvoyProxy
 `lbipam.cilium.io/ips` annotation now — per-Gateway `spec.addresses` is dropped (it would conflict on the
@@ -82,8 +82,8 @@ missing cert never blocks another, nor the platform. The sample workload lives i
 [`04_google_sso`](12_google_sso.md); argocd in [`06_argocd_ingress`](14_argocd_ingress.md); the
 monitoring UIs each in their own stack chart (`07_grafana`, `07_victoria_logs`, `07_victoria_metrics_k8s_stack`).
 
-### Email + base domain are lib/config.sh-driven
-Per [CLAUDE.md](CLAUDE.md), no values are hardcoded in scripts. `lib/config.sh` holds `LE_EMAIL`
+### Email + base domain are .env-driven
+Per [CLAUDE.md](CLAUDE.md), no values are hardcoded in scripts. `.env` holds `LE_EMAIL`
 and `BASE_DOMAIN`; `10_gateway.sh` writes them into the chart's `values.yaml` (`acme.email`,
 `baseDomain`) with `yq`. `baseDomain` is now informational (the cluster serves more than one domain, so
 hostnames are spelled out explicitly in each app's per-app values). Commit the rewritten
@@ -111,7 +111,7 @@ network. It owns no CRDs, so a prune never cascade-deletes one.
 
 ## Apply / verify
 
-1. Set knobs and propagate: edit `lib/config.sh` (or env-override), run `./10_gateway/10_gateway.sh`,
+1. Set knobs and propagate: edit `.env`, run `./10_gateway/10_gateway.sh`,
    commit the rewritten `values.yaml`. ArgoCD (wave 3) applies the Gateway + ClusterIssuers.
 2. Per host (demo, SSO, real app): point the hostname's public DNS at the home router and forward `:80`
    for it to the Gateway IP on the old Pi (`allowACMEByPass=true` + a `Host(...)` HTTP router) so

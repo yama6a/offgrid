@@ -22,12 +22,12 @@
 #
 set -uo pipefail
 
-# All shared config (TALOSCTL_VERSION, EXPECT_NIC, ...) lives in lib/config.sh.
+# Shared config (EXPECT_NIC, ...) lives in .env; TALOSCTL_VERSION is derived in lib/common.sh.
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 source "${SCRIPT_DIR}/../lib/common.sh"
 
 # ---- knobs ------------------------------------------------------------------
-OUTDIR="${CLUSTER_DIR}"                    # talosconfig + kubeconfig live here (the lib's talosctl() mounts it); IFACE comes from config.sh
+OUTDIR="${CLUSTER_DIR}"                    # talosconfig + kubeconfig live here (the lib's talosctl() mounts it); IFACE derived in lib/common.sh
 KUBECTL_IMAGE="registry.k8s.io/kubectl:v1.36.1"   # ~match cluster
 DEBUG_IMAGE="alpine:3.21"                  # probe pod; apk-installs ethtool
 WATCHDOG_TIMEOUT="15s"                     # floored to 10s (Talos min); Pi hw max ~15s
@@ -76,7 +76,7 @@ read -ra NODES_ARR <<< "${ENDPOINTS:-${NODES:-}}"
 if [ "${#NODES_ARR[@]}" -eq 0 ]; then
   read -r -p ">> node IP(s), space-separated: " line; read -ra NODES_ARR <<< "$line"
 fi
-[ "${#NODES_ARR[@]}" -gt 0 ] || die "no nodes (set endpoints in talosconfig / CLUSTER_NODES in config.sh)"
+[ "${#NODES_ARR[@]}" -gt 0 ] || die "no nodes (set endpoints in talosconfig / CLUSTER_NODES in .env)"
 echo "   nodes: ${NODES_ARR[*]}"
 NODE0_IP="${NODES_ARR[0]}"
 

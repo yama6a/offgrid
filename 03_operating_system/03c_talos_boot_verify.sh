@@ -3,7 +3,7 @@
 # 03c_talos_boot_verify.sh  (macOS)
 #
 # Run AFTER flashing (03b_talos_image_flasher.sh) and booting each Pi from NVMe
-# with no SD card. Checks the nodes in NODES (config.sh) in MAINTENANCE mode
+# with no SD card. Checks the nodes (CLUSTER_NODES in .env) in MAINTENANCE mode
 # (pre-cluster, so `--insecure`), and inspects the output for correctness —
 # printing PASS/FAIL per check and an overall summary.
 #
@@ -15,7 +15,7 @@
 #
 set -u
 
-# All config (talosctl version, API port, NODES, the EXPECT_* checks) lives in lib/config.sh.
+# Config (API port, CLUSTER_NODES, the EXPECT_* checks) in .env; NODES/TALOSCTL_VERSION derived in lib/common.sh.
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 source "${SCRIPT_DIR}/../lib/common.sh"
 
@@ -35,9 +35,9 @@ docker info >/dev/null 2>&1 || die "docker not running (needed for the talosctl 
 say "pulling ghcr.io/siderolabs/talosctl:${TALOSCTL_VERSION} (first run only)"
 docker pull -q "ghcr.io/siderolabs/talosctl:${TALOSCTL_VERSION}" >/dev/null
 
-# nodes to check (from NODES in config.sh)
+# nodes to check (CLUSTER_NODES in .env, via the derived NODES)
 read -ra IPS <<< "$NODES"
-[ "${#IPS[@]}" -gt 0 ] || die "no nodes set — edit CLUSTER_NODES in config.sh"
+[ "${#IPS[@]}" -gt 0 ] || die "no nodes set — edit CLUSTER_NODES in .env"
 
 for ip in "${IPS[@]}"; do
   echo ""

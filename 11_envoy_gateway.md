@@ -61,7 +61,7 @@ provider config is its **sole** IP authority: `provider.kubernetes.envoyService.
 belt-and-suspenders per-Gateway `spec.addresses` request is **dropped everywhere** — with the class
 collapsed onto one Service, multiple Gateways each asserting an address on it would conflict, so the
 annotation pins the IP alone. The IP must stay inside the LB-IPAM pool (`192.168.100.10-250`, from
-`lib/config.sh`).
+`.env`).
 
 ### cert-manager HTTP-01 is unaffected
 The `gatewayHTTPRoute` solver is standard Gateway API — cert-manager creates a temporary HTTPRoute on

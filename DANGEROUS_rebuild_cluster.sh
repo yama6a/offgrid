@@ -29,7 +29,7 @@ set -uo pipefail
 
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 cd "$SCRIPT_DIR"   # the reset script cd's into ./03_operating_system relative to here
-source "${SCRIPT_DIR}/lib/common.sh"   # say/die/warn/ok + CLUSTER_DIR + CLUSTER_NODES from config.sh
+source "${SCRIPT_DIR}/lib/common.sh"   # say/die/warn/ok + CLUSTER_DIR + CLUSTER_NODES from .env
 
 # ---- knobs ------------------------------------------------------------------
 RESET="${SCRIPT_DIR}/DANGEROUS_reset_talos_cluster.sh"

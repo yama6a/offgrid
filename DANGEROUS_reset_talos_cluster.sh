@@ -11,12 +11,12 @@
 set -euo pipefail
 
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
-source "${SCRIPT_DIR}/lib/common.sh"   # dockerized talosctl() (mounts CLUSTER_DIR) + CLUSTER_NODES from config.sh
+source "${SCRIPT_DIR}/lib/common.sh"   # dockerized talosctl() (mounts CLUSTER_DIR) + CLUSTER_NODES from .env
 
 read -r -p ">> Destroy ENTIRE Talos cluster AND wipe ALL Longhorn/PVC data (u-longhorn)? type YES: " confirm
 [ "${confirm}" = "YES" ] || { echo "skipped destruction (phew!)."; exit 0; }
 
-# Node IPs from config.sh (CLUSTER_NODES "host:ip" -> IPs).
+# Node IPs from .env (CLUSTER_NODES "host:ip" -> IPs).
 NODES=(); for e in "${CLUSTER_NODES[@]}"; do NODES+=("${e##*:}"); done
 
 # Reset every node at once — they're all being wiped + rebooted (graceful=false), so there's no

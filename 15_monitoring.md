@@ -203,7 +203,7 @@ Sized for 8GB Pi 5s already running etcd + control plane + Cilium + Longhorn. No
 Talos binds kube-controller-manager / kube-scheduler / etcd metrics to **localhost** by default, so
 those targets are dead until exposed. We keep their ServiceMonitors **enabled** (`endpoints` = the
 control-plane node IPs `192.168.10.201-203`, static/reserved — mirrors
-[lib/config.sh](lib/config.sh) `CLUSTER_NODES`; all-control-plane cluster, so every
+[`.env`](.env.example) `CLUSTER_NODES`; all-control-plane cluster, so every
 node runs all three) and expose the metrics with a Talos machine-config patch:
 
 ```yaml

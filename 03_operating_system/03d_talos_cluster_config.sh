@@ -13,11 +13,11 @@
 # Requires: docker, with host networking enabled in Docker Desktop
 #           (Settings -> Resources -> Network -> Enable host networking).
 #
-# Cluster name, VIP, disk, NIC, and the node list all come from lib/config.sh.
+# Cluster name, VIP, disk, NIC, and the node list all come from .env.
 #
 set -euo pipefail
 
-# All config (talosctl version, CLUSTER_*, INSTALL_DISK, IFACE, CLUSTER_NODES) in lib/config.sh.
+# Config (CLUSTER_*, CLUSTER_NODES, EXPECT_*) in .env; INSTALL_DISK/IFACE/TALOSCTL_VERSION derived in lib/common.sh.
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 source "${SCRIPT_DIR}/../lib/common.sh"
 
@@ -42,7 +42,7 @@ echo "Output:   ${OUTDIR}"
 # 0. GHCR registry auth (OPTIONAL, global). Bake a machine.registries auth into the CP patch so the
 #    kubelet/CRI authenticates EVERY pull from ${GHCR_SERVER} on every node — cluster-wide, no
 #    per-namespace imagePullSecrets. Only the classic token is a secret, so it's the only thing prompted
-#    (host + username come from lib/config.sh). The token lands only in cp-patch.yaml under the gitignored
+#    (host + username come from .env). The token lands only in cp-patch.yaml under the gitignored
 #    talos-cluster dir — never in git. Empty => no auth block (fine if every image is PUBLIC). GitHub
 #    Packages ONLY authenticates with a CLASSIC token scoped read:packages.
 echo

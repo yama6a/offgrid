@@ -47,7 +47,7 @@ lives in `templates/configmap.yaml` (mounted + exec'd); every knob is in `values
 | **`instance-type: rpi5` selector** | the macb wedge is Pi 5-only; selecting rpi5 hardware keeps the pod off a future non-rpi5 node. Not `os: linux` (too broad), not `control-plane:DoesNotExist` (every node here is control-plane → matches zero nodes, same trap as the Cilium L2 policy). |
 
 The selector label `node.kubernetes.io/instance-type: rpi5` is stamped by Talos `machine.nodeLabels` in
-[`03d`](03_operating_system.md#what-03d_talos_cluster_configsh-does) (`NODE_INSTANCE_TYPE` in `lib/config.sh`).
+[`03d`](03_operating_system.md#what-03d_talos_cluster_configsh-does) (`NODE_INSTANCE_TYPE` in `.env`).
 That key works because it's on the kubelet **NodeRestriction allowlist** — an arbitrary `kubernetes.io/*`
 label would be rejected by admission.
 

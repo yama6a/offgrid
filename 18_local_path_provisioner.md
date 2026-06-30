@@ -62,12 +62,12 @@ node-local storage, where `Immediate` would bind a PV to an arbitrary node befor
 
 ## Talos prerequisite — the dedicated partition + kubelet bind-mount
 
-Two things in [`03d`](03_operating_system.md) (`lib/config.sh` + `03d_talos_cluster_config.sh`), the same
+Two things in [`03d`](03_operating_system.md) (`.env` + `03d_talos_cluster_config.sh`), the same
 shape as Longhorn's:
 
 | Requirement                                                               | Where                                                                                            |
 |---------------------------------------------------------------------------|--------------------------------------------------------------------------------------------------|
-| Dedicated fixed-size XFS volume at `/var/mnt/cnpg` (50 GiB, `min == max`) | `03d` `volumes.yaml` (`UserVolumeConfig` `cnpg`); size knob `CNPG_VOLUME_SIZE` in `lib/config.sh` |
+| Dedicated fixed-size XFS volume at `/var/mnt/cnpg` (50 GiB, `min == max`) | `03d` `volumes.yaml` (`UserVolumeConfig` `cnpg`); size knob `CNPG_VOLUME_SIZE` in `.env` |
 | **kubelet bind-mount of `/var/mnt/cnpg`**                                 | `03d` `cp-patch.yaml` (`machine.kubelet.extraMounts`)                                            |
 
 The partition layout per node is now: `EPHEMERAL` (64 GiB) → `cnpg` (50 GiB, fixed) → `longhorn` (the

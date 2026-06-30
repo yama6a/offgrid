@@ -44,8 +44,8 @@ the fourth is added here.
 
 | Requirement                                        | Status           | Where                                                 |
 |----------------------------------------------------|------------------|-------------------------------------------------------|
-| `iscsi-tools` extension (iscsid for PV operations) | ✅ baked          | `lib/config.sh` `ISCSI_EXT`, image built in `03a`      |
-| `util-linux-tools` extension (nsenter/fstrim)      | ✅ baked          | `lib/config.sh` `UTIL_EXT`                             |
+| `iscsi-tools` extension (iscsid for PV operations) | ✅ baked          | `.env` `ISCSI_EXT`, image built in `03a`      |
+| `util-linux-tools` extension (nsenter/fstrim)      | ✅ baked          | `.env` `UTIL_EXT`                             |
 | **4K kernel pages** (XFS won't mount on 16K)       | ✅ built          | `03_operating_system.md` ("4K kernel pages")          |
 | Dedicated XFS volume at `/var/mnt/longhorn`        | ✅ provisioned    | `03d` `volumes.yaml` (`UserVolumeConfig` `longhorn`)  |
 | **kubelet bind-mount of `/var/mnt/longhorn`**      | ➕ **added here** | `03d` `cp-patch.yaml` (`machine.kubelet.extraMounts`) |
@@ -87,7 +87,7 @@ machine:
         source: /var/mnt/longhorn
         options: [bind, rshared, rw]
 EOF
-for ip in 192.168.10.201 192.168.10.202 192.168.10.203; do   # CLUSTER_NODES in lib/config.sh
+for ip in 192.168.10.201 192.168.10.202 192.168.10.203; do   # CLUSTER_NODES in .env
   docker run --rm --network host -v "$PWD:/work" -w /work \
     -e TALOSCONFIG=/work/talosconfig \
     ghcr.io/siderolabs/talosctl:v1.13.4 \

@@ -38,7 +38,7 @@ RELEASE="cilium"
 NS="kube-system"
 API_WAIT=300                                       # secs to wait for the API to answer (the VIP lags the 03e reboot)
 VALUES="${CHART_DIR}/values.yaml"
-# LB-IPAM range (LB_RANGE_START/STOP) comes from config.sh via the lib; we write it into the chart's
+# LB-IPAM range (LB_RANGE_START/STOP) comes from .env via the lib; we write it into the chart's
 # values.yaml below so ArgoCD renders the same pool.
 # -----------------------------------------------------------------------------
 
@@ -63,7 +63,7 @@ done
 echo
 ok "Kubernetes API reachable"
 
-# === 0b. write the LB-IPAM range from config.sh into the chart's values.yaml ===
+# === 0b. write the LB-IPAM range from .env into the chart's values.yaml ===
 # yq edits the chart's plain-YAML values (NOT the helm-templated cilium-lb.yaml, which references
 # .Values.loadBalancer.ipPool). Committing values.yaml is what keeps ArgoCD's render in sync with
 # this bootstrap. strenv() forces the IPs to stay quoted strings.

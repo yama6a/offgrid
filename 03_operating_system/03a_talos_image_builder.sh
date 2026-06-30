@@ -20,7 +20,7 @@
 #
 set -euo pipefail
 
-# All config (versions, kernel ref, extensions, registry, paths) lives in lib/config.sh.
+# All config (versions, kernel ref, extensions, registry, paths) lives in .env.
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 source "${SCRIPT_DIR}/../lib/common.sh"
 
