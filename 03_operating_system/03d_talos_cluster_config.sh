@@ -39,6 +39,34 @@ echo "Disk:     ${DISK}        EPHEMERAL cap: ${EPHEMERAL}"
 for i in "${!IPS[@]}"; do echo "  ${HOSTNAMES[$i]}  ->  ${IPS[$i]}"; done
 echo "Output:   ${OUTDIR}"
 
+# 0. GHCR registry auth (OPTIONAL, global). Bake a machine.registries auth into the CP patch so the
+#    kubelet/CRI authenticates EVERY pull from ${GHCR_SERVER} on every node — cluster-wide, no
+#    per-namespace imagePullSecrets. Only the classic token is a secret, so it's the only thing prompted
+#    (host + username come from lib/config.sh). The token lands only in cp-patch.yaml under the gitignored
+#    talos-cluster dir — never in git. Empty => no auth block (fine if every image is PUBLIC). GitHub
+#    Packages ONLY authenticates with a CLASSIC token scoped read:packages.
+echo
+echo "GHCR registry auth (optional): paste a CLASSIC token (read:packages) to pull PRIVATE images as"
+echo "  '${GHCR_USER}' from ${GHCR_SERVER}, cluster-wide. Leave empty to skip (public images only)."
+printf '  GHCR classic token (hidden; empty = skip): '
+read -rs GHCR_TOKEN </dev/tty 2>/dev/null || GHCR_TOKEN=""   # non-interactive => skip
+echo
+REGISTRIES_BLOCK=""
+if [ -n "${GHCR_TOKEN}" ]; then
+  REGISTRIES_BLOCK="$(cat <<EOF
+  registries:
+    config:
+      ${GHCR_SERVER}:
+        auth:
+          username: ${GHCR_USER}
+          password: ${GHCR_TOKEN}
+EOF
+)"
+  echo "  -> ${GHCR_SERVER} auth will be baked into the machine config for all nodes."
+else
+  echo "  -> no token entered; skipping registry auth (fine if every image is PUBLIC)."
+fi
+
 # 1. Secrets + base machine config (generated once; preserved on re-run)
 if [ ! -f "${OUTDIR}/controlplane.yaml" ]; then
   talosctl gen config "${CLUSTER}" "https://${VIP}:6443" --install-disk "${DISK}"
@@ -48,6 +76,7 @@ fi
 CERTSANS="$(printf '      - %s\n' "${VIP}" "${IPS[@]}")"
 cat > "${OUTDIR}/cp-patch.yaml" <<EOF
 machine:
+${REGISTRIES_BLOCK}
   nodeLabels:
     node.kubernetes.io/instance-type: ${NODE_INSTANCE_TYPE}   # nic-keeper DaemonSet selector (06_nic_keeper.md)
   kubelet:

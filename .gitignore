@@ -1,0 +1,3 @@
+# Static config — your real IPs / domains / usernames / versions. Gitignored so they stay out of git.
+# Copy the committed template and edit:  cp .env.example .env
+.env

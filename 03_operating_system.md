@@ -264,6 +264,17 @@ picked `192.168.100.1` for the VIP.
 > never latch onto WiFi. Confirm the name on a live node with `talosctl get links` if unsure (`IFACE` in `lib/config.sh`,
 > default `end0`).
 
+> **GHCR registry auth (optional, global):** to pull **private** container images, the script prompts (once, at the
+> start) for a GitHub **classic** token scoped `read:packages` and bakes a `machine.registries.config."ghcr.io".auth`
+> block into the same control-plane patch. The **kubelet/CRI then authenticates every pull from `ghcr.io` on every
+> node** — cluster-wide, with **no per-namespace `imagePullSecrets`** to wire into workloads. We chose node-level auth
+> over an in-cluster (sealed-secret) pull secret precisely because it's global and namespace-agnostic; the cost is that
+> the token lives in the machine config (in the gitignored `talos-cluster/cp-patch.yaml`, **never committed**) rather
+> than in the sealed-secrets pipeline, and rotating it means re-running `03d` (re-enter the token). The host + username
+> are plain config (`GHCR_SERVER`/`GHCR_USER` in `lib/config.sh`); only the token is a secret, so it's the only thing
+> prompted. Leave the prompt empty to skip (the auth block is simply omitted). GHCR only accepts a **classic** token —
+> fine-grained tokens do not work for package pulls.
+
 ### Run
 
 ```bash

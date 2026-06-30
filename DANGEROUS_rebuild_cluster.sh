@@ -40,10 +40,10 @@ STEP_05_DIR="${SCRIPT_DIR}/05_gitops"
 KUBECONFIG_FILE="${CLUSTER_DIR}/kubeconfig"
 INGRESS_GW_NS="gateway"                        # namespace of the shared Gateway
 INGRESS_GW_NAME="shared-gateway"               # name of the shared Gateway
-# operational knobs — overridable per-run for this orchestrator:
-COMMIT_MSG="${COMMIT_MSG:-rebuild: sync working tree before cluster rebuild}"
-INGRESS_WAIT="${INGRESS_WAIT:-900}"            # max secs to wait for the ingress to actually serve (HTTP-01 issuance is slow)
-INGRESS_HOSTS="${INGRESS_HOSTS:-}"             # space-separated hosts to check; empty = derive from the Gateway's HTTPS listeners
+# operational knobs for this orchestrator:
+COMMIT_MSG="rebuild: sync working tree before cluster rebuild"
+INGRESS_WAIT=900                               # max secs to wait for the ingress to actually serve (HTTP-01 issuance is slow)
+INGRESS_HOSTS=""                               # space-separated hosts to check; empty = derive from the Gateway's HTTPS listeners
 # -----------------------------------------------------------------------------
 
 # === prereqs =================================================================

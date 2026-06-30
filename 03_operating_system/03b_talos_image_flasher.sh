@@ -14,14 +14,13 @@
 #
 set -euo pipefail
 
-# Config (OUT_DIR, RAW_XZ — the compressed raw image from 03a_talos_image_builder.sh)
-# lives in lib/config.sh. Override RAW_XZ to flash a specific build.
+# Config (OUT_DIR — the build-cache output dir from 03a_talos_image_builder.sh) lives in lib/config.sh.
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 source "${SCRIPT_DIR}/../lib/common.sh"
 
-# The staged image from 03a (OUT_DIR comes from the shared build-cache key in config.sh). Override
-# RAW_XZ to flash a specific build. Filename matches 03a's IMAGE_NAME.
-RAW_XZ="${RAW_XZ:-${OUT_DIR}/metal-arm64-rpi5.raw.xz}"
+# The staged image from 03a (OUT_DIR comes from the shared build-cache key in config.sh).
+# Filename matches 03a's IMAGE_NAME. To flash a different build, point OUT_DIR's inputs at it in config.sh.
+RAW_XZ="${OUT_DIR}/metal-arm64-rpi5.raw.xz"
 
 require xz
 [ -f "$RAW_XZ" ] || die "image not found: $RAW_XZ — build it first: ./03a_talos_image_builder.sh"

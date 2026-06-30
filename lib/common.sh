@@ -2,8 +2,9 @@
 #
 # lib/common.sh — shared helpers for every bootstrap script in this repo.
 #
-# Source it near the top of a script; it self-locates the repo root and pulls in the single root
-# config.sh (the one source of truth for all knobs/values):
+# Source it near the top of a script; it self-locates the repo root, loads the gitignored .env (the
+# single source of truth for editable config — copy .env.example to .env), and derives the computed
+# values (node array, install paths, version aliases, build-cache key):
 #
 #   SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 #   source "${SCRIPT_DIR}/../lib/common.sh"      # repo-root scripts: "${SCRIPT_DIR}/lib/common.sh"
@@ -24,9 +25,36 @@ _COMMON_SH=1
 
 # Repo root = the dir above this file (lib/). Robust regardless of which script sources it.
 REPO_ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
-# The single source of truth for all knobs/values (sibling of this file, in lib/).
-# shellcheck source=config.sh
-source "$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)/config.sh"
+
+# ---- static config: the gitignored .env (copy .env.example -> .env and edit it) -------------------
+# Holds the plain scalar config (versions, topology, domains, namespaces, …). Gitignored so your
+# IPs/domains/usernames stay out of git; .env.example is the committed template. die() isn't defined
+# yet (helpers are below), so error raw.
+ENV_FILE="${REPO_ROOT}/.env"
+if [ ! -f "$ENV_FILE" ]; then
+  printf '\033[1;31mERROR: missing %s\n       copy the template and edit it:  cp .env.example .env\033[0m\n' \
+    "$ENV_FILE" >&2
+  exit 1
+fi
+# shellcheck disable=SC1090
+source "$ENV_FILE"
+
+# ---- derived config (computed from the .env scalars; not user-editable) ---------------------------
+# These can't live in a flat .env (arrays, interpolation, a shasum-keyed path), so they're computed here.
+read -ra CLUSTER_NODES <<< "${CLUSTER_NODES}"   # .env CLUSTER_NODES is a space-separated "host:ip" string -> array
+NODES="${CLUSTER_NODES[*]##*:}"                 # IPs only (space-separated); used by boot-verify + reset
+IFACE="${EXPECT_NIC}"                           # wired NIC the VIP binds to (dhcp + vip)
+INSTALL_DISK="/dev/${EXPECT_DISK}"              # nvme0n1 -> /dev/nvme0n1
+MACHINERY_VERSION="${TALOS_VERSION}"            # overlay rebuilt against this (must match TALOS_VERSION)
+TALOSCTL_VERSION="${TALOS_VERSION}"             # talosctl container (talosctl() below; boot-verify)
+# Build-cache key + dirs (shared: 03a builder writes, 03b flasher reads). Keyed by the pinned inputs so
+# 03a/03b resolve the SAME paths: change any version/ref/tag and the build lands in a fresh .cache/<key>.
+CONFIG_DIR="${REPO_ROOT}/03_operating_system"   # the step-03 folder (build scratch lives under it)
+BUILD_KEY="${TALOS_VERSION}-${KERNEL_REF}-$(printf '%s' \
+  "${BUILDER_VERSION}|${PKG_VERSION}|${SBCOVERLAY_VERSION}|${MACHINERY_VERSION}|${ISCSI_EXT}|${UTIL_EXT}" \
+  | shasum -a 256 | cut -c1-8)"
+BUILD_DIR="${CONFIG_DIR}/.cache/${BUILD_KEY}"   # build scratch + output (gitignored)
+OUT_DIR="${BUILD_DIR}/out"                      # final image is staged here for the flasher
 
 # ---- output helpers (consistent across every script) ------------------------
 say()  { printf '\n\033[1;36m>> %s\033[0m\n' "$*"; }
@@ -64,9 +92,9 @@ require() {
 # ---- cluster credentials (written by 03d to the gitignored talos-cluster dir) ----
 CLUSTER_DIR="${REPO_ROOT}/03_operating_system/talos-cluster"   # canonical talosconfig + kubeconfig
 
-# Point KUBECONFIG at the 03d kubeconfig (respecting a pre-set value) and assert it exists.
+# Point KUBECONFIG at the canonical 03d kubeconfig and assert it exists.
 use_kubeconfig() {
-  export KUBECONFIG="${KUBECONFIG:-${CLUSTER_DIR}/kubeconfig}"   # the 03d kubeconfig (points at the VIP)
+  export KUBECONFIG="${CLUSTER_DIR}/kubeconfig"   # the 03d kubeconfig (points at the VIP)
   [ -f "$KUBECONFIG" ] || die "missing ${KUBECONFIG} — run step 03 (03d) first"
 }
 # Assert the API answers via the current KUBECONFIG.
@@ -74,6 +102,7 @@ assert_api() { kubectl get nodes >/dev/null 2>&1 || die "kubectl can't reach the
 
 # ---- dockerized talosctl (talos-phase + reset scripts) ----------------------
 # Runs talosctl in Docker against the talosconfig in CLUSTER_DIR (host networking, stdin attached).
+# MacOS talosCTL is completely broken for some reason.
 talosctl() {
   docker run --rm -i --network host \
     -v "${CLUSTER_DIR}:/work" -w /work \

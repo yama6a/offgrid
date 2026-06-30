@@ -34,25 +34,9 @@ RELEASE="argocd"
 NS="argocd"
 REPO_ARGO="https://argoproj.github.io/argo-helm"
 HELM_TIMEOUT="8m"                                  # 3x Pi 5 image pulls can be slow
-ASSUME_PUSHED="${ASSUME_PUSHED:-0}"                # set 1 to skip the "did you push?" prompt (automation)
-REPO_URL="${REPO_URL:-}"                           # repo ArgoCD polls; empty => inferred from git origin + prompted
-GIT_TOKEN="${GIT_TOKEN:-}"                          # PRIVATE-repo read-only PAT; normally PROMPTED — pre-set only to skip the prompt (automation)
+GIT_TOKEN=""                                       # PRIVATE-repo read-only PAT (the ONLY secret) — filled by the prompt below
+# REPO_URL (the repo ArgoCD polls) is config — see lib/config.sh.
 # -----------------------------------------------------------------------------
-
-# normalize an scp/ssh git remote to an anonymous-friendly https URL (https URLs pass through), and
-# strip a trailing .git so root.yaml + the seeded creds match the committed manifests (which omit
-# it) — otherwise this re-derives the origin's .git form and rewrites it back in on every run. ArgoCD
-# normalizes .git internally, so the suffix is cosmetic; we keep one canonical (no-.git) form.
-normalize_repo_url() {
-  local url
-  case "$1" in
-    "")        printf ''; return ;;
-    git@*:*)   rest="${1#git@}";   url="https://${rest%%:*}/${rest#*:}" ;;
-    ssh://*)   rest="${1#ssh://}"; rest="${rest#*@}"; url="https://${rest}" ;;
-    *)         url="$1" ;;
-  esac
-  printf '%s\n' "${url%.git}"
-}
 
 # wait until an ArgoCD Application reports Synced + Healthy (or time out)
 wait_app() {  # $1=app name  $2=timeout secs
@@ -122,17 +106,8 @@ kubectl -n "$NS" rollout status deploy/argocd-server --timeout=180s >/dev/null 2
 # a ComparisonError ("path does not exist"). Re-running this script after pushing is safe.
 say "handing off to GitOps (kubectl apply root)"
 
-# Resolve the repo ArgoCD polls and pin it into root.yaml. Priority: $REPO_URL env, else the
-# git 'origin' remote (offered as a default you can override), else whatever's already in the file.
-if [ -z "$REPO_URL" ]; then
-  inferred=""
-  [ -n "$REPO_ROOT" ] && inferred="$(normalize_repo_url "$(git -C "$REPO_ROOT" remote get-url origin 2>/dev/null || true)")"
-  [ -z "$inferred" ] && inferred="$(sed -n -E 's|^[[:space:]]*repoURL:[[:space:]]*||p' "$ROOT_APP" | head -n1)"
-  printf '   Git repo for ArgoCD to poll [%s]: ' "${inferred:-<none>}"
-  read -r REPO_URL </dev/tty 2>/dev/null || REPO_URL=""   # non-interactive: fall back to the default
-  [ -z "$REPO_URL" ] && REPO_URL="$inferred"
-fi
-[ -n "$REPO_URL" ] || die "no repo URL given and none could be inferred (set REPO_URL=... and re-run)"
+# The repo ArgoCD polls comes from lib/config.sh (REPO_URL); pin it into root.yaml below.
+[ -n "$REPO_URL" ] || die "REPO_URL is empty — set it in lib/config.sh"
 # Idempotent: a no-op when the URL already matches. Only the root-of-roots — the child roots under
 # argo_apps/roots/ AND every app under argo_apps/{platform,workloads}/apps/ also carry a repoURL; if
 # you point at a fork, rewrite those too (see 05_gitops.md).
@@ -145,14 +120,15 @@ else
   bad "could not rewrite repoURL in ${ROOT_APP}"
 fi
 
-if [ -n "$REPO_ROOT" ] && [ -n "$(git -C "$REPO_ROOT" status --porcelain -- argo_apps 05_gitops 2>/dev/null)" ]; then
-  bad "uncommitted changes under argo_apps/ or 05_gitops/ — commit & push them, then re-run"
-  echo "   (ArgoCD clones the public repo; unpushed files are invisible to the root app.)"
-fi
-if [ "$ASSUME_PUSHED" != "1" ]; then
-  printf '   Have you committed AND pushed argo_apps/** (incl. Chart.lock) to origin? [y/N] '
-  read -r ans || ans=""
-  case "$ans" in [Yy]*) ;; *) die "Push first, then re-run (idempotent). Or set ASSUME_PUSHED=1 to skip this." ;; esac
+# ArgoCD clones the PUSHED repo, so local-only changes are invisible to the root app. Automatic guards
+# (no prompt — re-run after pushing, it's idempotent): flag uncommitted changes under argo_apps/ or
+# 05_gitops/, and any committed-but-unpushed commits on the current branch.
+if [ -n "$REPO_ROOT" ]; then
+  [ -n "$(git -C "$REPO_ROOT" status --porcelain -- argo_apps 05_gitops 2>/dev/null)" ] \
+    && bad "uncommitted changes under argo_apps/ or 05_gitops/ — commit & push them, then re-run"
+  ahead="$(git -C "$REPO_ROOT" rev-list --count '@{u}..HEAD' 2>/dev/null || echo 0)"
+  [ "${ahead:-0}" -gt 0 ] \
+    && bad "${ahead} unpushed commit(s) on the current branch — push them, then re-run (ArgoCD only sees pushed commits)"
 fi
 
 # Optional git credential. Seeded out-of-band here — before the root app — as an ArgoCD repo-creds
@@ -164,7 +140,7 @@ fi
 # app's repoURL just has to start with this url — it equals it — so no inline repo Secret is needed.
 # See 05_gitops.md.
 say "git credential (single-repo PAT)"
-# Ask for the PAT interactively (hidden input). $GIT_TOKEN env, if pre-set, skips the prompt (automation).
+# Ask for the PAT interactively (hidden input) — the one secret this script prompts for.
 if [ -z "$GIT_TOKEN" ]; then
   cat <<'EOF'
    For a PRIVATE repo, paste a fine-grained, READ-ONLY, single-repo PAT (leave empty for a PUBLIC
