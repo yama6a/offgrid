@@ -80,7 +80,7 @@ ok "remote up to date"
 
 # === STEP 1. reset to maintenance ============================================
 say "STEP 1/7 — reset to maintenance (DANGEROUS_reset_talos_cluster.sh)"
-printf 'YES\n' | bash "$RESET" || die "reset failed"
+#printf 'YES\n' | bash "$RESET" || die "reset failed"
 ok "reset issued"
 
 # === STEP 2-5. bootstrap (each in its own dir; 03d waits for maintenance; abort on first failure) ===
