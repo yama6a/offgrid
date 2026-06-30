@@ -128,3 +128,11 @@ Blower-style active cooler (aluminium heatsink + PWM fan), one per board. Kit in
 
 Why RP1 is the one that needs the second contact: it's the southbridge carrying USB / Ethernet / GPIO / PCIe I/O, the
 second-warmest chip after the SoC, and the cooler's intended secondary contact point.
+
+
+## End Result (Assembled)
+
+<img src="01_hardware/assembled_blade.jpg" alt="Assembled Pi 5 Blade" height="250"/>
+<img src="01_hardware/assembled_rack.jpg" alt="Assembled Pi 5 Rack" height="250"/>
+
+Granted, the rack still needs a bit of better cable management, but that's a problem for future-me.

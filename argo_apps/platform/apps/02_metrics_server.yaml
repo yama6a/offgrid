@@ -1,0 +1,37 @@
+# ArgoCD Application for metrics-server (argo_apps/platform/charts/02_metrics_server/) — the in-tree
+# resource-metrics provider. It scrapes every kubelet's Summary API over HTTPS (:10250) and registers
+# the aggregated `metrics.k8s.io` APIService, which backs `kubectl top node/pod` and CPU/memory HPAs.
+# VictoriaMetrics serves custom/observability metrics but NOT metrics.k8s.io, so this fills that gap.
+#
+# AUTOMATED (prune + selfHeal): a safe leaf, like cert-manager / longhorn / sealed-secrets — it can't
+# cut the cluster off its own network, so drift should auto-correct. It owns only its own APIService +
+# RBAC + Deployment (no shared CRDs), so a prune cascade-deletes nothing else.
+#
+# sync-wave "2": same wave as cert-manager / longhorn / sealed-secrets — independent leaves that only
+# need the CNI (wave 0). The prometheus-operator CRDs (wave 0) guarantee the ServiceMonitor CRD exists,
+# so the values.yaml `serviceMonitor.enabled: true` is safe here. Per CLAUDE.md the NN prefix IS the wave.
+#
+# Talos kubelets serve self-signed certs, so the chart runs with --kubelet-insecure-tls (no Talos
+# machine-config change, no CSR approver). See 19_metrics_server.md for the kubelet-TLS trade-off.
+apiVersion: argoproj.io/v1alpha1
+kind: Application
+metadata:
+  name: metrics-server
+  namespace: argocd
+  annotations:
+    argocd.argoproj.io/sync-wave: "2"
+spec:
+  project: default
+  source:
+    repoURL: https://github.com/yama6a/offgrid
+    targetRevision: HEAD
+    path: argo_apps/platform/charts/02_metrics_server
+  destination:
+    server: https://kubernetes.default.svc
+    namespace: kube-system
+  syncPolicy:
+    automated:
+      prune: true
+      selfHeal: true
+    syncOptions:
+      - CreateNamespace=true
