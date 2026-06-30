@@ -44,3 +44,9 @@ longhorn:
   metrics:
     serviceMonitor:
       enabled: true
+
+  csi:
+    # Disable the CSI snapshotter sidecar — the chart has no on/off toggle, so scale its replica
+    # count to 0 (default 3). We don't use Longhorn CSI VolumeSnapshots, so the sidecar is dead weight,
+    # and it was generating constant log noise.
+    snapshotterReplicaCount: 0
