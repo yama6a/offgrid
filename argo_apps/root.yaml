@@ -1,7 +1,7 @@
 # The root-of-roots. Applied once by 05_gitops/05_argocd.sh; everything else is GitOps from here. It
 # watches argo_apps/roots/ and manages the two child root Applications it finds there (directory.recurse):
 #
-#   0_platform.yaml   (sync-wave "0")  -> recurses argo_apps/platform/apps/   (CNI, operators, storage, …)
+#   0_platform.yaml   (sync-wave "0")  -> recurses argo_apps/platform/apps/   (CNI, operators, storage, ...)
 #   1_workloads.yaml  (sync-wave "1")  -> recurses argo_apps/workloads/apps/  (the actual apps)
 #
 # The waves on those two children are what gate the bootstrap: this root creates `platform` first, waits

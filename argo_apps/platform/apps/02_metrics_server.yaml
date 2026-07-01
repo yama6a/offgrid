@@ -1,13 +1,13 @@
-# ArgoCD Application for metrics-server (argo_apps/platform/charts/02_metrics_server/) — the in-tree
+# ArgoCD Application for metrics-server (argo_apps/platform/charts/02_metrics_server/), the in-tree
 # resource-metrics provider. It scrapes every kubelet's Summary API over HTTPS (:10250) and registers
 # the aggregated `metrics.k8s.io` APIService, which backs `kubectl top node/pod` and CPU/memory HPAs.
 # VictoriaMetrics serves custom/observability metrics but NOT metrics.k8s.io, so this fills that gap.
 #
-# AUTOMATED (prune + selfHeal): a safe leaf, like cert-manager / longhorn / sealed-secrets — it can't
+# AUTOMATED (prune + selfHeal): a safe leaf, like cert-manager / longhorn / sealed-secrets, it can't
 # cut the cluster off its own network, so drift should auto-correct. It owns only its own APIService +
 # RBAC + Deployment (no shared CRDs), so a prune cascade-deletes nothing else.
 #
-# sync-wave "2": same wave as cert-manager / longhorn / sealed-secrets — independent leaves that only
+# sync-wave "2": same wave as cert-manager / longhorn / sealed-secrets, independent leaves that only
 # need the CNI (wave 0). The prometheus-operator CRDs (wave 0) guarantee the ServiceMonitor CRD exists,
 # so the values.yaml `serviceMonitor.enabled: true` is safe here. Per CLAUDE.md the NN prefix IS the wave.
 #

@@ -4,24 +4,24 @@
 #
 # One-shot orchestrator: wipe the cluster and rebuild it end-to-end so you don't run the steps by hand.
 # Sequence (one confirmation, up front):
-#   0. git add/commit/push              — ArgoCD deploys the REMOTE repo, not your laptop, so sync it first
-#   1. DANGEROUS_reset_talos_cluster.sh — wipe STATE+EPHEMERAL+u-longhorn, reboot to maintenance
-#   2. 03d_talos_cluster_config.sh      — WAITS for maintenance, applies config, bootstraps etcd
-#   3. 03e_nic_hardening.sh             — NIC hardening (EEE/watchdog)
-#   4. 04_cilium.sh                     — CNI + prometheus-operator CRDs + LB-IPAM/L2 + Hubble
-#   5. 05_argocd.sh                     — bootstrap ArgoCD; it then deploys everything else from git
-#   6. 07_restore_sealed_secrets_key.sh — restore the master key so committed SealedSecrets decrypt
-#   7. verify ingress serving           — wait until each HTTPS host serves an LE cert over clean HTTP/2
+#   0. git add/commit/push             : ArgoCD deploys the REMOTE repo, not your laptop, so sync it first
+#   1. DANGEROUS_reset_talos_cluster.sh, wipe STATE+EPHEMERAL+u-longhorn, reboot to maintenance
+#   2. 03d_talos_cluster_config.sh     : WAITS for maintenance, applies config, bootstraps etcd
+#   3. 03e_nic_hardening.sh            : NIC hardening (EEE/watchdog)
+#   4. 04_cilium.sh                    : CNI + prometheus-operator CRDs + LB-IPAM/L2 + Hubble
+#   5. 05_argocd.sh                    : bootstrap ArgoCD; it then deploys everything else from git
+#   6. 06_restore_sealed_secrets_key.sh, restore the master key so committed SealedSecrets decrypt
+#   7. verify ingress serving          : wait until each HTTPS host serves an LE cert over clean HTTP/2
 #
 # Skips 03a/03b/03c (image build/flash/boot-verify): a reset keeps BOOT/EFI/META, so the OS is already on
-# the NVMe — no reflash. 03d waits for maintenance itself. Bootstrap steps (1-5) abort on the first
+# the NVMe, no reflash. 03d waits for maintenance itself. Bootstrap steps (1-5) abort on the first
 # failure; the git + restore steps (0,6) are best-effort with printed fallbacks so a slow ArgoCD never
 # wedges the rebuild.
 #
-# This script does NOT back up the sealed-secrets key — doing it here would risk overwriting a good
+# This script does NOT back up the sealed-secrets key, doing it here would risk overwriting a good
 # backup with the about-to-be-wiped cluster's key. Back up DELIBERATELY beforehand
-# (07_sealed_secrets/07_backup_sealed_secrets_key.sh) so step 6 has something to restore; with no backup,
-# step 6 fails cleanly and you re-seal instead (12_google_sso, 16_grafana_smtp) + commit/push.
+# (06_secrets/06_backup_sealed_secrets_key.sh) so step 6 has something to restore; with no backup,
+# step 6 fails cleanly and you re-seal instead (07_google_sso, 09_grafana_smtp) + commit/push.
 #
 # Needs Docker (host networking), git, kubectl.
 #
@@ -33,7 +33,7 @@ source "${SCRIPT_DIR}/lib/common.sh"   # say/die/warn/ok + CLUSTER_DIR + CLUSTER
 
 # ---- knobs ------------------------------------------------------------------
 RESET="${SCRIPT_DIR}/DANGEROUS_reset_talos_cluster.sh"
-RESTORE="${SCRIPT_DIR}/07_sealed_secrets/07_restore_sealed_secrets_key.sh"
+RESTORE="${SCRIPT_DIR}/06_secrets/06_restore_sealed_secrets_key.sh"
 STEP_03_DIR="${SCRIPT_DIR}/03_operating_system"
 STEP_04_DIR="${SCRIPT_DIR}/04_networking"
 STEP_05_DIR="${SCRIPT_DIR}/05_gitops"
@@ -52,76 +52,76 @@ require docker git kubectl
 [ -f "$RESTORE" ] || die "missing ${RESTORE}"
 IPS=(); for e in "${CLUSTER_NODES[@]}"; do IPS+=("${e##*:}"); done
 
-# === confirm (the ONLY destructive prompt — the reset's own prompt is auto-answered) ===
+# === confirm (the ONLY destructive prompt, the reset's own prompt is auto-answered) ===
 cat <<EOF
 
 This will DESTROY and REBUILD the entire Talos cluster:
   nodes : ${IPS[*]}
-  wipe  : STATE + EPHEMERAL + u-longhorn  (ALL k8s state AND all Longhorn/PVC data — gone for good)
+  wipe  : STATE + EPHEMERAL + u-longhorn  (ALL k8s state AND all Longhorn/PVC data, gone for good)
   flow  : commit+push -> reset -> 03d -> 03e -> 04 -> 05 -> restore sealed-secrets key
           (ArgoCD then redeploys cilium/cert-manager/longhorn/gateway/SSO/monitoring from git)
 
-Have a CURRENT sealed-secrets key backup (07_backup_sealed_secrets_key.sh) — else SSO + Grafana
-email won't decrypt until you re-seal (12_google_sso, 16_grafana_smtp).
+Have a CURRENT sealed-secrets key backup (06_backup_sealed_secrets_key.sh), else SSO + Grafana
+email won't decrypt until you re-seal (07_google_sso, 09_grafana_smtp).
 EOF
 read -r -p ">> type REBUILD to proceed: " ans
 [ "$ans" = "REBUILD" ] || { echo "aborted (phew!)."; exit 0; }
 
 # === STEP 0. commit + push (ArgoCD deploys the remote, not your working tree) ==
-say "STEP 0/7 — git add + commit + push"
+say "STEP 0/7, git add + commit + push"
 git add -A
 if git diff --cached --quiet; then
   ok "nothing new to commit"
 else
   git commit -m "$COMMIT_MSG" >/dev/null && ok "committed local changes" || die "git commit failed"
 fi
-git push || die "git push failed — ArgoCD deploys the REMOTE; push manually then re-run"
+git push || die "git push failed, ArgoCD deploys the REMOTE; push manually then re-run"
 ok "remote up to date"
 
 # === STEP 1. reset to maintenance ============================================
-say "STEP 1/7 — reset to maintenance (DANGEROUS_reset_talos_cluster.sh)"
+say "STEP 1/7, reset to maintenance (DANGEROUS_reset_talos_cluster.sh)"
 #printf 'YES\n' | bash "$RESET" || die "reset failed"
 ok "reset issued"
 
 # === STEP 2-5. bootstrap (each in its own dir; 03d waits for maintenance; abort on first failure) ===
-say "STEP 2/7 — 03d_talos_cluster_config.sh (waits for maintenance, applies config, bootstraps etcd)"
-( cd "$STEP_03_DIR" && bash ./03d_talos_cluster_config.sh ) || die "03d failed — fix and resume from 03d by hand"
+say "STEP 2/7, 03d_talos_cluster_config.sh (waits for maintenance, applies config, bootstraps etcd)"
+( cd "$STEP_03_DIR" && bash ./03d_talos_cluster_config.sh ) || die "03d failed, fix and resume from 03d by hand"
 ok "03d done"
 
-say "STEP 3/7 — 03e_nic_hardening.sh"
-( cd "$STEP_03_DIR" && bash ./03e_nic_hardening.sh ) || die "03e failed — fix and resume from 03e by hand"
+say "STEP 3/7, 03e_nic_hardening.sh"
+( cd "$STEP_03_DIR" && bash ./03e_nic_hardening.sh ) || die "03e failed, fix and resume from 03e by hand"
 ok "03e done"
 
-say "STEP 4/7 — 04_cilium.sh (CNI + monitoring CRDs + LB/L2 + Hubble)"
-( cd "$STEP_04_DIR" && bash ./04_cilium.sh ) || die "04_cilium failed — fix and resume from 04 by hand"
+say "STEP 4/7, 04_cilium.sh (CNI + monitoring CRDs + LB/L2 + Hubble)"
+( cd "$STEP_04_DIR" && bash ./04_cilium.sh ) || die "04_cilium failed, fix and resume from 04 by hand"
 ok "04_cilium done"
 
-say "STEP 5/7 — 05_argocd.sh (bootstrap ArgoCD; it deploys the rest from git)"
-( cd "$STEP_05_DIR" && bash ./05_argocd.sh ) || die "05_argocd failed — fix and resume from 05 by hand"
+say "STEP 5/7, 05_argocd.sh (bootstrap ArgoCD; it deploys the rest from git)"
+( cd "$STEP_05_DIR" && bash ./05_argocd.sh ) || die "05_argocd failed, fix and resume from 05 by hand"
 ok "05_argocd done"
 
 # === STEP 6. restore the sealed-secrets key (best-effort, non-fatal) =========
 # Waits for the controller (ArgoCD wave 2), applies the backed-up key + restarts it, so the committed
 # SealedSecrets decrypt. Fails cleanly (no backup / controller never came up) without wedging the rebuild.
-say "STEP 6/7 — restore sealed-secrets key (07_restore_sealed_secrets_key.sh)"
-bash "$RESTORE" || warn "key restore didn't complete (see above) — restore by hand once sealed-secrets is up, or re-seal (12/15) + commit/push"
+say "STEP 6/7, restore sealed-secrets key (06_restore_sealed_secrets_key.sh)"
+bash "$RESTORE" || warn "key restore didn't complete (see above), restore by hand once sealed-secrets is up, or re-seal (07/09) + commit/push"
 
 # === STEP 7. verify the ingress data path actually serves (best-effort) =======
 # ArgoCD brings up the ingress stack (envoy-gateway -> gateway -> cert-manager -> apps) ASYNC after
-# step 5, and HTTP-01 issuance takes minutes — so "05 done" does NOT mean the sites work yet. Poll each
+# step 5, and HTTP-01 issuance takes minutes, so "05 done" does NOT mean the sites work yet. Poll each
 # HTTPS host until it serves a REAL response, encoding two gates that mirror the browser failure modes:
 #   1. the served cert's issuer says "Let's Encrypt" (accepts staging OR prod, but rejects cert-manager's
-#      temporary self-signed cert and any wrong-SNI cert — i.e. issuance for THIS host has finished);
+#      temporary self-signed cert and any wrong-SNI cert, i.e. issuance for THIS host has finished);
 #   2. curl --http2 returns a normal status (2xx/3xx/4xx): an ERR_HTTP2_PROTOCOL_ERROR / connection
-#      failure shows up as http_code 000, and a not-ready backend as 5xx — both keep us waiting.
+#      failure shows up as http_code 000, and a not-ready backend as 5xx, both keep us waiting.
 # We hit the Gateway's LB IP with the right SNI (not public DNS), so a home-router/DDNS/hairpin quirk
-# can't wedge it — this checks that the CLUSTER serves. CA *trust* is intentionally ignored (-k), since
+# can't wedge it, this checks that the CLUSTER serves. CA *trust* is intentionally ignored (-k), since
 # LE staging is untrusted-but-fine; every OTHER tls/h2 failure keeps waiting. Best-effort: warns (does
 # not fail the rebuild) if it can't confirm within INGRESS_WAIT.
-say "STEP 7/7 — verify ingress serving (LE cert + clean HTTP/2), up to ${INGRESS_WAIT}s"
+say "STEP 7/7, verify ingress serving (LE cert + clean HTTP/2), up to ${INGRESS_WAIT}s"
 export KUBECONFIG="$KUBECONFIG_FILE"
 if ! command -v curl >/dev/null || ! command -v openssl >/dev/null; then
-  warn "curl/openssl not both present — skipping ingress verification"
+  warn "curl/openssl not both present, skipping ingress verification"
 else
   ingress_serves_ok() {   # $1=host $2=lbip ; returns 0 only for a real, LE-backed, clean-h2 response
     local host="$1" ip="$2" issuer code ver
@@ -137,7 +137,7 @@ else
   deadline=$(( $(date +%s) + INGRESS_WAIT )); remaining=""; lbip=""
   while :; do
     # Under mergeGateways every `eg` Gateway shares one LB Service, so each Gateway's status carries the
-    # same address — read it from whichever Gateway in the ns has one (shared-gateway is now :80-only).
+    # same address, read it from whichever Gateway in the ns has one (shared-gateway is now :80-only).
     lbip="$(kubectl get gateway -n "$INGRESS_GW_NS" \
             -o jsonpath='{range .items[*]}{.status.addresses[0].value}{"\n"}{end}' 2>/dev/null | grep -m1 .)"
     if [ -n "$INGRESS_HOSTS" ]; then hosts="$INGRESS_HOSTS"; else
@@ -153,7 +153,7 @@ else
       [ -z "${remaining// }" ] && { ok "all ingress hosts serve an LE cert over clean HTTP/2 (via ${lbip})"; break; }
     fi
     if [ "$(date +%s)" -ge "$deadline" ]; then
-      warn "ingress not fully serving within ${INGRESS_WAIT}s${lbip:+ (LB ${lbip})} — still pending:${remaining:-  <gateway/hosts not found yet>}"
+      warn "ingress not fully serving within ${INGRESS_WAIT}s${lbip:+ (LB ${lbip})}, still pending:${remaining:-  <gateway/hosts not found yet>}"
       warn "inspect: kubectl get gateway,certificate -A ; kubectl -n argocd get applications"
       break
     fi
@@ -172,8 +172,8 @@ envoy-gateway, gateway, SSO, monitoring). Watch it:
 
 Notes:
   - If the key restore (STEP 6) didn't run, do it once sealed-secrets is up
-    (./07_sealed_secrets/07_restore_sealed_secrets_key.sh), or re-seal with 12_google_sso +
-    16_grafana_smtp and commit+push.
+    (./06_secrets/06_restore_sealed_secrets_key.sh), or re-seal with 07_google_sso +
+    09_grafana_smtp and commit+push.
   - TLS certs re-issue via HTTP-01; first issuance takes a few minutes. If you've rebuilt repeatedly,
     validate hosts on letsencrypt-staging before flipping to prod (tight rate limits).
 EOF

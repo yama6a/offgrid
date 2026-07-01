@@ -1,7 +1,7 @@
 apiVersion: v2
 name: cilium
 description: >-
-  Wrapper chart for Cilium on Talos/Raspberry Pi 5 — the CNI + LoadBalancer
+  Wrapper chart for Cilium on Talos/Raspberry Pi 5, the CNI + LoadBalancer
   (LB-IPAM/L2) + Gateway API + WireGuard encryption. Single source of truth for
   the Cilium chart version (this file), its values (values.yaml), the Gateway API
   CRDs (crds/), and the LB-IPAM pool + L2 policy (templates/cilium-lb.yaml).
@@ -13,5 +13,5 @@ appVersion: "1.19.5"          # Cilium version it pins (mirrors the dependency b
 
 dependencies:
   - name: cilium
-    version: "1.19.5"         # cilium/cilium chart + image — THE single source for the pin
+    version: "1.19.5"         # cilium/cilium chart + image, THE single source for the pin
     repository: https://helm.cilium.io

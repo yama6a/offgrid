@@ -1,12 +1,12 @@
-# Values for the 02_local_path_provisioner wrapper chart. SINGLE SOURCE OF TRUTH — ArgoCD (and any
+# Values for the 02_local_path_provisioner wrapper chart. SINGLE SOURCE OF TRUTH, ArgoCD (and any
 # local `helm template`) consume this. Version pinned in Chart.yaml (appVersion). See
 # 18_local_path_provisioner.md for the why.
 #
-# Unlike the other platform charts this does NOT pull an upstream subchart — there's no maintained
+# Unlike the other platform charts this does NOT pull an upstream subchart, there's no maintained
 # public Helm repo for local-path-provisioner, so its manifests are vendored under templates/ and
 # parameterized from here. Runs in its own `local-path-storage` namespace (CreateNamespace=true in the
 # Application). PSA: the provisioner Deployment runs unprivileged, but its helper pods mount the node
-# data path as a `hostPath` volume — FORBIDDEN under `baseline` (Talos' default) — so the namespace is
+# data path as a `hostPath` volume, FORBIDDEN under `baseline` (Talos' default), so the namespace is
 # labelled `privileged` via managedNamespaceMetadata in the Application (like longhorn).
 
 image:
@@ -27,7 +27,7 @@ dataPath: /var/mnt/cnpg
 
 storageClass:
   name: local-path
-  # NOT the cluster default — Longhorn stays the default class; CNPG opts in by name.
+  # NOT the cluster default, Longhorn stays the default class; CNPG opts in by name.
   defaultClass: false
   # WaitForFirstConsumer is mandatory for true node-local storage: the volume only exists on one node,
   # so the scheduler must place the pod first (honoring CNPG's hostname anti-affinity) and provision
@@ -35,5 +35,5 @@ storageClass:
   volumeBindingMode: WaitForFirstConsumer
   # Retain so deleting a PVC/Cluster never silently destroys DB data (matches the old longhorn-single
   # rationale). NOTE: local-path's reclaim runs the teardown script (rm -rf $VOL_DIR) only on Delete;
-  # with Retain the host dir under /var/mnt/cnpg is left behind — clean up manually to reclaim space.
+  # with Retain the host dir under /var/mnt/cnpg is left behind, clean up manually to reclaim space.
   reclaimPolicy: Retain

@@ -1,4 +1,4 @@
-# Values for the 01_victoria_metrics_operator wrapper chart. SINGLE SOURCE OF TRUTH — ArgoCD (and any
+# Values for the 01_victoria_metrics_operator wrapper chart. SINGLE SOURCE OF TRUTH, ArgoCD (and any
 # local `helm template`) consume this. Chart version pinned in Chart.yaml. See 15_monitoring.md.
 #
 # Everything under `victoria-metrics-operator:` is passed to the upstream victoria-metrics-operator
@@ -12,7 +12,7 @@ victoria-metrics-operator:
     enabled: false
     plain: false
 
-  # The prometheus-operator CONVERTER — the heart of the zero-rewrite migration.
+  # The prometheus-operator CONVERTER, the heart of the zero-rewrite migration.
   operator:
     # Keep the converter ON: ServiceMonitor -> VMServiceScrape, PodMonitor -> VMPodScrape,
     # PrometheusRule -> VMRule, Probe -> VMProbe, continuously.
@@ -22,12 +22,12 @@ victoria-metrics-operator:
     # the monitoring apps Synced/Healthy instead of fighting the operator. See 15_monitoring.md.
     prometheus_converter_add_argocd_ignore_annotations: true
     # Owner-reference converted objects to their source, so deleting a ServiceMonitor garbage-collects its
-    # VMServiceScrape — a clean cutover with no orphaned VM* copies when kube-prometheus-stack is removed.
+    # VMServiceScrape, a clean cutover with no orphaned VM* copies when kube-prometheus-stack is removed.
     enable_converter_ownership: true
 
-  # Validation webhook for VM*/VL* CR syntax is DISABLED — deliberately. Two reasons:
+  # Validation webhook for VM*/VL* CR syntax is DISABLED, deliberately. Two reasons:
   #   1. Wave ordering: this operator is wave 1, BEFORE cert-manager (wave 2), so the cert-manager-issued
-  #      webhook-cert path isn't available yet (it would deadlock — the webhook would reject the wave-7 CRs
+  #      webhook-cert path isn't available yet (it would deadlock, the webhook would reject the wave-7 CRs
   #      before cert-manager exists to issue its serving cert).
   #   2. The chart's non-cert-manager fallback generates the webhook cert with Helm's genCA at TEMPLATE
   #      time; ArgoCD re-renders on every sync, so the served cert and the injected caBundle drift apart

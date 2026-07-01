@@ -1,7 +1,7 @@
 apiVersion: v2
 name: victoria-logs
 description: >-
-  Wrapper chart for the LOGS half of the observability stack — a single-replica VLSingle (VictoriaLogs
+  Wrapper chart for the LOGS half of the observability stack, a single-replica VLSingle (VictoriaLogs
   store, Longhorn-backed, 60d retention, reconciled by the standalone VM operator) plus the
   victoria-logs-collector DaemonSet that tails every container log on every node and remote-writes to it.
   The store is a hand-written VLSingle CR (templates/vlsingle.yaml) so it stays under the one VM operator
@@ -9,7 +9,7 @@ description: >-
   operator auto-creates a self VMServiceScrape for VLSingle and the collector ships a VMPodScrape
   (podMonitor.vm), so vmagent monitors the logging stack's health with no extra wiring. CRDs come from
   wave 0 (00_victoria_metrics_operator_crds). Single source of truth for the chart version (this file) and
-  all config (values.yaml). Delivered by ArgoCD via argo_apps/apps/07_victoria_logs.yaml — wave 7 (after
+  all config (values.yaml). Delivered by ArgoCD via argo_apps/apps/07_victoria_logs.yaml, wave 7 (after
   the operator wave 1 + Longhorn wave 2; same wave as the metrics stack and Grafana). See 15_monitoring.md.
 type: application
 version: 0.1.0                 # this wrapper chart's own version
@@ -17,5 +17,5 @@ appVersion: "v1.51.0"         # VictoriaLogs version (store image + collector ap
 
 dependencies:
   - name: victoria-logs-collector
-    version: "0.3.6"          # VictoriaMetrics/victoria-logs-collector — THE single source for the pin
+    version: "0.3.6"          # VictoriaMetrics/victoria-logs-collector, THE single source for the pin
     repository: https://victoriametrics.github.io/helm-charts/

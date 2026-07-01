@@ -4,8 +4,7 @@
 #
 # Run AFTER flashing (03b_talos_image_flasher.sh) and booting each Pi from NVMe
 # with no SD card. Checks the nodes (CLUSTER_NODES in .env) in MAINTENANCE mode
-# (pre-cluster, so `--insecure`), and inspects the output for correctness —
-# printing PASS/FAIL per check and an overall summary.
+# (pre-cluster, so `--insecure`), and inspects the output for correctness,# printing PASS/FAIL per check and an overall summary.
 #
 # talosctl runs via the official container: the native macOS client can wrongly
 # report "no route to host" even when the node is fine (see 03_operating_system.md).
@@ -25,7 +24,7 @@ EXPECT_CMDLINE="console=ttyAMA0,115200"      # rpi5 overlay signature in the ker
 # -----------------------------------------------------------------------------
 
 # talosctl via the official container, INSECURE + no talosconfig (maintenance mode, reliable on macOS).
-# Distinct from the lib's talosctl() (which mounts the cluster talosconfig) — these nodes aren't a cluster yet.
+# Distinct from the lib's talosctl() (which mounts the cluster talosconfig), these nodes aren't a cluster yet.
 tctl() {
   docker run --rm --network host "ghcr.io/siderolabs/talosctl:${TALOSCTL_VERSION}" "$@"
 }
@@ -37,7 +36,7 @@ docker pull -q "ghcr.io/siderolabs/talosctl:${TALOSCTL_VERSION}" >/dev/null
 
 # nodes to check (CLUSTER_NODES in .env, via the derived NODES)
 read -ra IPS <<< "$NODES"
-[ "${#IPS[@]}" -gt 0 ] || die "no nodes set — edit CLUSTER_NODES in .env"
+[ "${#IPS[@]}" -gt 0 ] || die "no nodes set, edit CLUSTER_NODES in .env"
 
 for ip in "${IPS[@]}"; do
   echo ""
@@ -47,7 +46,7 @@ for ip in "${IPS[@]}"; do
   if ping -c1 -t10 "$ip" >/dev/null 2>&1; then
     ok "reachable (ping)"
   else
-    bad "not reachable (ping) — skipping the rest for this node"
+    bad "not reachable (ping), skipping the rest for this node"
     continue
   fi
 
@@ -94,7 +93,7 @@ for ip in "${IPS[@]}"; do
   fi
 
   # 6. the Pi 5 overlay/kernel booted (dmesg needs certs, so check the kernel cmdline
-  #    for the rpi5 overlay's signature arg instead — maintenance-mode safe)
+  #    for the rpi5 overlay's signature arg instead, maintenance-mode safe)
   out=$(tctl -n "$ip" get kernelcmdlines -o yaml --insecure 2>&1); rc=$?
   if [ $rc -eq 0 ] && echo "$out" | grep -qF "$EXPECT_CMDLINE"; then
     ok "Pi 5 overlay/kernel booted (cmdline has ${EXPECT_CMDLINE})"
@@ -107,7 +106,7 @@ done
 
 summary
 if [ "$FAIL" -eq 0 ]; then
-  echo "All nodes good. Next: cluster bring-up — ./03d_talos_cluster_config.sh"
+  echo "All nodes good. Next: cluster bring-up, ./03d_talos_cluster_config.sh"
 else
   echo "Some checks failed. This script runs talosctl via the container to avoid the"
   echo "native macOS 'no route to host' gotcha."

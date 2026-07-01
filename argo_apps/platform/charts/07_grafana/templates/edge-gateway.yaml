@@ -1,8 +1,8 @@
-# This stack's own Gateway — a single :443 HTTPS listener terminating TLS for its UI host with the cert
+# This stack's own Gateway, a single :443 HTTPS listener terminating TLS for its UI host with the cert
 # this chart mints. Folded onto the cluster's one Envoy + LB IP by mergeGateways (01_envoy_gateway), so it
 # shares the single ingress point without its own LoadBalancer. In the gateway namespace so the HTTPRoute
 # (also gateway ns) attaches same-namespace and the 04_google_sso SecurityPolicy still selects it by label.
-# The listener is not-Ready only until its own cert issues — that wait lives on THIS Gateway, and under
+# The listener is not-Ready only until its own cert issues, that wait lives on THIS Gateway, and under
 # merge one UI's missing cert never blocks another. See 15_monitoring.md.
 {{- with .Values.ingress }}
 apiVersion: gateway.networking.k8s.io/v1

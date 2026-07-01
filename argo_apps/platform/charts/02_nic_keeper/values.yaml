@@ -1,8 +1,8 @@
-# Values for the 02_nic_keeper wrapper chart. SINGLE SOURCE OF TRUTH — every knob the
+# Values for the 02_nic_keeper wrapper chart. SINGLE SOURCE OF TRUTH, every knob the
 # DaemonSet + loop script use is here; nothing is hard-coded in the templates or the script
 # (the script reads them as env, with the same defaults as a fallback).
 
-# Image: must ship ethtool, iproute2 (ip + ss) and ping — Talos has no host shell, so the
+# Image: must ship ethtool, iproute2 (ip + ss) and ping, Talos has no host shell, so the
 # container brings its own tools. netshoot is the off-the-shelf option; pinned to the v0.13
 # multi-arch manifest digest (resolves to arm64 on the Pi 5). Swap for a slim purpose-built
 # image later if the footprint matters.
@@ -10,14 +10,14 @@ image: "nicolaka/netshoot:v0.13@sha256:a20c2531bf35436ed3766cd6cfe89d352b050ccc4
 
 iface: end0                   # the ONLY NIC the agent ever touches (Pi 5 wired NIC, macb)
 
-# Active-probe target. Empty → auto-detect the default gateway via `ip route` at runtime.
+# Active-probe target. Empty -> auto-detect the default gateway via `ip route` at runtime.
 # Set explicitly to probe something off-link if your gateway doesn't answer ICMP.
 pingTarget: ""
 
 checkIntervalSeconds: 5       # probe cadence
 failThreshold: 4              # consecutive probe failures before a recovery
 linkDownSeconds: 2            # how long the link stays down during a bounce
-cooldownSeconds: 60           # post-recovery quiet period — anti-flap
+cooldownSeconds: 60           # post-recovery quiet period, anti-flap
 
 # EEE is ALWAYS asserted off on start and after every bounce regardless of this. Set true to
 # also re-assert it on every successful probe cycle (belt-and-braces; usually unnecessary).
@@ -28,10 +28,10 @@ eeeReassertEachCycle: false
 # CONFIG_INET_DIAG_DESTROY; if absent the loop logs ss-k-unsupported and skips this step.
 ssKillFilter: "dport = :6443"
 
-# Where the agent runs. rpi5 hardware ONLY — the macb wedge is a Pi 5 problem, so a future
+# Where the agent runs. rpi5 hardware ONLY, the macb wedge is a Pi 5 problem, so a future
 # non-rpi5 node must NOT get this pod. The label is stamped by Talos machine.nodeLabels in 03d
 # (node.kubernetes.io/instance-type is on the kubelet NodeRestriction allowlist, so it's settable).
-# NOT node-role.kubernetes.io/control-plane:DoesNotExist — every node here is control-plane, so
+# NOT node-role.kubernetes.io/control-plane:DoesNotExist, every node here is control-plane, so
 # that selector would match zero nodes (same trap as the Cilium L2 policy).
 nodeSelector:
   node.kubernetes.io/instance-type: rpi5

@@ -1,12 +1,12 @@
-# ArgoCD Application for the CloudNativePG operator (argo_apps/platform/charts/02_cnpg_operator/) — the
+# ArgoCD Application for the CloudNativePG operator (argo_apps/platform/charts/02_cnpg_operator/), the
 # Kubernetes-native PostgreSQL controller + its CRDs. This installs the OPERATOR ONLY; the actual
 # database (a Cluster CR on a node-local local-path StorageClass) is the sample-workload workload. See 17_cnpg.md.
 #
-# AUTOMATED (prune + selfHeal): a safe leaf, like cert-manager / longhorn / sealed-secrets — it can't
+# AUTOMATED (prune + selfHeal): a safe leaf, like cert-manager / longhorn / sealed-secrets, it can't
 # cut the cluster off its own network, so drift should auto-correct. A prune won't cascade-delete the
 # databases: those Cluster CRs live in the separate sample-workload workload, and their PVCs are reclaimPolicy: Retain.
 #
-# sync-wave "2": same wave as cert-manager / longhorn / sealed-secrets — all independent leaves, none
+# sync-wave "2": same wave as cert-manager / longhorn / sealed-secrets, all independent leaves, none
 # depends on the others (the operator only needs the CNI). Per CLAUDE.md the NN prefix IS the wave, so
 # they share `02_` (distinct dir names). The sample-workload workload syncs only after the whole platform
 # is Healthy, so its Cluster CRD + Longhorn are guaranteed present first.
@@ -32,4 +32,4 @@ spec:
       selfHeal: true
     syncOptions:
       - CreateNamespace=true
-      - ServerSideApply=true   # the CNPG CRDs are large — SSA avoids the last-applied-annotation limit
+      - ServerSideApply=true   # the CNPG CRDs are large, SSA avoids the last-applied-annotation limit

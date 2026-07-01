@@ -1,6 +1,6 @@
 # Routes the ArgoCD UI host to argocd-server (cross-namespace, via the ReferenceGrant below). Lives in
 # the gateway namespace so the 04_google_sso SecurityPolicy (also gateway ns) selects it by the
-# `sso: <domain>` label — that's the Google gate. ArgoCD's own admin login runs behind it.
+# `sso: <domain>` label, that's the Google gate. ArgoCD's own admin login runs behind it.
 apiVersion: gateway.networking.k8s.io/v1
 kind: HTTPRoute
 metadata:

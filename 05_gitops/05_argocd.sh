@@ -2,7 +2,7 @@
 #
 # 05_argocd.sh  (macOS)
 #
-# Installs ArgoCD — the GitOps engine — on the cluster from step 03, networked by step 04
+# Installs ArgoCD, the GitOps engine, on the cluster from step 03, networked by step 04
 # (Cilium). This is the LAST component installed imperatively: ArgoCD then manages itself and
 # every later app from argo_apps/. One-time bootstrap; re-run safe (helm upgrade --install).
 #
@@ -19,8 +19,8 @@
 #   4. applies the app-of-apps root  ->  cilium (wave 0) then argocd (wave 1) auto-adopt their releases
 #   5. waits for root + argocd to be Synced/Healthy and prints UI access
 #
-# Uses NATIVE helm + kubectl (errors out if either is missing) — like 04_cilium.sh, unlike the
-# dockerized talos-phase scripts (03a–03e). Talks to the cluster via the step-03 kubeconfig.
+# Uses NATIVE helm + kubectl (errors out if either is missing), like 04_cilium.sh, unlike the
+# dockerized talos-phase scripts (03a-03e). Talks to the cluster via the step-03 kubeconfig.
 #
 set -uo pipefail
 
@@ -34,8 +34,8 @@ RELEASE="argocd"
 NS="argocd"
 REPO_ARGO="https://argoproj.github.io/argo-helm"
 HELM_TIMEOUT="8m"                                  # 3x Pi 5 image pulls can be slow
-GIT_TOKEN=""                                       # PRIVATE-repo read-only PAT (the ONLY secret) — filled by the prompt below
-# REPO_URL (the repo ArgoCD polls) is config — see .env.
+GIT_TOKEN=""                                       # PRIVATE-repo read-only PAT (the ONLY secret), filled by the prompt below
+# REPO_URL (the repo ArgoCD polls) is config, see .env.
 # -----------------------------------------------------------------------------
 
 # wait until an ArgoCD Application reports Synced + Healthy (or time out)
@@ -58,8 +58,8 @@ require kubectl helm
 [ -f "${ROOT_APP}" ] || die "no root app at ${ROOT_APP}"
 use_kubeconfig
 assert_api
-# ArgoCD (and everything else) needs Cilium's pod network — step 04 must have run.
-kubectl -n kube-system get ds/cilium >/dev/null 2>&1 || die "Cilium not found — run step 04 (04_cilium.sh) first"
+# ArgoCD (and everything else) needs Cilium's pod network, step 04 must have run.
+kubectl -n kube-system get ds/cilium >/dev/null 2>&1 || die "Cilium not found, run step 04 (04_cilium.sh) first"
 ok "kubectl + helm present, API reachable, chart + root app found, Cilium up"
 
 # === 1. resolve the argo-cd subchart =========================================
@@ -74,7 +74,7 @@ else
   bad "helm dependency build/update failed (see: helm dependency build ${CHART_DIR})"
 fi
 if [ "$LOCK_BEFORE" -eq 0 ] && [ -f "${CHART_DIR}/Chart.lock" ]; then
-  say "NOTE: Chart.lock was just generated — COMMIT it"
+  say "NOTE: Chart.lock was just generated, COMMIT it"
   echo "   ArgoCD's repo-server runs 'helm dependency build', which REQUIRES a committed Chart.lock."
   echo "   git add ${CHART_DIR#${REPO_ROOT}/}/Chart.lock"
 fi
@@ -102,13 +102,13 @@ kubectl -n "$NS" rollout status deploy/argocd-server --timeout=180s >/dev/null 2
 
 # === 4. hand off to GitOps ===================================================
 # ArgoCD reads from GIT, not local disk. The root app (and the argocd self-app) point at paths
-# under argo_apps/ in the PUBLIC repo — they must be committed AND pushed first, or the apps show
+# under argo_apps/ in the PUBLIC repo, they must be committed AND pushed first, or the apps show
 # a ComparisonError ("path does not exist"). Re-running this script after pushing is safe.
 say "handing off to GitOps (kubectl apply root)"
 
 # The repo ArgoCD polls comes from .env (REPO_URL); pin it into root.yaml below.
-[ -n "$REPO_URL" ] || die "REPO_URL is empty — set it in .env"
-# Idempotent: a no-op when the URL already matches. Only the root-of-roots — the child roots under
+[ -n "$REPO_URL" ] || die "REPO_URL is empty, set it in .env"
+# Idempotent: a no-op when the URL already matches. Only the root-of-roots, the child roots under
 # argo_apps/roots/ AND every app under argo_apps/{platform,workloads}/apps/ also carry a repoURL; if
 # you point at a fork, rewrite those too (see 05_gitops.md).
 # Temp-file rewrite (no `sed -i`): portable across BSD sed and GNU sed (Homebrew gnu-sed on PATH).
@@ -121,26 +121,26 @@ else
 fi
 
 # ArgoCD clones the PUSHED repo, so local-only changes are invisible to the root app. Automatic guards
-# (no prompt — re-run after pushing, it's idempotent): flag uncommitted changes under argo_apps/ or
+# (no prompt, re-run after pushing, it's idempotent): flag uncommitted changes under argo_apps/ or
 # 05_gitops/, and any committed-but-unpushed commits on the current branch.
 if [ -n "$REPO_ROOT" ]; then
   [ -n "$(git -C "$REPO_ROOT" status --porcelain -- argo_apps 05_gitops 2>/dev/null)" ] \
-    && bad "uncommitted changes under argo_apps/ or 05_gitops/ — commit & push them, then re-run"
+    && bad "uncommitted changes under argo_apps/ or 05_gitops/, commit & push them, then re-run"
   ahead="$(git -C "$REPO_ROOT" rev-list --count '@{u}..HEAD' 2>/dev/null || echo 0)"
   [ "${ahead:-0}" -gt 0 ] \
-    && bad "${ahead} unpushed commit(s) on the current branch — push them, then re-run (ArgoCD only sees pushed commits)"
+    && bad "${ahead} unpushed commit(s) on the current branch, push them, then re-run (ArgoCD only sees pushed commits)"
 fi
 
-# Optional git credential. Seeded out-of-band here — before the root app — as an ArgoCD repo-creds
+# Optional git credential. Seeded out-of-band here, before the root app, as an ArgoCD repo-creds
 # credential template (secret-type: repo-creds), whose url is a PREFIX-match. We set it to the FULL
-# repo $REPO_URL (not the github.com/<user> prefix) so it scopes to exactly this repo — our PAT is
+# repo $REPO_URL (not the github.com/<user> prefix) so it scopes to exactly this repo, our PAT is
 # fine-grained and only authorizes this one repo. Empty token => anonymous HTTPS (fine for a PUBLIC
 # repo). forceHttpBasicAuth makes ArgoCD send the PAT preemptively even though the repo is public,
 # so polling git ls-remote is AUTHENTICATED (5000/h rate limit, not the 60/h anonymous one). The
-# app's repoURL just has to start with this url — it equals it — so no inline repo Secret is needed.
+# app's repoURL just has to start with this url, it equals it, so no inline repo Secret is needed.
 # See 05_gitops.md.
 say "git credential (single-repo PAT)"
-# Ask for the PAT interactively (hidden input) — the one secret this script prompts for.
+# Ask for the PAT interactively (hidden input), the one secret this script prompts for.
 if [ -z "$GIT_TOKEN" ]; then
   cat <<'EOF'
    For a PRIVATE repo, paste a fine-grained, READ-ONLY, single-repo PAT (leave empty for a PUBLIC
@@ -187,7 +187,7 @@ say "waiting for root + argocd to reconcile"
 wait_app root   300
 wait_app argocd 300
 csync=$(kubectl -n "$NS" get application cilium -o jsonpath='{.status.sync.status}' 2>/dev/null)
-echo "   app/cilium sync status: ${csync:-<not created yet>}  (expected Synced — auto-adopted, no pod churn)"
+echo "   app/cilium sync status: ${csync:-<not created yet>}  (expected Synced, auto-adopted, no pod churn)"
 
 # === 6. access + summary =====================================================
 say "ArgoCD access"
@@ -198,7 +198,7 @@ cat <<EOF
      open http://localhost:8080   (user: admin)
    admin password:
      ${ADMIN_PW:-<run: kubectl -n ${NS} get secret argocd-initial-admin-secret -o jsonpath='{.data.password}' | base64 -d>}
-   All apps auto-adopt their running releases — nothing to click.
+   All apps auto-adopt their running releases, nothing to click.
 EOF
 
 summary

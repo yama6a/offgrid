@@ -1,5 +1,5 @@
-# Let's Encrypt ClusterIssuers (cluster-scoped — usable by Certificates in any namespace).
-# Let's Encrypt ClusterIssuers (cluster-scoped — usable by Certificates in any namespace).
+# Let's Encrypt ClusterIssuers (cluster-scoped, usable by Certificates in any namespace).
+# Let's Encrypt ClusterIssuers (cluster-scoped, usable by Certificates in any namespace).
 # Each solves HTTP-01 by having cert-manager create a temporary HTTPRoute attached to the shared
 # Gateway (parentRefs below); the challenge is served on the Gateway's :80 listener. Reachability
 # from the internet is provided by the old Raspberry Pi forwarding :80 for the migrated host to the

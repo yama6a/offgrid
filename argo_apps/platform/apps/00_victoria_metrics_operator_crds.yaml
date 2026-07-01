@@ -1,14 +1,14 @@
 # ArgoCD Application for the VictoriaMetrics operator CRDs (argo_apps/charts/00_victoria_metrics_operator_crds/).
-# CRDs ONLY — no controller. The operator lands at wave 1 (01_victoria_metrics_operator, crds.enabled:false)
+# CRDs ONLY, no controller. The operator lands at wave 1 (01_victoria_metrics_operator, crds.enabled:false)
 # and the VM/VL custom resources at wave 7; this app owns their CRD lifecycle separately so they can be
 # upgraded independently and so the CRDs exist before ANY consumer.
 #
 # sync-wave "0": foundational, alongside cilium and the Prometheus operator CRDs. CRDs with no controller
 # are inert; VM*/VL* CRs created before the operator (wave 1) simply wait for it.
 #
-# AUTOMATED with prune:false — a CRD-only app must NEVER cascade-delete its CRDs (that would take every
+# AUTOMATED with prune:false, a CRD-only app must NEVER cascade-delete its CRDs (that would take every
 # VMSingle/VMAgent/VMServiceScrape/VMRule/VLSingle CR with them). selfHeal:true is safe: re-applying CRDs
-# can't cut the cluster off its network. ServerSideApply=true — the VM CRDs are huge and blow past the
+# can't cut the cluster off its network. ServerSideApply=true, the VM CRDs are huge and blow past the
 # client-side last-applied-annotation size limit. See 15_monitoring.md.
 apiVersion: argoproj.io/v1alpha1
 kind: Application
@@ -32,4 +32,4 @@ spec:
       selfHeal: true
     syncOptions:
       - CreateNamespace=true
-      - ServerSideApply=true   # VM operator CRDs are large — SSA avoids the last-applied-annotation limit
+      - ServerSideApply=true   # VM operator CRDs are large, SSA avoids the last-applied-annotation limit

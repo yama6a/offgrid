@@ -1,15 +1,15 @@
-# ArgoCD Application for the Google-SSO SecurityPolicy (argo_apps/charts/04_google_sso/) — the OPTIONAL
+# ArgoCD Application for the Google-SSO SecurityPolicy (argo_apps/charts/04_google_sso/), the OPTIONAL
 # auth layer that attaches Google OIDC + an email allowlist to any HTTPRoute labelled `auth: google-sso`.
 # See 12_google_sso.md.
 #
-# AUTOMATED (prune + selfHeal): a safe leaf — it owns no CRDs and can't cut the cluster off its network.
+# AUTOMATED (prune + selfHeal): a safe leaf, it owns no CRDs and can't cut the cluster off its network.
 # Its only secret (the OAuth client secret) comes from a committed SealedSecret (unsealed by the wave-2
 # controller); the raw Secret is not in git, so prune never touches it.
 #
-# sync-wave "4": after the gateway (wave 3 — the routes it targets + the Gateway exist) and
-# sealed-secrets (wave 2 — unseals the client secret) and Envoy Gateway (wave 1 — owns the SecurityPolicy
+# sync-wave "4": after the gateway (wave 3, the routes it targets + the Gateway exist) and
+# sealed-secrets (wave 2, unseals the client secret) and Envoy Gateway (wave 1, owns the SecurityPolicy
 # CRD). Last wave, nothing depends on it: until 12_google_sso.sh seals the client secret and you commit
-# it, the policy references a missing Secret and the labelled route is NOT protected (fail-open) — run
+# it, the policy references a missing Secret and the labelled route is NOT protected (fail-open), run
 # the script first. Per CLAUDE.md the NN prefix IS the wave.
 apiVersion: argoproj.io/v1alpha1
 kind: Application
@@ -19,7 +19,7 @@ metadata:
   annotations:
     argocd.argoproj.io/sync-wave: "4"
     # Diff via a server-side-apply dry-run so server-defaulted Gateway API fields (parentRefs/backendRefs
-    # group+kind, rules.matches, weight, …) don't show as perpetual OutOfSync. Pairs with ServerSideApply
+    # group+kind, rules.matches, weight, ...) don't show as perpetual OutOfSync. Pairs with ServerSideApply
     # below. Needs ArgoCD >= 2.10. See 12_google_sso.md.
     argocd.argoproj.io/compare-options: ServerSideDiff=true
 spec:

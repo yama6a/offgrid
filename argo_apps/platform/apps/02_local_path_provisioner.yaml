@@ -1,20 +1,19 @@
-# ArgoCD Application for local-path-provisioner (argo_apps/platform/charts/02_local_path_provisioner/) —
-# node-local dynamic PVs on the dedicated XFS 'cnpg' user volume (mounted at /var/mnt/cnpg by 03d,
+# ArgoCD Application for local-path-provisioner (argo_apps/platform/charts/02_local_path_provisioner/),# node-local dynamic PVs on the dedicated XFS 'cnpg' user volume (mounted at /var/mnt/cnpg by 03d,
 # exposed to the kubelet by 03d's extraMount). It backs CloudNativePG OFF Longhorn so that Postgres
 # streaming replication is the only replication layer, on a partition isolated from Longhorn's.
 # See 18_local_path_provisioner.md.
 #
-# AUTOMATED (prune + selfHeal): a safe leaf like longhorn / cnpg-operator / sealed-secrets — it owns
+# AUTOMATED (prune + selfHeal): a safe leaf like longhorn / cnpg-operator / sealed-secrets, it owns
 # no CRDs and can't cut the cluster off its network, so drift should auto-correct.
 #
-# sync-wave "2": same wave as longhorn / cnpg-operator / cert-manager / sealed-secrets — independent
+# sync-wave "2": same wave as longhorn / cnpg-operator / cert-manager / sealed-secrets, independent
 # storage leaves, none depends on the others. Per CLAUDE.md the NN prefix IS the wave (02_). The CNPG
 # *cluster* that consumes the local-path class is a workload, only created once the whole platform is
-# Healthy, so any platform wave is early enough — wave 2 keeps it with the storage leaves.
+# Healthy, so any platform wave is early enough, wave 2 keeps it with the storage leaves.
 #
 # Privileged PSA IS required: the provisioner Deployment itself runs unprivileged, but the short-lived
 # helper pods it stamps out to mkdir/rm the per-volume dirs mount the node's data path as a `hostPath`
-# volume — and hostPath is FORBIDDEN under `baseline`, which is Talos' cluster-wide default. So like
+# volume, and hostPath is FORBIDDEN under `baseline`, which is Talos' cluster-wide default. So like
 # longhorn, the namespace must be labelled `privileged` (managedNamespaceMetadata below) or the helper
 # pods are rejected at admission and PVC provisioning fails with a PodSecurity "baseline" violation.
 apiVersion: argoproj.io/v1alpha1

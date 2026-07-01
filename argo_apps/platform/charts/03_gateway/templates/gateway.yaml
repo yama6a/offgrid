@@ -1,6 +1,6 @@
 # The platform's ACME ingress Gateway. Envoy Gateway (the `eg` class, mergeGateways: true) folds this
 # and every per-app Gateway onto ONE data-plane Envoy + LoadBalancer Service, pinned to the LB-IPAM IP
-# by the EnvoyProxy `lbipam.cilium.io/ips` annotation (01_envoy_gateway chart) — that annotation is the
+# by the EnvoyProxy `lbipam.cilium.io/ips` annotation (01_envoy_gateway chart), that annotation is the
 # sole IP authority now, so this Gateway carries no spec.addresses (it would conflict on the shared
 # Service under merge).
 #

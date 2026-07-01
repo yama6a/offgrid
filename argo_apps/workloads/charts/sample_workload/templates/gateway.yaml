@@ -1,6 +1,6 @@
 {{- range .Values.ingress.hosts }}
 ---
-# {{ .name }}'s own Gateway — a single :443 HTTPS listener terminating TLS for {{ .host }} with the cert
+# {{ .name }}'s own Gateway, a single :443 HTTPS listener terminating TLS for {{ .host }} with the cert
 # this chart mints. Folded onto the cluster's one Envoy + LB IP by mergeGateways (01_envoy_gateway), so
 # the workload owns its full ingress without its own LoadBalancer. In the gateway namespace so the
 # HTTPRoute attaches same-namespace and{{ if .sso }} the 04_google_sso SecurityPolicy still selects it by

@@ -1,20 +1,20 @@
-# Values for the 02_metrics_server wrapper chart. SINGLE SOURCE OF TRUTH — ArgoCD (and any local
+# Values for the 02_metrics_server wrapper chart. SINGLE SOURCE OF TRUTH, ArgoCD (and any local
 # `helm template`) consume this. Chart version pinned in Chart.yaml. See 19_metrics_server.md for the why.
 #
 # metrics-server runs in kube-system (CreateNamespace is a no-op there) and serves the metrics.k8s.io
-# aggregated API for `kubectl top` + CPU/memory HPAs. No privileged PSA needed — the pod runs non-root.
+# aggregated API for `kubectl top` + CPU/memory HPAs. No privileged PSA needed, the pod runs non-root.
 #
 # Everything under `metrics-server:` is passed to the upstream metrics-server subchart (key == dependency name).
 metrics-server:
   # Talos kubelets serve a SELF-SIGNED serving cert (no rotate-server-certificates / CSR approver in this
-  # cluster — see 03d_talos_cluster_config.sh), so metrics-server can't verify the kubelet's identity.
+  # cluster, see 03d_talos_cluster_config.sh), so metrics-server can't verify the kubelet's identity.
   # --kubelet-insecure-tls skips that verification; the scrape stays TLS-encrypted, only the cert identity
-  # is unverified — acceptable for a pod→kubelet hop on this trusted, NIC-hardened L2. The secure
+  # is unverified, acceptable for a pod->kubelet hop on this trusted, NIC-hardened L2. The secure
   # alternative (rotate-server-certificates + a CSR approver + --kubelet-certificate-authority) is the
   # documented future upgrade. See 19_metrics_server.md.
   #
   # `args` is APPENDED to the chart's `defaultArgs`, which already carry the rest of what Talos needs:
-  #   --kubelet-preferred-address-types=InternalIP,ExternalIP,Hostname  (InternalIP first — kubelet
+  #   --kubelet-preferred-address-types=InternalIP,ExternalIP,Hostname  (InternalIP first, kubelet
   #       serving-cert SANs are the node IPs; Talos hostnames aren't in DNS)
   #   --kubelet-use-node-status-port   --metric-resolution=15s   --cert-dir=/tmp
   # We leave those defaults intact and only add the one flag.
@@ -31,7 +31,7 @@ metrics-server:
       memory: 200Mi
 
   # Expose metrics-server's own /metrics and ship a ServiceMonitor. The VM operator's prometheus
-  # converter turns it into a VMServiceScrape and vmagent (selectAllByDefault) scrapes it — same pattern
+  # converter turns it into a VMServiceScrape and vmagent (selectAllByDefault) scrapes it, same pattern
   # as cnpg / longhorn / sealed-secrets. The ServiceMonitor CRD exists from wave 0 (prometheus-operator-crds).
   metrics:
     enabled: true

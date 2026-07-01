@@ -1,6 +1,6 @@
 # Lets the HTTPRoutes (in the gateway namespace) reference the sample app Service in this chart's
 # release namespace ({{ .Release.Namespace }}). Cross-namespace backendRefs require a ReferenceGrant in
-# the BACKEND's namespace. One grant covers both hosts (open + SSO) — they target the same Service.
+# the BACKEND's namespace. One grant covers both hosts (open + SSO), they target the same Service.
 apiVersion: gateway.networking.k8s.io/v1beta1
 kind: ReferenceGrant
 metadata:

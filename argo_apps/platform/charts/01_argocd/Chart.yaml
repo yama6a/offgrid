@@ -1,7 +1,7 @@
 apiVersion: v2
 name: argocd
 description: >-
-  Wrapper chart for ArgoCD on the Talos/Raspberry Pi 5 cluster — the GitOps engine
+  Wrapper chart for ArgoCD on the Talos/Raspberry Pi 5 cluster, the GitOps engine
   that manages itself and every later app under argo_apps/. Single source of truth for
   the argo-cd chart version (this file) and its HA-lite values (values.yaml, under the
   `argo-cd:` key). Bootstrapped imperatively once by ../../../05_gitops/05_argocd.sh,
@@ -12,5 +12,5 @@ appVersion: "v3.4.4"          # ArgoCD version the pinned chart ships (mirrors t
 
 dependencies:
   - name: argo-cd
-    version: "9.6.0"          # argoproj/argo-helm argo-cd chart — THE single source for the pin
+    version: "9.6.0"          # argoproj/argo-helm argo-cd chart, THE single source for the pin
     repository: https://argoproj.github.io/argo-helm

@@ -1,4 +1,4 @@
-# Values for the 06_argocd_ingress wrapper chart. SINGLE SOURCE OF TRUTH — ArgoCD (and any local
+# Values for the 06_argocd_ingress wrapper chart. SINGLE SOURCE OF TRUTH, ArgoCD (and any local
 # `helm template`) consume this.
 #
 # Fronts the ArgoCD UI on `host` through its OWN Gateway (a single :443 listener, merged onto the one
@@ -18,14 +18,14 @@ host: argocd.example.com
 listenerName: argocd
 tlsSecretName: argocd-tls
 # Cert issuer (HTTP-01). STAGING for the brand-new host; flip to letsencrypt-prod once it issues (the
-# UI is browser-facing, so a trusted cert is wanted — example.com's HTTP-01 path is already validated).
+# UI is browser-facing, so a trusted cert is wanted, example.com's HTTP-01 path is already validated).
 issuer: letsencrypt-staging
 
 # Route label that opts this host into SSO. `sso: <domain>` -> gated by that domain's SecurityPolicy.
 routeLabelKey: sso
 sso: "example.com"
 
-# The in-cluster Service to route to (cross-namespace — needs the ReferenceGrant this chart ships).
+# The in-cluster Service to route to (cross-namespace, needs the ReferenceGrant this chart ships).
 # argocd-server :80 serves the UI/API over HTTP (server.insecure: true); the Gateway terminates TLS.
 backend:
   name: argocd-server

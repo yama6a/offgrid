@@ -1,4 +1,4 @@
-# Values for the 01_envoy_gateway wrapper chart. SINGLE SOURCE OF TRUTH — ArgoCD (and any local
+# Values for the 01_envoy_gateway wrapper chart. SINGLE SOURCE OF TRUTH, ArgoCD (and any local
 # `helm template`) consume this. Chart version pinned in Chart.yaml.
 #
 # This chart delivers the envoy-gateway controller (which also installs the Gateway API + Envoy
@@ -23,7 +23,7 @@ envoyProxy:
 gateway-helm:
   # Quiet the envoy-gateway CONTROLLER's xDS reconcile INFO logs (this is the control plane, not the
   # data-plane proxy). WARN keeps routing/translation errors. The per-Gateway Envoy PROXY access logs
-  # (the `envoy` containers — our HTTP request/response logs) are emitted separately and stay untouched.
+  # (the `envoy` containers, our HTTP request/response logs) are emitted separately and stay untouched.
   config:
     envoyGateway:
       logging:

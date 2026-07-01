@@ -1,4 +1,4 @@
-# Values for the sample_workload wrapper chart. SINGLE SOURCE OF TRUTH — ArgoCD (and any local
+# Values for the sample_workload wrapper chart. SINGLE SOURCE OF TRUTH, ArgoCD (and any local
 # `helm template`) consume this. Chart (cnpg/cluster) version pinned in Chart.yaml.
 # See 13_sample_workload.md / 17_cnpg.md / 18_local_path_provisioner.md for the why.
 #
@@ -19,7 +19,7 @@ app:
   replicas: 1
   # The CNPG operator auto-generates the bootstrap owner's credentials into the `<cluster>-app` Secret.
   # The Cluster is named `<release>-cluster` by the cnpg/cluster chart, so the Secret is
-  # `sample-workload-cluster-app` — left blank here to derive it from the release name (stays correct if
+  # `sample-workload-cluster-app`, left blank here to derive it from the release name (stays correct if
   # renamed). PG_PASSWORD is taken from its `password` key; templates/app.yaml passes it plus PG_HOST/
   # PG_USER/PG_DATABASE (pointing at THIS chart's `<release>-cluster-rw` Service) to the app, which
   # assembles + escapes the DSN itself. (The app's built-in default DSN already targets this cluster too.)
@@ -54,9 +54,9 @@ ingress:
 # ---- the CloudNativePG Postgres Cluster (upstream cnpg/cluster dependency) -------------------------
 # NOTE on nesting: everything is under `cluster:` because that's the dependency NAME (cnpg/cluster).
 # The upstream chart ITSELF has a top-level `cluster:` map for the Cluster CR spec, hence the
-# `cluster.cluster.*` double key below — that's expected, not a typo.
+# `cluster.cluster.*` double key below, that's expected, not a typo.
 cluster:
-  # postgresql | postgis | timescaledb — plain Postgres here.
+  # postgresql | postgis | timescaledb, plain Postgres here.
   type: postgresql
 
   # ---- the Cluster CR spec ----
@@ -68,18 +68,18 @@ cluster:
 
     storage:
       # Node-local storage on the dedicated /var/mnt/cnpg partition (platform app
-      # 02_local_path_provisioner). Postgres is the ONLY replication layer now — no Longhorn engine/CSI
+      # 02_local_path_provisioner). Postgres is the ONLY replication layer now, no Longhorn engine/CSI
       # in the data path, and the partition is isolated from Longhorn's. See 18_local_path_provisioner.md.
       storageClass: local-path
       # REQUIRED by the CNPG Cluster CR, but a NO-OP under local-path: local-path neither reserves nor
-      # enforces this — it just makes a directory, and Postgres reads statfs on the mount (the whole
+      # enforces this, it just makes a directory, and Postgres reads statfs on the mount (the whole
       # ~50Gi partition). Set to the honest partition budget (minus XFS headroom) so it stays sane if
       # the class is ever swapped for an enforcing one (Longhorn/TopoLVM). It is NOT a real limit.
       size: 45Gi
 
     # The chart's default anti-affinity spreads by `topology.kubernetes.io/zone`, but bare Pi nodes
     # carry no zone label, so both instances could land on one node. Spread by hostname instead so the
-    # primary + replica occupy 2 distinct nodes (true node-loss HA — required for node-local storage).
+    # primary + replica occupy 2 distinct nodes (true node-loss HA, required for node-local storage).
     affinity:
       topologyKey: kubernetes.io/hostname
 
@@ -100,7 +100,7 @@ cluster:
 
     # Emit the Cluster's PodMonitor so vmagent scrapes per-instance Postgres metrics; the operator's
     # PrometheusRule ships CNPG alerts. Both are auto-converted by the VM operator and discovered
-    # cluster-wide — wires into VictoriaMetrics with no extra config. See 15_monitoring.md.
+    # cluster-wide, wires into VictoriaMetrics with no extra config. See 15_monitoring.md.
     monitoring:
       enabled: true
       podMonitor:
@@ -109,12 +109,12 @@ cluster:
         enabled: true
 
     # Bootstrap an `app` database owned by an `app` role; the operator auto-generates the owner's
-    # credentials into the `<cluster>-app` Secret — the same Secret the app reads PG_PASSWORD from.
+    # credentials into the `<cluster>-app` Secret, the same Secret the app reads PG_PASSWORD from.
     initdb:
       database: app
       owner: app
 
-  # No object-storage (Barman) backups in this pass — add later via the cnpg/plugin-barman-cloud and
+  # No object-storage (Barman) backups in this pass, add later via the cnpg/plugin-barman-cloud and
   # a sealed-secret for the S3 credentials. Until then durability rests on Postgres replication across
   # the 2 instances + the local-path class's Retain policy; node-local storage means a lost instance is
   # rebuilt from a surviving one via streaming replication.

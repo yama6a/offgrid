@@ -1,13 +1,13 @@
 apiVersion: v2
 name: metrics-server
 description: >-
-  Wrapper chart for kubernetes-sigs/metrics-server on the Talos/Raspberry Pi 5 cluster — the in-tree
+  Wrapper chart for kubernetes-sigs/metrics-server on the Talos/Raspberry Pi 5 cluster, the in-tree
   resource-metrics provider. It scrapes every kubelet's Summary API over HTTPS (:10250) and registers
   the aggregated `metrics.k8s.io` APIService, which is what backs `kubectl top node/pod` and the CPU/
   memory HorizontalPodAutoscalers. VictoriaMetrics covers custom/observability metrics but does NOT
   serve metrics.k8s.io, so this fills a real gap. Single source of truth for the chart version (this
   file) and its values (values.yaml, under the `metrics-server:` key). Delivered purely by ArgoCD (no
-  imperative bootstrap) via argo_apps/platform/apps/02_metrics_server.yaml — wave 2, same as cert-manager
+  imperative bootstrap) via argo_apps/platform/apps/02_metrics_server.yaml, wave 2, same as cert-manager
   / longhorn / sealed-secrets (independent leaves, only need the CNI). The image
   (registry.k8s.io/metrics-server/metrics-server) is multi-arch incl. arm64. See 19_metrics_server.md.
 type: application
@@ -16,5 +16,5 @@ appVersion: "0.8.1"           # metrics-server version the pinned chart ships (m
 
 dependencies:
   - name: metrics-server
-    version: "3.13.1"          # kubernetes-sigs/metrics-server chart — THE single source for the pin
+    version: "3.13.1"          # kubernetes-sigs/metrics-server chart, THE single source for the pin
     repository: https://kubernetes-sigs.github.io/metrics-server/

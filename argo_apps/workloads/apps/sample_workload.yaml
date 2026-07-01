@@ -1,10 +1,10 @@
-# ArgoCD Application for the sample workload (argo_apps/workloads/charts/sample_workload/) — the merge of
+# ArgoCD Application for the sample workload (argo_apps/workloads/charts/sample_workload/), the merge of
 # the old gateway-test demo and the cnpg-cluster Postgres into one app. Ships the sample app (PG_PASSWORD
 # injected from the CNPG secret), its CloudNativePG Cluster, and two ingress hosts:
 # sample-workload.example.com (OPEN) + sample-workload-sso.example.com (PROTECTED by the platform SSO
 # policy). See 13_sample_workload.md / 17_cnpg.md.
 #
-# AUTOMATED (prune + selfHeal): drift auto-corrects. A prune is data-safe — the Postgres PVCs use the
+# AUTOMATED (prune + selfHeal): drift auto-corrects. A prune is data-safe, the Postgres PVCs use the
 # `local-path` class with reclaimPolicy: Retain, so removing the Cluster CR never destroys the node-local
 # volumes (the dirs under /var/mnt/cnpg persist). The app + echo routes are safe leaves.
 #
@@ -13,7 +13,7 @@
 # (where the SSO SecurityPolicy + merged Envoy live), reaching the app via the chart's ReferenceGrant.
 #
 # A WORKLOAD, not platform: lives in the workloads tree, which the root-of-roots only creates AFTER the
-# whole platform tree is Healthy — so the CNPG operator's Cluster CRD, the local-path class, the Gateway,
+# whole platform tree is Healthy, so the CNPG operator's Cluster CRD, the local-path class, the Gateway,
 # AND the SSO SecurityPolicies all exist before this app reconciles (the protected route is never briefly
 # exposed; the Cluster CR never hits a missing CRD). No per-app sync-wave needed. See 05_gitops.md.
 apiVersion: argoproj.io/v1alpha1
@@ -23,7 +23,7 @@ metadata:
   namespace: argocd
   annotations:
     # Diff via a server-side-apply dry-run so server-defaulted Gateway API fields (HTTPRoute
-    # parentRefs/backendRefs group+kind, rules.matches, weight, …) and the large CNPG Cluster CR don't
+    # parentRefs/backendRefs group+kind, rules.matches, weight, ...) and the large CNPG Cluster CR don't
     # show as perpetual OutOfSync. Pairs with ServerSideApply below. Needs ArgoCD >= 2.10.
     argocd.argoproj.io/compare-options: ServerSideDiff=true
 spec:
@@ -41,4 +41,4 @@ spec:
       selfHeal: true
     syncOptions:
       - CreateNamespace=true
-      - ServerSideApply=true   # the CNPG Cluster CR is large — SSA avoids the last-applied-annotation limit
+      - ServerSideApply=true   # the CNPG Cluster CR is large, SSA avoids the last-applied-annotation limit

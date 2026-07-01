@@ -1,12 +1,12 @@
 # ArgoCD Application that exposes the ArgoCD UI through the shared Gateway behind Google SSO
-# (argo_apps/charts/06_argocd_ingress/). Edge only — ArgoCD stays local-admin/server.insecure. Two auth
+# (argo_apps/charts/06_argocd_ingress/). Edge only, ArgoCD stays local-admin/server.insecure. Two auth
 # layers: Google (outer gate) then the ArgoCD admin login. See 14_argocd_ingress.md.
 #
-# AUTOMATED (prune + selfHeal): a safe leaf — a Certificate + an HTTPRoute + a ReferenceGrant, no CRDs,
+# AUTOMATED (prune + selfHeal): a safe leaf, a Certificate + an HTTPRoute + a ReferenceGrant, no CRDs,
 # can't cut the cluster off its network. Break-glass if this wedges the UI: `kubectl -n argocd
 # port-forward svc/argocd-server 8080:80` bypasses the Gateway + SSO entirely.
 #
-# sync-wave "6": after the gateway (wave 3 — the `argocd` listener) AND the SSO policy (wave 4 — so the
+# sync-wave "6": after the gateway (wave 3, the `argocd` listener) AND the SSO policy (wave 4, so the
 # UI is gated the instant its labelled route appears, never briefly exposed). Per CLAUDE.md the NN
 # prefix IS the wave. ServerSideDiff so the Gateway API resources don't show perpetual OutOfSync.
 apiVersion: argoproj.io/v1alpha1
@@ -17,7 +17,7 @@ metadata:
   annotations:
     argocd.argoproj.io/sync-wave: "6"
     # Diff via a server-side-apply dry-run so server-defaulted Gateway API fields (HTTPRoute/
-    # ReferenceGrant group+kind, rules.matches, …) don't show as perpetual OutOfSync. Needs ArgoCD >= 2.10.
+    # ReferenceGrant group+kind, rules.matches, ...) don't show as perpetual OutOfSync. Needs ArgoCD >= 2.10.
     argocd.argoproj.io/compare-options: ServerSideDiff=true
 spec:
   project: default

@@ -1,8 +1,8 @@
-# Values for the 02_cert_manager wrapper chart. SINGLE SOURCE OF TRUTH — ArgoCD (and any local
+# Values for the 02_cert_manager wrapper chart. SINGLE SOURCE OF TRUTH, ArgoCD (and any local
 # `helm template`) consume this. Chart version pinned in Chart.yaml.
 #
 # cert-manager runs in its own `cert-manager` namespace (CreateNamespace=true in the Application).
-# This step installs the CONTROLLER ONLY — no Issuer/ClusterIssuer is shipped yet (the Let's Encrypt
+# This step installs the CONTROLLER ONLY, no Issuer/ClusterIssuer is shipped yet (the Let's Encrypt
 # wiring depends on a domain + public-reachable Cilium Gateway + ACME email, decided later). See
 # 08_cert_manager.md.
 
@@ -12,19 +12,19 @@ cert-manager:
   # Install the cert-manager CRDs as part of this release (the chart owns them)...
   crds:
     enabled: true
-    # ...but never let an ArgoCD prune cascade-delete them — that would take every Certificate,
+    # ...but never let an ArgoCD prune cascade-delete them, that would take every Certificate,
     # Issuer and Order CR down with them. `keep` leaves the CRDs in place on uninstall/prune.
     keep: true
 
   # Expose controller metrics (default on) + create the ServiceMonitor so Prometheus scrapes
-  # cert-manager. NOTE the lowercase `servicemonitor` key — cert-manager spells it differently from
+  # cert-manager. NOTE the lowercase `servicemonitor` key, cert-manager spells it differently from
   # most charts. CRDs exist from wave 0, before this wave-2 app. See 15_monitoring.md.
   prometheus:
     enabled: true
     servicemonitor:
       enabled: true
 
-  # Modest footprint for a 3x 8GB Pi 5 cluster — three light components (controller, webhook,
+  # Modest footprint for a 3x 8GB Pi 5 cluster, three light components (controller, webhook,
   # cainjector). Defaults are generous; trim requests, keep memory limits to bound the webhook.
   resources:
     requests: { cpu: 25m, memory: 64Mi }
@@ -39,7 +39,7 @@ cert-manager:
       limits:   { memory: 256Mi }
 
   # HTTP-01 solving through the Cilium Gateway API. NOTE: since cert-manager 1.15 this is NOT a
-  # feature gate any more — the old `ExperimentalGatewayAPISupport` gate is gone. It's enabled via
+  # feature gate any more, the old `ExperimentalGatewayAPISupport` gate is gone. It's enabled via
   # the controller's file config below. The one ordering requirement is that the Gateway API CRDs
   # exist before the controller starts; they do (Cilium vendors them at wave 0, before this wave-2
   # app), so a fresh rollout picks them up. The matching Gateway + Let's Encrypt ClusterIssuers live

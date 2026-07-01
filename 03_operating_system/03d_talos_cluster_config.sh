@@ -5,7 +5,7 @@
 # Brings up the Talos control-plane cluster from NVMes already flashed (03b) and
 # booted into maintenance mode at their (router-reserved) IPs.
 #
-# Self-contained: talosctl runs as a pinned Docker image — no host talosctl, no
+# Self-contained: talosctl runs as a pinned Docker image, no host talosctl, no
 # shell functions, no PATH games. Generated configs land in ./talos-cluster next
 # to this script; the container mounts that dir as /work so every talosctl call
 # (generate, apply, config, bootstrap, kubeconfig) sees the same files.
@@ -40,10 +40,10 @@ for i in "${!IPS[@]}"; do echo "  ${HOSTNAMES[$i]}  ->  ${IPS[$i]}"; done
 echo "Output:   ${OUTDIR}"
 
 # 0. GHCR registry auth (OPTIONAL, global). Bake a machine.registries auth into the CP patch so the
-#    kubelet/CRI authenticates EVERY pull from ${GHCR_SERVER} on every node — cluster-wide, no
+#    kubelet/CRI authenticates EVERY pull from ${GHCR_SERVER} on every node, cluster-wide, no
 #    per-namespace imagePullSecrets. Only the classic token is a secret, so it's the only thing prompted
 #    (host + username come from .env). The token lands only in cp-patch.yaml under the gitignored
-#    talos-cluster dir — never in git. Empty => no auth block (fine if every image is PUBLIC). GitHub
+#    talos-cluster dir, never in git. Empty => no auth block (fine if every image is PUBLIC). GitHub
 #    Packages ONLY authenticates with a CLASSIC token scoped read:packages.
 echo
 echo "GHCR registry auth (optional): paste a CLASSIC token (read:packages) to pull PRIVATE images as"
@@ -78,7 +78,7 @@ cat > "${OUTDIR}/cp-patch.yaml" <<EOF
 machine:
 ${REGISTRIES_BLOCK}
   nodeLabels:
-    node.kubernetes.io/instance-type: ${NODE_INSTANCE_TYPE}   # nic-keeper DaemonSet selector (06_nic_keeper.md)
+    node.kubernetes.io/instance-type: ${NODE_INSTANCE_TYPE}   # nic-keeper DaemonSet selector (03_operating_system.md)
   kubelet:
     # Longhorn's data path lives on the dedicated 'longhorn' user volume (see volumes.yaml below),
     # mounted at /var/mnt/longhorn on the host. Talos runs the kubelet in a container and does NOT
@@ -87,7 +87,7 @@ ${REGISTRIES_BLOCK}
     # The 'cnpg' mount is the same idea for the local-path-provisioner that backs CNPG (off Longhorn):
     # its helper pods + the hostPath PVs both resolve /var/mnt/cnpg against the kubelet's view, so the
     # bind is required too; plain rw suffices (no sub-mount propagation like Longhorn).
-    # See 09_longhorn.md and 18_local_path_provisioner.md.
+    # See 08_storage.md and 08_storage.md.
     extraMounts:
       - destination: /var/mnt/longhorn
         type: bind
@@ -122,7 +122,7 @@ EOF
 # 3. Partition layout (extra config documents): cap EPHEMERAL, carve a fixed-size 'cnpg' volume,
 #    then 'longhorn' takes the remainder. The 'cnpg' volume is min==max (a fixed slice) so CNPG's
 #    local-path storage can't grow into Longhorn's space; 'longhorn' has no maxSize so it grows once
-#    at provision time to claim whatever is left. See 09_longhorn.md / 18_local_path_provisioner.md.
+#    at provision time to claim whatever is left. See 08_storage.md / 08_storage.md.
 cat > "${OUTDIR}/volumes.yaml" <<EOF
 ---
 apiVersion: v1alpha1
@@ -163,7 +163,7 @@ cat "${OUTDIR}/volumes.yaml" >> "${OUTDIR}/cp.yaml"
 #     (DANGEROUS_reset_talos_cluster.sh / DANGEROUS_rebuild_cluster.sh) the nodes wipe + reboot
 #     asynchronously, so the apply-config --insecure below would fail on a node that hasn't come back
 #     yet. A maintenance node answers --insecure; a CONFIGURED one does not (and a freshly-reset node
-#     can't boot configured — STATE is wiped), so this check is never fooled by the pre-reset instance:
+#     can't boot configured, STATE is wiped), so this check is never fooled by the pre-reset instance:
 #     it blocks until the node is genuinely back in maintenance. nc gates the call so we don't hang on a
 #     node mid-reboot. On a first install (straight off 03b) the nodes are already in maintenance, so
 #     this returns immediately.
@@ -173,7 +173,7 @@ for i in "${!IPS[@]}"; do
   printf '   %-8s %-15s ' "$host" "$ip"
   deadline=$(( $(date +%s) + 300 ))
   until nc -z -G2 "$ip" "$API_PORT" >/dev/null 2>&1 && talosctl -e "$ip" -n "$ip" version --insecure >/dev/null 2>&1; do
-    [ "$(date +%s)" -lt "$deadline" ] || { echo "TIMEOUT"; die "${ip} not in maintenance after 300s — check its console/power"; }
+    [ "$(date +%s)" -lt "$deadline" ] || { echo "TIMEOUT"; die "${ip} not in maintenance after 300s, check its console/power"; }
     printf '.'; sleep 5
   done
   echo "ready"
@@ -181,7 +181,7 @@ done
 
 # 5. Apply to each node (file paths are relative to /work inside the container).
 #    Hostname goes through the HostnameConfig document (Talos 1.12+), not the legacy
-#    machine.network.hostname — gen config now ships HostnameConfig (auto: stable), and
+#    machine.network.hostname, gen config now ships HostnameConfig (auto: stable), and
 #    setting both errors with "static hostname is already set in v1alpha1 config".
 for i in "${!IPS[@]}"; do
   ip="${IPS[$i]}"; host="${HOSTNAMES[$i]}"
@@ -198,7 +198,7 @@ talosctl config node "${IPS[0]}"
 # 7. Wait for every node to reboot into its configured state before bootstrapping.
 #    apply-config (maintenance mode) reboots each node; it comes back serving the API
 #    *securely* with our PKI, so a secure `version` (no --insecure) succeeding is the
-#    ready signal — a maintenance-mode node only answers --insecure. Beats guessing a
+#    ready signal, a maintenance-mode node only answers --insecure. Beats guessing a
 #    fixed wait. nc gates the call so we don't hang on a node that's mid-reboot.
 say "waiting for nodes to reboot into their configured state (up to 5 min each)..."
 sleep 10   # let the reboots actually begin (avoids a false 'ready' before reboot)
@@ -207,7 +207,7 @@ for i in "${!IPS[@]}"; do
   printf '   %-8s %-15s ' "$host" "$ip"
   deadline=$(( $(date +%s) + 300 ))
   until nc -z -G2 "$ip" "$API_PORT" >/dev/null 2>&1 && talosctl -e "$ip" -n "$ip" version >/dev/null 2>&1; do
-    [ "$(date +%s)" -lt "$deadline" ] || { echo "TIMEOUT"; die "${ip} never came back — check its console/power"; }
+    [ "$(date +%s)" -lt "$deadline" ] || { echo "TIMEOUT"; die "${ip} never came back, check its console/power"; }
     printf '.'; sleep 5
   done
   echo "ready"
@@ -222,7 +222,7 @@ sleep 10
 
 # 9. Wait for the cluster, then fetch kubeconfig (-> ${OUTDIR}/kubeconfig)
 say "waiting for cluster health (a few minutes)..."
-talosctl health --wait-timeout 10m || warn "health timed out — verify with kubectl below"
+talosctl health --wait-timeout 10m || warn "health timed out, verify with kubectl below"
 talosctl kubeconfig .
 say "Done."
 echo "   talosconfig: ${OUTDIR}/talosconfig   (export TALOSCONFIG=${OUTDIR}/talosconfig)"

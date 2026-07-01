@@ -1,10 +1,10 @@
-# One Google-SSO policy PER domain. Each selects routes by LABEL (`sso: <domain>`, targetSelectors) — so
+# One Google-SSO policy PER domain. Each selects routes by LABEL (`sso: <domain>`, targetSelectors), so
 # protecting a host is just labelling its route with its domain, zero per-host config. Three filters run
 # at the Envoy edge, in order:
-#   1. oidc            — no session -> 302 to Google; callback lands on the shared google-sso.<domain>
+#   1. oidc           : no session -> 302 to Google; callback lands on the shared google-sso.<domain>
 #                        host and stores the ID token in a cookie scoped to <domain> (cookieDomain).
-#   2. jwt             — validates that ID token (Google's JWKS) and exposes its claims.
-#   3. authorization   — Deny by default; Allow only when the `email` claim is in THIS domain's allowlist.
+#   2. jwt            : validates that ID token (Google's JWKS) and exposes its claims.
+#   3. authorization  : Deny by default; Allow only when the `email` claim is in THIS domain's allowlist.
 # ONE Google OAuth client is shared across domains (same clientID + sealed secret); only the redirectURL,
 # cookieDomain, label and allowlist differ per domain. A SecurityPolicy is namespaced and selects routes
 # in its OWN namespace, hence ns == the routes' ns. See 12_google_sso.md.
@@ -29,7 +29,7 @@ spec:
     clientID: {{ $.Values.oidc.clientID | quote }}
     clientSecret:
       name: {{ $.Values.oidc.clientSecretName | quote }}
-    # Fixed shared callback host for this domain — register it on the Google OAuth client.
+    # Fixed shared callback host for this domain, register it on the Google OAuth client.
     redirectURL: {{ printf "https://%s.%s/oauth2/callback" $.Values.authSubdomain .domain | quote }}
     # Off the default /logout so it doesn't collide with a backend app's own /logout (e.g. ArgoCD's).
     logoutPath: {{ $.Values.oidc.logoutPath | quote }}
@@ -47,8 +47,8 @@ spec:
     csrfTokenTTL: {{ . | quote }}
     {{- end }}
     {{- with $.Values.oidc.denyRedirectSecFetchMode }}
-    # Return 401 instead of a 302→Google for non-navigational requests (XHR/fetch/websocket). Such a
-    # request can't render Google's login page, so the OIDC flow it kicks off never completes — and
+    # Return 401 instead of a 302->Google for non-navigational requests (XHR/fetch/websocket). Such a
+    # request can't render Google's login page, so the OIDC flow it kicks off never completes, and
     # every attempt leaks an OauthNonce/CodeVerifier cookie. A logged-out SPA (Grafana Live's
     # /api/live/ws, ArgoCD's polling) spams these until the crumbled HTTP/2 cookie count crosses
     # Envoy's max_headers_count and the stream is reset (http2.too_many_headers -> ERR_HTTP2_PROTOCOL_ERROR).
@@ -60,7 +60,7 @@ spec:
           value: {{ . | quote }}
     {{- end }}
     # Minimal scopes: `openid` (required to get an ID token) + `email` (the only claim we authorize
-    # on). No `profile` — its name/picture claims go unused and just inflate the ID token / its cookie.
+    # on). No `profile`, its name/picture claims go unused and just inflate the ID token / its cookie.
     scopes:
       - openid
       - email

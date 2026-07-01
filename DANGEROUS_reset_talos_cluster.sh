@@ -1,10 +1,10 @@
 #!/usr/bin/env bash
 #
-# DANGEROUS — wipes the whole cluster back to maintenance, INCLUDING all persistent data.
+# DANGEROUS, wipes the whole cluster back to maintenance, INCLUDING all persistent data.
 #
 # Wipes STATE + EPHEMERAL (Talos persistent state + k8s/etcd) AND `u-longhorn` (the dedicated Longhorn
-# user volume, /dev/nvme0n1p7 — provisioned by 03d). Keeps BOOT/EFI/META, so nodes reboot straight to
-# maintenance — NO reflash needed. Wiping Longhorn too means NO orphaned replica data ever survives a
+# user volume, /dev/nvme0n1p7, provisioned by 03d). Keeps BOOT/EFI/META, so nodes reboot straight to
+# maintenance, NO reflash needed. Wiping Longhorn too means NO orphaned replica data ever survives a
 # reset: a rebuilt cluster always starts from a clean disk (the old volume CRs die with etcd anyway).
 # Recoverable state (k8s objects) comes back from git via ArgoCD; the Longhorn data is gone for good.
 #
@@ -19,7 +19,7 @@ read -r -p ">> Destroy ENTIRE Talos cluster AND wipe ALL Longhorn/PVC data (u-lo
 # Node IPs from .env (CLUSTER_NODES "host:ip" -> IPs).
 NODES=(); for e in "${CLUSTER_NODES[@]}"; do NODES+=("${e##*:}"); done
 
-# Reset every node at once — they're all being wiped + rebooted (graceful=false), so there's no
+# Reset every node at once, they're all being wiped + rebooted (graceful=false), so there's no
 # reason to serialize. Each runs in its own subshell/container; output is prefixed with the node IP
 # so the interleaved streams stay readable. PIPESTATUS[0] propagates talosctl's status past the sed.
 #

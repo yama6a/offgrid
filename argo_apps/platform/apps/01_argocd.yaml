@@ -3,11 +3,11 @@
 # first; this Application then adopts it (same name "argocd" + namespace "argocd") and, from then
 # on, reconciles ArgoCD from git. See 05_gitops.md.
 #
-# AUTOMATED (prune + selfHeal): safe to self-manage — ArgoCD applying its own manifests is the
+# AUTOMATED (prune + selfHeal): safe to self-manage, ArgoCD applying its own manifests is the
 # whole point. ServerSideApply avoids the "last-applied annotation too long" failure on the large
 # argo-cd CRDs.
 #
-# sync-wave "1": after Cilium (wave 0) — ArgoCD needs the CNI. Both are adopted (already running),
+# sync-wave "1": after Cilium (wave 0), ArgoCD needs the CNI. Both are adopted (already running),
 # so this is purely the order the root creates the Application objects. Future apps go at wave 2+.
 apiVersion: argoproj.io/v1alpha1
 kind: Application

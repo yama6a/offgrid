@@ -9,7 +9,7 @@
 #
 # It drives talos-rpi5/talos-builder (which stitches siderolabs/pkgs +
 # siderolabs/talos + the talos-rpi5 overlay), but rebases four things the
-# upstream build can't do at this Talos version — see the REBASES below.
+# upstream build can't do at this Talos version, see the REBASES below.
 #
 # Prereqs (the script checks them):
 #   - gmake (GNU make >= 4)        brew install make      (system make is 3.81)
@@ -28,7 +28,7 @@ BUILDER_REPO="https://github.com/talos-rpi5/talos-builder.git"
 WORK="${BUILD_DIR}/talos-builder"
 CHK="${WORK}/checkouts"
 
-# ---- build infra (03a-only — not shared config) -----------------------------
+# ---- build infra (03a-only, not shared config) -----------------------------
 GMAKE="/opt/homebrew/opt/make/libexec/gnubin/make"  # GNU make >= 4 (system make is 3.81)
 REGISTRY_PORT="5010"                       # 5001 is often taken by kind
 REGISTRY_HOST="localhost:${REGISTRY_PORT}" # local build registry
@@ -42,7 +42,7 @@ IMAGE_NAME="metal-arm64-rpi5.raw.xz"       # staged image filename (rpi5/grub im
 
 # === 0. prereqs ==============================================================
 say "checking prerequisites"
-[ "$(uname -m)" = "arm64" ] || warn "not arm64 — the kernel build will be emulated and very slow"
+[ "$(uname -m)" = "arm64" ] || warn "not arm64, the kernel build will be emulated and very slow"
 [ -x "$GMAKE" ] || die "GNU make >= 4 not found at $GMAKE (brew install make)"
 "$GMAKE" --version | head -1 | grep -qE 'GNU Make (4|5|6)' || die "need GNU make >= 4"
 require docker zstd xz jq curl go
@@ -81,15 +81,15 @@ rm -rf "$CHK/pkgs" "$CHK/talos" "$CHK/sbc-raspberrypi5"
 # NB: the Makefile uses $(PWD)/checkouts, so make must run with cwd=$WORK (not `make -C`).
 ( cd "$WORK" && "$GMAKE" checkouts )
 # The Makefile clones the overlay with `git clone --branch`, which only takes a branch
-# or tag — not a SHA. So it clones main (a full clone), and we pin to SBCOVERLAY_VERSION
+# or tag, not a SHA. So it clones main (a full clone), and we pin to SBCOVERLAY_VERSION
 # here (a commit reachable in main's history). pkgs/talos pin via --branch (they're tags).
 git -C "$CHK/sbc-raspberrypi5" checkout -q "$SBCOVERLAY_VERSION" || die "could not pin overlay to ${SBCOVERLAY_VERSION}"
 
-# === 3. REBASE 1 — kernel: raspberrypi/linux source + Pi5 config fragment ====
+# === 3. REBASE 1, kernel: raspberrypi/linux source + Pi5 config fragment ====
 # pkgs ships a stock 6.18 arm64 config (already 4K). We point the kernel source
 # at raspberrypi/linux (for the RP1/BCM2712 drivers that are fork-only) and add a
 # small fragment, reconciled with olddefconfig under the real clang toolchain.
-say "REBASE 1 — kernel source -> raspberrypi/linux ${KERNEL_REF} (served locally), + Pi5 config fragment"
+say "REBASE 1, kernel source -> raspberrypi/linux ${KERNEL_REF} (served locally), + Pi5 config fragment"
 # GitHub's /archive/ tarballs are NOT byte-stable (different CDN nodes serve different
 # gzip), so the sha bldr downloads can differ from one we hash on the host. Download
 # once and serve it from a local HTTP server so bldr fetches the exact bytes we hashed.
@@ -106,7 +106,7 @@ docker run -d --name "$SRCSERVER_NAME" -p "127.0.0.1:${SRCSERVER_PORT}:80" \
 # Pkgfile: pin kernel version + the local file's shas.
 perl -0pi -e "s/  linux_version: .*\n  linux_sha256: .*\n  linux_sha512: .*\n/  linux_version: ${KERNEL_REF}\n  linux_sha256: ${KSHA256}\n  linux_sha512: ${KSHA512}\n/" "$CHK/pkgs/Pkgfile"
 # kernel source fetch: the locally-served tarball (deterministic), extracted as .tar.gz.
-# Pattern uses .* (not \S+) — the stock cdn URL has spaces inside a {{ }} template.
+# Pattern uses .* (not \S+), the stock cdn URL has spaces inside a {{ }} template.
 perl -0pi -e 's{- url: https://cdn\.kernel\.org/.*\.tar\.xz\n\s+destination: linux\.tar\.xz}{- url: "http://localhost:'"${SRCSERVER_PORT}"'/linux.tar.gz"\n        destination: linux.tar.gz}' "$CHK/pkgs/kernel/prepare/pkg.yaml"
 perl -i -pe 's/tar -xJf linux\.tar\.xz/tar -xzf linux.tar.gz/' "$CHK/pkgs/kernel/prepare/pkg.yaml"
 grep -q 'localhost:'"${SRCSERVER_PORT}" "$CHK/pkgs/kernel/prepare/pkg.yaml" || die "kernel source URL rewrite failed"
@@ -115,10 +115,10 @@ grep -q 'localhost:'"${SRCSERVER_PORT}" "$CHK/pkgs/kernel/prepare/pkg.yaml" || d
 cat > "$CHK/pkgs/kernel/build/pi5-rpi.fragment" <<'FRAG'
 # Raspberry Pi 5 (BCM2712 + RP1) over the stock Talos arm64 config, reconciled
 # with `make olddefconfig` against the raspberrypi/linux source.
-# 4K pages (NOT the Pi defconfig's 16K) — Longhorn/XFS compat (see 03_operating_system.md).
+# 4K pages (NOT the Pi defconfig's 16K), Longhorn/XFS compat (see 03_operating_system.md).
 CONFIG_ARM64_4K_PAGES=y
 # CONFIG_ARM64_16K_PAGES is not set
-# RP1 south-bridge bring-up (NIC end0/macb, USB, GPIO live behind it) — fork-only
+# RP1 south-bridge bring-up (NIC end0/macb, USB, GPIO live behind it), fork-only
 CONFIG_MFD_RP1=y
 CONFIG_MBOX_RP1=y
 CONFIG_FIRMWARE_RP1=y
@@ -162,11 +162,11 @@ open(p,"w").write(s.replace(anchor, block, 1))
 PY
 
 # === 4. build kernel =========================================================
-say "build kernel (clang/ThinLTO — the long pole; verifies bake-ins early then compiles)"
+say "build kernel (clang/ThinLTO, the long pole; verifies bake-ins early then compiles)"
 ( cd "$WORK" && "$GMAKE" REGISTRY="$REGISTRY_HOST" REGISTRY_USERNAME="$REGISTRY_USER" kernel )
 
-# === 5. REBASE 2 — filter modules-arm64.txt to what the rpi kernel built ======
-say "REBASE 2 — filter modules-arm64.txt to modules the kernel actually built"
+# === 5. REBASE 2, filter modules-arm64.txt to what the rpi kernel built ======
+say "REBASE 2, filter modules-arm64.txt to modules the kernel actually built"
 PKGS_TAG=$(cd "$CHK/pkgs" && git describe --tag --always --dirty --match 'v[0-9]*')
 KIMG="${REGISTRY_HOST}/${REGISTRY_USER}/kernel:${PKGS_TAG}"
 docker pull -q "$KIMG" >/dev/null
@@ -177,9 +177,9 @@ MF="$CHK/talos/hack/modules-arm64.txt"
 grep -Fxf "$BUILD_DIR/kexist.txt" "$MF" > "$MF.new" && mv "$MF.new" "$MF"
 echo "   modules list pinned to kernel ${KVER}"
 
-# === 6. REBASE 3 — port the overlay to the current machinery =================
+# === 6. REBASE 3, port the overlay to the current machinery =================
 # The overlay API gained a ctx arg; the upstream overlay targets old machinery.
-say "REBASE 3 — port sbc-raspberrypi5 overlay to machinery ${MACHINERY_VERSION}"
+say "REBASE 3, port sbc-raspberrypi5 overlay to machinery ${MACHINERY_VERSION}"
 OSRC="$CHK/sbc-raspberrypi5/installers/rpi5/src"
 ( cd "$OSRC" && GOWORK=off GOFLAGS=-mod=mod go get "github.com/siderolabs/talos/pkg/machinery@${MACHINERY_VERSION}" && GOWORK=off go mod tidy )
 perl -i -pe 's/adapter\.Execute\(&RpiInstaller\{\}\)/adapter.Execute(context.Background(), &RpiInstaller{})/' "$OSRC/main.go"
@@ -188,11 +188,11 @@ perl -i -pe 's/func \(i \*RpiInstaller\) Install\(options/func (i *RpiInstaller)
 grep -q '"context"' "$OSRC/main.go" || perl -0pi -e 's/(import \(\n)/$1\t"context"\n/' "$OSRC/main.go"
 ( cd "$OSRC" && GOWORK=off CGO_ENABLED=0 go build -o /dev/null . ) || die "overlay does not compile against ${MACHINERY_VERSION}"
 
-# === 7. REBASE 4 — extensions + grub profile + network in the Makefile ========
+# === 7. REBASE 4, extensions + grub profile + network in the Makefile ========
 # Bake both extensions (one --system-extension-image flag each) and image with the
 # overlay's `rpi5` (grub) profile, NOT `metal` (1.13's sd-boot default silently
 # skips the overlay installer, so a Pi-5 image built as `metal` has no boot bits).
-say "REBASE 4 — wire extensions + grub (rpi5) profile + --network host"
+say "REBASE 4, wire extensions + grub (rpi5) profile + --network host"
 python3 - "$WORK/Makefile" "$ISCSI_EXT" "$UTIL_EXT" <<'PY'
 import re,sys
 p,iscsi,util=sys.argv[1],sys.argv[2],sys.argv[3]

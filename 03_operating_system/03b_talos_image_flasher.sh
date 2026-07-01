@@ -2,8 +2,8 @@
 #
 # 03b_talos_image_flasher.sh  (macOS)
 #
-# Writes the LOCAL custom Raspberry Pi 5 Talos image — built and validated by
-# 03a_talos_image_builder.sh — to an NVMe SSD over a USB adapter. Run once per
+# Writes the LOCAL custom Raspberry Pi 5 Talos image, built and validated by
+# 03a_talos_image_builder.sh, to an NVMe SSD over a USB adapter. Run once per
 # drive; swap the SSD each time.
 #
 # Boot chain: the EEPROM (step 02) tries SD first, then NVMe. With no card
@@ -23,7 +23,7 @@ source "${SCRIPT_DIR}/../lib/common.sh"
 RAW_XZ="${OUT_DIR}/metal-arm64-rpi5.raw.xz"
 
 require xz
-[ -f "$RAW_XZ" ] || die "image not found: $RAW_XZ — build it first: ./03a_talos_image_builder.sh"
+[ -f "$RAW_XZ" ] || die "image not found: $RAW_XZ, build it first: ./03a_talos_image_builder.sh"
 
 # Decompress next to the .xz (only when missing or stale).
 RAW="${RAW_XZ%.xz}"
@@ -38,11 +38,11 @@ ls -lh "$RAW"
 # 1. Show disks so you can identify the USB-NVMe adapter
 diskutil list
 
-# 2. Pick the NVMe's WHOLE-DISK id (e.g. /dev/disk6 — NOT /dev/disk6s1)
+# 2. Pick the NVMe's WHOLE-DISK id (e.g. /dev/disk6, NOT /dev/disk6s1)
 read -r -p ">> enter NVMe disk id (e.g. /dev/disk6): " DISK
 diskutil info "${DISK}" >/dev/null 2>&1 || die "'${DISK}' is not a disk"
 
-# 3. Confirm — this erases the entire drive
+# 3. Confirm, this erases the entire drive
 diskutil info "${DISK}" | grep -E 'Device / Media Name|Disk Size|Protocol|Removable' || true
 read -r -p ">> ERASE ${DISK} and write Talos? type YES: " confirm
 [ "${confirm}" = "YES" ] || { echo "aborted."; exit 1; }

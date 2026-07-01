@@ -1,4 +1,4 @@
-# Values for the 02_longhorn wrapper chart. SINGLE SOURCE OF TRUTH — ArgoCD (and any local
+# Values for the 02_longhorn wrapper chart. SINGLE SOURCE OF TRUTH, ArgoCD (and any local
 # `helm template`) consume this. Chart version pinned in Chart.yaml. See 09_longhorn.md for the why.
 #
 # Longhorn runs in its own `longhorn-system` namespace (CreateNamespace=true in the Application,
@@ -17,12 +17,12 @@ longhorn:
     # replicas always land on three distinct nodes (exactly what we want at 3 nodes / 3 replicas).
     defaultReplicaCount: 3
 
-    # Keep headroom on the Pi NVMes — don't schedule replicas onto a disk under 15% free.
+    # Keep headroom on the Pi NVMes, don't schedule replicas onto a disk under 15% free.
     storageMinimalAvailablePercentage: 15
 
     # When a node goes down, force-delete the StatefulSet pods bound to it so the scheduler can
     # reschedule them onto a surviving node instead of waiting indefinitely for the dead node. Single-
-    # replica StatefulSets (Prometheus, Alertmanager — 07_kube_prometheus_stack) otherwise hang on a
+    # replica StatefulSets (Prometheus, Alertmanager, 07_kube_prometheus_stack) otherwise hang on a
     # lost node; with replica-3 Longhorn volumes the rescheduled pod re-attaches from a surviving
     # replica. The NICs on this cluster are flaky, so node loss is a real, recurring case. See
     # 15_monitoring.md (failover).
@@ -46,7 +46,7 @@ longhorn:
       enabled: true
 
   csi:
-    # Disable the CSI snapshotter sidecar — the chart has no on/off toggle, so scale its replica
+    # Disable the CSI snapshotter sidecar, the chart has no on/off toggle, so scale its replica
     # count to 0 (default 3). We don't use Longhorn CSI VolumeSnapshots, so the sidecar is dead weight,
     # and it was generating constant log noise.
     snapshotterReplicaCount: 0

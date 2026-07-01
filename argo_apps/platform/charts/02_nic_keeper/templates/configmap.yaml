@@ -46,7 +46,7 @@ data:
       out="$(ss -K dport = :0 2>&1)"
       if printf '%s' "$out" | grep -qi 'not supported'; then
         SS_KILL_OK=0
-        log ss-k-unsupported "kernel lacks CONFIG_INET_DIAG_DESTROY — socket-drop step disabled: ${out}"
+        log ss-k-unsupported "kernel lacks CONFIG_INET_DIAG_DESTROY, socket-drop step disabled: ${out}"
       fi
     }
 
@@ -56,11 +56,11 @@ data:
       [ -n "$PING_TARGET" ] && log target-resolved "gateway=$PING_TARGET"
     }
 
-    # A wedge is link-up-but-no-traffic, so carrier alone can't catch it — the active ping is the
+    # A wedge is link-up-but-no-traffic, so carrier alone can't catch it, the active ping is the
     # real signal. Bounce the link, re-assert EEE (a bounce can re-enable it), drop stale sockets.
     recover() {
       carrier="$(cat "/sys/class/net/$IFACE/carrier" 2>/dev/null || echo '?')"
-      log wedge "fail_count=$count threshold=$FAIL_THRESHOLD carrier=$carrier — bouncing link"
+      log wedge "fail_count=$count threshold=$FAIL_THRESHOLD carrier=$carrier (bouncing link)"
       ip link set "$IFACE" down
       sleep "$LINK_DOWN_SECONDS"
       ip link set "$IFACE" up
@@ -82,7 +82,7 @@ data:
     while true; do
       resolve_target
       if [ -z "$PING_TARGET" ]; then
-        log probe-skip "no default gateway yet — cannot probe"
+        log probe-skip "no default gateway yet, cannot probe"
         sleep "$CHECK_INTERVAL"
         continue
       fi

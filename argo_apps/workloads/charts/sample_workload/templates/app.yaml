@@ -1,4 +1,4 @@
-# The sample app — a single Deployment + Service in this chart's release namespace (sample-workload),
+# The sample app, a single Deployment + Service in this chart's release namespace (sample-workload),
 # alongside the CNPG Cluster and its operator-generated password Secret. PG_PASSWORD is injected from
 # that Secret (`<release>-cluster-app`, key `password`) so the app can connect to its Postgres. Both
 # ingress hosts (open + SSO) route to this one Service. See 13_sample_workload.md.
@@ -30,7 +30,7 @@ spec:
             - name: PORT
               value: {{ .Values.app.port | quote }}
             # Postgres connection, fed to the app's DSNFromEnv() as discrete PG_* parts (it assembles +
-            # escapes the DSN itself — safer than passing a pre-built URL with the raw password). Points at
+            # escapes the DSN itself, safer than passing a pre-built URL with the raw password). Points at
             # THIS chart's CNPG cluster: the `<release>-cluster-rw` read-write Service in this namespace,
             # with the initdb owner/database. PG_PASSWORD comes from the CNPG operator-generated Secret
             # (blank pgPasswordSecret => derive `<release>-cluster-app`, the cnpg/cluster fullname + -app).

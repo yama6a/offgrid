@@ -1,9 +1,9 @@
-# Values for the 07_victoria_metrics_k8s_stack wrapper chart. SINGLE SOURCE OF TRUTH — ArgoCD (and any
+# Values for the 07_victoria_metrics_k8s_stack wrapper chart. SINGLE SOURCE OF TRUTH, ArgoCD (and any
 # local `helm template`) consume this. Chart version pinned in Chart.yaml. See 15_monitoring.md.
 #
 # Everything under `victoria-metrics-k8s-stack:` is passed to the upstream subchart (key == dependency
 # name). Resource numbers are sized for 8GB Pi 5 nodes already running etcd + control plane + Cilium +
-# Longhorn. This is the drop-in replacement for the retired kube-prometheus-stack — same `monitoring`
+# Longhorn. This is the drop-in replacement for the retired kube-prometheus-stack, same `monitoring`
 # namespace, same Talos control-plane scrape targets, same high-cardinality drops.
 victoria-metrics-k8s-stack:
   # The VM operator runs STANDALONE (01_victoria_metrics_operator, wave 1) and reconciles the CRs this
@@ -32,7 +32,7 @@ victoria-metrics-k8s-stack:
             storage: 50Gi
       resources:
         requests: {cpu: 250m, memory: 512Mi}
-        limits: {memory: 1500Mi}     # no CPU limit — avoid throttling merges/queries
+        limits: {memory: 1500Mi}     # no CPU limit, avoid throttling merges/queries
       # Reschedule fast on node loss instead of the default. Pair with Longhorn
       # nodeDownPodDeletionPolicy=delete-statefulset-pod (02_longhorn). See 15_monitoring.md (failover).
       tolerations:
@@ -49,8 +49,7 @@ victoria-metrics-k8s-stack:
   vmagent:
     enabled: true
     spec:
-      # Discover ALL VMServiceScrape/VMPodScrape/VMProbe across every namespace, regardless of labels —
-      # so the per-component scrapes (cilium, argocd, cert-manager, longhorn, sealed-secrets) AND the
+      # Discover ALL VMServiceScrape/VMPodScrape/VMProbe across every namespace, regardless of labels,      # so the per-component scrapes (cilium, argocd, cert-manager, longhorn, sealed-secrets) AND the
       # operator-converted ServiceMonitors are all picked up. This mirrors the old
       # serviceMonitorSelectorNilUsesHelmValues:false behaviour.
       selectAllByDefault: true
@@ -59,26 +58,26 @@ victoria-metrics-k8s-stack:
         cluster: raspi-cluster
       extraArgs:
         promscrape.streamParse: "true"
-      # Global metric-relabel drop, applied to EVERY scrape after collection (__name__ available) — the
+      # Global metric-relabel drop, applied to EVERY scrape after collection (__name__ available), the
       # catch-all for high-cardinality noise we never want, regardless of which job emits it. The
       # gRPC server counters (~4.5k series) come from argocd-server, hubble/cilium and others via their
       # converted ServiceMonitors, which carry no per-source drop; this kills them everywhere in one place.
-      # TRADE-OFF: grpc_server_handled_total carries grpc_code (RPC error rates) — dropped too; if you ever
+      # TRADE-OFF: grpc_server_handled_total carries grpc_code (RPC error rates), dropped too; if you ever
       # want ArgoCD/Hubble RPC health, narrow this to grpc_server_(started|msg_received|msg_sent)_total.
       globalScrapeMetricRelabelConfigs:
         - sourceLabels: [__name__]
           action: drop
           regex: "grpc_server_(handled|started|msg_received|msg_sent)_total"
         # Tier-1 cardinality noise emitted across many jobs (or by a job with no per-target drop block):
-        #   flag                       — one series per command-line flag of every VM component, value always 1.
-        #   kubernetes_feature_enabled — one series per apiserver/kubelet feature-gate; static config dump.
-        #   kube_pod_tolerations       — toleration inventory per pod (kube-state-metrics); `kubectl` it instead.
-        #   container_tasks_state      — per-container task counts by state (kubelet/cAdvisor); pod health
+        #   flag                      : one series per command-line flag of every VM component, value always 1.
+        #   kubernetes_feature_enabled, one series per apiserver/kubelet feature-gate; static config dump.
+        #   kube_pod_tolerations      : toleration inventory per pod (kube-state-metrics); `kubectl` it instead.
+        #   container_tasks_state     : per-container task counts by state (kubelet/cAdvisor); pod health
         #                                already comes from kube_pod_status_*.
         - sourceLabels: [__name__]
           action: drop
           regex: "flag|kubernetes_feature_enabled|kube_pod_tolerations|container_tasks_state"
-        # Go runtime GC/scheduler histograms + the GC-pause summary — per-bucket detail for EVERY Go target,
+        # Go runtime GC/scheduler histograms + the GC-pause summary, per-bucket detail for EVERY Go target,
         # never queried. Deliberately KEEPS go_sched_latencies_seconds_bucket (used by the VM dashboards) and
         # all the cheap go_memstats_*/go_goroutines scalars.
         - sourceLabels: [__name__]
@@ -86,19 +85,19 @@ victoria-metrics-k8s-stack:
           regex: "go_(gc_pauses_seconds|gc_heap_allocs_by_size_bytes|gc_heap_frees_by_size_bytes|sched_pauses_stopping_gc_seconds|sched_pauses_stopping_other_seconds|sched_pauses_total_gc_seconds|sched_pauses_total_other_seconds)_(bucket|count|sum)|go_gc_duration_seconds(_count|_sum)?"
         # ---- Tier-2 drops: controller/storage/CNI internals, unreferenced by any VMRule or dashboard ----
         # Longhorn manager's REST-client + workqueue latency/queue internals. Storage HEALTH metrics
-        # (longhorn_volume_*, longhorn_node_*, longhorn_backup_*) are untouched — this is only the
+        # (longhorn_volume_*, longhorn_node_*, longhorn_backup_*) are untouched, this is only the
         # controller's own client/queue plumbing.
         - sourceLabels: [__name__]
           action: drop
           regex: "longhorn_rest_client_.*|longhorn_workqueue_.*"
         # Cilium agent/operator internal latency histograms (hive jobs, k8s-client, endpoint regen, k8s
-        # workqueue, conntrack GC, policy/identity timers...). Drops only *_bucket — every cilium_*_total
+        # workqueue, conntrack GC, policy/identity timers...). Drops only *_bucket, every cilium_*_total
         # dataplane / policy / drop counter stays.
         - sourceLabels: [__name__]
           action: drop
           regex: "cilium_.*_bucket"
         # Generic controller queue/REST histograms emitted by MANY jobs (apiserver, argocd, cert-manager,
-        # cnpg, kubelet). Buckets only — KEEPS workqueue_depth, rest_client_requests_total and
+        # cnpg, kubelet). Buckets only, KEEPS workqueue_depth, rest_client_requests_total and
         # rest_client_request_duration_seconds_bucket (all queried).
         - sourceLabels: [__name__]
           action: drop
@@ -120,9 +119,9 @@ victoria-metrics-k8s-stack:
 
   # ---- shape B: everything alerting/visualisation is OFF -------------------------------------------
   vmalert:
-    enabled: false               # no rule evaluator — Grafana owns alerting (07_grafana).
+    enabled: false               # no rule evaluator, Grafana owns alerting (07_grafana).
   alertmanager:
-    enabled: false               # no Alertmanager — Grafana owns notifications (07_grafana).
+    enabled: false               # no Alertmanager, Grafana owns notifications (07_grafana).
   grafana:
     enabled: false               # standalone Grafana is its own app (07_grafana).
 
@@ -131,7 +130,7 @@ victoria-metrics-k8s-stack:
   defaultRules:
     create: false
 
-  # Curated default dashboards — emitted as ConfigMaps labelled `grafana_dashboard` (the sync-job reads
+  # Curated default dashboards, emitted as ConfigMaps labelled `grafana_dashboard` (the sync-job reads
   # grafana.sidecar.dashboards.label, default `grafana_dashboard`) so the standalone Grafana sidecar
   # (07_grafana, searchNamespace ALL) picks them up with zero rework. See 15_monitoring.md.
   defaultDashboards:
@@ -191,9 +190,9 @@ victoria-metrics-k8s-stack:
 
   # ---- Talos control-plane scrape targets ----------------------------------------------------------
   # Talos binds kube-controller-manager / kube-scheduler / etcd metrics to localhost by DEFAULT; we expose
-  # them via Talos machine config (OUTSIDE ArgoCD — already applied, see 15_monitoring.md "control-plane
+  # them via Talos machine config (OUTSIDE ArgoCD, already applied, see 15_monitoring.md "control-plane
   # scrape"): bind-address 0.0.0.0 for the two controllers, etcd listen-metrics-urls http://0.0.0.0:2381.
-  # `endpoints` are the control-plane node IPs (static, reserved — mirror 03_operating_system/03_config.sh
+  # `endpoints` are the control-plane node IPs (static, reserved, mirror 03_operating_system/03_config.sh
   # CLUSTER_NODES); every node runs all three on this all-control-plane cluster.
   kubeControllerManager:
     enabled: true
@@ -236,15 +235,15 @@ victoria-metrics-k8s-stack:
     endpoints: ["192.168.10.201", "192.168.10.202", "192.168.10.203"]
     service:
       enabled: true
-      port: 2381   # Talos etcd listen-metrics-urls — plain HTTP, no auth
+      port: 2381   # Talos etcd listen-metrics-urls, plain HTTP, no auth
       targetPort: 2381
     vmScrape:
       spec:
         endpoints:
           - port: http-metrics
             scheme: http
-            # Drop etcd's gRPC server counters (top cardinality, low value). NOTE: the apiserver→etcd
-            # request-latency histogram `etcd_request_duration_seconds_bucket` is NOT exported here — it
+            # Drop etcd's gRPC server counters (top cardinality, low value). NOTE: the apiserver->etcd
+            # request-latency histogram `etcd_request_duration_seconds_bucket` is NOT exported here, it
             # comes from the apiserver job, so it's dropped in kubeApiServer below, not here.
             metricRelabelConfigs:
               - source_labels: [__name__]
@@ -254,9 +253,9 @@ victoria-metrics-k8s-stack:
         namespaceSelector:
           matchNames: []
   # Scrape the apiserver but DROP its big histograms (request/response/watch/flowcontrol/admission *_bucket)
-  # — the top cardinality hogs, and we don't run the apiserver latency SLOs. Keep apiserver_request_total.
+  #, the top cardinality hogs, and we don't run the apiserver latency SLOs. Keep apiserver_request_total.
   # Also drop `etcd_request_duration_seconds_bucket` here: it's the apiserver's CLIENT-side etcd latency
-  # histogram (exported by THIS job, not by etcd — ~30k series, by far the biggest hog). _count/_sum stay.
+  # histogram (exported by THIS job, not by etcd, ~30k series, by far the biggest hog). _count/_sum stay.
   kubeApiServer:
     enabled: true
     vmScrape:
@@ -277,7 +276,7 @@ victoria-metrics-k8s-stack:
               - source_labels: [__name__]
                 action: drop
                 regex: "etcd_bookmark_total|watch_cache_capacity|apiextensions_openapi_v(2|3)_regeneration_count"
-              # apiserver "deep internals" — watch-cache / storage-list / cache-list inventories, request &
+              # apiserver "deep internals", watch-cache / storage-list / cache-list inventories, request &
               # response body sizes, SLI-duration and long-running gauges. Unreferenced by every VMRule and
               # dashboard, incl. k8s_system_apisrv (which uses only apiserver_request_total + the
               # request_duration_seconds _count/_sum). The matching *_bucket histograms are already dropped
@@ -285,7 +284,7 @@ victoria-metrics-k8s-stack:
               - source_labels: [__name__]
                 action: drop
                 regex: "apiserver_watch_cache_.*|apiserver_watch_events_.*|apiserver_watch_list_duration_seconds_(count|sum)|apiserver_storage_list_.*|apiserver_cache_list_.*|apiserver_storage_objects|apiserver_resource_objects|apiserver_resource_size_estimate_bytes|apiserver_response_sizes_(count|sum)|apiserver_request_body_size_bytes_(count|sum)|apiserver_request_sli_duration_seconds_(count|sum)|apiserver_longrunning_requests|apiserver_storage_consistency_checks_total|apiserver_storage_transformation_duration_seconds_(bucket|count|sum)"
-              # etcd request detail — the apiserver's CLIENT-side etcd op counter + latency _count/_sum (the
+              # etcd request detail, the apiserver's CLIENT-side etcd op counter + latency _count/_sum (the
               # matching _bucket is already dropped by the first rule). etcd's own SERVER metrics
               # (etcd_server_*, etcd_disk_*, etcd_mvcc_* from the kubeEtcd job) are untouched.
               - source_labels: [__name__]
@@ -298,10 +297,10 @@ victoria-metrics-k8s-stack:
           matchLabels:
             component: apiserver
             provider: kubernetes
-  # CoreDNS on Talos exposes :9153 cluster-wide — keep the default scrape.
+  # CoreDNS on Talos exposes :9153 cluster-wide, keep the default scrape.
   coreDns:
     enabled: true
-  # Cilium replaces kube-proxy (kubeProxyReplacement) — there is no kube-proxy to scrape.
+  # Cilium replaces kube-proxy (kubeProxyReplacement), there is no kube-proxy to scrape.
   kubeProxy:
     enabled: false
 
@@ -309,9 +308,9 @@ victoria-metrics-k8s-stack:
 # Exposes the VictoriaMetrics vmui on `host` through its OWN Gateway (a single :443 listener, merged onto
 # the one Envoy via mergeGateways in 01_envoy_gateway), gated by Google SSO: the HTTPRoute is labelled
 # `sso: <sso>` so the 04_google_sso SecurityPolicy attaches Google login + the allowlist. vmui has NO
-# login of its own, so this SSO gate is the only barrier — which is the point. The Gateway/listener/cert/
+# login of its own, so this SSO gate is the only barrier, which is the point. The Gateway/listener/cert/
 # route are named `vmui`; the ReferenceGrant lands in the backend namespace as gateway-routes-to-vmui.
-# `issuer` is STAGING until the cert issues — flip to letsencrypt-prod then. See 15_monitoring.md.
+# `issuer` is STAGING until the cert issues, flip to letsencrypt-prod then. See 15_monitoring.md.
 ingress:
   name: vmui
   gatewayClassName: eg

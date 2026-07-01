@@ -1,5 +1,5 @@
 {{- if .Values.loadBalancer.enabled }}
-# LoadBalancer IPs for the cluster. COMMIT THIS — later managed by ArgoCD.
+# LoadBalancer IPs for the cluster. COMMIT THIS, later managed by ArgoCD.
 apiVersion: cilium.io/v2          # promoted to v2 in Cilium 1.19
 kind: CiliumLoadBalancerIPPool
 metadata:
@@ -16,13 +16,13 @@ metadata:
 spec:
   loadBalancerIPs: true
   # Also announce externalIPs (defensive). The merged Envoy Service gets 192.168.100.10 as an LB-IPAM
-  # ingress IP via the EnvoyProxy `lbipam.cilium.io/ips` annotation — loadBalancerIPs:true announces that.
+  # ingress IP via the EnvoyProxy `lbipam.cilium.io/ips` annotation, loadBalancerIPs:true announces that.
   # We KEEP externalIPs:true as a safety net: historically the Gateway's spec.addresses also surfaced the
   # IP as a spec.externalIP (Envoy Gateway copied it onto the Service), and when one IP is both, Cilium
-  # creates a single frontend typed `ExternalIPs` that loadBalancerIPs:true alone does NOT announce — and
+  # creates a single frontend typed `ExternalIPs` that loadBalancerIPs:true alone does NOT announce, and
   # the type could land differently across restarts, silently dropping the ARP announcement on a
   # reschedule/rebuild. Since the mergeGateways migration we no longer set spec.addresses (the annotation
-  # is the sole IP authority), so that ExternalIPs frontend shouldn't recur — but announcing both stays
+  # is the sole IP authority), so that ExternalIPs frontend shouldn't recur, but announcing both stays
   # deterministic and costs nothing. See 04_networking.md.
   externalIPs: true
   interfaces:

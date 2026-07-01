@@ -1,8 +1,8 @@
-# One Gateway per SSO callback host (google-sso.<domain>) — a single :443 HTTPS listener terminating TLS
+# One Gateway per SSO callback host (google-sso.<domain>), a single :443 HTTPS listener terminating TLS
 # for the callback host with the cert callbacks.yaml mints. Folded onto the cluster's one Envoy + LB IP by
 # mergeGateways (01_envoy_gateway). In the gateway namespace so the callback HTTPRoute (same ns) attaches
 # same-namespace and this domain's SecurityPolicy still selects it by the `sso: <domain>` label. The
-# listener + its Certificate + its HTTPRoute now all live in this chart — one place per domain. The
+# listener + its Certificate + its HTTPRoute now all live in this chart, one place per domain. The
 # callback cert must be browser-trusted (the login flow redirects THROUGH this host). See 12_google_sso.md.
 {{- range .Values.ssoDomains }}
 {{- $slug := .domain | replace "." "-" }}

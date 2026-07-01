@@ -1,7 +1,7 @@
 {{- range .Values.ingress.hosts }}
 ---
 # cert-manager mints this (HTTP-01 via the shared :80 listener) into the Secret this host's own Gateway
-# listener references. In the gateway namespace, alongside that Gateway. STAGING by default — flip
+# listener references. In the gateway namespace, alongside that Gateway. STAGING by default, flip
 # .Values.ingress.issuer to letsencrypt-prod once it issues (browser-facing).
 apiVersion: cert-manager.io/v1
 kind: Certificate

@@ -1,14 +1,14 @@
-# ArgoCD Application for the logs stack — VictoriaLogs (argo_apps/charts/07_victoria_logs/). A VLSingle
+# ArgoCD Application for the logs stack, VictoriaLogs (argo_apps/charts/07_victoria_logs/). A VLSingle
 # store (operator-reconciled, Longhorn-backed, 60d retention) + the victoria-logs-collector DaemonSet that
 # tails container logs on every node and remote-writes to it. Also owns its own edge (folded in from the
 # retired 07_monitoring_ingress): the vlogs Gateway/Certificate/HTTPRoute behind Google SSO
 # (templates/edge-*.yaml). The VictoriaLogs UI has no login of its own, so the `sso: example.com` label IS
 # the only barrier. See 15_monitoring.md.
 #
-# AUTOMATED (prune + selfHeal): a safe leaf — owns no CRDs (wave-0 app), can't cut the cluster off its
+# AUTOMATED (prune + selfHeal): a safe leaf, owns no CRDs (wave-0 app), can't cut the cluster off its
 # network. Break-glass: `kubectl -n monitoring port-forward svc/vlsingle-victoria-logs 9428:9428`.
 #
-# sync-wave "7": same wave as the metrics stack and Grafana — after the operator (wave 1, which reconciles
+# sync-wave "7": same wave as the metrics stack and Grafana, after the operator (wave 1, which reconciles
 # the VLSingle CR and the collector's VMPodScrape) + Longhorn (wave 2, for the VLSingle PVC). Co-locating
 # the vlogs edge here lets its HTTPRoute backendRef resolve the instant the VLSingle Service appears. SSA
 # for the CR; ServerSideDiff so operator- and server-defaulted CR / Gateway API fields don't show OutOfSync.
@@ -28,7 +28,7 @@ spec:
     path: argo_apps/platform/charts/07_victoria_logs
   destination:
     server: https://kubernetes.default.svc
-    # VictoriaLogs lands in `monitoring`; its edge resources set their own metadata.namespace — the Gateway/
+    # VictoriaLogs lands in `monitoring`; its edge resources set their own metadata.namespace, the Gateway/
     # Certificate/HTTPRoute in `gateway`, the ReferenceGrant in `monitoring`. The default AppProject permits
     # all three, so this multi-namespace app is fine.
     namespace: monitoring

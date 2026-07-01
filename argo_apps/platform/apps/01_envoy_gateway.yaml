@@ -1,4 +1,4 @@
-# ArgoCD Application for Envoy Gateway (argo_apps/charts/01_envoy_gateway/) — the cluster's Gateway
+# ArgoCD Application for Envoy Gateway (argo_apps/charts/01_envoy_gateway/), the cluster's Gateway
 # API data plane, replacing Cilium Gateway API. Installs the envoy-gateway controller, the Gateway
 # API + Envoy Gateway CRDs, the `eg` GatewayClass and the LB-IP-pinning EnvoyProxy. Later waves attach
 # their Gateway/HTTPRoutes/SecurityPolicies to this. See 11_envoy_gateway.md.
@@ -8,7 +8,7 @@
 # CRDs, but ServerSideApply lets it adopt the CRDs Cilium previously vendored without a fight, and
 # prune only removes what this app itself manages.
 #
-# sync-wave "1": same wave as ArgoCD — it needs only the CNI (wave 0), and it must come BEFORE
+# sync-wave "1": same wave as ArgoCD, it needs only the CNI (wave 0), and it must come BEFORE
 # cert-manager (wave 2, whose Gateway API support wants the CRDs present at startup) and the gateway
 # (wave 3, which references the `eg` GatewayClass). Per CLAUDE.md the NN prefix IS the wave; two apps
 # may share a wave (distinct dir names), like the wave-2 leaves.

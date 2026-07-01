@@ -4,10 +4,10 @@
 # kube-prometheus-stack rewrites no third-party scrape config. CRDs come from wave 0
 # (00_victoria_metrics_operator_crds, crds.enabled:false here). See 15_monitoring.md.
 #
-# AUTOMATED (prune + selfHeal): a safe leaf — it owns no CRDs (those are the wave-0 app's) and can't cut
+# AUTOMATED (prune + selfHeal): a safe leaf, it owns no CRDs (those are the wave-0 app's) and can't cut
 # the cluster off its network. selfHeal re-applying the operator Deployment is harmless.
 #
-# sync-wave "1": an operator with an admission webhook, alongside argocd / envoy-gateway — after its CRDs
+# sync-wave "1": an operator with an admission webhook, alongside argocd / envoy-gateway, after its CRDs
 # (wave 0), and well before the wave-7 VM/VL custom resources it validates and reconciles (by the time the
 # root reaches wave 7 this operator is long Healthy, so its webhook accepts the VMSingle/VLSingle/VMAgent
 # CRs). ServerSideApply + ServerSideDiff so the operator-managed webhook fields don't show OutOfSync.

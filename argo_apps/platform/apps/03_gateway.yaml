@@ -2,12 +2,12 @@
 # (argo_apps/charts/03_gateway/). This is the cluster's single ingress point and its cert-issuance
 # wiring; apps reconciled in later waves attach HTTPRoutes/Certificates to it. See 10_gateway.md.
 #
-# AUTOMATED (prune + selfHeal): a safe leaf — pruning it removes ingress, but it is NOT the CNI and
+# AUTOMATED (prune + selfHeal): a safe leaf, pruning it removes ingress, but it is NOT the CNI and
 # cannot cut the cluster (or ArgoCD) off its own network, so drift should just auto-correct. It owns
 # no CRDs (Gateway API CRDs come from Cilium; cert-manager CRDs from cert-manager), so a prune here
 # never cascade-deletes a CRD or the CRs other apps own.
 #
-# sync-wave "3": strictly AFTER cert-manager (wave 2) — the ClusterIssuers need cert-manager's CRDs
+# sync-wave "3": strictly AFTER cert-manager (wave 2), the ClusterIssuers need cert-manager's CRDs
 # and a controller with Gateway API enabled (set in 02_cert_manager/values.yaml). The Gateway also
 # needs Cilium's Gateway API (wave 0). Per CLAUDE.md the NN prefix IS the wave; this is the first
 # app past the wave-2 platform leaves, so it takes the next free wave.
@@ -19,7 +19,7 @@ metadata:
   annotations:
     argocd.argoproj.io/sync-wave: "3"
     # Diff via a server-side-apply dry-run so server-defaulted Gateway API fields (the Gateway's
-    # certificateRefs group, the ClusterIssuer solver parentRefs group, …) don't show as perpetual
+    # certificateRefs group, the ClusterIssuer solver parentRefs group, ...) don't show as perpetual
     # OutOfSync. Pairs with ServerSideApply below. Needs ArgoCD >= 2.10. See 10_gateway.md.
     argocd.argoproj.io/compare-options: ServerSideDiff=true
 spec:

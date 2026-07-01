@@ -1,17 +1,17 @@
 # ArgoCD Application for the Prometheus Operator CRDs (argo_apps/charts/00_prometheus_operator_crds/).
-# CRDs ONLY — no controller. The operator + the rest of the stack land at wave 7
+# CRDs ONLY, no controller. The operator + the rest of the stack land at wave 7
 # (07_kube_prometheus_stack, crds.enabled:false); this app owns their CRD lifecycle separately so they
 # can be upgraded independently and so the CRDs exist before ANY consumer.
 #
 # sync-wave "0": foundational, alongside cilium. Every component ServiceMonitor we switch on lives in
-# an earlier-or-equal wave than the stack — cilium (0), argocd (1), cert-manager/longhorn/sealed-secrets
+# an earlier-or-equal wave than the stack, cilium (0), argocd (1), cert-manager/longhorn/sealed-secrets
 # (2). On a from-scratch bootstrap those waves can't go Healthy until the ServiceMonitor CRD exists, so
-# the CRDs MUST precede them — hence wave 0. CRDs with no controller are inert; ServiceMonitors created
+# the CRDs MUST precede them, hence wave 0. CRDs with no controller are inert; ServiceMonitors created
 # before the operator (wave 7) simply wait for it. Like 01_envoy_gateway owning the Gateway API CRDs.
 #
-# AUTOMATED with prune:false — a CRD-only app must NEVER cascade-delete its CRDs (that would take every
+# AUTOMATED with prune:false, a CRD-only app must NEVER cascade-delete its CRDs (that would take every
 # Prometheus/Alertmanager/ServiceMonitor/PrometheusRule CR with them). selfHeal:true is safe: re-applying
-# CRDs can't cut the cluster off its network. ServerSideApply=true — the operator CRDs are huge and blow
+# CRDs can't cut the cluster off its network. ServerSideApply=true, the operator CRDs are huge and blow
 # past the client-side last-applied-annotation size limit. See 15_monitoring.md.
 apiVersion: argoproj.io/v1alpha1
 kind: Application
@@ -35,4 +35,4 @@ spec:
       selfHeal: true
     syncOptions:
       - CreateNamespace=true
-      - ServerSideApply=true   # operator CRDs are large — SSA avoids the last-applied-annotation limit
+      - ServerSideApply=true   # operator CRDs are large, SSA avoids the last-applied-annotation limit

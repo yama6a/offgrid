@@ -1,15 +1,15 @@
 apiVersion: v2
 name: envoy-gateway
 description: >-
-  Wrapper chart for Envoy Gateway on the Talos/Raspberry Pi 5 cluster — the cluster's Gateway API
+  Wrapper chart for Envoy Gateway on the Talos/Raspberry Pi 5 cluster, the cluster's Gateway API
   data plane (it REPLACES Cilium Gateway API; Cilium stays the CNI + LB-IPAM). Ships the
   envoy-gateway controller (upstream gateway-helm), the `eg` GatewayClass, and an EnvoyProxy that
   pins the shared Gateway's LoadBalancer Service to the LB-IPAM IP via a Cilium annotation. Envoy
   Gateway also OWNS the Gateway API CRDs here (gateway-helm vendors v1.5.1), which is why 00_cilium
   no longer vendors them. Picked over Cilium Gateway API for its SecurityPolicy CRD (label-selectable
-  OIDC/JWT/authorization — see 04_google_sso). Single source of truth for the gateway-helm version
+  OIDC/JWT/authorization, see 04_google_sso). Single source of truth for the gateway-helm version
   (this file) and its values (values.yaml, under the `gateway-helm:` key). Delivered purely by
-  ArgoCD via argo_apps/apps/01_envoy_gateway.yaml — wave 1 (after the CNI; before cert-manager wave 2
+  ArgoCD via argo_apps/apps/01_envoy_gateway.yaml, wave 1 (after the CNI; before cert-manager wave 2
   which needs the Gateway API CRDs, and the gateway wave 3 which needs the `eg` class).
   See 11_envoy_gateway.md.
 type: application
@@ -18,5 +18,5 @@ appVersion: "1.8.1"           # envoy-gateway version the pinned chart ships (mi
 
 dependencies:
   - name: gateway-helm
-    version: "v1.8.1"         # envoyproxy/gateway-helm — THE single source for the pin
+    version: "v1.8.1"         # envoyproxy/gateway-helm, THE single source for the pin
     repository: "oci://docker.io/envoyproxy"

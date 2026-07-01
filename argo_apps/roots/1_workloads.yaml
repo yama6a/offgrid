@@ -1,10 +1,10 @@
 # The WORKLOADS root. A child of the root-of-roots (argo_apps/root.yaml), which creates it SECOND
-# (sync-wave "1") — only AFTER the platform root (wave 0) is Synced + Healthy. It watches
+# (sync-wave "1"), only AFTER the platform root (wave 0) is Synced + Healthy. It watches
 # argo_apps/workloads/apps/ and manages every workload Application it finds there (directory.recurse).
 #
 # Workloads carry NO per-app sync-wave and NO NN_ numbering: by the time this root is created the entire
 # platform (CRDs, operators, storage, gateway, SSO) is already Healthy, so the workloads have nothing
-# left to order among themselves — they all reconcile in PARALLEL. The platform→workloads ordering is
+# left to order among themselves, they all reconcile in PARALLEL. The platform->workloads ordering is
 # enforced once, here, by the root-of-roots wave. See 05_gitops.md.
 #
 # AUTOMATED: keeps the set of workload Application OBJECTS matching git; each child's own syncPolicy

@@ -1,4 +1,4 @@
-# Values for the 01_argocd wrapper chart. SINGLE SOURCE OF TRUTH — both the 05_argocd.sh
+# Values for the 01_argocd wrapper chart. SINGLE SOURCE OF TRUTH, both the 05_argocd.sh
 # bootstrap and the (self-managed) ArgoCD Application consume this. Chart version pinned in Chart.yaml.
 #
 # HA-lite posture for 3x 8GB Pi 5s: ArgoCD is NOT in the data path of running apps (once an app
@@ -12,7 +12,7 @@ argo-cd:
   # component's labelSelector automatically. Singletons (controller, redis) satisfy it trivially.
   # maxSkew 1 + DoNotSchedule over 3 nodes => the 2 replicas land on 2 distinct nodes.
   global:
-    # ArgoCD is ~90% of all cluster log volume at INFO — the controller's per-app reconcile churn
+    # ArgoCD is ~90% of all cluster log volume at INFO, the controller's per-app reconcile churn
     # ("Refreshing app status", "Reconciliation completed") and the repo-server's per-GenerateManifest
     # gRPC call tracing. WARN cuts essentially all of it; sync/compare FAILURES still log at warn/error,
     # and the sync audit trail lives in the ArgoCD UI/API + Application status.
@@ -25,9 +25,9 @@ argo-cd:
 
   # --- trim the footprint --------------------------------------------------------------------
   dex:
-    enabled: false                 # no SSO — drop the dex pod
+    enabled: false                 # no SSO, drop the dex pod
   notifications:
-    enabled: false                 # no notifications controller yet — drop the pod
+    enabled: false                 # no notifications controller yet, drop the pod
   redis-ha:
     enabled: false                 # single redis (the default); it's only a cache, self-heals on restart
 

@@ -2,12 +2,12 @@ apiVersion: v2
 name: victoria-metrics-operator-crds
 description: >-
   Wrapper chart for the VictoriaMetrics operator CRDs (VMSingle, VMAgent, VMServiceScrape, VMPodScrape,
-  VMRule, VMProbe, VLSingle, VLAgent, …). Installed on its OWN, ahead of everything that references them:
+  VMRule, VMProbe, VLSingle, VLAgent, ...). Installed on its OWN, ahead of everything that references them:
   the VM operator (01_victoria_metrics_operator) AND every VM/VL custom resource the monitoring stack
   ships at wave 7 (07_victoria_metrics_k8s_stack, 07_victoria_logs). Shipped SEPARATELY from the operator
   chart so the (large) CRDs sync ServerSideApply=true and never hit the operator app's annotation-size
-  limit — the same split we use for the Prometheus operator (00_prometheus_operator_crds). That's why
-  this sits at WAVE 0 alongside cilium — the CRDs must exist before any consumer; CRDs with no controller
+  limit, the same split we use for the Prometheus operator (00_prometheus_operator_crds). That's why
+  this sits at WAVE 0 alongside cilium, the CRDs must exist before any consumer; CRDs with no controller
   are inert, and VM*/VL* CRs created before the operator simply wait for it. Single source of truth for
   the CRD version (this file). See 15_monitoring.md.
 type: application
@@ -16,6 +16,6 @@ appVersion: "v0.72.0"         # victoria-metrics-operator version these CRDs mat
 
 dependencies:
   - name: victoria-metrics-operator-crds
-    version: "0.12.0"         # VictoriaMetrics/victoria-metrics-operator-crds — appVersion v0.72.0,
+    version: "0.12.0"         # VictoriaMetrics/victoria-metrics-operator-crds, appVersion v0.72.0,
                               # matches the operator pinned in 01_victoria_metrics_operator (0.65.1)
     repository: https://victoriametrics.github.io/helm-charts/

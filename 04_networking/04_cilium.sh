@@ -3,7 +3,7 @@
 # 04_cilium.sh  (macOS)
 #
 # Installs Cilium as the CNI on the cluster brought up by step 03 (03d: cni: none,
-# proxy: disabled). One-time imperative bootstrap — the chicken-and-egg breaker,
+# proxy: disabled). One-time imperative bootstrap, the chicken-and-egg breaker,
 # since ArgoCD and everything else need pod networking to exist first.
 #
 # SINGLE SOURCE OF TRUTH is the wrapper chart at argo_apps/platform/charts/00_cilium/:
@@ -14,12 +14,12 @@
 # versions, CRD lists, or values are defined here. See 04_networking.md.
 #
 # Brings up: WireGuard transparent encryption, kube-proxy replacement (via KubePrism),
-# LB-IPAM + L2 announcements (replaces MetalLB), Hubble. (Cilium's gatewayAPI is OFF — the ingress
-# data plane is Envoy Gateway; see 11_envoy_gateway.md.)
+# LB-IPAM + L2 announcements (replaces MetalLB), Hubble. (Cilium's gatewayAPI is OFF, the ingress
+# data plane is Envoy Gateway; see 07_ingress.md.)
 #
 # Also installs the prometheus-operator CRDs FIRST (rendered from argo_apps/platform/charts/
 # 00_prometheus_operator_crds): 00_cilium enables a ServiceMonitor, and cilium's chart hard-fails if
-# the monitoring.coreos.com CRDs don't exist yet. ArgoCD's wave-0 CRD app adopts them later. See 15_monitoring.md.
+# the monitoring.coreos.com CRDs don't exist yet. ArgoCD's wave-0 CRD app adopts them later. See 09_monitoring.md.
 #
 # Uses NATIVE helm + kubectl (errors out if either is missing). Talks to the cluster
 # via the kubeconfig step 03 (03d) wrote to 03_operating_system/talos-cluster/kubeconfig.
@@ -57,7 +57,7 @@ say "waiting for the Kubernetes API to answer (up to ${API_WAIT}s; the VIP lags 
 deadline=$(( $(date +%s) + API_WAIT ))
 until kubectl get nodes >/dev/null 2>&1; do
   [ "$(date +%s)" -lt "$deadline" ] \
-    || die "API still unreachable via ${KUBECONFIG} after ${API_WAIT}s — is the cluster up? (run step 03, or wait longer after the 03e reboot, or raise API_WAIT)"
+    || die "API still unreachable via ${KUBECONFIG} after ${API_WAIT}s, is the cluster up? (run step 03, or wait longer after the 03e reboot, or raise API_WAIT)"
   printf '.'; sleep 5
 done
 echo
@@ -67,7 +67,7 @@ ok "Kubernetes API reachable"
 # yq edits the chart's plain-YAML values (NOT the helm-templated cilium-lb.yaml, which references
 # .Values.loadBalancer.ipPool). Committing values.yaml is what keeps ArgoCD's render in sync with
 # this bootstrap. strenv() forces the IPs to stay quoted strings.
-say "LB-IPAM range -> values.yaml (${LB_RANGE_START} – ${LB_RANGE_STOP})"
+say "LB-IPAM range -> values.yaml (${LB_RANGE_START}-${LB_RANGE_STOP})"
 if LB_RANGE_START="$LB_RANGE_START" LB_RANGE_STOP="$LB_RANGE_STOP" \
      yq -i '.loadBalancer.ipPool.start = strenv(LB_RANGE_START)
           | .loadBalancer.ipPool.stop  = strenv(LB_RANGE_STOP)' "$VALUES"; then
@@ -77,11 +77,11 @@ else
 fi
 
 # === 0c. prometheus-operator CRDs (cilium's ServiceMonitor prerequisite) ======
-# 00_cilium's values enable prometheus.serviceMonitor — and cilium's chart HARD-FAILS at template
+# 00_cilium's values enable prometheus.serviceMonitor, and cilium's chart HARD-FAILS at template
 # time if the monitoring.coreos.com CRDs are absent (validate.yaml), then couldn't apply the
 # ServiceMonitor anyway (its template is value-gated, not capability-gated). On a fresh cluster
 # nothing has installed those CRDs yet: ArgoCD's 00_prometheus_operator_crds app only lands at
-# step 05. So install them HERE, first — rendered from that SAME pinned chart (no version in this
+# step 05. So install them HERE, first, rendered from that SAME pinned chart (no version in this
 # script), server-side (the CRDs are huge), with NO helm release so ArgoCD's wave-0 app adopts them
 # with no churn. Idempotent; --force-conflicts so a re-run after ArgoCD has adopted them still applies.
 say "prometheus-operator CRDs (cilium ServiceMonitor prerequisite)"
@@ -91,7 +91,7 @@ if helm dependency build "$CRDS_CHART_DIR" >/dev/null 2>&1 || helm dependency up
   if helm template prometheus-operator-crds "$CRDS_CHART_DIR" | kubectl apply --server-side --force-conflicts -f - >/dev/null 2>&1; then
     # wait for API discovery to register the new group/version, or cilium's render still won't see it.
     if kubectl wait --for=condition=established crd/servicemonitors.monitoring.coreos.com --timeout=60s >/dev/null 2>&1; then
-      ok "monitoring.coreos.com CRDs applied + established (ServiceMonitor/Prometheus/…)"
+      ok "monitoring.coreos.com CRDs applied + established (ServiceMonitor/Prometheus/...)"
     else
       bad "monitoring CRDs applied but not Established after 60s (cilium render may still fail)"
     fi
@@ -115,7 +115,7 @@ fi
 
 # === 2. install / upgrade ====================================================
 # The CiliumLoadBalancerIPPool / L2 CRDs are registered by the cilium-operator at
-# RUNTIME, not shipped by the chart — so on a FRESH cluster they don't exist when
+# RUNTIME, not shipped by the chart, so on a FRESH cluster they don't exist when
 # helm would apply the LB pool. Install with loadBalancer OFF first, let the operator
 # come up (--wait), then re-apply with it ON. On a re-run (CRD already present) do it
 # in one shot.
@@ -165,8 +165,8 @@ kubectl -n "$NS" rollout status ds/cilium --timeout=120s >/dev/null 2>&1 \
   && ok "cilium agent DaemonSet rolled out" || bad "cilium DaemonSet not ready"
 kubectl -n "$NS" rollout status deploy/cilium-operator --timeout=120s >/dev/null 2>&1 \
   && ok "cilium-operator ready" || bad "cilium-operator not ready"
-# (No Gateway API CRD check here — Cilium's gatewayAPI is OFF; Envoy Gateway installs those later, see
-# 11_envoy_gateway.md.)
+# (No Gateway API CRD check here, Cilium's gatewayAPI is OFF; Envoy Gateway installs those later, see
+# 07_ingress.md.)
 # fully-qualified name + retry: the cilium.io CRDs may have only just been registered by the
 # operator, so kubectl's API-discovery cache can lag a few seconds behind reality.
 pool_ok=1

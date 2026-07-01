@@ -2,10 +2,10 @@ apiVersion: v2
 name: prometheus-operator-crds
 description: >-
   Wrapper chart for the Prometheus Operator CRDs (Prometheus, Alertmanager, ServiceMonitor,
-  PodMonitor, PrometheusRule, Probe, ScrapeConfig, …). Installed on its OWN, ahead of everything
+  PodMonitor, PrometheusRule, Probe, ScrapeConfig, ...). Installed on its OWN, ahead of everything
   that references them: the kube-prometheus-stack (07_kube_prometheus_stack, crds.enabled:false) AND
-  the per-component ServiceMonitors enabled across waves 0–2 (cilium, argocd, cert-manager, longhorn,
-  sealed-secrets). That's why this sits at WAVE 0 alongside cilium — the CRDs must exist before any
+  the per-component ServiceMonitors enabled across waves 0-2 (cilium, argocd, cert-manager, longhorn,
+  sealed-secrets). That's why this sits at WAVE 0 alongside cilium, the CRDs must exist before any
   consumer, exactly like 01_envoy_gateway owns the Gateway API CRDs early. The operator itself comes
   much later (wave 7); CRDs with no controller are inert, and ServiceMonitors created before the
   operator simply wait for it. Single source of truth for the CRD version (this file). The CRDs are
@@ -16,6 +16,6 @@ appVersion: "v0.92.0"         # prometheus-operator version these CRDs match (==
 
 dependencies:
   - name: prometheus-operator-crds
-    version: "30.0.0"         # prometheus-community/prometheus-operator-crds — appVersion v0.92.0,
+    version: "30.0.0"         # prometheus-community/prometheus-operator-crds, appVersion v0.92.0,
                               # matches the operator bundled by kube-prometheus-stack 87.2.1
     repository: https://prometheus-community.github.io/helm-charts

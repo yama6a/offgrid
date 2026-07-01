@@ -1,6 +1,6 @@
 # One pod per rpi5 node. hostNetwork so it sees and acts on the host NIC + host-netns sockets.
-# Least privilege: NET_ADMIN (ethtool EEE, `ip link`, `ss -K`) + NET_RAW (ping) — not privileged.
-# Never calls the k8s API → automountServiceAccountToken: false.
+# Least privilege: NET_ADMIN (ethtool EEE, `ip link`, `ss -K`) + NET_RAW (ping), not privileged.
+# Never calls the k8s API -> automountServiceAccountToken: false.
 apiVersion: apps/v1
 kind: DaemonSet
 metadata:
@@ -44,7 +44,7 @@ spec:
             capabilities:
               drop: ["ALL"]
               # NET_ADMIN: ethtool EEE, `ip link` down/up, `ss -K`. NET_RAW: ping's ICMP socket
-              # (dropped by drop:ALL otherwise, so every probe would false-fail → false wedge).
+              # (dropped by drop:ALL otherwise, so every probe would false-fail -> false wedge).
               add: ["NET_ADMIN", "NET_RAW"]
           env:
             - {name: IFACE, value: {{ .Values.iface | quote }}}

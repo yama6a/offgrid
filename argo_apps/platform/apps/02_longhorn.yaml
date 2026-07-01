@@ -1,12 +1,12 @@
-# ArgoCD Application for Longhorn (argo_apps/charts/02_longhorn/) — the cluster's distributed block
+# ArgoCD Application for Longhorn (argo_apps/charts/02_longhorn/), the cluster's distributed block
 # storage and default StorageClass, backed by the dedicated XFS 'longhorn' user volume on each NVMe
 # (mounted at /var/mnt/longhorn by 03d, exposed to the kubelet by 03d's extraMount). See 09_longhorn.md.
 #
-# AUTOMATED (prune + selfHeal): a safe leaf, like nic-keeper / sealed-secrets / cert-manager — it can't
+# AUTOMATED (prune + selfHeal): a safe leaf, like nic-keeper / sealed-secrets / cert-manager, it can't
 # cut the cluster off its own network, so drift should auto-correct. Longhorn keeps its own CRDs (it
 # manages their lifecycle), so a prune here won't cascade-delete volume data.
 #
-# sync-wave "2": same wave as nic-keeper / sealed-secrets / cert-manager — all independent leaves, none
+# sync-wave "2": same wave as nic-keeper / sealed-secrets / cert-manager, all independent leaves, none
 # depends on the others. Per CLAUDE.md the NN prefix IS the wave, so they share `02_` (distinct dir
 # names). Wave 2 is the "after the platform (CNI + ArgoCD) is in place" slot.
 apiVersion: argoproj.io/v1alpha1
@@ -38,4 +38,4 @@ spec:
       selfHeal: true
     syncOptions:
       - CreateNamespace=true
-      - ServerSideApply=true   # the Longhorn CRDs are large — SSA avoids the last-applied-annotation limit
+      - ServerSideApply=true   # the Longhorn CRDs are large, SSA avoids the last-applied-annotation limit

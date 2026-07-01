@@ -1,12 +1,12 @@
 #!/usr/bin/env bash
 #
-# 10_gateway.sh  (macOS)
+# 07_gateway.sh  (macOS)
 #
 # Propagates the step-10 knobs (Let's Encrypt email + base domain) from .env into the gateway
 # wrapper chart's values.yaml, so the shell side and ArgoCD render the SAME values. This step has NO
-# imperative cluster bootstrap — the Gateway + ClusterIssuers (+ the sample app (sample-workload)) are
+# imperative cluster bootstrap, the Gateway + ClusterIssuers (+ the sample app (sample-workload)) are
 # delivered purely by ArgoCD from argo_apps/platform/charts/03_gateway/ (Application: argo_apps/platform/apps/
-# 03_gateway.yaml, sync-wave 3). See 10_gateway.md.
+# 03_gateway.yaml, sync-wave 3). See 07_ingress.md.
 #
 # SINGLE SOURCE OF TRUTH:
 #   - .env (here)                       -> LE_EMAIL + BASE_DOMAIN (the shell side)
@@ -15,7 +15,7 @@
 #
 # Idempotent: re-run safely (it only rewrites the two values).
 #
-# Non-interactive: NO prompting — knobs come from .env.
+# Non-interactive: NO prompting, knobs come from .env.
 #
 set -uo pipefail
 
@@ -65,11 +65,11 @@ Single source of truth: .env -> argo_apps/platform/charts/03_gateway/values.yaml
 
 Next:
   - git add -A && git commit && git push   # ArgoCD (wave 3) applies the Gateway + ClusterIssuers only
-    (the sample app is sample-workload, the SSO callback hosts 04_google_sso — each owns its cert+route)
+    (the sample app is sample-workload, the SSO callback hosts 04_google_sso, each owns its cert+route)
   - watch the Gateway:  kubectl -n gateway get gateway shared-gateway   # PROGRAMMED=True, pinned LB IP
-  - the per-host listeners stay not-Ready until their apps' certs issue (HTTP-01) — expected. See 10_gateway.md.
+  - the per-host listeners stay not-Ready until their apps' certs issue (HTTP-01), expected. See 07_ingress.md.
 EOF
 else
-  echo "Some checks failed — see above. Fix .env and re-run (idempotent)."
+  echo "Some checks failed, see above. Fix .env and re-run (idempotent)."
 fi
 [ "$FAIL" -eq 0 ]

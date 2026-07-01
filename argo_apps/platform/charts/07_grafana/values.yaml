@@ -1,27 +1,27 @@
-# Values for the 07_grafana wrapper chart. SINGLE SOURCE OF TRUTH — ArgoCD (and any local
+# Values for the 07_grafana wrapper chart. SINGLE SOURCE OF TRUTH, ArgoCD (and any local
 # `helm template`) consume this. Chart version pinned in Chart.yaml. See 16_grafana.md for the why.
 #
 # Grafana runs in the `monitoring` namespace (release name `grafana`), alongside the VictoriaMetrics +
 # VictoriaLogs stack it visualises AND alerts on. Everything under `grafana:` is passed to the upstream
-# grafana/grafana subchart (key == dependency name). Since the Prometheus → VictoriaMetrics migration,
+# grafana/grafana subchart (key == dependency name). Since the Prometheus -> VictoriaMetrics migration,
 # Grafana also OWNS alerting (no Alertmanager, no vmalert): datasources, contact point, notification
 # policy and alert rules are all provisioned here as code.
 grafana:
-  # No persistent storage (explicit request). Ephemeral pod — the datasources, dashboards and alert rules
+  # No persistent storage (explicit request). Ephemeral pod, the datasources, dashboards and alert rules
   # are all re-provisioned on every start (from these values + the k8s-stack's emitted dashboard
   # ConfigMaps). TRADE-OFF: alert *state* (firing history, silences) and any UI-created dashboards reset
   # on restart; rules themselves survive because they are file-provisioned. See 16_grafana.md.
   persistence:
     enabled: false
 
-  # Grafana's OWN auth is OFF — the gateway Google SSO allowlist (this chart's own `sso: example.com` edge
+  # Grafana's OWN auth is OFF, the gateway Google SSO allowlist (this chart's own `sso: example.com` edge
   # route, see the `ingress:` block below, + the 04_google_sso SecurityPolicy) is the only barrier, exactly
   # like the vmui/VictoriaLogs UIs.
   # Every request arrives already authenticated at the edge, so we serve it as an anonymous Admin: no
   # second login, full functionality. dotted keys (`auth.anonymous` etc.) are grafana.ini SECTION names.
   grafana.ini:
     # Quiet Grafana's INFO chatter (per-poll "Plugin Request Completed" datasource calls, cleanup &
-    # update-check). WARN keeps errors. No HTTP access logs lost — inbound traffic is logged by the
+    # update-check). WARN keeps errors. No HTTP access logs lost, inbound traffic is logged by the
     # envoy gateway, which stays at INFO on purpose.
     log:
       level: warn
@@ -29,14 +29,14 @@ grafana:
       domain: grafana.example.com
       root_url: https://grafana.example.com
     auth:
-      disable_login_form: true       # no built-in login — SSO is the front door
+      disable_login_form: true       # no built-in login, SSO is the front door
     auth.anonymous:
       enabled: true
       org_name: Main Org.
       org_role: Admin                # everyone who clears the SSO allowlist gets full admin
     auth.basic:
       enabled: false                 # no basic-auth path either
-    # SMTP for unified-alerting email. The PASSWORD is NOT here — Grafana maps the GF_SMTP_PASSWORD env
+    # SMTP for unified-alerting email. The PASSWORD is NOT here, Grafana maps the GF_SMTP_PASSWORD env
     # (injected from the sealed `grafana-smtp` Secret via envValueFrom below) onto [smtp].password. The
     # Gmail app-password is sealed by 16_grafana_smtp/16_grafana_smtp.sh (plaintext never committed).
     smtp:
@@ -57,9 +57,9 @@ grafana:
         optional: true   # so Grafana starts before 16_grafana_smtp.sh seals the secret; SMTP stays
                          # unconfigured (test email fails) until the SealedSecret lands and the pod restarts
 
-  # The VictoriaLogs datasource is NOT built in (unlike Loki) — install the signed plugin (commercial
+  # The VictoriaLogs datasource is NOT built in (unlike Loki), install the signed plugin (commercial
   # signature, so no allow-unsigned needed). Version pinned; the space-separated form pins the version via
-  # grafana-cli. The VictoriaMetrics datasource is the built-in `prometheus` type — no plugin required.
+  # grafana-cli. The VictoriaMetrics datasource is the built-in `prometheus` type, no plugin required.
   plugins:
     - victoriametrics-logs-datasource 0.29.0
 
@@ -86,7 +86,7 @@ grafana:
           url: http://vlsingle-victoria-logs.monitoring.svc:9428
 
   # Dashboards: keep the sidecar (it ingests the k8s-stack's emitted `grafana_dashboard` ConfigMaps across
-  # ALL namespaces). Datasources sidecar is OFF — datasources are provisioned directly above now.
+  # ALL namespaces). Datasources sidecar is OFF, datasources are provisioned directly above now.
   sidecar:
     dashboards:
       enabled: true
@@ -364,14 +364,14 @@ grafana:
                       - type: query
                         evaluator: {type: gt, params: [100]}
 
-  # Default ClusterIP Service on :80 -> container :3000 — what this chart's own grafana edge backendRef
+  # Default ClusterIP Service on :80 -> container :3000, what this chart's own grafana edge backendRef
   # targets (the `ingress:` block below; name `grafana`, port 80).
   service:
     enabled: true
     type: ClusterIP
     port: 80
 
-  # No Helm test Pod — it's a `helm.sh/hook: test` resource ArgoCD ignores anyway; drop it so the chart
+  # No Helm test Pod, it's a `helm.sh/hook: test` resource ArgoCD ignores anyway; drop it so the chart
   # ships only the running workload.
   testFramework:
     enabled: false
@@ -388,9 +388,9 @@ grafana:
 # Exposes Grafana on `host` through its OWN Gateway (a single :443 listener, merged onto the one Envoy via
 # mergeGateways in 01_envoy_gateway), gated by Google SSO: the HTTPRoute is labelled `sso: <sso>` so the
 # 04_google_sso SecurityPolicy attaches Google login + the allowlist. Grafana's own login is disabled
-# (anonymous Admin), so this SSO gate is the ONLY barrier — same as the vmui/VictoriaLogs UIs. The
+# (anonymous Admin), so this SSO gate is the ONLY barrier, same as the vmui/VictoriaLogs UIs. The
 # Gateway/listener/cert/route are named `grafana`; the ReferenceGrant lands in the backend namespace as
-# gateway-routes-to-grafana. `issuer` is STAGING until the cert issues — flip to letsencrypt-prod then.
+# gateway-routes-to-grafana. `issuer` is STAGING until the cert issues, flip to letsencrypt-prod then.
 # See 16_grafana.md.
 ingress:
   name: grafana

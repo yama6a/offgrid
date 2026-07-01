@@ -1,14 +1,14 @@
 # ArgoCD Application that ADOPTS the already-running Cilium (installed imperatively by
-# 04_networking/04_cilium.sh from the SAME chart). Same chart/namespace/release → Argo sees it
+# 04_networking/04_cilium.sh from the SAME chart). Same chart/namespace/release -> Argo sees it
 # in-sync, not fighting it. See 05_gitops.md.
 #
 # AUTOMATED, but DELIBERATELY without selfHeal (and prune: false): Cilium is the one app that can
-# cut the whole cluster — and ArgoCD itself — off the network. Auto-sync applies git changes
+# cut the whole cluster, and ArgoCD itself, off the network. Auto-sync applies git changes
 # hands-off, but with selfHeal OFF Argo never reverts an out-of-band break-glass fix (04_cilium.sh)
 # back to a bad git state mid-incident, and prune: false means it never cascade-deletes a CRD.
 # Recovery rule: after any break-glass, COMMIT the fix to git so the app reconciles (and doesn't
 # stall its sync-wave). The price of auto-sync: a bad Cilium change PUSHED to git applies unattended
-# — mind your pushes. First sync auto-adopts the running release with no pod churn (values.yaml
+#, mind your pushes. First sync auto-adopts the running release with no pod churn (values.yaml
 # already has loadBalancer.enabled: true).
 #
 # sync-wave "0": the CNI comes before ArgoCD (wave 1) and all later apps. This only works because

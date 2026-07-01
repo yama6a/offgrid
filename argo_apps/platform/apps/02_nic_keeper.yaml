@@ -1,8 +1,8 @@
-# ArgoCD Application for the nic-keeper DaemonSet (argo_apps/charts/02_nic_keeper/) — the RUNTIME
+# ArgoCD Application for the nic-keeper DaemonSet (argo_apps/charts/02_nic_keeper/), the RUNTIME
 # half of the Pi 5 macb NIC-wedge mitigation, complementing 03e's machine-config half. See
-# 06_nic_keeper.md and 03_operating_system.md ("NIC hardening — the macb wedge").
+# 06_nic_keeper.md and 03_operating_system.md ("NIC hardening, the macb wedge").
 #
-# AUTOMATED (prune + selfHeal): unlike Cilium (wave 0), this is a safe leaf — it can't cut the
+# AUTOMATED (prune + selfHeal): unlike Cilium (wave 0), this is a safe leaf, it can't cut the
 # cluster off its own network, so drift should just auto-correct. No break-glass concerns here.
 #
 # sync-wave "2": after cilium (0) + argocd (1). The pod schedules only on a Ready node, which means
@@ -22,7 +22,7 @@ spec:
     path: argo_apps/platform/charts/02_nic_keeper
   destination:
     server: https://kubernetes.default.svc
-    namespace: kube-system   # Talos exempts kube-system from Pod Security → the NET_ADMIN pod is allowed
+    namespace: kube-system   # Talos exempts kube-system from Pod Security -> the NET_ADMIN pod is allowed
   syncPolicy:
     automated:
       prune: true

@@ -1,9 +1,9 @@
 # The shared OIDC callback hosts (google-sso.<domain>), ONE per SSO domain. Each is the fixed OAuth
-# redirect target for every protected app on its domain — the SecurityPolicy points its redirectURL here
+# redirect target for every protected app on its domain, the SecurityPolicy points its redirectURL here
 # and attaches via the `sso: <domain>` label. Envoy Gateway intercepts /oauth2/callback before it reaches
 # a backend, so all callback routes share ONE tiny whoami. Per domain this chart now ships the whole
 # stack: its own Gateway + :443 listener (templates/gateway.yaml), a Certificate, and an `sso`-labelled
-# HTTPRoute — one place, no 03_gateway edit. See 12_google_sso.md.
+# HTTPRoute, one place, no 03_gateway edit. See 12_google_sso.md.
 apiVersion: apps/v1
 kind: Deployment
 metadata:
@@ -49,7 +49,7 @@ spec:
 ---
 # cert-manager mints this (HTTP-01 via the shared :80 listener) into the Secret this domain's own Gateway
 # listener (templates/gateway.yaml) references. Keep `issuer` on letsencrypt-prod once {{ .domain }}'s
-# HTTP-01 is validated — the browser is redirected THROUGH this host, so its cert must be trusted.
+# HTTP-01 is validated, the browser is redirected THROUGH this host, so its cert must be trusted.
 apiVersion: cert-manager.io/v1
 kind: Certificate
 metadata:

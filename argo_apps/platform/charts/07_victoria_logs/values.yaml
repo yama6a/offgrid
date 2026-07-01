@@ -1,4 +1,4 @@
-# Values for the 07_victoria_logs wrapper chart. SINGLE SOURCE OF TRUTH — ArgoCD (and any local
+# Values for the 07_victoria_logs wrapper chart. SINGLE SOURCE OF TRUTH, ArgoCD (and any local
 # `helm template`) consume this. Chart version pinned in Chart.yaml. See 15_monitoring.md.
 #
 # Two pieces:
@@ -34,7 +34,7 @@ victoria-logs-collector:
   tolerations:
     - operator: Exists
 
-  # Let vmagent scrape the collector's own /metrics via a VMPodScrape (vm: true) — operator-native,
+  # Let vmagent scrape the collector's own /metrics via a VMPodScrape (vm: true), operator-native,
   # picked up by vmagent's selectAllByDefault.
   podMonitor:
     enabled: true
@@ -50,7 +50,7 @@ victoria-logs-collector:
 # `sso: <sso>` so the 04_google_sso SecurityPolicy attaches Google login + the allowlist. The VictoriaLogs
 # UI has NO login of its own, so this SSO gate is the only barrier. The Gateway/listener/cert/route are
 # named `vlogs`; the ReferenceGrant lands in the backend namespace as gateway-routes-to-vlogs. `issuer`
-# is STAGING until the cert issues — flip to letsencrypt-prod then. See 15_monitoring.md.
+# is STAGING until the cert issues, flip to letsencrypt-prod then. See 15_monitoring.md.
 ingress:
   name: vlogs
   gatewayClassName: eg

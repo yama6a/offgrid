@@ -66,11 +66,11 @@ say "card payload ready:"; ls -l ../card
 # 8. Show disks so you can identify the SD card
 diskutil list
 
-# 9. Pick the SD card's WHOLE-DISK id (e.g. /dev/disk4 — NOT /dev/disk4s1)
+# 9. Pick the SD card's WHOLE-DISK id (e.g. /dev/disk4, NOT /dev/disk4s1)
 read -r -p ">> enter SD card disk id (e.g. /dev/disk4): " SD_DISK
 diskutil info "${SD_DISK}" >/dev/null 2>&1 || die "'${SD_DISK}' is not a disk"
 
-# 10. Confirm — this erases the entire card
+# 10. Confirm, this erases the entire card
 diskutil info "${SD_DISK}" | grep -E 'Device / Media Name|Disk Size|Removable|Protocol' || true
 read -r -p ">> ERASE ${SD_DISK} and write the EEPROM card? type YES: " confirm
 [ "${confirm}" = "YES" ] || { echo "aborted."; exit 1; }
