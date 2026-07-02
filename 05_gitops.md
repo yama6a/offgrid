@@ -114,18 +114,18 @@ This repo is public, so ArgoCD clones it anonymously over HTTPS, no credential n
 `git ls-remote` is git smart-HTTP, not the REST API, so the 10s poll stays well under GitHub's limits (rationale
 in `argo_apps/platform/charts/01_argocd/values.yaml`).
 
-For a private repo (or to lift the anonymous rate limit), `05_argocd.sh` seeds a credential: at hand-off it
-prompts for a fine-grained, read-only, single-repo PAT (input hidden), leave it empty for a public repo, then
-creates an ArgoCD `repository` Secret (labelled `argocd.argoproj.io/secret-type: repository`, with `url` == the polled
-`repoURL`) before it applies the root app. The prompt prints the exact PAT how-to inline.
+For a private repo (or to lift the anonymous rate limit), `05_argocd.sh` seeds a credential: at hand-off it reads
+`ARGOCD_GITHUB_PAT_SECRET` (a fine-grained, read-only, single-repo PAT) from the gitignored `.env` — leave it empty for a
+public repo — then creates an ArgoCD `repository` Secret (labelled `argocd.argoproj.io/secret-type: repository`, with
+`url` == the polled `repoURL`) before it applies the root app.
 
 ```text
 # Create the PAT first: GitHub -> Settings -> Developer settings -> Fine-grained tokens
 #   Repository access: Only select repositories -> this repo
 #   Permissions: Repository -> Contents -> Read-only   (nothing else)
-# Then just run the script, it asks for the token (hidden) during hand-off:
+# Put it in .env:  ARGOCD_GITHUB_PAT_SECRET="github_pat_..."   (gitignored; empty = anonymous clone)
+# Then run the script (no prompt):
 ./05_gitops/05_argocd.sh
-# (Automation only: pre-set GIT_TOKEN in the env to skip the prompt.)
 ```
 
 Why the credential is seeded imperatively (and not via sealed-secrets). A private repo's clone credential cannot
@@ -184,7 +184,7 @@ talos-phase scripts (03a-03e). Talks to the cluster via `03_operating_system/tal
    release `argocd` / namespace `argocd` so the self-managed Application adopts THIS release.
 4. Waits for the controller / repo-server / server to roll out.
 5. Hands off: resolves the repo to poll (`$REPO_URL`, else the git `origin` remote as a prompt default) and pins it
-   into `root.yaml`; optionally seeds a `GIT_TOKEN` repository credential (see [Git auth](#git-auth)); then,
+   into `root.yaml`; optionally seeds an `ARGOCD_GITHUB_PAT_SECRET` repository credential from `.env` (see [Git auth](#git-auth)); then,
    after a "did you push?" check (ArgoCD reads git, not local disk), `kubectl apply` the root app. The root creates
    `cilium` (wave 0) which auto-adopts, then `argocd` (wave 1) which self-adopts, both Synced, no clicks.
 6. Waits for `root` + `argocd` to be Synced/Healthy, then prints the admin password + port-forward command.

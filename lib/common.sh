@@ -3,8 +3,9 @@
 # lib/common.sh, shared helpers for every bootstrap script in this repo.
 #
 # Source it near the top of a script; it self-locates the repo root, loads the gitignored .env (the
-# single source of truth for editable config, copy .env.example to .env), and derives the computed
-# values (node array, install paths, version aliases, build-cache key):
+# single source of truth for editable config AND secrets — tokens/passwords are read from .env, never
+# prompted), and derives the computed values (node array, install paths, version aliases, build-cache
+# key, the published installer ref):
 #
 #   SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 #   source "${SCRIPT_DIR}/../lib/common.sh"      # repo-root scripts: "${SCRIPT_DIR}/lib/common.sh"
@@ -39,6 +40,16 @@ fi
 # shellcheck disable=SC1090
 source "$ENV_FILE"
 
+# ---- secrets (read from .env, never prompted; default empty so an older .env missing a key is safe) ----
+# Scripts run under `set -u`; defaulting here means a script can reference any of these even if the key
+# isn't in .env yet. Empty = "skip the feature it enables" (see each key's comment in .env.example).
+: "${GITHUB_GHCR_PULL_TOKEN_SECRET:=}"    # 03d bakes into node machine config (kubelet pulls private ghcr.io)
+: "${GITHUB_GHCR_PUSH_TOKEN_SECRET:=}"    # 03a docker-login + push of the installer image (build host only)
+: "${ARGOCD_GITHUB_PAT_SECRET:=}"         # 05 seeds ArgoCD's repo-creds Secret
+: "${SMTP_GOOGLE_APP_PASSWORD_SECRET:=}"  # 09 seals it for Grafana email
+: "${GOOGLE_SSO_CLIENT_ID:=}"      # 07 writes into the google-sso values
+: "${GOOGLE_SSO_CLIENT_SECRET:=}"  # 07 seals it for Envoy Gateway OIDC
+
 # ---- derived config (computed from the .env scalars; not user-editable) ---------------------------
 # These can't live in a flat .env (arrays, interpolation, a shasum-keyed path), so they're computed here.
 read -ra CLUSTER_NODES <<< "${CLUSTER_NODES}"   # .env CLUSTER_NODES is a space-separated "host:ip" string -> array
@@ -55,6 +66,10 @@ BUILD_KEY="${TALOS_VERSION}-${KERNEL_REF}-$(printf '%s' \
   | shasum -a 256 | cut -c1-8)"
 BUILD_DIR="${CONFIG_DIR}/.cache/${BUILD_KEY}"   # build scratch + output (gitignored)
 OUT_DIR="${BUILD_DIR}/out"                      # final image is staged here for the flasher
+# Published installer image (03a pushes it to GHCR, 03f upgrades nodes from it). Tag off TALOS_VERSION
+# (not the build's `git describe`), so 03a and 03f compute the SAME ref deterministically, no git state.
+INSTALLER_IMAGE="${GHCR_SERVER}/${GHCR_USER}/${INSTALLER_PACKAGE}"  # e.g. ghcr.io/<user>/talos-installer
+INSTALLER_REF="${INSTALLER_IMAGE}:${TALOS_VERSION}-arm64"           # exact tag 03a pushes / 03f pulls
 
 # ---- output helpers (consistent across every script) ------------------------
 say()  { printf '\n\033[1;36m>> %s\033[0m\n' "$*"; }

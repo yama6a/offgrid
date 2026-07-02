@@ -1,17 +1,12 @@
 # Talos: OS choice, custom NVMe image & cluster bring-up
 
-OS for the 3-node Pi 5 cluster: Talos Linux. Immutable, API-managed, Kubernetes-only. The whole node is one
-declarative config: no SSH, no package manager, no drift. Talos has no official Pi 5 image, so we build our own
-against the latest Talos on a recent Raspberry Pi kernel. This doc covers why we picked Talos, what we looked at and
-rejected, how the NVMe image gets built, validated, and flashed, and how the nodes are brought up into a cluster
-([Cluster bring-up](#cluster-bring-up)). The networking layer (Cilium as CNI, load balancer, gateway, and
-encryption) is the next step: see [04_networking.md](04_networking.md).
+OS for the 3-node Pi 5 cluster: Talos Linux. Immutable, API-managed, Kubernetes-only.
+Talos has no official Pi 5 image, so we build our own against the latest Talos on a recent Raspberry Pi kernel.
 
 ## Why Talos
 
 - Whole node = one declarative config. Managed via `talosctl`. Everything-as-code without exception.
-- Identical nodes. Same image on every board; what makes a node different is just its config (cluster bring-up,
-  below).
+- Identical nodes. Same image on every board; what makes a node different is just its config (cluster bring-up, below).
 - Atomic A/B upgrades + rollback via `talosctl upgrade`. No in-place mutation.
 - Minimal attack surface. No shell, no SSH, ~12 host binaries. WiFi/Bluetooth/cron daemons aren't in the image at
   all.
@@ -20,13 +15,10 @@ encryption) is the next step: see [04_networking.md](04_networking.md).
 
 ## Trade-offs
 
-- Pi 5 isn't officially supported. Talos ships no Pi 5 image; BCM2712 + RP1 needs drivers that only exist in the
-  `raspberrypi/linux` fork. We build against the [talos-rpi5](https://github.com/talos-rpi5/talos-builder) pipeline,
-  rebased onto latest Talos (details below). Upgrading Talos = rebuild the image.
+- Talos ships no Pi 5 image; BCM2712 + RP1 needs drivers that only exist in the `raspberrypi/linux` fork.
+- Upgrading Talos = rebuild the image.
 - We own the build. New Talos release -> re-run the builder, possibly re-apply the rebases too.
 - API-only, no shell. A hung node gets rebooted, not SSH'd into.
-- Pi 5 NIC bug: silent `macb` link wedge that needs mitigation, handled in step 04. The image's job on the NIC side
-  is just shipping the newer kernel that makes EEE actually disableable (6.12 can't do it on Pi 5; 6.18 can).
 
 ## OSes considered
 
@@ -53,9 +45,9 @@ that combination doesn't exist as a published image anywhere:
 - The only prebuilt Talos Pi 5 image is the community one, which is old.
 
 So we drive the `talos-rpi5` pipeline but rebase it onto latest Talos. The 6.18 kernel is the whole point: it carries
-the upstream RP1 patches that let step 04 disable EEE on the NIC.
+the upstream RP1 patches that allow step 04 to disable EEE on the NIC.
 
-## Versions (pinned)
+## Versions
 
 | Component  | Pin                                             | Notes                                                                            |
 |------------|-------------------------------------------------|----------------------------------------------------------------------------------|
@@ -71,8 +63,16 @@ Script: `03a_talos_image_builder.sh` (macOS, Apple Silicon). All config (version
 extensions) lives in `.env` (build-cache output path derived in `lib/common.sh`), shared by all the step-03 scripts.
 A clean run builds and validates; it exits non-zero if anything goes wrong.
 
-What it does: spins up a local registry + a mergeop-capable buildx builder -> clones and checks out `talos-builder` ->
-applies the four rebases -> builds kernel -> overlay -> installer -> raw image -> runs offline validation.
+What it does:
+
+1. spins up a local registry + a mergeop-capable buildx builder
+2. clones and checks out `talos-builder`
+3. applies the four rebases
+4. builds kernel
+5. overlay
+6. installer
+7. raw image
+8. runs offline validation
 
 Prerequisites (the script checks all of these, with the `brew` fix for each):
 
@@ -82,10 +82,9 @@ Prerequisites (the script checks all of these, with the `brew` fix for each):
 
 The four rebases (things the upstream pipeline can't handle at this Talos version, all automated by the script):
 
-1. Kernel source + config. Point the kernel at `raspberrypi/linux@<tag>` (sha-verified) and layer a small Pi 5/RP1
-   config fragment on top of the stock 6.18 config, then reconcile with `make olddefconfig` under the real clang
-   toolchain. The build fails immediately if any required symbol didn't make it in (4K pages, NVMe, MACB, watchdog, RP1,
-   BCM2712).
+1. Kernel source + config. Point the kernel at `raspberrypi/linux@<tag>` and layer a small Pi 5/RP1 config fragment on
+   top of the stock 6.18 config, then reconcile with `make olddefconfig` under the real clang toolchain. The build fails
+   immediately if any required symbol didn't make it in (4K pages, NVMe, MACB, watchdog, RP1, BCM2712).
 2. Module list. Filter `hack/modules-arm64.txt` to what the rpi kernel actually built. The stock list references
    drivers our config doesn't include (e.g. `bnxt_re`), and `nvme` is now built-in rather than a module. The script
    regenerates the list by intersecting against the real kernel module tree.
@@ -93,7 +92,7 @@ The four rebases (things the upstream pipeline can't handle at this Talos versio
    1.13's overlay API added a `ctx` argument. The script bumps machinery to match and patches `main.go` in the overlay.
 4. grub profile. Build with the overlay's `rpi5` grub profile, not `metal`. Talos 1.13's `metal` default is
    sd-boot, and sd-boot's image path silently skips the overlay installer entirely. So a Pi 5 image built as `metal`
-   has the kernel but no u-boot/config.txt/dtb and simply won't boot. The grub profile runs the overlay install
+   has the kernel but no u-boot/config.txt/dtb and won't boot. The grub profile runs the overlay install
    properly and the EFI partition ends up with the boot bits it needs.
 
 ```bash
@@ -103,30 +102,40 @@ The four rebases (things the upstream pipeline can't handle at this Talos versio
 First run takes a while. Full clang/ThinLTO kernel compile is 30-40 min on 12 cores (macBook Pro, M2 Pro). Later runs
 cache the kernel layer.
 
-## What's baked into the image (and why it has to be)
+## What's baked into the image
 
-- 4K kernel pages (`CONFIG_ARM64_4K_PAGES=y`, not the Pi defconfig's 16K). The 16K risk lands squarely in
-  mount/filesystem handling, which is exactly what cluster bring-up and step 04 (Longhorn) touch. Etcd and Kubernetes
-  are fine on 16K, but XFS only mounts when its block size <= the kernel page size, so a 16K-block XFS volume won't
-  mount on a 4K kernel. Some other software has 16K compatibility issues too. 4K is also what stock Talos `metal-arm64`
+- 4K kernel pages (`CONFIG_ARM64_4K_PAGES=y`, not the Pi defconfig's 16K). Etcd and Kubernetes
+  are fine on 16K, but there is some software has 16K compatibility issues. 4K is also what stock Talos `metal-arm64`
   uses. Keep page size the same on all three nodes.
 - System extensions (baked at the installer step): `iscsi-tools` (iscsid, required by Longhorn) and
   `util-linux-tools` (fstrim).
 - Radios off: `dtoverlay=disable-wifi` + `dtoverlay=disable-bt` in the overlay's `config.txt`, plus the `.dtbo`
-  files.
+  files. This saves some marginal power and CPU syscles (kernel probes). But we will never use WiFi or Bluetooth anyway.
 - Built-in (`=y`) drivers needed for step 04 (hardening) and Longhorn: Pi 5 watchdog (`BCM2835_WDT`), NVMe + PCIe
   (`PCIE_BRCMSTB`), the Pi 5 NIC (`MACB` + PHYLINK/PHYLIB/BROADCOM_PHY), RP1 bring-up (`MFD_RP1`, `BCM2712_MIP`, ...).
-- Not baked in (tuned in step 04): NIC mitigation. TSO/GSO off, ring sizes, EEE disable, watchdog enable, the
-  link-watchdog DaemonSet, kubelet socket cleanup. The image just ships the kernel version that makes EEE controllable.
 
 ## Registry & upgrades
 
-The build pushes to a local registry (`localhost:5010`), enough for building and validating.
+The build runs against a **local** registry (`localhost:5010`): it's fast, supports the BuildKit mergeop `bldr`
+needs, and works offline. That's where the kernel, overlay, and installer layers land while `03a` builds and
+validates. The local registry stays the build target — we don't point the build at GHCR, because that would push
+the large kernel/overlay layers over the network on every run for no benefit.
 
-The NVMe gets flashed exactly once (initial install); after that, Talos upgrades are atomic A/B over the network with no
-reflash. Bumping Talos = re-run the builder with updated version knobs in `.env`. If a rebase fails, the script
-will tell you. The kernel layer caches, so a userspace-only Talos bump skips the long compile. A network upgrade does
-need the installer image somewhere the nodes can pull from (e.g. a registry they can reach), not set up here.
+**Publishing the installer (for network upgrades).** After validation, `03a` optionally publishes **only** the
+installer image to GHCR — the one artifact a node needs to upgrade. Set `GITHUB_GHCR_PUSH_TOKEN_SECRET` (a classic token
+scoped `write:packages`) in `.env` and `03a` re-tags the validated installer and pushes it to
+`ghcr.io/<GHCR_USER>/<INSTALLER_PACKAGE>:<TALOS_VERSION>-arm64` (the `INSTALLER_REF` derived in `lib/common.sh`).
+Leave the token empty to build + validate without publishing. Push and pull tokens are kept separate on purpose: the
+write token lives only on the build host (here), never in node config, so a compromised node can't push to GHCR.
+
+**Upgrading the cluster.** During first setup, the NVMe is flashed once (`03b`). After that, Talos upgrades are
+atomic A/B over the network with rollback — no reflash. Bumping Talos = bump the version knobs in `.env`, re-run
+`03a` (the kernel layer caches, so a userspace-only bump skips the long compile) to build + publish the new
+installer, then run **`03f_talos_upgrade.sh`**. `03f` rolls `talosctl upgrade --image "$INSTALLER_REF"` one node at
+a time, waiting for full cluster health between nodes so etcd quorum is never at risk; it's re-run-safe (an
+already-upgraded node is a no-op). The nodes pull the installer using the `read:packages` auth `03d` baked into
+their machine config, so a private installer package needs no extra wiring (either that pull token was set in `03d`,
+or the GHCR package is public).
 
 ## Validation (offline, no hardware)
 
@@ -142,21 +151,16 @@ container. Exits non-zero on any failure.
   actually got swapped out.
 - Extensions baked: decompress the UKI's `.initrd` and confirm `iscsi-tools` and `util-linux-tools` are in there.
 
-> No QEMU/VM boot. The Pi 5 (BCM2712 + RP1) isn't emulated by QEMU, so a VM boot would fail for unrelated reasons and
-> tell you nothing useful about image correctness. Real boot validation means flashing to a Pi.
-
 ## Flash the NVMe
 
 Script: `03b_talos_image_flasher.sh` (macOS). `dd`s the local built image (`.raw.xz`) to an NVMe over a USB
-adapter. Has the usual safeguards: lists disks, requires typing `YES`, writes to `/dev/rdiskN`, ejects. Needs `xz`
-(`brew install xz`).
+adapter. Has the usual safeguards: lists disks, requires typing `YES`, writes to `/dev/rdiskN`, ejects.
 
 ### Per drive
 
 Run the script, pick the USB-NVMe adapter's disk id, confirm. Repeat for each SSD, just swap drives in the adapter.
 
-Then slot the SSD into a Pi, power on with no SD card -> EEPROM (step 02) falls through to NVMe -> Talos boots into
-maintenance mode (no role assigned yet).
+Then slot the SSD into a Pi, power on with no SD card -> Talos boots into maintenance mode (no role assigned yet).
 
 ## Boot & verify (per node)
 
@@ -242,7 +246,8 @@ picked `192.168.100.1` for the VIP.
    the patch below turns the CNI off so Cilium can take over.)
 3. Applies a control-plane patch to every node: the VIP bound to the wired NIC, `allowSchedulingOnControlPlanes:
    true`, `certSANs` (VIP + node IPs), the node label `machine.nodeLabels: node.kubernetes.io/instance-type=rpi5`
-   (so the `nic-keeper` DaemonSet targets rpi5 hardware only, see [Runtime: the recovery DaemonSet](#runtime-the-recovery-daemonset-nic-keeper-gitops);
+   (so the `nic-keeper` DaemonSet targets rpi5 hardware only,
+   see [Runtime: the recovery DaemonSet](#runtime-the-recovery-daemonset-nic-keeper-gitops);
    `NODE_INSTANCE_TYPE` in `.env`), and the Cilium prep: `cluster.network.cni.name: none`,
    `cluster.proxy.disabled: true` (Cilium does kube-proxy replacement), and `machine.features.kubePrism.enabled: true`
    (Cilium's API endpoint at `localhost:7445`; default-on in 1.13, set explicitly here to document the dependency).
@@ -261,16 +266,17 @@ picked `192.168.100.1` for the VIP.
 > never latch onto WiFi. Confirm the name on a live node with `talosctl get links` if unsure (`EXPECT_NIC` in `.env`,
 > default `end0`).
 
-> GHCR registry auth (optional, global): to pull private container images, the script prompts (once, at the
-> start) for a GitHub classic token scoped `read:packages` and bakes a `machine.registries.config."ghcr.io".auth`
-> block into the same control-plane patch. The kubelet/CRI then authenticates every pull from `ghcr.io` on every
-> node, cluster-wide, with no per-namespace `imagePullSecrets` to wire into workloads. We chose node-level auth
-> over an in-cluster (sealed-secret) pull secret precisely because it's global and namespace-agnostic; the cost is that
-> the token lives in the machine config (in the gitignored `talos-cluster/cp-patch.yaml`, never committed) rather
-> than in the sealed-secrets pipeline, and rotating it means re-running `03d` (re-enter the token). The host + username
-> are plain config (`GHCR_SERVER`/`GHCR_USER` in `.env`); only the token is a secret, so it's the only thing
-> prompted. Leave the prompt empty to skip (the auth block is simply omitted). GHCR only accepts a classic token,
-> fine-grained tokens do not work for package pulls.
+> GHCR registry auth (optional, global): to pull private container images, `03d` reads `GITHUB_GHCR_PULL_TOKEN_SECRET`
+> (a GitHub classic token scoped `read:packages`) from the gitignored `.env` and bakes a
+> `machine.registries.config."ghcr.io".auth` block into the control-plane patch. The kubelet/CRI then authenticates
+> every pull from `ghcr.io` on every node, cluster-wide, with no per-namespace `imagePullSecrets` to wire into
+> workloads. We chose node-level auth over an in-cluster (sealed-secret) pull secret precisely because it's global
+> and namespace-agnostic; the cost is that the token lives in the machine config (in the gitignored
+> `talos-cluster/cp-patch.yaml`, never committed) rather than in the sealed-secrets pipeline, and rotating it means
+> editing `.env` and re-running `03d`. The host + username are plain config (`GHCR_SERVER`/`GHCR_USER`); leave
+> `GITHUB_GHCR_PULL_TOKEN_SECRET` empty to skip (the auth block is simply omitted). This is the **pull** token — distinct
+> from the `write:packages` `GITHUB_GHCR_PUSH_TOKEN_SECRET` `03a` uses to publish, which never touches node config. GHCR
+> only accepts a classic token; fine-grained tokens do not work for package pulls.
 
 ### Run
 
@@ -382,11 +388,11 @@ step. Chart: `argo_apps/platform/charts/02_nic_keeper/`; Application:
 The three runtime `macb` failure modes machine-config can't reach (the other two are `03e`'s, see
 the [table above](#nic-hardening-the-macb-wedge)):
 
-| runtime trigger                    | what happens                                                | defence                                       |
-|------------------------------------|-------------------------------------------------------------|-----------------------------------------------|
-| EEE LPI-wake race                  | link wakes from low-power idle too slowly, drops frames      | assert `ethtool --set-eee end0 eee off`       |
-| silent wedge                       | link stays up, carrier fine, but no traffic passes          | active ping probe -> bounce `ip link` down/up |
-| post-recovery kubelet socket stall | kubelet's old TCP sockets to the API server hang after a bounce | `ss -K` drops them so they reconnect      |
+| runtime trigger                    | what happens                                                    | defence                                       |
+|------------------------------------|-----------------------------------------------------------------|-----------------------------------------------|
+| EEE LPI-wake race                  | link wakes from low-power idle too slowly, drops frames         | assert `ethtool --set-eee end0 eee off`       |
+| silent wedge                       | link stays up, carrier fine, but no traffic passes              | active ping probe -> bounce `ip link` down/up |
+| post-recovery kubelet socket stall | kubelet's old TCP sockets to the API server hang after a bounce | `ss -K` drops them so they reconnect          |
 
 On each node the single consolidated loop:
 
@@ -404,14 +410,14 @@ script lives in the chart's `templates/configmap.yaml` (mounted + exec'd); every
 
 Decisions:
 
-| decision                       | why                                                                                  |
-|--------------------------------|--------------------------------------------------------------------------------------|
-| DaemonSet                      | the fix is per-node, on the host's NIC + netns — one pod per node.                    |
-| One consolidated agent         | EEE, link-watchdog and socket-drop share state (one wedge -> all three react); one loop beats three pods racing. |
-| Runtime, not machine-config    | no Talos `EthernetConfig` field for EEE; wedge detection is reactive; socket-drop is post-recovery. |
-| Active ping, not carrier       | the wedge is link-up-no-traffic; carrier reads healthy, only a probe catches it.     |
-| `NET_ADMIN` + `NET_RAW`        | NET_ADMIN covers `ethtool` EEE / `ip link` / `ss -K`; NET_RAW is required for `ping`'s ICMP socket. Still least-privilege, beats `privileged: true`. |
-| Auto-sync (prune + selfHeal)   | safe leaf — it can't cut the cluster off its own network, so drift just auto-corrects. Contrast Cilium (wave 0), which auto-syncs *without* selfHeal/prune precisely because it can. |
+| decision                       | why                                                                                                                                                                                                                                                                                                                                                                                                                 |
+|--------------------------------|---------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------|
+| DaemonSet                      | the fix is per-node, on the host's NIC + netns — one pod per node.                                                                                                                                                                                                                                                                                                                                                  |
+| One consolidated agent         | EEE, link-watchdog and socket-drop share state (one wedge -> all three react); one loop beats three pods racing.                                                                                                                                                                                                                                                                                                    |
+| Runtime, not machine-config    | no Talos `EthernetConfig` field for EEE; wedge detection is reactive; socket-drop is post-recovery.                                                                                                                                                                                                                                                                                                                 |
+| Active ping, not carrier       | the wedge is link-up-no-traffic; carrier reads healthy, only a probe catches it.                                                                                                                                                                                                                                                                                                                                    |
+| `NET_ADMIN` + `NET_RAW`        | NET_ADMIN covers `ethtool` EEE / `ip link` / `ss -K`; NET_RAW is required for `ping`'s ICMP socket. Still least-privilege, beats `privileged: true`.                                                                                                                                                                                                                                                                |
+| Auto-sync (prune + selfHeal)   | safe leaf — it can't cut the cluster off its own network, so drift just auto-corrects. Contrast Cilium (wave 0), which auto-syncs *without* selfHeal/prune precisely because it can.                                                                                                                                                                                                                                |
 | `instance-type: rpi5` selector | the macb wedge is Pi 5-only. Stamped by Talos `machine.nodeLabels` in [`03d`](#what-03d_talos_cluster_configsh-does) (`NODE_INSTANCE_TYPE` in `.env`); that key works because it's on the kubelet NodeRestriction allowlist (an arbitrary `kubernetes.io/*` label is rejected by admission). Not `os: linux` (too broad) nor `control-plane:DoesNotExist` (every node here is control-plane -> matches zero nodes). |
 
 Caveats / preconditions:
@@ -446,7 +452,8 @@ A recovery, in the affected node's pod logs:
 
 > Live cluster (label not yet present): if the cluster predates the `03d` change, stamp the label
 > without a reboot the same way `03e` patches config:
-> `talosctl -n <node-ip> patch mc --mode no-reboot --patch '{"machine":{"nodeLabels":{"node.kubernetes.io/instance-type":"rpi5"}}}'`
+>
+`talosctl -n <node-ip> patch mc --mode no-reboot --patch '{"machine":{"nodeLabels":{"node.kubernetes.io/instance-type":"rpi5"}}}'`
 > (repeat per node). Otherwise the DaemonSet has nothing to schedule onto.
 
 ### Caveats
@@ -507,7 +514,8 @@ Boot:
   image): <https://github.com/siderolabs/sbc-raspberrypi/issues/91>
 - Cilium on Talos (KubePrism, kube-proxy replacement, cgroup/securityContext):
   <https://docs.cilium.io/en/stable/installation/k8s-install-helm/>
-- Envoy Gateway (the cluster's Gateway API data plane; Cilium's gatewayAPI is disabled): <https://gateway.envoyproxy.io/>
+- Envoy Gateway (the cluster's Gateway API data plane; Cilium's gatewayAPI is
+  disabled): <https://gateway.envoyproxy.io/>
 - Cilium LB-IPAM + L2 announcements: <https://docs.cilium.io/en/stable/network/lb-ipam/>
 - ingress-nginx retirement (why Gateway API): <https://kubernetes.io/blog/2025/11/11/ingress-nginx-retirement/>
 - Worked examples: <https://kcirtap.io/posts/talos-rpi5-custom-kernel-build/>

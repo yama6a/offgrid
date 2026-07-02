@@ -2,15 +2,16 @@
 #
 # 07_google_sso.sh  (macOS)
 #
-# Wires up the multi-domain Google-SSO SecurityPolicies (04_google_sso chart): prompts for the ONE
-# shared Google OAuth client-id + client-secret, and a SEPARATE email allowlist per SSO domain. Writes
-# the non-secret bits (clientID + per-domain allowlists) into the chart values and seals the client
-# SECRET into a committable SealedSecret. The SecurityPolicies are delivered purely by ArgoCD
+# Wires up the multi-domain Google-SSO SecurityPolicies (04_google_sso chart): reads the ONE shared
+# Google OAuth client-id + client-secret from .env, and prompts for a SEPARATE email allowlist per SSO
+# domain. Writes the non-secret bits (clientID + per-domain allowlists) into the chart values and seals
+# the client SECRET into a committable SealedSecret. The SecurityPolicies are delivered purely by ArgoCD
 # (argo_apps/platform/apps/04_google_sso.yaml, sync-wave 4). See 07_ingress.md.
 #
-# INTERACTIVE: prompts for client-id, client-secret (hidden), and one allowlist per domain. No cookie
-# secret, Envoy Gateway signs its own session cookies. The redirectURL + cookieDomain are DERIVED in the
-# chart (google-sso.<domain> / <domain>), not written here. Re-run to rotate the secret or edit allowlists.
+# client-id + client-secret come from the gitignored .env (GOOGLE_SSO_CLIENT_ID / GOOGLE_SSO_CLIENT_SECRET);
+# only the per-domain email allowlist is prompted. No cookie secret, Envoy Gateway signs its own session
+# cookies. The redirectURL + cookieDomain are DERIVED in the chart (google-sso.<domain> / <domain>), not
+# written here. Re-run to rotate the secret or edit allowlists.
 #
 # SINGLE SOURCE OF TRUTH (read, not duplicated):
 #   - the SSO domains + seal target <- argo_apps/platform/charts/04_google_sso/values.yaml (ssoDomains, namespace,
@@ -83,12 +84,14 @@ for d in "${DOMAINS[@]}"; do echo "         https://${AUTH_SUBDOMAIN}.${d}/oauth
 echo "    4. Create -> copy the Client ID (...apps.googleusercontent.com) and Client secret."
 echo "  No service account needed (that's only for Google Workspace *group* restriction)."
 
-# === 3. prompt for the shared client id + secret =============================
-say "enter the shared Google OAuth client credentials"
-read -rp  "  Google OAuth Client ID: " CLIENT_ID
-read -rsp "  Google OAuth Client secret (hidden): " CLIENT_SECRET; echo
-[ -n "$CLIENT_ID" ]     || die "client id is empty"
-[ -n "$CLIENT_SECRET" ] || die "client secret is empty"
+# === 3. read the shared client id + secret from .env =========================
+# Both come from the gitignored .env (GOOGLE_SSO_CLIENT_ID / GOOGLE_SSO_CLIENT_SECRET); nothing is
+# prompted. Both are REQUIRED (SSO can't be configured without them).
+say "reading the shared Google OAuth client credentials from .env"
+CLIENT_ID="$GOOGLE_SSO_CLIENT_ID"
+CLIENT_SECRET="$GOOGLE_SSO_CLIENT_SECRET"
+[ -n "$CLIENT_ID" ]     || die "GOOGLE_SSO_CLIENT_ID is empty in .env"
+[ -n "$CLIENT_SECRET" ] || die "GOOGLE_SSO_CLIENT_SECRET is empty in .env"
 case "$CLIENT_ID" in *.apps.googleusercontent.com) ;; *)
   warn "client id does not end in .apps.googleusercontent.com, double-check it" ;;
 esac

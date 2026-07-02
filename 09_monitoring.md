@@ -89,8 +89,9 @@ SSO-allowlisted user is a full Grafana admin — acceptable for a small trusted 
 allowlist is the real boundary. Drop `auth.anonymous.org_role` to `Viewer` if that's ever too broad.
 
 ### SMTP secret
-Grafana's Gmail app-password is sealed by `09_monitoring/09_grafana_smtp.sh` into the `grafana-smtp` Secret
-(key `password`), surfaced as `GF_SMTP_PASSWORD` (optional, so Grafana starts before it's sealed).
+Grafana's Gmail app-password comes from `SMTP_GOOGLE_APP_PASSWORD_SECRET` in the gitignored `.env`; `09_monitoring/09_grafana_smtp.sh`
+seals it into the `grafana-smtp` Secret (key `password`), surfaced as `GF_SMTP_PASSWORD` (optional, so Grafana starts
+before it's sealed). Leave the var empty and the script offers to delete the sealed file (disables outgoing email).
 Host/user/from are non-secret in the values. This is the only imperative script for this step; the VM stack
 and metrics-server are pure GitOps.
 

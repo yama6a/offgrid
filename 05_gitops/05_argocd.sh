@@ -34,8 +34,7 @@ RELEASE="argocd"
 NS="argocd"
 REPO_ARGO="https://argoproj.github.io/argo-helm"
 HELM_TIMEOUT="8m"                                  # 3x Pi 5 image pulls can be slow
-GIT_TOKEN=""                                       # PRIVATE-repo read-only PAT (the ONLY secret), filled by the prompt below
-# REPO_URL (the repo ArgoCD polls) is config, see .env.
+# REPO_URL (the repo ArgoCD polls) + ARGOCD_GITHUB_PAT_SECRET (the repo-creds PAT) are config/secret in .env.
 # -----------------------------------------------------------------------------
 
 # wait until an ArgoCD Application reports Synced + Healthy (or time out)
@@ -140,20 +139,10 @@ fi
 # app's repoURL just has to start with this url, it equals it, so no inline repo Secret is needed.
 # See 05_gitops.md.
 say "git credential (single-repo PAT)"
-# Ask for the PAT interactively (hidden input), the one secret this script prompts for.
-if [ -z "$GIT_TOKEN" ]; then
-  cat <<'EOF'
-   For a PRIVATE repo, paste a fine-grained, READ-ONLY, single-repo PAT (leave empty for a PUBLIC
-   repo -> anonymous clone). Create one at: https://github.com/settings/personal-access-tokens/new
-     GitHub -> Settings -> Developer settings -> Fine-grained tokens -> Generate new token
-       Repository access : Only select repositories -> this repo
-       Permissions       : Contents (Repository) -> Read-only   (nothing else)
-EOF
-  printf '   GitHub PAT (hidden; empty = anonymous): '
-  read -rs GIT_TOKEN </dev/tty 2>/dev/null || GIT_TOKEN=""   # non-interactive => anonymous
-  echo
-fi
-if [ -n "$GIT_TOKEN" ]; then
+# The PAT comes from the gitignored .env (ARGOCD_GITHUB_PAT_SECRET); nothing is prompted. For a PRIVATE repo
+# it should be a fine-grained, READ-ONLY, single-repo PAT (Contents: Read-only, nothing else). Mint one
+# at https://github.com/settings/personal-access-tokens/new. Empty => anonymous HTTPS (PUBLIC repo only).
+if [ -n "$ARGOCD_GITHUB_PAT_SECRET" ]; then
   # username: GitHub authenticates off the PAT (password) and ignores this, but Basic Auth needs it
   # non-empty, so it's hardcoded. For a non-GitHub remote that DOES use it, set it here.
   if kubectl -n "$NS" apply -f - >/dev/null 2>&1 <<EOF
@@ -168,14 +157,14 @@ stringData:
   type: git
   url: ${REPO_URL}
   username: git
-  password: ${GIT_TOKEN}
+  password: ${ARGOCD_GITHUB_PAT_SECRET}
   forceHttpBasicAuth: "true"
 EOF
   then ok "repository credential seeded (upsert) for ${REPO_URL}"
   else bad "could not seed repository credential"
   fi
 else
-  echo "   no PAT entered -> ArgoCD clones ${REPO_URL} anonymously (fine for a PUBLIC repo)"
+  echo "   ARGOCD_GITHUB_PAT_SECRET empty in .env -> ArgoCD clones ${REPO_URL} anonymously (fine for a PUBLIC repo)"
 fi
 
 kubectl apply -f "$ROOT_APP" >/dev/null 2>&1 && ok "root applied" || bad "kubectl apply root failed"

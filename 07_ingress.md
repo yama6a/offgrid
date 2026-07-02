@@ -220,9 +220,10 @@ placeholder `clientID`/allowlist also deny everyone, so a half-configured policy
 only targets routes in its own namespace).
 
 ### Apply / verify
-1. Run `./07_ingress/07_google_sso.sh` (needs the cluster reachable for `kubeseal`). It reads the
-   domains from `04_google_sso/values.yaml`, prints the redirect URIs to register, prompts the shared
-   client-id/secret + an allowlist per domain, writes the values, seals the secret.
+1. Put the shared `GOOGLE_SSO_CLIENT_ID` + `GOOGLE_SSO_CLIENT_SECRET` in the gitignored `.env`, then run
+   `./07_ingress/07_google_sso.sh` (needs the cluster reachable for `kubeseal`). It reads the domains from
+   `04_google_sso/values.yaml`, prints the redirect URIs to register, reads the client-id/secret from `.env` and
+   prompts an allowlist per domain, writes the values, seals the secret.
 2. Register each printed redirect URI on the one OAuth client; add each apex under "Authorized
    domains". Publish the consent screen (in "Testing" only listed test users log in, regardless of
    the allowlist).

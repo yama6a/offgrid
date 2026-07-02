@@ -4,8 +4,12 @@
 #
 # Builds a CUSTOM Talos Linux image for the Raspberry Pi 5 at the latest Talos
 # on a recent Raspberry Pi kernel, bakes in the items cluster bring-up (03d) and
-# hardening (step 04) need, and ends with an OFFLINE validation stage. A clean
-# run = a built AND validated image.
+# hardening (step 04) need, ends with an OFFLINE validation stage, and then
+# OPTIONALLY publishes the installer image to GHCR (for network upgrades, 03f).
+# A clean run = a built AND validated image (published too, if a push token is set).
+#
+# Set GITHUB_GHCR_PUSH_TOKEN_SECRET (classic, write:packages) in .env to publish the
+# installer to ${INSTALLER_REF}; leave it empty to build+validate only.
 #
 # It drives talos-rpi5/talos-builder (which stitches siderolabs/pkgs +
 # siderolabs/talos + the talos-rpi5 overlay), but rebases four things the
@@ -266,8 +270,31 @@ PY
   echo "$ext" | grep -qx util-linux-tools && echo "PASS  extension util-linux-tools" || { echo "FAIL  util-linux-tools"; exit 1; }
 ' || die "installer/kernel validation failed"
 
+# === 9c. PUBLISH installer to GHCR (optional) ================================
+# Network upgrades (03f) work by having the nodes PULL an installer image. Push the just-built, just-
+# validated installer to GHCR so they can. Only the installer is published (not the large kernel/overlay
+# layers, which stay in the local registry, all the nodes need is the installer). The image was already
+# pulled into the docker daemon for validation above ($INSTALLER_IMG), so this just re-tags + pushes it.
+# Needs a classic write:packages token in .env (GITHUB_GHCR_PUSH_TOKEN_SECRET); empty => skip (build stays usable offline).
+if [ -n "${GITHUB_GHCR_PUSH_TOKEN_SECRET}" ]; then
+  say "publish installer -> ${INSTALLER_REF}"
+  printf '%s' "$GITHUB_GHCR_PUSH_TOKEN_SECRET" | docker login "$GHCR_SERVER" -u "$GHCR_USER" --password-stdin >/dev/null \
+    || die "docker login ${GHCR_SERVER} failed (is GITHUB_GHCR_PUSH_TOKEN_SECRET a CLASSIC write:packages token for ${GHCR_USER}?)"
+  docker tag "$INSTALLER_IMG" "$INSTALLER_REF"
+  docker push "$INSTALLER_REF" >/dev/null || die "docker push ${INSTALLER_REF} failed"
+  docker logout "$GHCR_SERVER" >/dev/null 2>&1 || true   # don't leave creds in the docker config
+  say "published ${INSTALLER_REF}"
+else
+  warn "GITHUB_GHCR_PUSH_TOKEN_SECRET empty in .env -> skipping GHCR publish (built + validated only)"
+fi
+
 # === 10. done ================================================================
 say "BUILD + VALIDATION PASSED"
 echo "   image:     $STAGED"
 echo "   installer: ${REGISTRY_HOST}/${REGISTRY_USER}/installer:${TALOS_TAG}  (local registry)"
+if [ -n "${GITHUB_GHCR_PUSH_TOKEN_SECRET}" ]; then
+  echo "   published: ${INSTALLER_REF}  (GHCR -> upgrade nodes with ./03f_talos_upgrade.sh)"
+else
+  echo "   publish:   skipped (set GITHUB_GHCR_PUSH_TOKEN_SECRET in .env to push ${INSTALLER_REF})"
+fi
 echo "   flash:     ./03b_talos_image_flasher.sh"

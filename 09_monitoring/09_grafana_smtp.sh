@@ -5,12 +5,12 @@
 # Seals the Gmail app-password Grafana uses to send unified-alerting email, so the project stays reusable
 # with no personal credentials in git. Grafana's SMTP host/user/from live (non-secret) in the 07_grafana
 # values.yaml [smtp] block; the PASSWORD is injected as GF_SMTP_PASSWORD from the sealed `grafana-smtp`
-# Secret (envValueFrom, optional). Prompts for the app-password; if given, seals it into a committable
-# SealedSecret; if blank, offers to DELETE it (disables outgoing email, the env is optional, so Grafana
-# keeps running). Re-run any time to rotate the password or disable email.
+# Secret (envValueFrom, optional). Reads the app-password from .env (SMTP_GOOGLE_APP_PASSWORD_SECRET); if set,
+# seals it into a committable SealedSecret; if blank, offers to DELETE it (disables outgoing email, the
+# env is optional, so Grafana keeps running). Re-run any time to rotate the password or disable email.
 #
-# INTERACTIVE: prompts for the 16-char Google App Password (hidden; needs 2-Step Verification, see
-# 09_monitoring.md), never echoed, never committed in plaintext.
+# The 16-char Google App Password (needs 2-Step Verification, see 09_monitoring.md) lives in the
+# gitignored .env, never echoed, never committed in plaintext.
 #
 # Written by this script (committable, no secrets in the values file):
 #   - argo_apps/platform/charts/07_grafana/templates/grafana-smtp-sealedsecret.yaml   (the sealed app-password)
@@ -35,15 +35,14 @@ require kubeseal kubectl
 [ -d "$GRAFANA_CHART" ] || die "missing ${GRAFANA_CHART}, the 07_grafana chart should ship it"
 ok "kubeseal/kubectl present, grafana chart found"
 
-# === 1. prompt for the app-password ==========================================
-# Empty => the DISABLE path (delete the sealed file). Given => seal it.
-say "Grafana SMTP app-password (Gmail), leave blank to DISABLE outgoing email"
-echo "  This is a 16-char Google App Password (needs 2-Step Verification), NOT your account password."
-echo "  Generate one at https://myaccount.google.com/apppasswords. See 09_monitoring.md."
-read -rsp "  app-password (hidden): " SMTP_PASSWORD; echo
+# === 1. read the app-password from .env ======================================
+# SMTP_GOOGLE_APP_PASSWORD_SECRET (16-char Gmail app password, needs 2-Step Verification, see 09_monitoring.md)
+# comes from the gitignored .env; nothing is prompted. Empty => the DISABLE path (delete the sealed
+# file). Given => seal it.
+say "Grafana SMTP app-password from .env (SMTP_GOOGLE_APP_PASSWORD_SECRET); empty => DISABLE outgoing email"
 
 # === 2a. SEAL path ===========================================================
-if [ -n "$SMTP_PASSWORD" ]; then
+if [ -n "$SMTP_GOOGLE_APP_PASSWORD_SECRET" ]; then
   say "app-password given -> sealing into ${SMTP_SECRET_NAME}"
 
   # controller must be reachable to seal against this cluster's key.
@@ -54,7 +53,7 @@ if [ -n "$SMTP_PASSWORD" ]; then
 
   # seal the app-password (key ${SMTP_SECRET_KEY}) -> ${SMTP_SECRET_NAME} in ${MONITORING_NS}.
   say "sealing app-password -> ${SEALED_OUT}"
-  seal_secret "$SMTP_SECRET_NAME" "$MONITORING_NS" "$SMTP_SECRET_KEY" "$SMTP_PASSWORD" "$SEALED_OUT"
+  seal_secret "$SMTP_SECRET_NAME" "$MONITORING_NS" "$SMTP_SECRET_KEY" "$SMTP_GOOGLE_APP_PASSWORD_SECRET" "$SEALED_OUT"
 
 # === 2b. DISABLE path: delete the sealed file ================================
 else
