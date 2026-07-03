@@ -1,6 +1,7 @@
 # ArgoCD Application that exposes the ArgoCD UI through the shared Gateway behind Google SSO
-# (argo_apps/charts/06_argocd_ingress/). Edge only, ArgoCD stays local-admin/server.insecure. Two auth
-# layers: Google (outer gate) then the ArgoCD admin login. See 14_argocd_ingress.md.
+# (argo_apps/charts/06_argocd_ingress/). Edge only, ArgoCD stays server.insecure. ONE auth layer: Google
+# (the outer gate); ArgoCD itself is anonymous-admin (no login — see 01_argocd/values.yaml
+# configs.cm/rbac), so this SSO edge is the ONLY auth boundary. See 14_argocd_ingress.md.
 #
 # AUTOMATED (prune + selfHeal): a safe leaf, a Certificate + an HTTPRoute + a ReferenceGrant, no CRDs,
 # can't cut the cluster off its network. Break-glass if this wedges the UI: `kubectl -n argocd

@@ -41,6 +41,20 @@ argo-cd:
     cm:
       timeout.reconciliation: 10s
       timeout.reconciliation.jitter: 2s
+      # No ArgoCD login screen: the anonymous user is auto-authenticated and (via rbac below) is admin, so
+      # whoever clears the Google SSO edge lands straight in. SAFE ONLY because the Google SSO SecurityPolicy
+      # at the shared Gateway (06_argocd_ingress, wave 4/6) is the SOLE path to the UI/API — that edge is now
+      # the ONLY auth boundary. NB `kubectl -n argocd port-forward svc/argocd-server` bypasses the Gateway +
+      # SSO and lands in as admin with no login. See 05_gitops.md (Exposure) / 06_argocd_ingress.yaml.
+      users.anonymous.enabled: "true"
+      # Disable the built-in local admin account: no argocd-initial-admin-secret, no username/password
+      # login. Redundant now that anonymous is admin, and removes a credential that could leak/brute-force.
+      # Recover (if you ever turn anonymous off too) with: kubectl -n argocd edit cm argocd-cm.
+      admin.enabled: "false"
+    # RBAC: give every request (i.e. the anonymous user above) full admin. No per-user roles — there are no
+    # ArgoCD users, Google SSO already gated who can reach this at the edge.
+    rbac:
+      policy.default: role:admin
 
   # --- Prometheus metrics: per-component metrics Service + ServiceMonitor. Discovered cluster-wide
   # via the stack's serviceMonitorSelectorNilUsesHelmValues:false. CRDs exist from wave 0, before this

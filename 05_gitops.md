@@ -142,10 +142,12 @@ re-running with a new token. A GitHub App is the upgrade path if you outgrow a P
 
 The bootstrap reaches the UI over port-forward (above). For day-to-day access the UI is exposed through
 its own Gateway (folded onto the one Envoy via `mergeGateways`), fronted by the same Google SSO built in
-[07_ingress.md](07_ingress.md#google-sso), **without touching ArgoCD's own auth**. The Google gate only
-decides who can reach the UI; ArgoCD stays in local-admin mode (no Dex, no OIDC, no RBAC), so you log in
-twice — Google, then the ArgoCD admin you already use. The SSO gate is the only network barrier in front
-of the UI.
+[07_ingress.md](07_ingress.md#google-sso). The Google gate decides who can reach the UI; ArgoCD's OWN
+login is turned off — the anonymous user is admin and the local admin account is disabled
+(`argo_apps/platform/charts/01_argocd/values.yaml`, `configs.cm`/`rbac`), no Dex/OIDC — so whoever clears
+Google lands straight in as admin (one login, not two). The SSO gate is the only auth boundary in front of
+the UI, which is why it must be the sole path: the port-forward break-glass below now also lands in as
+admin with no login.
 
 Delivered purely by ArgoCD at sync-wave 6 (app `argo_apps/platform/apps/06_argocd_ingress.yaml`, chart
 `argo_apps/platform/charts/06_argocd_ingress/`): its own `argocd` `Gateway` (one `:443` listener) +
@@ -187,7 +189,8 @@ talos-phase scripts (03a-03e). Talks to the cluster via `03_operating_system/tal
    into `root.yaml`; optionally seeds an `ARGOCD_GITHUB_PAT_SECRET` repository credential from `.env` (see [Git auth](#git-auth)); then,
    after a "did you push?" check (ArgoCD reads git, not local disk), `kubectl apply` the root app. The root creates
    `cilium` (wave 0) which auto-adopts, then `argocd` (wave 1) which self-adopts, both Synced, no clicks.
-6. Waits for `root` + `argocd` to be Synced/Healthy, then prints the admin password + port-forward command.
+6. Waits for `root` + `argocd` to be Synced/Healthy, then prints the port-forward command (no login —
+   anonymous is admin, local admin disabled).
 
 ```bash
 # 1) generate + commit the argo-cd Chart.lock (first time only), commit the new files, and PUSH:
@@ -197,7 +200,7 @@ git add argo_apps 05_gitops 03_operating_system.md && git commit -m "step 05: Ar
 # 2) bootstrap:
 ./05_gitops/05_argocd.sh
 
-# 3) reach the UI (user: admin; password printed by the script):
+# 3) reach the UI (no login — anonymous is admin, local admin disabled):
 kubectl -n argocd port-forward svc/argocd-server 8080:80
 #    then open http://localhost:8080, all apps auto-adopt, nothing to click.
 ```
@@ -225,8 +228,10 @@ kubectl -n argocd port-forward svc/argocd-server 8080:80
   git, or `Chart.lock`/CRD issues). With `selfHeal` off Argo won't self-correct, commit the fix to git, then it reconciles.
 - `server`/`repo-server` pods pending -> the `DoNotSchedule` topology spread needs 2 schedulable nodes free; check
   `kubectl -n argocd get pods -o wide` and node pressure (Longhorn/monitoring not yet installed, so this is rare now).
-- Can't log in -> admin password:
-  `kubectl -n argocd get secret argocd-initial-admin-secret -o jsonpath='{.data.password}' | base64 -d`.
+- No login prompt (expected) -> the anonymous user is admin and the local admin account is disabled
+  (`01_argocd` `configs.cm`: `users.anonymous.enabled` + `admin.enabled: "false"`, `rbac.policy.default:
+  role:admin`). To restore password login, set `admin.enabled: "true"` and push, or break-glass
+  `kubectl -n argocd edit cm argocd-cm`.
 
 ## Reading the script output
 

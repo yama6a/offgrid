@@ -179,14 +179,15 @@ csync=$(kubectl -n "$NS" get application cilium -o jsonpath='{.status.sync.statu
 echo "   app/cilium sync status: ${csync:-<not created yet>}  (expected Synced, auto-adopted, no pod churn)"
 
 # === 6. access + summary =====================================================
+# No login: the local admin account is disabled and the anonymous user is admin (01_argocd/values.yaml
+# configs.cm/rbac), so a port-forward drops straight into the UI. Day-to-day access is the SSO edge
+# (06_argocd_ingress, wave 6); this port-forward is the break-glass that bypasses the Gateway + SSO.
 say "ArgoCD access"
-ADMIN_PW="$(kubectl -n "$NS" get secret argocd-initial-admin-secret -o jsonpath='{.data.password}' 2>/dev/null | base64 -d 2>/dev/null)"
 cat <<EOF
-   UI/CLI via port-forward (no ingress yet; server runs plain HTTP):
+   UI via port-forward (no ingress yet; server runs plain HTTP, no login — anonymous is admin):
      kubectl -n ${NS} port-forward svc/argocd-server 8080:80
-     open http://localhost:8080   (user: admin)
-   admin password:
-     ${ADMIN_PW:-<run: kubectl -n ${NS} get secret argocd-initial-admin-secret -o jsonpath='{.data.password}' | base64 -d>}
+     open http://localhost:8080   (lands in as admin, no username/password)
+   Day-to-day: https://argocd.<domain> behind Google SSO (06_argocd_ingress).
    All apps auto-adopt their running releases, nothing to click.
 EOF
 
