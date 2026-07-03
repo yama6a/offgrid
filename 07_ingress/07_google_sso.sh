@@ -9,9 +9,11 @@
 # (argo_apps/platform/apps/04_google_sso.yaml, sync-wave 4). See 07_ingress.md.
 #
 # client-id + client-secret come from the gitignored .env (GOOGLE_SSO_CLIENT_ID / GOOGLE_SSO_CLIENT_SECRET);
-# only the per-domain email allowlist is prompted. No cookie secret, Envoy Gateway signs its own session
-# cookies. The redirectURL + cookieDomain are DERIVED in the chart (google-sso.<domain> / <domain>), not
-# written here. Re-run to rotate the secret or edit allowlists.
+# only the per-domain email allowlist is prompted (Enter / empty answer KEEPS the existing committed
+# allowlist, so a non-interactive re-run — e.g. DANGEROUS_bootstrap_cluster.sh piping </dev/null — just
+# re-seals the secret without clobbering the allowlists already in git). No cookie secret, Envoy Gateway
+# signs its own session cookies. The redirectURL + cookieDomain are DERIVED in the chart
+# (google-sso.<domain> / <domain>), not written here. Re-run to rotate the secret or edit allowlists.
 #
 # SINGLE SOURCE OF TRUTH (read, not duplicated):
 #   - the SSO domains + seal target <- argo_apps/platform/charts/04_google_sso/values.yaml (ssoDomains, namespace,
@@ -105,7 +107,16 @@ else
 fi
 i=0
 for d in "${DOMAINS[@]}"; do
-  read -rp "  Allowed Google accounts for ${d} (comma-separated emails): " RAW
+  # How many emails this domain already has committed, so an empty answer can KEEP them (a
+  # non-interactive re-run — bootstrap pipes </dev/null so read hits EOF — re-seals without
+  # clobbering the allowlists in git). Only a domain with NO existing allowlist AND no input fails.
+  HAVE="$(yq -r ".ssoDomains[$i].allowlist | length" "$SSO_VALUES" 2>/dev/null)"; case "$HAVE" in ''|null) HAVE=0;; esac
+  read -rp "  Allowed Google accounts for ${d} (comma-separated emails, Enter to keep existing): " RAW || RAW=""
+  if [ -z "$RAW" ]; then
+    if [ "${HAVE:-0}" -ge 1 ]; then ok "${d}: keeping existing ${HAVE}-account allowlist"
+    else bad "no allowlist for ${d} and none committed, supply emails (re-run and enter them)"; fi
+    i=$((i+1)); continue
+  fi
   LIST="$(normalize_emails "$RAW")"
   N="$(printf '%s\n' "$LIST" | grep -c . || true)"
   if [ "${N:-0}" -lt 1 ]; then bad "no valid emails for ${d}, left unchanged"; i=$((i+1)); continue; fi

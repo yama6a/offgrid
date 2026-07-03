@@ -66,6 +66,23 @@ kubectl apply -f 03_operating_system/talos-cluster/sealed-secrets-master.key
 kubectl delete pod -n sealed-secrets -l app.kubernetes.io/name=sealed-secrets   # restart to load it
 ```
 
+### First-time bootstrap vs rebuild (the two orchestrators)
+
+The repo has two one-shot orchestrators at the root, and the sealed-secrets key is exactly what separates
+them:
+
+- **`DANGEROUS_rebuild_cluster.sh`** — wipes a **running** cluster and rebuilds it, then **restores** the
+  backed-up master key (`06_restore`) so the committed `SealedSecret`s decrypt unchanged. It does *not*
+  re-seal. Requires a current key backup (run `06_backup` beforehand).
+- **`DANGEROUS_bootstrap_cluster.sh`** — **first-time** init on freshly-flashed nodes in maintenance mode.
+  There is no prior key to restore, so the fresh controller mints a **brand-new** key and the two committed
+  `SealedSecret`s (`google-oauth`, `grafana-smtp`) are orphaned. It therefore **re-seals** them against the
+  new key (`07_google_sso </dev/null` — keeps the committed allowlists — and `09_grafana_smtp`), commits +
+  pushes, then **backs up** the new key (`06_backup`) so future rebuilds can restore it. It also archives
+  the old `secrets.yaml`/`kubeconfig`/`talosconfig`/`sealed-secrets-master.key` to
+  `talos-cluster/backup_<timestamp>/` and starts from a fresh Talos CA. To re-initialize a *running*
+  cluster, use the rebuild script instead (it wipes first).
+
 ## Using it: sealing a secret
 
 Install the `kubeseal` CLI (`brew install kubeseal`), then seal against this controller (the

@@ -29,12 +29,12 @@ OUTDIR="${CLUSTER_DIR}"
 mkdir -p "${OUTDIR}"
 
 # Working vars from shared config (IFACE is used directly).
-CLUSTER="$CLUSTER_NAME"; DISK="$INSTALL_DISK"; EPHEMERAL="$EPHEMERAL_SIZE"; VIP="$CLUSTER_VIP"; CNPG_SIZE="$CNPG_VOLUME_SIZE"
+CLUSTER="$CLUSTER_NAME"; DISK="$INSTALL_DISK"; EPHEMERAL="$EPHEMERAL_SIZE"; VIP="$CLUSTER_VIP"; CNPG_SIZE="$CNPG_VOLUME_SIZE"; KVER="$KUBERNETES_VERSION"
 HOSTNAMES=(); IPS=()
 for e in "${CLUSTER_NODES[@]}"; do HOSTNAMES+=("${e%%:*}"); IPS+=("${e##*:}"); done
 
 echo "== Talos cluster setup (talosctl ${TALOSCTL_VERSION}, dockerized) =="
-echo "Cluster:  ${CLUSTER}     VIP: ${VIP}     NIC: ${IFACE}"
+echo "Cluster:  ${CLUSTER}     VIP: ${VIP}     NIC: ${IFACE}     k8s: ${KVER}"
 echo "Disk:     ${DISK}        EPHEMERAL cap: ${EPHEMERAL}"
 for i in "${!IPS[@]}"; do echo "  ${HOSTNAMES[$i]}  ->  ${IPS[$i]}"; done
 echo "Output:   ${OUTDIR}"
@@ -63,10 +63,34 @@ else
   echo "  -> GITHUB_GHCR_PULL_TOKEN_SECRET empty in .env; skipping registry auth (fine if every image is PUBLIC)."
 fi
 
-# 1. Secrets + base machine config (generated once; preserved on re-run)
-if [ ! -f "${OUTDIR}/controlplane.yaml" ]; then
-  talosctl gen config "${CLUSTER}" "https://${VIP}:6443" --install-disk "${DISK}"
+# 1. Durable secrets bundle (secrets.yaml): the cluster's PKI — CA, service-account key, bootstrap/join
+#    tokens. This is the ONE sticky artifact in this dir; everything below is disposable scratch re-rendered
+#    from it each run. It's generated ONCE and never rotated, so the cluster identity (and thus the
+#    talosconfig/kubeconfig that authenticate to it) survives every re-run and rebuild. Migration: if there
+#    is no secrets.yaml yet but a controlplane.yaml from before this split exists, EXTRACT the bundle from it
+#    so the RUNNING cluster's existing PKI is preserved — a plain `gen secrets` would mint a NEW PKI that no
+#    longer matches the live nodes and would lock us out.
+if [ ! -f "${OUTDIR}/secrets.yaml" ]; then
+  if [ -f "${OUTDIR}/controlplane.yaml" ]; then
+    say "extracting secrets.yaml from the existing controlplane.yaml (preserves the running cluster's PKI)"
+    talosctl gen secrets --from-controlplane-config controlplane.yaml -o secrets.yaml
+  else
+    say "generating a fresh secrets.yaml (new cluster PKI — created once, never rotated)"
+    talosctl gen secrets -o secrets.yaml
+  fi
 fi
+
+# 1b. Render the base control-plane config FRESH each run from the durable secrets + the CURRENT .env knobs
+#     (k8s version, install disk, VIP endpoint). Regenerating every run (--force) is the whole point of the
+#     split: a version bump in .env actually lands here, instead of being frozen into a preserved
+#     controlplane.yaml. --with-secrets reuses secrets.yaml so the re-render never rotates PKI; worker.yaml
+#     is skipped (every node here is control-plane); talosconfig is re-issued off the same CA (still valid).
+talosctl gen config "${CLUSTER}" "https://${VIP}:6443" \
+  --with-secrets secrets.yaml \
+  --install-disk "${DISK}" \
+  --kubernetes-version "${KVER}" \
+  --output-types controlplane,talosconfig \
+  --force
 
 # 2. Cluster-wide control-plane patch: VIP on the wired NIC, schedulable CP, certSANs
 CERTSANS="$(printf '      - %s\n' "${VIP}" "${IPS[@]}")"
@@ -186,6 +210,14 @@ for i in "${!IPS[@]}"; do
     -p @cp-patch.yaml \
     -p '{"apiVersion":"v1alpha1","kind":"HostnameConfig","hostname":"'"${host}"'","auto":"off"}'
 done
+
+# 5b. All the rendered scratch — cp.yaml + controlplane.yaml (base config) and their inputs cp-patch.yaml +
+#     volumes.yaml — has now been applied to every node; the nodes hold their own live config from here on.
+#     Drop it so the only config left on disk is the durable secrets.yaml (plus the talosconfig/kubeconfig
+#     creds). cp.yaml/controlplane.yaml carry cluster secrets and cp-patch.yaml carries the GHCR pull token,
+#     so not leaving them lying around is a bonus; re-render is one `03d` run away. (On an apply failure
+#     `set -e` exits before this line, leaving them in place for inspection.)
+rm -f "${OUTDIR}/cp.yaml" "${OUTDIR}/controlplane.yaml" "${OUTDIR}/cp-patch.yaml" "${OUTDIR}/volumes.yaml"
 
 # 6. Point talosctl at the real node IPs (NOT the VIP)
 talosctl config endpoint "${IPS[@]}"

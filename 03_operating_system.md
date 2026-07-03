@@ -52,6 +52,7 @@ the upstream RP1 patches that allow step 04 to disable EEE on the NIC.
 | Component  | Pin                                             | Notes                                                                            |
 |------------|-------------------------------------------------|----------------------------------------------------------------------------------|
 | Talos      | `v1.13.4`                                       | `siderolabs/talos`                                                               |
+| Kubernetes | `1.36.1`                                         | `KUBERNETES_VERSION` in `.env`; the pin `03d` passes to `gen config` + `03g` upgrades to. Ceiling = the Talos release default (v1.13.4 -> 1.36.1); raise it only after bumping Talos |
 | pkgs       | `v1.13.0`                                       | `siderolabs/pkgs`. Ships a stock 6.18 arm64 kernel config (already 4K pages)     |
 | Kernel     | `raspberrypi/linux` `stable_20260609`           | = Linux 6.18.34 on `rpi-6.18.y`; in-image string `6.18.34-talos`                 |
 | Overlay    | `talos-rpi5/sbc-raspberrypi5` `main`            | u-boot `v2025.04-rpi5-3`, rpi firmware `1.20250430`; ported to machinery v1.13.4 |
@@ -82,15 +83,15 @@ Prerequisites (the script checks all of these, with the `brew` fix for each):
 
 The four rebases (things the upstream pipeline can't handle at this Talos version, all automated by the script):
 
-1. Kernel source + config. Point the kernel at `raspberrypi/linux@<tag>` and layer a small Pi 5/RP1 config fragment on
+1. Kernel source + config: Point the kernel at `raspberrypi/linux@<tag>` and layer a small Pi 5/RP1 config fragment on
    top of the stock 6.18 config, then reconcile with `make olddefconfig` under the real clang toolchain. The build fails
    immediately if any required symbol didn't make it in (4K pages, NVMe, MACB, watchdog, RP1, BCM2712).
-2. Module list. Filter `hack/modules-arm64.txt` to what the rpi kernel actually built. The stock list references
+2. Module list: Filter `hack/modules-arm64.txt` to what the rpi kernel actually built. The stock list references
    drivers our config doesn't include (e.g. `bnxt_re`), and `nvme` is now built-in rather than a module. The script
    regenerates the list by intersecting against the real kernel module tree.
-3. Overlay port. The overlay (copies u-boot/config.txt/dtb to disk) was written against older machinery; Talos
+3. Overlay port: The overlay (copies u-boot/config.txt/dtb to disk) was written against older machinery; Talos
    1.13's overlay API added a `ctx` argument. The script bumps machinery to match and patches `main.go` in the overlay.
-4. grub profile. Build with the overlay's `rpi5` grub profile, not `metal`. Talos 1.13's `metal` default is
+4. Grub profile: Build with the overlay's `rpi5` grub profile, not `metal`. Talos 1.13's `metal` default is
    sd-boot, and sd-boot's image path silently skips the overlay installer entirely. So a Pi 5 image built as `metal`
    has the kernel but no u-boot/config.txt/dtb and won't boot. The grub profile runs the overlay install
    properly and the EFI partition ends up with the boot bits it needs.
@@ -136,6 +137,16 @@ a time, waiting for full cluster health between nodes so etcd quorum is never at
 already-upgraded node is a no-op). The nodes pull the installer using the `read:packages` auth `03d` baked into
 their machine config, so a private installer package needs no extra wiring (either that pull token was set in `03d`,
 or the GHCR package is public).
+
+**Upgrading Kubernetes (separate from the OS).** The Talos OS version and the Kubernetes version upgrade
+independently, so they have separate scripts. `03f` (above) swaps the node OS and leaves k8s untouched;
+**`03g_k8s_upgrade.sh`** rolls the k8s control plane (`talosctl upgrade-k8s --to "$KUBERNETES_VERSION"`) and
+reboots nothing. So bumping *only* `KUBERNETES_VERSION` in `.env` = run `03g` (no `03a` rebuild, no installer
+publish — k8s images come from `registry.k8s.io`, not our GHCR). `KUBERNETES_VERSION` can't exceed the pinned
+Talos release's default k8s version (its supported ceiling), so raising it past that means bumping
+`TALOS_VERSION` and running `03a`/`03f` first. When both changed, upgrade Talos then k8s (`03f` then `03g`): a
+newer Talos always supports the k8s version it defaults to. The dockerized `kubectl` in `03e` reads the same
+`KUBERNETES_VERSION` for its image tag, so tooling never skews from the cluster.
 
 ## Validation (offline, no hardware)
 
@@ -242,8 +253,18 @@ picked `192.168.100.1` for the VIP.
 
 1. Reads cluster name, install disk, EPHEMERAL cap, NIC, the VIP, and each node's hostname + IP from
    `.env`, prints a summary, and waits for a `YES` confirmation.
-2. `talosctl gen config`, secrets + base machine config, API endpoint = the VIP. (The base would default to Flannel;
-   the patch below turns the CNI off so Cilium can take over.)
+2. Prepares the config. The **durable secrets bundle** (`secrets.yaml` — the cluster PKI: CA, service-account
+   key, bootstrap/join tokens) is generated **once** and never rotated, so the cluster identity survives every
+   re-run and rebuild. Everything else is **disposable scratch re-rendered each run**: `talosctl gen config
+   --with-secrets secrets.yaml --force` regenerates the base machine config from that bundle + the *current*
+   `.env` knobs, so a version bump in `.env` actually lands (unlike the old preserved `controlplane.yaml`,
+   which froze the version it was first generated with). Kubernetes is pinned explicitly with
+   `--kubernetes-version "$KUBERNETES_VERSION"` rather than taking the Talos release default, so the k8s
+   version is a reviewed knob, not an implicit side effect of a Talos bump. `worker.yaml` is skipped (every
+   node here is control-plane); the API endpoint is the VIP. (The base would default to Flannel; the patch
+   below turns the CNI off so Cilium can take over.) Migration note: the first run after this split, if only a
+   pre-split `controlplane.yaml` exists, extracts `secrets.yaml` *from it* (`gen secrets
+   --from-controlplane-config`) so the running cluster's existing PKI is preserved rather than replaced.
 3. Applies a control-plane patch to every node: the VIP bound to the wired NIC, `allowSchedulingOnControlPlanes:
    true`, `certSANs` (VIP + node IPs), the node label `machine.nodeLabels: node.kubernetes.io/instance-type=rpi5`
    (so the `nic-keeper` DaemonSet targets rpi5 hardware only,
@@ -256,7 +277,11 @@ picked `192.168.100.1` for the VIP.
    [local-path-provisioner](08_storage.md)) + a `longhorn` user volume taking the rest of the NVMe
    (`/var/mnt/longhorn`). Both `/var/mnt` paths also get a `kubelet.extraMounts` bind so the containerized kubelet
    can see them. Sit empty until their apps sync (step 04+).
-5. `apply-config` to each node, only the hostname differs.
+5. `apply-config` to each node (only the hostname differs), then deletes the rendered scratch (`cp.yaml`,
+   `controlplane.yaml`, and their inputs `cp-patch.yaml` + `volumes.yaml`) — the nodes now hold their own
+   live config, so the only config left on disk is the durable `secrets.yaml` (plus the
+   `talosconfig`/`kubeconfig` creds). On an apply failure the script aborts before the cleanup, leaving the
+   files for inspection.
 6. Waits for every node to reboot back into its configured state (polls the secure Talos API per node, up to 5 min
    each), so the bootstrap prompt only appears once the nodes are actually ready, no guessing.
 7. `bootstrap` etcd once on the first node (after a confirm); the others join automatically.

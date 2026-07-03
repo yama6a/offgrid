@@ -10,6 +10,9 @@
 # The nodes PULL the installer using the read:packages auth 03d baked into their machine config, so a
 # PRIVATE ${INSTALLER_PACKAGE} works with no extra steps here.
 #
+# This upgrades the Talos OS only; it does NOT change the Kubernetes version. k8s is a separate, no-reboot
+# roll — bump KUBERNETES_VERSION in .env and run 03g_k8s_upgrade.sh. If both changed, run 03f then 03g.
+#
 # Prereqs:
 #   - 03a was run with GITHUB_GHCR_PUSH_TOKEN_SECRET set, so ${INSTALLER_REF} exists on GHCR.
 #   - The nodes can pull it: either the GHCR package is PUBLIC, or 03d was run with a
@@ -76,3 +79,4 @@ done
 say "ROLLING UPGRADE COMPLETE"
 echo "   image:  ${INSTALLER_REF}"
 echo "   verify: talosctl version   (server tag on every node)   /   kubectl get nodes"
+echo "   note:   this did NOT change the k8s version; for that run 03g_k8s_upgrade.sh"

@@ -28,7 +28,7 @@ source "${SCRIPT_DIR}/../lib/common.sh"
 
 # ---- knobs ------------------------------------------------------------------
 OUTDIR="${CLUSTER_DIR}"                    # talosconfig + kubeconfig live here (the lib's talosctl() mounts it); IFACE derived in lib/common.sh
-KUBECTL_IMAGE="registry.k8s.io/kubectl:v1.36.1"   # ~match cluster
+KUBECTL_IMAGE="registry.k8s.io/kubectl:v${KUBERNETES_VERSION}"   # dockerized kubectl pinned to the cluster's k8s version (.env), no host/cluster skew; tag needs the 'v'
 DEBUG_IMAGE="alpine:3.21"                  # probe pod; apk-installs ethtool
 WATCHDOG_TIMEOUT="15s"                     # floored to 10s (Talos min); Pi hw max ~15s
 APPLY_MODE="no-reboot"                     # never silently reboot control-plane nodes
@@ -45,7 +45,7 @@ PROBE_POD="nic-hw-probe"
 PATCH_FILE="nic-hardening-patch.yaml"      # written into OUTDIR (=/work in the container)
 # -----------------------------------------------------------------------------
 
-# dockerized kubectl pinned ~to the cluster version, mounting the talos-cluster dir.
+# dockerized kubectl pinned to the cluster's k8s version (KUBERNETES_VERSION), mounting the talos-cluster dir.
 # (talosctl() is the lib's dockerized wrapper, which mounts the same CLUSTER_DIR as /work.)
 kubectl()  { docker run --rm -i --network host -v "${OUTDIR}:/work" \
   -e KUBECONFIG=/work/kubeconfig "${KUBECTL_IMAGE}" "$@"; }
@@ -244,6 +244,10 @@ summary
 if [ "$FAIL" -eq 0 ]; then
   echo "NIC machine-config defences applied + verified. Next (deferred, ArgoCD):"
   echo "  EEE-off + link-watchdog + 'ss -K' DaemonSet, see 03_operating_system.md."
+  # Applied + verified, so drop this run's scratch: the discovery capture and the patch files talosctl has
+  # already consumed. Kept on failure (this branch is skipped) so you can inspect what was attempted; a
+  # re-run regenerates them from a fresh probe.
+  rm -f "$DISC" "${OUTDIR}/${DEL_FILE}" "${OUTDIR}/${PATCH_FILE}"
 else
   echo "Some checks failed. If 'patch mc' demanded a reboot it was refused (see above);"
   echo "if the watchdog wasn't armed, lower WATCHDOG_TIMEOUT (Pi hw max ~15s)."
