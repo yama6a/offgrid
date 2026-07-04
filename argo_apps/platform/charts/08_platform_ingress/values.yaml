@@ -1,40 +1,23 @@
-# Values for the 08_platform_ingress wrapper chart. SINGLE SOURCE OF TRUTH; ArgoCD (and any local
-# `helm template`) consume this. All config nests under `ingress-edge:` (the library dependency name), the
-# repo's usual "config under the dependency name" convention. The shared OIDC defaults come from the
-# library's own values.yaml (merged under this same key); we only override the parts that are specific to
-# the platform ingress here: the `ingresses:` list. See 07_ingress.md.
-#
-# ONE platform ingress groups every platform UI under ONE Google-SSO allowlist. To protect a new platform
-# UI, add a host below (no new SecurityPolicy, no new app). To change who may log in, edit `allowlist`.
-
+# Ingress (edges) for all platform UIs.
 ingress-edge:
   ingresses:
     - name: platform
-      # The registrable domain for this ingress: each host below is a `subdomain` under it, and it drives
-      # the shared callback host (google-sso.example.com, stood up by 04_google_sso) + the cookieDomain.
       domain: example.com
-      # STAGING while any host is still bootstrapping the cert; flip to letsencrypt-prod once it issues
-      # (these are browser-facing UIs that want a trusted cert). ONE multi-SAN cert covers all four hosts,
-      # into the derived `platform-tls` Secret every listener references.
-      issuer: letsencrypt-staging
-      sso:
-        enabled: true
-        # The ONE platform allowlist. Deny is the default; only these Google accounts reach any platform
-        # UI. Non-secret, edited by hand here (not prompted) — see 07_ingress.md.
-        allowlist:
-          - you@example.com
-      # Each host: a `subdomain` under `domain`, its own Gateway/:443 listener + HTTPRoute (labelled
-      # ingress-group: platform so the one SecurityPolicy gates it) + ReferenceGrant into the backend's
-      # namespace. Resource names derive from the full host (argocd.example.com -> argocd-example-com).
+      issuer: letsencrypt-staging # todo: switch to letsencrypt-prod once testing is done.
       hosts:
-        # argocd-server :80 serves the UI/API over HTTP (server.insecure: true); the Gateway terminates TLS.
         - subdomain: argocd
-          backend: { name: argocd-server, namespace: argocd, port: 80 }
-        # grafana/grafana Service (release `grafana`, ClusterIP :80 -> :3000). Grafana's own login is off
-        # (anonymous Admin), so this SSO gate is its only barrier.
+          targetNamespace: argocd
+          targetService: argocd-server
+          targetPort: 80
         - subdomain: grafana
-          backend: { name: grafana, namespace: monitoring, port: 80 }
+          targetNamespace: monitoring
+          targetService: grafana
+          targetPort: 80
         - subdomain: vmui
-          backend: { name: vmsingle-victoria-metrics-k8s-stack, namespace: monitoring, port: 8428 }
+          targetNamespace: monitoring
+          targetService: vmsingle-victoria-metrics-k8s-stack
+          targetPort: 8428
         - subdomain: vlogs
-          backend: { name: vlsingle-victoria-logs, namespace: monitoring, port: 9428 }
+          targetNamespace: monitoring
+          targetService: vlsingle-victoria-logs
+          targetPort: 9428

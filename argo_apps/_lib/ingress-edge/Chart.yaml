@@ -1,17 +1,13 @@
 apiVersion: v2
 name: ingress-edge
 description: >-
-  Shared LIBRARY chart (type: library, renders nothing on its own) that emits the whole ingress "edge"
-  bundle for a list of ingresses: per host a :443 Gateway listener + an HTTPRoute + a ReferenceGrant,
-  ONE multi-SAN cert-manager Certificate per ingress (covering all its hosts, into one shared Secret every
-  listener references), and per SSO-enabled ingress ONE Envoy Gateway SecurityPolicy carrying that
-  ingress's OWN Google-OIDC email allowlist. Consumed via a `file://` dependency by the platform
-  ingress (argo_apps/platform/charts/08_platform_ingress) and by each workload chart, so the six-way
-  copy-paste of the edge quartet lives in exactly one place. The shared, non-secret OIDC config
-  (clientID, cookie, TTLs, callback subdomain, ...) lives once in this chart's values.yaml and flows to
-  every consumer; only `domain` + `allowlist` differ per ingress. The OAuth client SECRET and the
-  per-domain callback host stay central in 04_google_sso (Google registers one redirect URI per domain).
-  See 07_ingress.md.
+  Shared LIBRARY chart (type: library, renders nothing on its own) that emits the ingress "edge" for a
+  list of ingresses: per host a :443 Gateway listener + an HTTPRoute + a ReferenceGrant, and ONE multi-SAN
+  cert-manager Certificate per ingress (covering all its hosts, into one shared Secret every listener
+  references). Consumed via a `file://` dependency by the platform ingress
+  (argo_apps/platform/charts/08_platform_ingress), each workload chart, and the google-sso chart (for its
+  callback hosts), so the edge lives in one place. It renders NO SSO — Google-SSO is applied centrally per
+  domain by 04_google_sso (one SecurityPolicy per domain with per-host email allowlists). See 07_ingress.md.
 # A library chart pins NO upstream dependency and renders no templates of its own, so there is no
 # Chart.lock here (the CONSUMERS that depend on this one carry the lock).
 type: library

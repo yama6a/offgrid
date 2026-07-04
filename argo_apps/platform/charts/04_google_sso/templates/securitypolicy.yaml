@@ -1,0 +1,95 @@
+{{/*
+ONE Google-OIDC SecurityPolicy per domain. It attaches (targetRefs) to the domain's callback route AND
+every gated app route, so a single OAuth flow (one cookie identity) completes on the shared callback host.
+Login gate = oidc; authorization is per-host: each rule allows a host (matched by `:authority`) only for
+its own email allowlist (both must match). A host with no rule -> Deny (e.g. the callback whoami itself).
+See 07_ingress.md.
+*/}}
+{{- $oidc := .Values.oidc -}}
+{{- $ns := .Values.namespace -}}
+{{- range $d := .Values.domains }}
+{{- $slug := $d.domain | replace "." "-" }}
+---
+apiVersion: gateway.envoyproxy.io/v1alpha1
+kind: SecurityPolicy
+metadata:
+  name: sso-{{ $slug }}
+  namespace: {{ $ns }}
+spec:
+  # The callback route + every gated host route on this domain. Route names are the full host with dots ->
+  # dashes (the ingress-edge library's naming), so they resolve whichever chart created the route.
+  targetRefs:
+    - group: gateway.networking.k8s.io
+      kind: HTTPRoute
+      name: google-sso-{{ $slug }}
+    {{- range $h := $d.hosts }}
+    - group: gateway.networking.k8s.io
+      kind: HTTPRoute
+      name: {{ $h.host | replace "." "-" }}
+    {{- end }}
+
+  oidc:
+    provider:
+      issuer: "https://accounts.google.com"
+    clientID: {{ $oidc.clientID | quote }}
+    clientSecret:
+      name: {{ $oidc.clientSecretName | quote }}
+    # The one callback host for this domain (register it on the Google OAuth client).
+    redirectURL: {{ printf "https://%s.%s/oauth2/callback" $oidc.authSubdomain $d.domain | quote }}
+    logoutPath: {{ $oidc.logoutPath | quote }}
+    # Domain-scoped session cookie so one login covers every host on the domain (each host still re-checks
+    # its own allowlist below).
+    cookieDomain: {{ $d.domain | quote }}
+    cookieNames:
+      idToken: {{ $oidc.idTokenCookie | quote }}
+    refreshToken: {{ $oidc.refreshToken }}
+    defaultRefreshTokenTTL: {{ $oidc.sessionTTL | quote }}
+    {{- with $oidc.csrfTokenTTL }}
+    csrfTokenTTL: {{ . | quote }}
+    {{- end }}
+    {{- with $oidc.denyRedirectSecFetchMode }}
+    denyRedirect:
+      headers:
+        - name: Sec-Fetch-Mode
+          type: RegularExpression
+          value: {{ . | quote }}
+    {{- end }}
+    scopes:
+      - openid
+      - email
+
+  jwt:
+    providers:
+      - name: google
+        issuer: "https://accounts.google.com"
+        remoteJWKS:
+          uri: "https://www.googleapis.com/oauth2/v3/certs"
+        extractFrom:
+          cookies:
+            - {{ $oidc.idTokenCookie | quote }}
+
+  authorization:
+    # Deny by default: the callback host (no rule) and any host not listed are denied; the OAuth
+    # /oauth2/callback path is handled by the oidc filter BEFORE authorization, so login still works.
+    defaultAction: Deny
+    rules:
+      {{- range $h := $d.hosts }}
+      - name: allow-{{ $h.host | replace "." "-" }}
+        action: Allow
+        principal:
+          # BOTH must match: the request host is {{ $h.host }} AND the email is in its allowlist.
+          headers:
+            - name: ":authority"
+              values:
+                - {{ $h.host | quote }}
+          jwt:
+            provider: google
+            claims:
+              - name: email
+                valueType: String
+                values:
+                  {{- range $h.allowlist }}
+                  - {{ . | quote }}
+                  {{- end }}
+      {{- end }}
+{{- end }}

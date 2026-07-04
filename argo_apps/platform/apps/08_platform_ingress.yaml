@@ -1,21 +1,19 @@
 # ArgoCD Application for THE platform ingress (argo_apps/platform/charts/08_platform_ingress/). One app
-# fronting every platform UI (argocd, grafana, vmui, vlogs) through a per-host Gateway (merged onto the
-# one Envoy), all behind ONE Google-SSO SecurityPolicy sharing ONE email allowlist. This REPLACES the
-# four hand-copied edge quartets that used to live inside 06_argocd_ingress + the three 07_* monitoring
-# charts, and carries the SecurityPolicy that used to be the domain-central one in 04_google_sso. The
+# rendering the EDGES for every platform UI (argocd, grafana, vmui, vlogs) — a per-host Gateway (merged onto
+# the one Envoy) + HTTPRoute + ReferenceGrant + one shared multi-SAN Certificate. NO SSO here: these hosts
+# are gated centrally by 04_google_sso (its domains[].hosts), which targetRefs these routes by name. The
 # whole edge is rendered by the shared ingress-edge library (a file:// dependency); no edge YAML is
 # hand-written. See 07_ingress.md.
 #
-# AUTOMATED (prune + selfHeal): a safe leaf, Gateways + Certificates + HTTPRoutes + ReferenceGrants + one
-# SecurityPolicy, no CRDs, can't cut the cluster off its network. Break-glass if this wedges a UI:
+# AUTOMATED (prune + selfHeal): a safe leaf, Gateways + Certificate + HTTPRoutes + ReferenceGrants, no CRDs,
+# can't cut the cluster off its network. Break-glass if this wedges a UI:
 # `kubectl -n argocd port-forward svc/argocd-server 8080:80` bypasses the Gateway + SSO entirely.
 #
 # sync-wave "8": AFTER the monitoring backends (wave 7) so every cross-namespace backendRef resolves the
-# instant the route is created (no ResolvedRefs:False across a wave boundary), and after the gateway
-# (wave 3), sealed-secrets (wave 2) and 04_google_sso (wave 4, the shared callback host + sealed OAuth
-# secret the SecurityPolicy references). The route AND its SecurityPolicy are created together here, so a
-# protected UI is never briefly exposed. ServerSideDiff so server-defaulted Gateway API fields don't show
-# perpetual OutOfSync; pairs with ServerSideApply.
+# instant the route is created (no ResolvedRefs:False across a wave boundary), and after 04_google_sso
+# (wave 4) so the central SSO policy is already there to attach to these routes as they appear (a UI is
+# briefly open only for the EG reconcile lag between route creation and policy attachment). ServerSideDiff
+# so server-defaulted Gateway API fields don't show perpetual OutOfSync; pairs with ServerSideApply.
 apiVersion: argoproj.io/v1alpha1
 kind: Application
 metadata:

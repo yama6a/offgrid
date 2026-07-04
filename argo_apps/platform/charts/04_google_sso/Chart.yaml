@@ -1,18 +1,15 @@
 apiVersion: v2
 name: google-sso
 description: >-
-  The OPTIONAL Google-SSO PLATFORM layer: the shared OIDC callback hosts (google-sso.<domain>, ONE per
-  domain) and the sealed Google OAuth client secret. The callback host is the single fixed redirect
-  target every protected ingress on its domain points at (so Google needs just ONE redirect URI per
-  domain); it's a tiny shared whoami behind Envoy's /oauth2/callback interception. Its Gateway +
-  Certificate + HTTPRoute + its OWN SecurityPolicy (which completes the token exchange and sets the
-  domain-scoped session cookie) are rendered by the shared ingress-edge library (a file:// dependency,
-  `ingress-edge.callbacks`) from `ingressEdge.callbackDomains` in the LIBRARY values — THE single source of
-  which domains have SSO, that every app ingress's domain is guarded against. The per-APP allowlists
-  don't live here either: each ingress (platform-ingress, each workload) carries its own; this chart only
-  owns the callback plumbing + the shared secret. The client secret is sealed by
-  07_ingress/07_google_sso.sh into templates/. Delivered by ArgoCD via argo_apps/platform/apps/
-  04_google_sso.yaml, wave 4 (after the gateway wave 3 and sealed-secrets wave 2). See 07_ingress.md.
+  CENTRAL Google-SSO for the whole cluster. Per domain (values `domains[]`) it stands up the shared
+  callback host google-sso.<domain> (its edge rendered by the ingress-edge library) + ONE SecurityPolicy
+  that targetRefs the callback route and every gated app route, so a single OAuth flow completes on the
+  shared callback host (one cookie identity). Authorization is per-host: each host's rule allows only its
+  own email allowlist, matched by the request `:authority`. So workloads/packages configure NOTHING SSO —
+  a host is gated by adding it to `domains[].hosts` here. Also holds the sealed OAuth client secret
+  (sealed by 07_ingress/07_google_sso.sh) + the shared whoami the callback routes to. Google needs one
+  redirect URI per domain (google-sso.<domain>/oauth2/callback). Delivered by ArgoCD via
+  argo_apps/platform/apps/04_google_sso.yaml, wave 4. See 07_ingress.md.
 type: application
 version: 0.1.0                 # this wrapper chart's own version
 

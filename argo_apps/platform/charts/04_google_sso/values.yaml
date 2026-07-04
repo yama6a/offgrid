@@ -1,21 +1,40 @@
-# Values for the 04_google_sso wrapper chart. SINGLE SOURCE OF TRUTH; ArgoCD (and any local
-# `helm template`) consume this.
-#
-# This chart owns only the SHARED Google-SSO PLATFORM plumbing:
-#   - the sealed OAuth client secret (templates/google-oauth-sealedsecret.yaml, sealed by 07_google_sso.sh),
-#   - one tiny shared whoami backend (templates/callbacks.yaml), and
-#   - the CALLBACK HOSTS google-sso.<domain> (templates/ingress.yaml -> the ingress-edge library's
-#     `ingress-edge.callbacks`): per domain a Gateway + :443 listener + Certificate + HTTPRoute + its own
-#     SecurityPolicy that completes the OAuth token exchange and sets the domain-scoped session cookie every
-#     app ingress on the domain then honours (redirectURL derives to itself).
-# The domain list itself lives in the LIBRARY values (ingressEdge.callbackDomains) — THE single source that
-# every app ingress's domain is guarded against — not here. The per-APP allowlists live on each app
-# ingress. This chart carries no `ingresses:` of its own. See 07_ingress.md.
+# CENTRAL Google-SSO for the whole cluster. Per domain this chart stands up the shared callback host
+# google-sso.<domain> and ONE SecurityPolicy that gates every listed host with its own email allowlist
+# (matched by the request `:authority`). Workloads/packages configure NOTHING SSO — a host is protected by
+# adding it to `domains[].hosts` below. See 07_ingress.md.
 
-# ---- this chart's own templates (the shared whoami) ----
-# Namespace the callback hosts, whoami and sealed Secret live in (the merged-Envoy ns; MUST match the
-# library's ingressEdge.gatewayNamespace so the callback routes/policies land beside the app ones).
-namespace: gateway
-# The shared callback backend image. Envoy intercepts /oauth2/callback before it reaches this, so it only
-# ever answers non-callback paths (behind the callback host's own SSO gate).
-callbackImage: "traefik/whoami:v1.10.3"
+namespace: gateway                       # must equal ingressEdge.gatewayNamespace (where the routes live).
+callbackImage: "traefik/whoami:v1.10.3"  # Envoy intercepts /oauth2/callback before it reaches this.
+
+# Shared Google-OIDC config (one client for everything). clientID written by 07_google_sso.sh; the client
+# secret is sealed (templates/google-oauth-sealedsecret.yaml).
+oidc:
+  clientID: "000000000000-xxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxx.apps.googleusercontent.com"
+  clientSecretName: google-oauth   # sealed Secret holding it under key `client-secret`.
+  authSubdomain: google-sso        # callback host = <authSubdomain>.<domain>; one Google redirect URI per domain.
+  idTokenCookie: "google-id-token" # cookie holding the Google ID token (email claim read from it).
+  logoutPath: "/oauth2/sign_out"   # off the default /logout so it doesn't swallow a backend's /logout.
+  refreshToken: true               # renew silently so a session outlives Google's ~1h token...
+  sessionTTL: "24h"                # ...capped here (needs access_type=offline).
+  csrfTokenTTL: "5m"               # TTL of per-flow CSRF/PKCE cookies; short so orphans drain fast.
+  # non-navigational reqs (XHR/websocket) get 401 not 302->Google, else a logged-out SPA leaks cookies
+  # until Envoy resets the stream (ERR_HTTP2_PROTOCOL_ERROR). Empty disables.
+  denyRedirectSecFetchMode: "cors|no-cors|same-origin|websocket"
+
+# THE central map: which hosts are SSO-gated, and by whom. One SecurityPolicy per domain covers all its
+# hosts + the callback host (one cookie identity -> the OAuth flow completes). Each host's rule allows only
+# its allowlist. To protect a host: add it here (its route is created by whatever chart owns the ingress).
+domains:
+  - domain: example.com
+    issuer: letsencrypt-staging   # callback cert issuer (letsencrypt-staging | letsencrypt-prod)
+    hosts:
+      - host: argocd.example.com
+        allowlist: [you@example.com]
+      - host: grafana.example.com
+        allowlist: [you@example.com]
+      - host: vmui.example.com
+        allowlist: [you@example.com]
+      - host: vlogs.example.com
+        allowlist: [you@example.com]
+      - host: sample-workload-sso.example.com
+        allowlist: [you@example.com]

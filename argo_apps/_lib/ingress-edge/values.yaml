@@ -1,93 +1,19 @@
-# Values for the ingress-edge LIBRARY chart. These are the SHARED, cross-cutting defaults every consumer
-# inherits (a dependency's values.yaml merges into each parent under the dependency name `ingress-edge`,
-# so the library templates read them at `.Values.ingressEdge.*`). SINGLE SOURCE OF TRUTH for everything
-# that is the same across every ingress; per-ingress data (hosts, domain, allowlist) lives in each
-# consumer chart's own `ingresses:` list. See 07_ingress.md.
-
+# Shared defaults every ingress-edge consumer inherits (merged under the `ingress-edge` key). Per-ingress
+# data (domain, hosts) lives in each consumer's own `ingresses:`; schema in 07_ingress.md. This library
+# renders only the edge (Gateway/Certificate/HTTPRoute/ReferenceGrant); SSO is applied centrally per domain
+# by the google-sso chart.
 ingressEdge:
-  # Envoy Gateway's class (registered by 01_envoy_gateway). Every per-host Gateway folds onto the one
-  # merged Envoy + LB IP via mergeGateways, so no per-Gateway spec.addresses is ever set here.
-  gatewayClassName: eg
-  # Namespace the Gateways / Certificates / HTTPRoutes / SecurityPolicies live in (the merged-Envoy ns,
-  # where the callback hosts + sealed OAuth secret from 04_google_sso also live). ReferenceGrants instead
-  # land in each backend's OWN namespace (set per host below).
-  gatewayNamespace: gateway
-  # The label an SSO-enabled ingress stamps on its HTTPRoutes, VALUE = the ingress `name`, so THIS
-  # ingress's SecurityPolicy (targetSelectors matchLabels) attaches to exactly its own routes and nothing
-  # else. This REPLACES the old domain-central `sso: <domain>` label: attachment is now per-ingress, which
-  # is what lets each ingress carry its own allowlist even when several share a domain.
-  groupLabelKey: ingress-group
-  # Cert issuer used when an ingress doesn't set its own. Must be one of the two ClusterIssuers 03_gateway
-  # ships (letsencrypt-staging | letsencrypt-prod); the render guard rejects anything else. ALWAYS staging
-  # for a brand-new host, flip the ingress to letsencrypt-prod once it issues.
-  defaultIssuer: letsencrypt-staging
-  # The registrable domains that have a shared google-sso.<domain> OIDC callback host. THE single source:
-  # 04_google_sso stands one callback host up per entry (via the library's callbacks template), and every
-  # SSO ingress's `domain` MUST be one of these — the render guard rejects any other, because a login on
-  # an unlisted domain would 302 to a google-sso.<domain> callback that doesn't exist and the OAuth exchange
-  # could never complete. Written by 07_sso_domains.sh from .env SSO_CALLBACK_DOMAINS; to add a domain see
-  # "Adding an SSO domain" in 07_ingress.md. (issuer per domain: letsencrypt-staging | letsencrypt-prod.)
-  callbackDomains:
-    - domain: example.com
-      issuer: letsencrypt-staging
-    - domain: yama.casa
-      issuer: letsencrypt-staging
-  # ---- shared Google-OIDC config (identical for every SSO ingress; only domain + allowlist differ) ----
-  # This block is the single home for what used to be 04_google_sso/values.yaml `oidc:`. The per-ingress
-  # SecurityPolicy the library renders reads all of it from here.
-  oidc:
-    # ONE Google OAuth client, shared across ALL domains/ingresses. NOT sensitive. Written by
-    # 07_google_sso.sh into THIS file (one place). An empty value denies login until set.
-    clientID: "000000000000-xxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxx.apps.googleusercontent.com"
-    # Sealed Secret (created by 04_google_sso) holding the client secret under key `client-secret` (the
-    # key Envoy Gateway expects). Lives in gatewayNamespace, same ns as the SecurityPolicies.
-    clientSecretName: google-oauth
-    # The shared callback subdomain: redirectURL = https://<authSubdomain>.<domain>/oauth2/callback. That
-    # host (its Gateway/cert/route + whoami) is stood up ONCE per domain by 04_google_sso and shared by
-    # every ingress on that domain, because Google registers one redirect URI per domain.
-    authSubdomain: google-sso
-    # Cookie Envoy Gateway stores the Google ID token in; the jwt provider extracts the email claim from it
-    # (Google's access token is opaque, so the email lives in the ID token).
-    idTokenCookie: "google-id-token"
-    # OIDC filter's OWN logout path, moved off the default /logout so it doesn't swallow a backend app's
-    # /logout (e.g. ArgoCD's).
-    logoutPath: "/oauth2/sign_out"
-    # Silently renew the id/access token so a session survives past Google's ~1h id-token expiry, up to
-    # sessionTTL. Without this the user is bounced back to Google every hour. (Google only ISSUES a refresh
-    # token when the auth request carries access_type=offline.)
-    refreshToken: true
-    sessionTTL: "24h"
-    # Lifetime of the per-flow CSRF (OauthNonce) + PKCE (CodeVerifier) cookies. A failed/abandoned flow
-    # orphans them for this long; keep it short so leftovers drain fast (EG default is 10m).
-    csrfTokenTTL: "5m"
-    # Sec-Fetch-Mode values that get a 401 instead of a 302->Google. A non-navigational request (XHR/
-    # fetch/websocket) can't render Google's login page, so the OIDC flow it kicks off never completes and
-    # leaks an OauthNonce/CodeVerifier cookie; a logged-out SPA spams these until Envoy resets the stream
-    # (http2.too_many_headers -> ERR_HTTP2_PROTOCOL_ERROR). Only real navigations should redirect to login.
-    # Empty string disables denyRedirect.
-    denyRedirectSecFetchMode: "cors|no-cors|same-origin|websocket"
-# ---- per-consumer data (documentation only; each consumer chart sets its own `ingresses:` list) -------
-# Shape of each entry the library iterates. Every ingress declares exactly ONE registrable `domain`; each
-# host gives a `subdomain` under it (host = `<subdomain>.<domain>`; the sentinel `subdomain: "@"` = the
-# apex `<domain>` itself, empty is rejected). So a host is under its domain BY CONSTRUCTION — no cross-domain
-# check. This means an ingress (even an open one) is single-domain; a cross-domain group is two ingresses.
-# SSO is OPTIONAL: omit the `sso:` block (or enabled: false) for an open ingress (no SecurityPolicy, no
-# group label); when enabled, `domain` must be one of ingressEdge.callbackDomains.
-#
-# The whole ingress gets ONE multi-SAN Certificate covering all its hosts, into ONE Secret every host's
-# listener references (always `<name>-tls`). Fewer ACME orders and no per-host cert bookkeeping; the
-# trade-off is coupled issuance (a single failing SAN leaves the whole cert not-Ready). Per-host resource
-# names (Gateway/listener/route) derive from the full host (dots -> dashes), so a host needs no `name`.
-#
-# ingresses:
-#   - name: platform            # unique; the group-label value, the SAN cert name + the <name>-tls Secret
-#     domain: example.com       # required; exactly one registrable domain; drives cookieDomain + the callback host
-#     issuer: letsencrypt-prod  # optional; defaults to ingressEdge.defaultIssuer
-#     sso:                      # optional; when enabled, `domain` must be in ingressEdge.callbackDomains
-#       enabled: true
-#       allowlist:              # THIS ingress's own allowed Google accounts (Deny is the default; required when enabled)
-#         - me@example.com
+  gatewayClassName: eg          # Envoy Gateway class (01_envoy_gateway); mergeGateways -> one LB IP.
+  gatewayNamespace: gateway     # ns for Gateways/Certs/Routes (ReferenceGrants go to the backend ns).
+  defaultIssuer: letsencrypt-staging   # fallback issuer; must be letsencrypt-staging|letsencrypt-prod.
+
+# ingresses[] schema — each consumer sets its own; full docs in 07_ingress.md:
+#   - name: platform              # unique; the SAN cert name + the <name>-tls Secret
+#     domain: example.com         # required; exactly one registrable domain
+#     issuer: letsencrypt-staging # optional; defaults to defaultIssuer
 #     hosts:
-#       - subdomain: argocd     # host = argocd.example.com  ("@" => the apex example.com)
-#         backend: { name: argocd-server, namespace: argocd, port: 80 }
+#       - subdomain: argocd            # host = argocd.example.com  ("@" = apex)
+#         targetService: argocd-server # the k8s Service to route to
+#         targetNamespace: argocd      # optional; defaults to the consumer's release namespace
+#         targetPort: 80               # the Service port
 ingresses: []

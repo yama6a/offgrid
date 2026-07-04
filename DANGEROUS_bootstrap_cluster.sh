@@ -14,8 +14,7 @@
 #   3. 03d_talos_cluster_config.sh  : generate fresh config, apply, bootstrap etcd, write kube/talosconfig
 #   4. 03e_nic_hardening.sh         : NIC hardening (EEE/watchdog)
 #   5. 04_cilium.sh                 : CNI + prometheus-operator CRDs + LB-IPAM/L2 + Hubble
-#   6. 07_gateway.sh + 07_sso_domains.sh : write LE_EMAIL/BASE_DOMAIN into the gateway chart + SSO_CALLBACK_DOMAINS
-#                                     into the ingress-edge callbackDomains (both chart values, no cluster)
+#   6. 07_gateway.sh                : write LE_EMAIL/BASE_DOMAIN into the gateway chart values (no cluster)
 #   7. git add/commit/push          : 05 refuses a dirty argo_apps/ tree; ArgoCD deploys the REMOTE
 #   8. 05_argocd.sh                 : bootstrap ArgoCD; it then delivers the whole platform from git
 #   9. wait sealed-secrets ctrl     : ArgoCD wave-2 app; kubeseal (steps 10-11, 13) needs it up
@@ -81,7 +80,7 @@ This will BOOTSTRAP a FIRST-TIME Talos cluster on freshly-flashed nodes:
   nodes   : ${IPS[*]}
   archive : secrets.yaml + kubeconfig + talosconfig + sealed-secrets-master.key (+ 03d scratch)
             -> talos-cluster/backup_<timestamp>/   (03d then mints a NEW Talos CA; the old creds stop working)
-  flow    : preflight -> archive -> 03d -> 03e -> 04 -> 07_gateway + 07_sso_domains -> commit/push -> 05 (ArgoCD)
+  flow    : preflight -> archive -> 03d -> 03e -> 04 -> 07_gateway -> commit/push -> 05 (ArgoCD)
             -> re-seal SSO + SMTP against the new key -> commit/push -> back up the new key -> verify ingress
 
 Requires nodes in MAINTENANCE mode (03a/03b/03c done). To re-initialize a RUNNING cluster instead,
@@ -141,20 +140,13 @@ say "STEP 5/14, 04_cilium.sh (CNI + monitoring CRDs + LB/L2 + Hubble)"
 ( cd "$STEP_04_DIR" && bash ./04_cilium.sh ) || die "04_cilium failed, fix and resume from 04 by hand"
 ok "04_cilium done"
 
-# === STEP 6. chart config from .env (gateway values + SSO callback domains; no cluster) ===
+# === STEP 6. gateway config from .env (chart values; no cluster) ===
 say "STEP 6/14, 07_gateway.sh (propagate LE_EMAIL/BASE_DOMAIN into the gateway chart values)"
 ( cd "$STEP_07_DIR" && bash ./07_gateway.sh ) || die "07_gateway failed, fix and resume from 07_gateway by hand"
 ok "07_gateway done"
-# 07_sso_domains.sh writes SSO_CALLBACK_DOMAINS from .env into the ingress-edge library's callbackDomains.
-# </dev/null -> non-interactive REPLACE (.env is authoritative); empty SSO_CALLBACK_DOMAINS -> it self-skips
-# (leaves the committed list untouched, so a no-SSO bootstrap never wipes domains). Must precede 07_google_sso.
-say "STEP 6/14, 07_sso_domains.sh (propagate SSO_CALLBACK_DOMAINS into the ingress-edge callbackDomains)"
-( cd "$STEP_07_DIR" && bash ./07_sso_domains.sh </dev/null ) \
-  || warn "07_sso_domains didn't complete; re-run it by hand ('07_sso_domains.sh') + commit/push"
-ok "07_sso_domains done"
 
 # === STEP 7. commit + push (ArgoCD deploys the REMOTE; 05 refuses a dirty tree) ===
-say "STEP 7/14, git add + commit + push (config so far: LB range + gateway values + SSO callback domains)"
+say "STEP 7/14, git add + commit + push (config so far: LB range + gateway values)"
 git add -A
 if git diff --cached --quiet; then
   ok "nothing new to commit"

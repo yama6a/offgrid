@@ -1,17 +1,18 @@
-# ArgoCD Application for the Google-SSO PLATFORM layer (argo_apps/charts/04_google_sso/): the shared OIDC
-# callback hosts (google-sso.<domain>, one per domain, each with its own SecurityPolicy that completes the
-# token exchange) + the shared whoami backend + the sealed OAuth client secret. The per-APP allowlists no
-# longer live here; each ingress (platform-ingress, each workload) carries its own. See 07_ingress.md.
+# ArgoCD Application for the CENTRAL Google-SSO (argo_apps/charts/04_google_sso/): per domain, ONE
+# SecurityPolicy that gates every listed host (per-host email allowlist matched by :authority) + completes
+# the OAuth flow on the shared google-sso.<domain> callback host (targetRefs the app routes + the callback
+# route). Ships the callback hosts' edges, the shared whoami, and the sealed OAuth client secret. Which
+# hosts are gated lives in this chart's `domains[].hosts`; workloads configure nothing SSO. See 07_ingress.md.
 #
 # AUTOMATED (prune + selfHeal): a safe leaf, it owns no CRDs and can't cut the cluster off its network.
 # Its only secret (the OAuth client secret) comes from a committed SealedSecret (unsealed by the wave-2
 # controller); the raw Secret is not in git, so prune never touches it.
 #
-# sync-wave "4": after the gateway (wave 3, the shared :80 Gateway + ClusterIssuers its callback certs
-# solve through) and sealed-secrets (wave 2, unseals the client secret) and Envoy Gateway (wave 1, owns
-# the SecurityPolicy CRD). It sits BEFORE the app ingresses (platform-ingress wave 8, workloads later), so
-# every protected app's redirectURL callback host already exists. Until 07_google_sso.sh seals the client
-# secret and you commit it, the callback policy references a missing Secret and login fails. Per CLAUDE.md
+# sync-wave "4": after the gateway (wave 3, the shared :80 Gateway + ClusterIssuers the callback certs
+# solve through), sealed-secrets (wave 2, unseals the client secret) and Envoy Gateway (wave 1, owns the
+# SecurityPolicy CRD). The policy targetRefs app routes that don't exist until their charts sync
+# (platform-ingress wave 8, workloads later); EG attaches it when they appear. Until 07_google_sso.sh seals
+# the client secret and you commit it, the policy references a missing Secret and login fails. Per CLAUDE.md
 # the NN prefix IS the wave.
 apiVersion: argoproj.io/v1alpha1
 kind: Application

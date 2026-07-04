@@ -1,9 +1,5 @@
-{{/*
-ingress-edge.referencegrant — lets this host's HTTPRoute (in the gateway namespace) reference its Service
-in the backend namespace. Cross-namespace backendRefs require a ReferenceGrant in the BACKEND's namespace.
-One per host (named for the host); several hosts in the same backend ns each get their own grant, which is
-fine (multiple grants coexist). ctx: {cfg, ingress, host}.
-*/}}
+{{/* ingress-edge.referencegrant — in the backend ns, lets the gateway-ns HTTPRoute reach its Service
+     cross-namespace (one per host). ctx: {cfg, ingress, host}. */}}
 {{- define "ingress-edge.referencegrant" -}}
 apiVersion: gateway.networking.k8s.io/v1beta1
 kind: ReferenceGrant
@@ -18,5 +14,5 @@ spec:
   to:
     - group: ""
       kind: Service
-      name: {{ .host.backend.name }}
+      name: {{ .host.targetService }}
 {{- end -}}

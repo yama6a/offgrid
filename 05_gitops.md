@@ -156,9 +156,10 @@ its own `:443` `Gateway` (named `argocd-example-com`, from the hostname) + a cro
 all rendered by the shared `ingress-edge` library. ArgoCD is untouched — it keeps `server.insecure: true` and
 serves plain HTTP on `argocd-server:80`; the Gateway terminates TLS.
 
-Almost free: `argocd.<domain>` shares the platform ingress's one `SecurityPolicy` + allowlist, the shared
-`google-sso.<domain>` callback, and `cookieDomain` with the other platform UIs — no new Google redirect URI,
-no new policy. Just add its host to the platform ingress's `hosts:` list.
+Gating is central: `argocd.example.com` is listed in `04_google_sso` `domains[].hosts` with its allowlist, so
+the domain's one `SecurityPolicy` targetRefs its route and gates it — sharing the `google-sso.<domain>`
+callback + `cookieDomain` with the other platform UIs, no new Google redirect URI, no new policy. To expose a
+new platform UI: add its edge to the platform ingress `hosts:` list AND list its host in `04_google_sso`.
 
 Decisions worth keeping:
 
