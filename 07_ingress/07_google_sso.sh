@@ -19,10 +19,10 @@
 # cookies). The redirectURL + cookieDomain are DERIVED in the library (google-sso.<domain> / <domain>).
 # Re-run to rotate the secret.
 #
-# SINGLE SOURCE OF TRUTH (read, not duplicated):
-#   - the shared OIDC config (authSubdomain, clientSecretName, gatewayNamespace) <- the ingress-edge
-#     library values (argo_apps/_lib/ingress-edge/values.yaml, key ingressEdge.oidc / ingressEdge.gatewayNamespace)
-#   - the SSO callback domains <- argo_apps/platform/charts/04_google_sso/values.yaml (ingress-edge.ingresses[].sso.domain)
+# SINGLE SOURCE OF TRUTH (read, not duplicated), all from the ingress-edge library values
+# (argo_apps/_lib/ingress-edge/values.yaml):
+#   - the shared OIDC config (authSubdomain, clientSecretName, gatewayNamespace) <- ingressEdge.oidc / ingressEdge.gatewayNamespace
+#   - the SSO callback domains <- ingressEdge.callbackDomains[].domain
 # Written by this script:
 #   - argo_apps/_lib/ingress-edge/values.yaml  (ingressEdge.oidc.clientID)
 #   - argo_apps/platform/charts/04_google_sso/templates/google-oauth-sealedsecret.yaml  (the sealed client secret)
@@ -38,7 +38,7 @@ source "${SCRIPT_DIR}/../lib/common.sh"
 # ---- knobs ------------------------------------------------------------------
 LIB_VALUES="${REPO_ROOT}/argo_apps/_lib/ingress-edge/values.yaml"                # shared oidc config; clientID written here
 SSO_CHART="${REPO_ROOT}/argo_apps/platform/charts/04_google_sso"                 # the callback-host wrapper chart
-SSO_VALUES="${SSO_CHART}/values.yaml"                                            # the callback domains live here
+SSO_VALUES="${SSO_CHART}/values.yaml"                                            # only checked for presence (domains live in LIB_VALUES)
 SEALED_OUT="${SSO_CHART}/templates/google-oauth-sealedsecret.yaml"              # sealed client secret (committed)
 CLIENT_SECRET_KEY="client-secret"   # Secret data key EG's OIDC clientSecret expects (fixed by Envoy Gateway)
 # -----------------------------------------------------------------------------
@@ -55,7 +55,7 @@ kubectl get pods -n "$SS_CONTROLLER_NS" -l "$SS_POD_SELECTOR" >/dev/null 2>&1 \
 ok "kubeseal/kubectl/yq present, API + sealed-secrets controller reachable"
 
 # === 1. read the shared OIDC config + callback domains (single source of truth) ==============
-say "reading shared OIDC config from ${LIB_VALUES} and callback domains from ${SSO_VALUES}"
+say "reading shared OIDC config + callback domains from ${LIB_VALUES}"
 AUTH_SUBDOMAIN="$(yq -r '.ingressEdge.oidc.authSubdomain' "$LIB_VALUES" 2>/dev/null)"
 SEAL_NAME="$(yq -r '.ingressEdge.oidc.clientSecretName' "$LIB_VALUES" 2>/dev/null)"
 SEAL_NAMESPACE="$(yq -r '.ingressEdge.gatewayNamespace' "$LIB_VALUES" 2>/dev/null)"
@@ -64,8 +64,8 @@ for v in AUTH_SUBDOMAIN:"$AUTH_SUBDOMAIN" SEAL_NAME:"$SEAL_NAME" SEAL_NAMESPACE:
 done
 DOMAINS=()
 while IFS= read -r d; do [ -n "$d" ] && [ "$d" != "null" ] && DOMAINS+=("$d"); done \
-  < <(yq -r '.["ingress-edge"].ingresses[].sso.domain' "$SSO_VALUES" 2>/dev/null)
-[ "${#DOMAINS[@]}" -ge 1 ] || die "no callback domains (.[\"ingress-edge\"].ingresses[].sso.domain) in ${SSO_VALUES}"
+  < <(yq -r '.ingressEdge.callbackDomains[].domain' "$LIB_VALUES" 2>/dev/null)
+[ "${#DOMAINS[@]}" -ge 1 ] || die "no callback domains (.ingressEdge.callbackDomains[].domain) in ${LIB_VALUES}"
 ok "domains: ${DOMAINS[*]}  callback: ${AUTH_SUBDOMAIN}.<domain>  seal: ${SEAL_NAME}/${SEAL_NAMESPACE}"
 
 # === 2. how to set up the Google OAuth client (ONE client, all domains) ======
@@ -125,7 +125,7 @@ Next:
            (sample-workload.example.com stays OPEN, no sso block.)
   - protect another host: add it to an ingress with an \`sso:\` block (platform-ingress for platform UIs, or
     the workload's own chart). No Google change if that domain already has a callback host; a NEW domain =
-    add a callback ingress to 04_google_sso + register one more redirect URI here.
+    add it to ingressEdge.callbackDomains (library values) + register one more redirect URI here. See 07_ingress.md.
   - change WHO may log in: edit the ingress's \`allowlist\` in its values.yaml (not this script), commit, push.
   - re-run this script to rotate the client secret.
 EOF

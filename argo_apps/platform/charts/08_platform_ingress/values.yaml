@@ -10,36 +10,31 @@
 ingress-edge:
   ingresses:
     - name: platform
+      # The registrable domain for this ingress: each host below is a `subdomain` under it, and it drives
+      # the shared callback host (google-sso.example.com, stood up by 04_google_sso) + the cookieDomain.
+      domain: example.com
       # STAGING while any host is still bootstrapping the cert; flip to letsencrypt-prod once it issues
-      # (these are browser-facing UIs that want a trusted cert).
+      # (these are browser-facing UIs that want a trusted cert). ONE multi-SAN cert covers all four hosts,
+      # into the derived `platform-tls` Secret every listener references.
       issuer: letsencrypt-staging
-      # ONE multi-SAN cert covers all four hosts, into the `platform-tls` Secret every listener references.
-      tlsSecretName: platform-tls
       sso:
         enabled: true
-        # The registrable domain: drives the shared callback host (google-sso.example.com, stood up by
-        # 04_google_sso) and the session cookieDomain. One login covers all four UIs below.
-        domain: example.com
         # The ONE platform allowlist. Deny is the default; only these Google accounts reach any platform
         # UI. Non-secret, edited by hand here (not prompted) — see 07_ingress.md.
         allowlist:
           - you@example.com
-      # Each host: its own Gateway/:443 listener + HTTPRoute (labelled ingress-group: platform so the one
-      # SecurityPolicy gates it) + ReferenceGrant into the backend's namespace. All four listeners share the
-      # one `platform-tls` SAN cert above.
+      # Each host: a `subdomain` under `domain`, its own Gateway/:443 listener + HTTPRoute (labelled
+      # ingress-group: platform so the one SecurityPolicy gates it) + ReferenceGrant into the backend's
+      # namespace. Resource names derive from the full host (argocd.example.com -> argocd-example-com).
       hosts:
-        - name: argocd
-          host: argocd.example.com
-          # argocd-server :80 serves the UI/API over HTTP (server.insecure: true); the Gateway terminates TLS.
+        # argocd-server :80 serves the UI/API over HTTP (server.insecure: true); the Gateway terminates TLS.
+        - subdomain: argocd
           backend: { name: argocd-server, namespace: argocd, port: 80 }
-        - name: grafana
-          host: grafana.example.com
-          # grafana/grafana Service (release `grafana`, ClusterIP :80 -> :3000). Grafana's own login is off
-          # (anonymous Admin), so this SSO gate is its only barrier.
+        # grafana/grafana Service (release `grafana`, ClusterIP :80 -> :3000). Grafana's own login is off
+        # (anonymous Admin), so this SSO gate is its only barrier.
+        - subdomain: grafana
           backend: { name: grafana, namespace: monitoring, port: 80 }
-        - name: vmui
-          host: vmui.example.com
+        - subdomain: vmui
           backend: { name: vmsingle-victoria-metrics-k8s-stack, namespace: monitoring, port: 8428 }
-        - name: vlogs
-          host: vlogs.example.com
+        - subdomain: vlogs
           backend: { name: vlsingle-victoria-logs, namespace: monitoring, port: 9428 }

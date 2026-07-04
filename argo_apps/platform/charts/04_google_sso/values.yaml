@@ -4,13 +4,13 @@
 # This chart owns only the SHARED Google-SSO PLATFORM plumbing:
 #   - the sealed OAuth client secret (templates/google-oauth-sealedsecret.yaml, sealed by 07_google_sso.sh),
 #   - one tiny shared whoami backend (templates/callbacks.yaml), and
-#   - one CALLBACK HOST per domain (google-sso.<domain>), rendered by the ingress-edge library from the
-#     `ingress-edge:` block below: its Gateway + :443 listener + Certificate + HTTPRoute + its own
-#     SecurityPolicy. That SecurityPolicy completes the OAuth token exchange and sets the domain-scoped
-#     session cookie every app ingress on the domain then honours; its redirectURL derives to itself.
-# The per-APP email allowlists are NOT here anymore, each ingress (platform-ingress, each workload) owns
-# its own. The shared, non-secret OIDC config (clientID, cookie, TTLs, ...) lives once in the library's
-# values.yaml. See 07_ingress.md.
+#   - the CALLBACK HOSTS google-sso.<domain> (templates/ingress.yaml -> the ingress-edge library's
+#     `ingress-edge.callbacks`): per domain a Gateway + :443 listener + Certificate + HTTPRoute + its own
+#     SecurityPolicy that completes the OAuth token exchange and sets the domain-scoped session cookie every
+#     app ingress on the domain then honours (redirectURL derives to itself).
+# The domain list itself lives in the LIBRARY values (ingressEdge.callbackDomains) — THE single source that
+# every app ingress's domain is guarded against — not here. The per-APP allowlists live on each app
+# ingress. This chart carries no `ingresses:` of its own. See 07_ingress.md.
 
 # ---- this chart's own templates (the shared whoami) ----
 # Namespace the callback hosts, whoami and sealed Secret live in (the merged-Envoy ns; MUST match the
@@ -19,37 +19,3 @@ namespace: gateway
 # The shared callback backend image. Envoy intercepts /oauth2/callback before it reaches this, so it only
 # ever answers non-callback paths (behind the callback host's own SSO gate).
 callbackImage: "traefik/whoami:v1.10.3"
-
-# ---- the callback hosts (rendered by the ingress-edge library) ----
-# ONE ingress per SSO domain. Each stands up google-sso.<domain> in front of the shared whoami, SSO-enabled
-# so it gets a SecurityPolicy whose redirectURL (google-sso.<domain>/oauth2/callback) points at itself.
-# `allowlist` here is effectively unused for access control: Envoy intercepts the /oauth2/callback path
-# BEFORE the authorization filter, and any non-callback request to the whoami is Deny-by-default anyway, so
-# a single owner entry keeps it valid without widening anything. Single host each, so the SAN cert is a
-# one-name cert; its Secret defaults to `<name>-tls` (= google-sso-<slug>-tls, the existing callback cert
-# secret, so cert-manager adopts the already-issued cert). To add an SSO domain: add an entry here
-# (+ register one redirect URI on the Google OAuth client) — see 07_google_sso.sh.
-ingress-edge:
-  ingresses:
-    - name: google-sso-example-com
-      issuer: letsencrypt-staging
-      sso:
-        enabled: true
-        domain: example.com
-        allowlist:
-          - you@example.com   # unused for access (see note above); kept valid + minimal
-      hosts:
-        - name: google-sso-example-com
-          host: google-sso.example.com
-          backend: { name: gateway-sso-callback, namespace: gateway, port: 80 }
-    - name: google-sso-yama-casa
-      issuer: letsencrypt-staging
-      sso:
-        enabled: true
-        domain: yama.casa
-        allowlist:
-          - you@example.com   # unused for access (see note above); kept valid + minimal
-      hosts:
-        - name: google-sso-yama-casa
-          host: google-sso.yama.casa
-          backend: { name: gateway-sso-callback, namespace: gateway, port: 80 }

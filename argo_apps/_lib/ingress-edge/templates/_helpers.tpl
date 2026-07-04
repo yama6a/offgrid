@@ -3,18 +3,31 @@ ingress-edge helpers. Resource-name / TLS-secret / issuer derivations live here 
 templates stay declarative. Each helper takes a dict {cfg, ingress, host} (host omitted where unused).
 */}}
 
-{{/* Short name for a host: explicit .host.name, else the first DNS label of .host.host (argocd.x.y -> argocd). */}}
-{{- define "ingress-edge.hostName" -}}
-{{- $h := .host -}}
-{{- if $h.name -}}{{ $h.name }}{{- else -}}{{ splitList "." $h.host | first }}{{- end -}}
+{{/*
+Full hostname for a host: the host's `subdomain` joined onto the ingress `domain` with a dot
+(argocd + example.com -> argocd.example.com). The sentinel `subdomain: "@"` means the apex (the domain
+itself), the DNS-registrar convention. ctx: {ingress, host}.
+*/}}
+{{- define "ingress-edge.host" -}}
+{{- if eq .host.subdomain "@" -}}{{ .ingress.domain }}{{- else -}}{{ printf "%s.%s" .host.subdomain .ingress.domain }}{{- end -}}
 {{- end -}}
 
 {{/*
-The ingress's ONE shared TLS Secret: explicit .ingress.tlsSecretName, else <ingress.name>-tls. Every host's
-Gateway listener references it, and the ingress's single SAN Certificate fills it. ctx needs {ingress}.
+Per-host resource name (Gateway / listener / HTTPRoute / ReferenceGrant), the full hostname with dots ->
+dashes: argocd.example.com -> argocd-example-com. The FULL host is used (not just the subdomain) so hosts
+that share a subdomain across domains stay unique in the shared gateway namespace (google-sso.example.com
+-> google-sso-example-com vs google-sso.yama.casa -> google-sso-yama-casa). ctx: {ingress, host}.
+*/}}
+{{- define "ingress-edge.hostName" -}}
+{{- include "ingress-edge.host" . | replace "." "-" -}}
+{{- end -}}
+
+{{/*
+The ingress's ONE shared TLS Secret: <ingress.name>-tls. Every host's Gateway listener references it, and
+the ingress's single SAN Certificate fills it. ctx needs {ingress}.
 */}}
 {{- define "ingress-edge.tlsSecret" -}}
-{{- .ingress.tlsSecretName | default (printf "%s-tls" .ingress.name) -}}
+{{- printf "%s-tls" .ingress.name -}}
 {{- end -}}
 
 {{/* cert-manager ClusterIssuer for the ingress's SAN cert: .ingress.issuer, else ingressEdge.defaultIssuer. */}}

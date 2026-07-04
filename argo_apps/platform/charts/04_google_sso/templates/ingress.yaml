@@ -1,8 +1,8 @@
 {{/*
-Each callback host (google-sso.<domain>) is rendered by the shared ingress-edge library from the
-`ingress-edge:` block in values.yaml, as an SSO ingress whose backend is the shared whoami above and whose
-redirectURL derives to ITSELF (google-sso.<domain>/oauth2/callback). Its SecurityPolicy is what completes
-the OAuth token exchange and sets the domain-scoped session cookie that every app ingress on that domain
-then honours. One line by design; no edge YAML hand-written. See 07_ingress.md.
+The shared OIDC callback hosts (google-sso.<domain>) are rendered by the ingress-edge library from
+`ingressEdge.callbackDomains` in the library values — one per domain, each an SSO ingress in front of the
+shared whoami (templates/callbacks.yaml) whose redirectURL derives to itself. That list is THE single source
+for which domains have SSO; every app ingress's `domain` is guarded against it. One line by design; no
+edge YAML hand-written. See 07_ingress.md ("Adding an SSO domain").
 */}}
-{{ include "ingress-edge.render" . }}
+{{ include "ingress-edge.callbacks" . }}

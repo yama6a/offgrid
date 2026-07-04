@@ -14,8 +14,9 @@ metadata:
 spec:
   secretName: {{ include "ingress-edge.tlsSecret" . | quote }}
   dnsNames:
-    {{- range .ingress.hosts }}
-    - {{ .host | quote }}
+    {{- $ing := .ingress }}
+    {{- range $h := .ingress.hosts }}
+    - {{ include "ingress-edge.host" (dict "ingress" $ing "host" $h) | quote }}
     {{- end }}
   issuerRef:
     name: {{ include "ingress-edge.issuer" . | quote }}

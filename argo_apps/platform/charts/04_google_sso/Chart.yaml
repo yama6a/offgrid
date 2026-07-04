@@ -6,9 +6,10 @@ description: >-
   target every protected ingress on its domain points at (so Google needs just ONE redirect URI per
   domain); it's a tiny shared whoami behind Envoy's /oauth2/callback interception. Its Gateway +
   Certificate + HTTPRoute + its OWN SecurityPolicy (which completes the token exchange and sets the
-  domain-scoped session cookie) are rendered by the shared ingress-edge library (a file:// dependency)
-  from the `ingress-edge:` block in values.yaml, exactly like every app ingress. The per-APP allowlists
-  no longer live here: each ingress (platform-ingress, each workload) carries its own; this chart only
+  domain-scoped session cookie) are rendered by the shared ingress-edge library (a file:// dependency,
+  `ingress-edge.callbacks`) from `ingressEdge.callbackDomains` in the LIBRARY values — THE single source of
+  which domains have SSO, that every app ingress's domain is guarded against. The per-APP allowlists
+  don't live here either: each ingress (platform-ingress, each workload) carries its own; this chart only
   owns the callback plumbing + the shared secret. The client secret is sealed by
   07_ingress/07_google_sso.sh into templates/. Delivered by ArgoCD via argo_apps/platform/apps/
   04_google_sso.yaml, wave 4 (after the gateway wave 3 and sealed-secrets wave 2). See 07_ingress.md.

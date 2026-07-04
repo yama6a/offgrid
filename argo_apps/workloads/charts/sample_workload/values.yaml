@@ -39,23 +39,22 @@ app:
 ingress-edge:
   ingresses:
     - name: sample-workload            # the OPEN control host (single-host ingress => one-name cert, secret sample-workload-tls)
+      domain: example.com
       issuer: letsencrypt-staging      # STAGING for a brand-new host; flip to letsencrypt-prod once it issues
       hosts:
-        - name: sample-workload
-          host: sample-workload.example.com
+        - subdomain: sample-workload   # -> sample-workload.example.com
           backend: { name: sample-workload, port: 8080 }   # namespace defaults to the release ns
     - name: sample-workload-sso        # the PROTECTED host, gated by this workload's own allowlist (secret sample-workload-sso-tls)
+      domain: example.com              # shared callback host google-sso.example.com (stood up by 04_google_sso)
       issuer: letsencrypt-staging
       sso:
         enabled: true
-        domain: example.com            # shared callback host google-sso.example.com (stood up by 04_google_sso)
         # This workload's OWN allowed Google accounts (Deny is the default). Edit here to change access;
         # entirely separate from the platform ingress's allowlist even though both are on example.com.
         allowlist:
           - you@example.com
       hosts:
-        - name: sample-workload-sso
-          host: sample-workload-sso.example.com
+        - subdomain: sample-workload-sso   # -> sample-workload-sso.example.com
           backend: { name: sample-workload, port: 8080 }   # namespace defaults to the release ns
 
 # ---- the CloudNativePG Postgres Cluster (upstream cnpg/cluster dependency) -------------------------

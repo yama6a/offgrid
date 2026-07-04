@@ -16,6 +16,7 @@ ctx: {cfg, ingress}.
 {{- define "ingress-edge.securitypolicy" -}}
 {{- $sso := .ingress.sso -}}
 {{- $oidc := .cfg.oidc -}}
+{{- $domain := .ingress.domain -}}
 apiVersion: gateway.envoyproxy.io/v1alpha1
 kind: SecurityPolicy
 metadata:
@@ -35,12 +36,12 @@ spec:
     clientSecret:
       name: {{ $oidc.clientSecretName | quote }}
     # Fixed shared callback host for this ingress's domain (register it on the Google OAuth client).
-    redirectURL: {{ printf "https://%s.%s/oauth2/callback" $oidc.authSubdomain $sso.domain | quote }}
+    redirectURL: {{ printf "https://%s.%s/oauth2/callback" $oidc.authSubdomain $domain | quote }}
     # Off the default /logout so it doesn't collide with a backend app's own /logout (e.g. ArgoCD's).
     logoutPath: {{ $oidc.logoutPath | quote }}
     # Share the session cookie across every subdomain of this domain (one login covers them all); each
     # ingress still re-checks its OWN allowlist below, so a shared cookie never widens access.
-    cookieDomain: {{ $sso.cookieDomain | default $sso.domain | quote }}
+    cookieDomain: {{ $sso.cookieDomain | default $domain | quote }}
     cookieNames:
       idToken: {{ $oidc.idTokenCookie | quote }}
     # Silently renew the id/access token so a session survives past Google's ~1h id-token expiry, up to
@@ -81,6 +82,7 @@ spec:
 
   authorization:
     defaultAction: Deny
+    {{- with $sso.allowlist }}
     rules:
       - name: allow-listed-emails
         action: Allow
@@ -91,7 +93,12 @@ spec:
               - name: email
                 valueType: String
                 values:
-                  {{- range $sso.allowlist }}
+                  {{- range . }}
                   - {{ . | quote }}
                   {{- end }}
+    {{- else }}
+    # No allowlist (the OIDC callback host): Deny everything. The /oauth2/callback path is handled by the
+    # OIDC filter BEFORE authorization, so the token exchange still works; any other path to the backend is
+    # denied. (User-facing SSO ingresses must set an allowlist — the render guard rejects an empty one.)
+    {{- end }}
 {{- end -}}

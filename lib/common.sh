@@ -49,6 +49,7 @@ source "$ENV_FILE"
 : "${SMTP_GOOGLE_APP_PASSWORD_SECRET:=}"  # 09 seals it for Grafana email
 : "${GOOGLE_SSO_CLIENT_ID:=}"      # 07 writes into the google-sso values
 : "${GOOGLE_SSO_CLIENT_SECRET:=}"  # 07 seals it for Envoy Gateway OIDC
+: "${SSO_CALLBACK_DOMAINS:=}"      # 07_sso_domains.sh writes into ingress-edge callbackDomains (empty = leave the list unchanged)
 
 # ---- derived config (computed from the .env scalars; not user-editable) ---------------------------
 # These can't live in a flat .env (arrays, interpolation, a shasum-keyed path), so they're computed here.

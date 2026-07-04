@@ -17,10 +17,21 @@ ingressEdge:
   # else. This REPLACES the old domain-central `sso: <domain>` label: attachment is now per-ingress, which
   # is what lets each ingress carry its own allowlist even when several share a domain.
   groupLabelKey: ingress-group
-  # Cert issuer used when an ingress (or host) doesn't set its own. ALWAYS staging for a brand-new host
-  # (generous limits, untrusted-but-harmless), flip that ingress/host to letsencrypt-prod once it issues.
+  # Cert issuer used when an ingress doesn't set its own. Must be one of the two ClusterIssuers 03_gateway
+  # ships (letsencrypt-staging | letsencrypt-prod); the render guard rejects anything else. ALWAYS staging
+  # for a brand-new host, flip the ingress to letsencrypt-prod once it issues.
   defaultIssuer: letsencrypt-staging
-
+  # The registrable domains that have a shared google-sso.<domain> OIDC callback host. THE single source:
+  # 04_google_sso stands one callback host up per entry (via the library's callbacks template), and every
+  # SSO ingress's `domain` MUST be one of these — the render guard rejects any other, because a login on
+  # an unlisted domain would 302 to a google-sso.<domain> callback that doesn't exist and the OAuth exchange
+  # could never complete. Written by 07_sso_domains.sh from .env SSO_CALLBACK_DOMAINS; to add a domain see
+  # "Adding an SSO domain" in 07_ingress.md. (issuer per domain: letsencrypt-staging | letsencrypt-prod.)
+  callbackDomains:
+    - domain: example.com
+      issuer: letsencrypt-staging
+    - domain: yama.casa
+      issuer: letsencrypt-staging
   # ---- shared Google-OIDC config (identical for every SSO ingress; only domain + allowlist differ) ----
   # This block is the single home for what used to be 04_google_sso/values.yaml `oidc:`. The per-ingress
   # SecurityPolicy the library renders reads all of it from here.
@@ -55,27 +66,28 @@ ingressEdge:
     # (http2.too_many_headers -> ERR_HTTP2_PROTOCOL_ERROR). Only real navigations should redirect to login.
     # Empty string disables denyRedirect.
     denyRedirectSecFetchMode: "cors|no-cors|same-origin|websocket"
-
 # ---- per-consumer data (documentation only; each consumer chart sets its own `ingresses:` list) -------
-# Shape of each entry the library iterates. SSO is OPTIONAL: omit the `sso:` block (or enabled: false) for
-# an open ingress (no SecurityPolicy, no group label). An ingress groups a set of subdomains that share
-# ONE allowlist.
+# Shape of each entry the library iterates. Every ingress declares exactly ONE registrable `domain`; each
+# host gives a `subdomain` under it (host = `<subdomain>.<domain>`; the sentinel `subdomain: "@"` = the
+# apex `<domain>` itself, empty is rejected). So a host is under its domain BY CONSTRUCTION — no cross-domain
+# check. This means an ingress (even an open one) is single-domain; a cross-domain group is two ingresses.
+# SSO is OPTIONAL: omit the `sso:` block (or enabled: false) for an open ingress (no SecurityPolicy, no
+# group label); when enabled, `domain` must be one of ingressEdge.callbackDomains.
 #
 # The whole ingress gets ONE multi-SAN Certificate covering all its hosts, into ONE Secret every host's
-# listener references (`<name>-tls` unless `tlsSecretName` is set). Fewer ACME orders and no per-host cert
-# bookkeeping; the trade-off is coupled issuance (a single failing SAN leaves the whole cert not-Ready).
+# listener references (always `<name>-tls`). Fewer ACME orders and no per-host cert bookkeeping; the
+# trade-off is coupled issuance (a single failing SAN leaves the whole cert not-Ready). Per-host resource
+# names (Gateway/listener/route) derive from the full host (dots -> dashes), so a host needs no `name`.
 #
 # ingresses:
-#   - name: platform            # unique; the group-label value, the SAN cert name + <name>-tls Secret
+#   - name: platform            # unique; the group-label value, the SAN cert name + the <name>-tls Secret
+#     domain: example.com       # required; exactly one registrable domain; drives cookieDomain + the callback host
 #     issuer: letsencrypt-prod  # optional; defaults to ingressEdge.defaultIssuer
-#     tlsSecretName: platform-tls  # optional; defaults to <name>-tls
-#     sso:
+#     sso:                      # optional; when enabled, `domain` must be in ingressEdge.callbackDomains
 #       enabled: true
-#       domain: example.com     # drives redirectURL + cookieDomain (override with `cookieDomain:`) + which callback host
-#       allowlist:              # THIS ingress's own allowed Google accounts (Deny is the default)
+#       allowlist:              # THIS ingress's own allowed Google accounts (Deny is the default; required when enabled)
 #         - me@example.com
 #     hosts:
-#       - name: argocd                       # optional; defaults to the first DNS label of `host` (Gateway/listener/route name)
-#         host: argocd.example.com
+#       - subdomain: argocd     # host = argocd.example.com  ("@" => the apex example.com)
 #         backend: { name: argocd-server, namespace: argocd, port: 80 }
 ingresses: []

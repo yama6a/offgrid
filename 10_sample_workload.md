@@ -68,10 +68,11 @@ namespace.
 ### One-place edit: the whole ingress is a values list
 Per-host HTTP-01 (no wildcard without DNS-01) still means every HTTPS host needs its own `:443` listener,
 but that listener lives on the host's own Gateway (rendered by the `ingress-edge` library), folded onto
-the shared Envoy via `mergeGateways`, not on a shared Gateway in `03_gateway`. Adding a host is a single
-`hosts[]` entry under an `ingresses[]` block; adding a differently-gated group is a new `ingresses[]` entry
-with its own `sso.allowlist`. The library renders Gateway + listener + cert + route (+ the ingress's
-`SecurityPolicy` when SSO is on) together, nothing to keep in step in `03_gateway`.
+the shared Envoy via `mergeGateways`, not on a shared Gateway in `03_gateway`. Each ingress declares one
+`domain`; adding a host is a single `{ subdomain, backend }` under its `hosts:` (host = `<subdomain>.<domain>`,
+or `subdomain: "@"` for the apex). A differently-gated (or different-domain) group is a new `ingresses[]`
+entry with its own `domain`/`sso.allowlist`. The library renders Gateway + listener + cert + route (+ the
+ingress's `SecurityPolicy` when SSO is on) together, nothing to keep in step in `03_gateway`.
 
 ### Ordering: a workload, gated behind the whole platform
 This workload needs the CNPG operator's `Cluster` CRD + the `local-path` class (platform wave 2), the
@@ -110,9 +111,9 @@ Checks (`export KUBECONFIG=03_operating_system/talos-cluster/kubeconfig`):
 
 ## Caveats
 
-- One-place edit per host: a single `hosts[]` entry renders that host's Gateway + listener + route (+ a SAN
-  entry on the ingress's one shared cert), so keep its `name`/`host`/`backend` consistent, or the route won't
-  bind / the listener's hostname won't match the cert.
+- One-place edit per host: a single `hosts[]` entry (just `subdomain` + `backend`) renders that host's
+  Gateway + listener + route (+ a SAN entry on the ingress's one shared cert); the resource names derive from
+  the full host `<subdomain>.<domain>` (dots -> dashes), so there's nothing else to keep in sync.
 - `sample-workload-sso` is only protected once the shared client secret is sealed: run
   `07_ingress/07_google_sso.sh` and commit (its allowlist lives in this chart's `values.yaml`, edit it
   there), or the policy references a missing Secret and login fails (see [07_ingress.md](07_ingress.md)).

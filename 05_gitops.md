@@ -151,9 +151,10 @@ admin with no login.
 
 Delivered purely by ArgoCD as one host of the consolidated platform-ingress app (sync-wave 8, app
 `argo_apps/platform/apps/08_platform_ingress.yaml`, chart `argo_apps/platform/charts/08_platform_ingress/`):
-its `argocd` `Gateway` (one `:443` listener) + `Certificate` + a cross-namespace `HTTPRoute` to
-`argocd-server` + a `ReferenceGrant`, all rendered by the shared `ingress-edge` library. ArgoCD is untouched
-— it keeps `server.insecure: true` and serves plain HTTP on `argocd-server:80`; the Gateway terminates TLS.
+its own `:443` `Gateway` (named `argocd-example-com`, from the hostname) + a cross-namespace `HTTPRoute` to
+`argocd-server` + a `ReferenceGrant`, plus a SAN entry on the platform ingress's shared `platform-tls` cert,
+all rendered by the shared `ingress-edge` library. ArgoCD is untouched — it keeps `server.insecure: true` and
+serves plain HTTP on `argocd-server:80`; the Gateway terminates TLS.
 
 Almost free: `argocd.<domain>` shares the platform ingress's one `SecurityPolicy` + allowlist, the shared
 `google-sso.<domain>` callback, and `cookieDomain` with the other platform UIs — no new Google redirect URI,

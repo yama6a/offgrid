@@ -22,7 +22,7 @@ spec:
       namespace: {{ .cfg.gatewayNamespace }}
       sectionName: {{ $name }}
   hostnames:
-    - {{ .host.host | quote }}
+    - {{ include "ingress-edge.host" . | quote }}
   rules:
     - backendRefs:
         - name: {{ .host.backend.name }}

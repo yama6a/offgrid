@@ -1,38 +1,24 @@
 {{/*
-ingress-edge.render — the one entry point a consumer calls: `{{ include "ingress-edge.render" . }}`.
-
-Reads EVERYTHING from the `ingress-edge:` block of the consumer's values (`.Values["ingress-edge"]`).
-Helm coalesces this library's own values.yaml under that same dependency-name key, so the shared
-`ingressEdge:` config (clientID, cookie, TTLs, ...) flows to every consumer from ONE place (the library
-values.yaml) while each consumer supplies its own `ingresses:` list under `ingress-edge:` — the repo's
-usual "config nested under the dependency name" convention (cf. grafana:/cluster:).
-
-Per host it emits Gateway + Certificate + HTTPRoute + ReferenceGrant; per SSO-enabled ingress ONE
-SecurityPolicy (after its hosts, so the routes it targets already exist in the same manifest).
-ctx: the root `.`.
+ingress-edge.renderIngress — emit the resources for ONE ingress (already-resolved dict {cfg, ingress,
+release}): per host a Gateway + HTTPRoute (+ a cross-namespace ReferenceGrant), ONE multi-SAN Certificate,
+and — when SSO is enabled — ONE SecurityPolicy. Shared by both entry points (render + callbacks) so the
+edge is built in exactly one place. Validates the cert issuer here (applies to every ingress, callbacks
+included); the SSO-domain guards live in `render` (they don't apply to the callback hosts themselves).
 */}}
-{{- define "ingress-edge.render" -}}
-{{- $le := index .Values "ingress-edge" -}}
-{{- $cfg := $le.ingressEdge -}}
-{{- range $ing := $le.ingresses }}
-{{- /* Guard: an SSO ingress is single-registrable-domain by construction — cookieDomain and the shared
-       google-sso.<domain> callback are per registrable domain, so a session issued for one domain is
-       useless on another. Reject an SSO ingress that names a domain but whose hosts aren't all under it,
-       rather than silently shipping hosts that can never authenticate. (Open ingresses may span domains.) */}}
-{{- if and $ing.sso $ing.sso.enabled }}
-{{- $domain := $ing.sso.domain | default "" }}
-{{- if not $domain }}
-{{- fail (printf "ingress-edge: SSO ingress %q has sso.enabled but no sso.domain" $ing.name) }}
-{{- end }}
-{{- $suffix := printf ".%s" $domain }}
-{{- range $h := $ing.hosts }}
-{{- if not (or (eq $h.host $domain) (hasSuffix $suffix $h.host)) }}
-{{- fail (printf "ingress-edge: SSO ingress %q sets sso.domain=%q but host %q is not under it; an SSO ingress can't span registrable domains (cookieDomain + the shared callback host are per domain). Split it into one ingress per domain, or drop the sso block to leave it open." $ing.name $domain $h.host) }}
-{{- end }}
-{{- end }}
+{{- define "ingress-edge.renderIngress" -}}
+{{- $cfg := .cfg -}}
+{{- $ing := .ingress -}}
+{{- $release := .release -}}
+{{- /* Guard: the cert issuer must be one of the two Let's Encrypt ClusterIssuers 03_gateway ships. A typo
+       would leave the Certificate's issuerRef pointing at a nonexistent ClusterIssuer — never issuing,
+       never erroring loudly. Catch it at render instead. */}}
+{{- $issuer := $ing.issuer | default $cfg.defaultIssuer -}}
+{{- $validIssuers := list "letsencrypt-staging" "letsencrypt-prod" -}}
+{{- if not (has $issuer $validIssuers) }}
+{{- fail (printf "ingress-edge: ingress %q uses issuer %q, but only %s are allowed (the ClusterIssuers 03_gateway ships)" $ing.name $issuer (join " / " $validIssuers)) }}
 {{- end }}
 {{- range $h := $ing.hosts }}
-{{- $ctx := dict "cfg" $cfg "ingress" $ing "host" $h "release" $.Release }}
+{{- $ctx := dict "cfg" $cfg "ingress" $ing "host" $h "release" $release }}
 ---
 {{ include "ingress-edge.gateway" $ctx }}
 ---
@@ -50,5 +36,46 @@ ctx: the root `.`.
 ---
 {{ include "ingress-edge.securitypolicy" (dict "cfg" $cfg "ingress" $ing) }}
 {{- end }}
+{{- end -}}
+
+{{/*
+ingress-edge.render — the entry point a consumer calls: `{{ include "ingress-edge.render" . }}`. Reads the
+`ingress-edge:` block of the consumer's values (the library's own defaults merge under that same key), then
+validates + renders each of the consumer's `ingresses[]`. ctx: the root `.`.
+*/}}
+{{- define "ingress-edge.render" -}}
+{{- $le := index .Values "ingress-edge" -}}
+{{- $cfg := $le.ingressEdge -}}
+{{- /* The domains that have a shared OIDC callback host (04_google_sso stands one up per entry). */}}
+{{- $callbackDomains := list -}}
+{{- range $cfg.callbackDomains }}{{- $callbackDomains = append $callbackDomains .domain -}}{{- end -}}
+{{- range $ing := $le.ingresses }}
+{{- /* Guard: every ingress declares exactly ONE registrable domain; each host is a `subdomain` under it
+       (so a host is under its domain by construction — no cross-domain check needed). */}}
+{{- if not $ing.domain }}
+{{- fail (printf "ingress-edge: ingress %q has no domain (every ingress must set exactly one registrable domain; hosts give a subdomain under it)" $ing.name) }}
+{{- end }}
+{{- /* Guard: each host needs a non-empty subdomain. Use "@" for the apex (the domain itself). A subdomain
+       that already ends with the domain is the classic "I put the full host here" mistake. */}}
+{{- range $h := $ing.hosts }}
+{{- if not $h.subdomain }}
+{{- fail (printf "ingress-edge: ingress %q has a host with no subdomain — set one (or \"@\" for the apex %q)" $ing.name $ing.domain) }}
+{{- end }}
+{{- if or (eq $h.subdomain $ing.domain) (hasSuffix (printf ".%s" $ing.domain) $h.subdomain) }}
+{{- fail (printf "ingress-edge: ingress %q host subdomain %q looks like a full hostname — give just the subdomain under %q (e.g. \"argocd\"), or \"@\" for the apex" $ing.name $h.subdomain $ing.domain) }}
+{{- end }}
+{{- end }}
+{{- if and $ing.sso $ing.sso.enabled }}
+{{- /* Guard: an SSO ingress's domain must have a callback host, or login redirects to a google-sso.<domain>
+       that doesn't exist and the OAuth exchange can never complete (a silent, login-time break). */}}
+{{- if not (has $ing.domain $callbackDomains) }}
+{{- fail (printf "ingress-edge: SSO ingress %q uses domain=%q, which has no OIDC callback host. Add it to ingressEdge.callbackDomains (07_sso_domains.sh, and register its redirect URI in Google — see 'Adding an SSO domain' in 07_ingress.md), or logins will bounce to a callback that doesn't exist. Known domains: %s" $ing.name $ing.domain (join ", " $callbackDomains)) }}
+{{- end }}
+{{- /* Guard: an empty allowlist would Deny every login — surely a mistake on a user-facing ingress. */}}
+{{- if not $ing.sso.allowlist }}
+{{- fail (printf "ingress-edge: SSO ingress %q has an empty allowlist — every login would be denied. Add at least one email, or drop the sso block to leave it open." $ing.name) }}
+{{- end }}
+{{- end }}
+{{ include "ingress-edge.renderIngress" (dict "cfg" $cfg "ingress" $ing "release" $.Release) }}
 {{- end }}
 {{- end -}}

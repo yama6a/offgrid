@@ -199,16 +199,19 @@ library (see [the wrapper-chart conventions](CLAUDE.md)); enabling it on an ingr
 own `SecurityPolicy` alongside its routes. Proven on `sample-workload-sso.<domain>` (protected, its own
 allowlist) vs `sample-workload.<domain>` (open).
 
-Two moving parts, both GitOps, plus one secret helper:
+Two moving parts, both GitOps, plus two `.env` helpers:
 
 - `argo_apps/_lib/ingress-edge/`: renders each SSO ingress's `SecurityPolicy` (`_securitypolicy.tpl`) and
-  holds the shared, non-secret OIDC config (`values.yaml` `ingressEdge.oidc`: clientID, cookie names,
-  TTLs, `authSubdomain`, denyRedirect) — the single place those live.
+  holds the shared, non-secret config in `values.yaml` — `ingressEdge.oidc` (clientID, cookie names, TTLs,
+  `authSubdomain`, denyRedirect) and `ingressEdge.callbackDomains` (the domains that have a callback host) —
+  the single place those live.
 - `argo_apps/platform/charts/04_google_sso/` (wave 4): the SHARED per-domain callback hosts
-  `google-sso.<domain>` (each rendered by the same library as an SSO ingress in front of one tiny shared
-  whoami) + the sealed OAuth client secret.
+  `google-sso.<domain>` (rendered by the library from `ingressEdge.callbackDomains`, in front of one tiny
+  shared whoami) + the sealed OAuth client secret.
+- `07_ingress/07_sso_domains.sh`: writes `.env` `SSO_CALLBACK_DOMAINS` into `ingressEdge.callbackDomains`
+  (asks replace-or-add; preserves each surviving domain's issuer).
 - `07_ingress/07_google_sso.sh`: writes the shared `clientID` into the library values and seals the client
-  secret. It does **not** touch allowlists (see below).
+  secret. Neither script touches allowlists (those are per-ingress values, see below).
 
 ### Per-ingress policy, shared callback host
 Each SSO ingress stamps `ingress-group: <ingressName>` on its `HTTPRoute`s and emits ONE `SecurityPolicy`
@@ -224,11 +227,12 @@ app.D (with cookie)-> [app policy: oidc] pass -> [jwt] validate -> [authorizatio
 ```
 
 The callback always lands on the fixed `google-sso.<domain>` host, so Google needs exactly **one** redirect
-URI per domain, never per app or per ingress. That host is stood up ONCE per domain by `04_google_sso` and
-gets its OWN `SecurityPolicy` (via the library, `redirectURL` deriving to itself) whose only job is to
-complete the token exchange and set the domain-scoped session cookie. A single OAuth client (one `clientID`
-+ one sealed `client-secret`) serves everything; `redirectURL`/`cookieDomain` are derived from the ingress's
-domain.
+URI per domain, never per app or per ingress. Those hosts are stood up from ONE list —
+`ingressEdge.callbackDomains` in the library values — which `04_google_sso` renders (via the library's
+`ingress-edge.callbacks`), one host per entry, each with its OWN `SecurityPolicy` (`redirectURL` deriving to
+itself, deny-all authorization) whose only job is to complete the token exchange and set the domain-scoped
+session cookie. That same list is what every app ingress's `domain` is validated against (see below). A
+single OAuth client (one `clientID` + one sealed `client-secret`) serves everything.
 
 **One login, per-ingress authorization.** The session cookie is scoped to `cookieDomain` (the registrable
 domain), so a single Google login covers every subdomain on that domain. Each ingress's policy still
@@ -237,19 +241,52 @@ user allowed on the platform UIs but absent from a workload's allowlist is signe
 workload. Across *different* registrable domains cookies don't cross, so the first visit re-runs OIDC but
 you're already signed into Google (silent redirect), same identity throughout.
 
-Because `cookieDomain` and the callback host are per registrable domain, **an SSO ingress must stay within
-one registrable domain** — all its hosts under `sso.domain`. The library enforces this: it `fail`s the
-render (so ArgoCD reports the error, nothing applies) if an SSO ingress names a host outside its `sso.domain`,
-or sets `sso.enabled` without a `sso.domain`. Split a cross-domain group into one ingress per domain, or drop
-the `sso` block to leave it open (an *open* ingress's SAN cert may span domains — cert SANs have no such rule).
+**Every ingress is single-domain by construction.** Each ingress declares exactly one registrable `domain`,
+and every host gives a `subdomain` under it (host = `<subdomain>.<domain>`; `subdomain: "@"` = the apex).
+So a host can't escape its domain — there's no cross-domain check to get wrong, and `cookieDomain` /
+callback are unambiguous. A group spanning two registrable domains is simply two ingresses. The library
+`fail`s the render (so ArgoCD reports the error, nothing applies) when:
+- an ingress has **no `domain`**, or a host has **no `subdomain`** (use `"@"` for the apex), or a `subdomain`
+  that **looks like a full hostname** (already ends with the domain — the classic copy-paste slip);
+- an **SSO** ingress's `domain` is **not in `ingressEdge.callbackDomains`** (else login would 302 to a
+  `google-sso.<domain>` that doesn't exist — the silent, login-time break this turns into a render-time one); or
+- an **SSO** ingress has an **empty `allowlist`** (every login would be denied).
 
 ### Adding a host / ingress / domain
 
 | You add | Google Console | Cluster |
 |---|---|---|
-| a subdomain to an existing ingress | nothing | add a host to that ingress's `hosts:` |
+| a subdomain to an existing ingress | nothing | add a `{ subdomain, backend }` to that ingress's `hosts:` |
 | a new protected ingress on an existing domain | nothing | a new `ingresses:` entry with an `sso:` block + its own `allowlist` (platform UIs -> `08_platform_ingress`; a workload -> its own chart) |
-| a brand-new root domain | +1 redirect URI (`google-sso.<newdomain>/oauth2/callback`) | a callback `ingresses:` entry in `04_google_sso` + register the URI via `07_google_sso.sh` |
+| a brand-new SSO domain | +1 redirect URI + the apex under "Authorized domains" | add it to `.env` `SSO_CALLBACK_DOMAINS`, run `07_sso_domains.sh` + `07_google_sso.sh` — see below |
+
+#### Adding an SSO domain
+
+An SSO domain is a registrable domain (e.g. `example.org`) that can gate apps behind Google login. The domain
+list lives in **`.env` `SSO_CALLBACK_DOMAINS`** (comma-separated), and `07_ingress/07_sso_domains.sh` writes it
+into the ingress-edge library's `ingressEdge.callbackDomains` — the single source from which the callback host,
+its cert, its policy and the SSO-ingress guard all follow. To add `example.org`:
+
+1. **`.env`.** Add the domain to `SSO_CALLBACK_DOMAINS` (e.g. `"example.com,yama.casa,example.org"`).
+2. **Write it into the chart.** Run `./07_ingress/07_sso_domains.sh`. It asks **replace** (make the list exactly
+   `.env`) or **add** (merge into the committed list); a domain that already exists keeps its ClusterIssuer, a
+   new one starts on `letsencrypt-staging`. This makes `04_google_sso` render the `google-sso.example.org`
+   callback host (Gateway + cert + route + its deny-all SecurityPolicy) and unblocks `domain: example.org`
+   on any SSO app ingress. (You *can* hand-edit `ingressEdge.callbackDomains` instead; the script is just the
+   ergonomic path and prints the redirect URIs to register.)
+3. **DNS.** Point `google-sso.example.org` (and every app host you'll gate on it) at the home router, and keep
+   the old Pi forwarding `:80` to the Gateway IP, so cert-manager can solve HTTP-01 for the callback cert.
+4. **Google Console** (one OAuth client, shared): under **OAuth consent screen → Authorized domains** add
+   `example.org`; under the **OAuth client → Authorized redirect URIs** add exactly
+   `https://google-sso.example.org/oauth2/callback`. (Both `07_sso_domains.sh` and `07_google_sso.sh` print this.)
+5. **Seal / register.** Run `./07_ingress/07_google_sso.sh` (writes the shared `clientID`, re-seals the client
+   secret — nothing per-domain to seal).
+6. **Use it.** Add an app `ingresses:` entry — `domain: example.org`, `sso: { enabled: true, allowlist: [...] }`,
+   and `hosts:` as `{ subdomain: <sub> }` (or `"@"` for the apex). Commit + push everything (`argo_apps/**`;
+   `.env` is gitignored, so also the library `values.yaml` the script wrote; incl. `Chart.lock`s).
+7. **Flip to prod** once the staging callback cert issues: change that `callbackDomains` entry's `issuer` (and
+   each app ingress's `issuer`) to `letsencrypt-prod`, commit, push. (Re-running `07_sso_domains.sh` preserves
+   the prod flip.)
 
 ### Allowlists are per-ingress values, only the client secret sealed
 Envoy Gateway's `authorization` takes allowed emails as inline literals — they can't come from a Secret. So
@@ -266,8 +303,8 @@ script first.
 ### Apply / verify
 1. Put the shared `GOOGLE_SSO_CLIENT_ID` + `GOOGLE_SSO_CLIENT_SECRET` in the gitignored `.env`, then run
    `./07_ingress/07_google_sso.sh` (needs the cluster reachable for `kubeseal`). It reads the callback domains
-   from `04_google_sso/values.yaml`, prints the redirect URIs to register, writes the shared `clientID` into the
-   library values, and seals the secret. Edit each ingress's `allowlist` by hand in its `values.yaml`.
+   from `ingressEdge.callbackDomains` (the library values), prints the redirect URIs to register, writes the
+   shared `clientID` into the library values, and seals the secret. Edit each ingress's `allowlist` by hand.
 2. Register each printed redirect URI on the one OAuth client; add each apex under "Authorized domains".
    Publish the consent screen (in "Testing" only listed test users log in, regardless of the allowlist).
 3. Commit + push; ArgoCD applies the callback hosts (wave 4) and each ingress's policy.

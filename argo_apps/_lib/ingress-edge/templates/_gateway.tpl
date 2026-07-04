@@ -19,7 +19,7 @@ spec:
     - name: {{ $name }}
       protocol: HTTPS
       port: 443
-      hostname: {{ .host.host | quote }}
+      hostname: {{ include "ingress-edge.host" . | quote }}
       tls:
         mode: Terminate
         certificateRefs:
