@@ -1,0 +1,2 @@
+# pulled by `helm dependency build` from the local file:// path; reproducible from Chart.lock, don't commit the blob
+charts/*.tgz

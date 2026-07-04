@@ -1,0 +1,6 @@
+dependencies:
+- name: ingress-edge
+  repository: file://../../../_lib/ingress-edge
+  version: 0.1.0
+digest: sha256:4002186d6d8caed3427969226fb379b7c97f7bf68491257fbe16cee38bed17cf
+generated: "2026-07-03T23:12:33.185939+02:00"

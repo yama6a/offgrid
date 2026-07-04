@@ -1,18 +1,20 @@
 # 07: Ingress, TLS & SSO
 
-The GitOps L7 ingress layer, delivered entirely by ArgoCD. Four components stack in wave order:
-Envoy Gateway (the Gateway API data plane), cert-manager (issues the X.509 certs), the shared
-Gateway + Let's Encrypt ClusterIssuers (the ACME ingress platform), and Google SSO (label-attached
-OIDC auth). Together they terminate TLS and route/authenticate every ingress host on one pinned
-LoadBalancer IP. Cilium ([04_networking.md](04_networking.md)) stays the CNI and LB-IPAM provider;
-only the gateway implementation lives here.
+The GitOps L7 ingress layer, delivered entirely by ArgoCD. Components stack in wave order: Envoy
+Gateway (the Gateway API data plane), cert-manager (issues the X.509 certs), the shared Gateway +
+Let's Encrypt ClusterIssuers (the ACME ingress platform), the Google-SSO callback plumbing, and the
+consolidated **platform ingress** (wave 8). Together they terminate TLS and route/authenticate every
+ingress host on one pinned LoadBalancer IP. Cilium ([04_networking.md](04_networking.md)) stays the CNI
+and LB-IPAM provider; only the gateway implementation lives here.
 
-The repeated shape across all of these: **each app ships its own Gateway + Certificate + HTTPRoute
-+ ReferenceGrant beside its Service**, and Envoy Gateway's `mergeGateways` folds them all onto one
-Envoy + one LoadBalancer Service. So the cluster keeps a single ingress point on the pinned IP while
-each host stays self-contained in its own chart. This per-app edge pattern is documented here once
-and assumed everywhere downstream ([10_sample_workload.md](10_sample_workload.md), argocd-ingress,
-the monitoring UIs).
+The repeated shape — **per host a Gateway + HTTPRoute + ReferenceGrant, one multi-SAN `Certificate` per
+ingress, plus an optional per-ingress SSO `SecurityPolicy`** — is rendered once by the shared `ingress-edge`
+library chart (`argo_apps/_lib/ingress-edge/`, see [the wrapper-chart conventions](CLAUDE.md)); Envoy
+Gateway's `mergeGateways` folds every host's Gateway onto one Envoy + one LoadBalancer Service. So the cluster
+keeps a single ingress point on the pinned IP while each ingress is just a values list. An **ingress** is
+a group of (sub)domains sharing one optional SSO allowlist: the platform-ingress app groups every
+platform UI under one allowlist; each workload owns its ingress(es) with its own allowlist
+([10_sample_workload.md](10_sample_workload.md)).
 
 ## Envoy Gateway
 
@@ -126,8 +128,9 @@ HTTP-01 solver routes (the ClusterIssuers point at `shared-gateway` by name) and
 http->https redirect (a `RequestRedirect` HTTPRoute on this same listener). With no cert refs it's
 Programmed immediately, independent of any app. HTTP-01 means a `:443` listener **per host** (no
 wildcard cert — that would need DNS-01, which we don't have), but those `:443` listeners live on
-the per-app Gateways, not here. A per-app listener sits not-Ready until its cert is issued; under
-merge listeners are independent, so one app's missing cert never blocks another, nor the platform.
+the per-host Gateways, not here. Each ingress issues ONE multi-SAN cert covering all its hosts; its
+listeners sit not-Ready until that cert issues (so hosts within an ingress are coupled — a single failing
+SAN blocks them together), but different ingresses are independent, and none blocks the platform's `:80`.
 
 ### Staging then prod ClusterIssuers
 Both `letsencrypt-staging` and `letsencrypt-prod` ship (cluster-scoped). Always validate a new host
@@ -163,79 +166,122 @@ monolithic cert must keep renewing).
   EXTERNAL-IP `192.168.100.10`.
 - `kubectl get clusterissuer` -> both `letsencrypt-staging` / `letsencrypt-prod` `READY=True`.
 
+## The ingress-edge library & the platform ingress
+
+The per-host edge used to be four hand-copied templates in every app chart (argocd-ingress + each
+monitoring chart + the sample workload + the callbacks), six copies in three dialects. It now lives in ONE
+`type: library` chart, `argo_apps/_lib/ingress-edge/`, which renders — for a list of `ingresses[]`, each a
+group of subdomains + an optional SSO allowlist — a Gateway + HTTPRoute + ReferenceGrant per host, ONE
+multi-SAN `Certificate` per ingress (covering all its hosts, into one shared Secret every listener
+references), and one `SecurityPolicy` per SSO-enabled ingress. Consumers are thin: a `file://` dependency on
+the library, a one-line template (`{{ include "ingress-edge.render" . }}`), and an `ingress-edge:` values block.
+See [CLAUDE.md](CLAUDE.md) for the library-chart + `file://` + committed-`Chart.lock` convention.
+
+Three charts consume it: `08_platform_ingress` (the consolidated platform edge), each workload chart, and
+`04_google_sso` (the callback hosts). ReferenceGrants are emitted only for cross-namespace backends, so the
+same-namespace callback host gets none.
+
+- `argo_apps/platform/apps/08_platform_ingress.yaml` (wave 8): the Application. Last wave, so every backend
+  (argocd wave 1, monitoring wave 7) exists when its route is created and the SSO callback + secret (wave 4)
+  are up. The route and its `SecurityPolicy` are created together, so a protected UI is never briefly exposed.
+- `argo_apps/platform/charts/08_platform_ingress/values.yaml`: ONE `platform` ingress, `sso.enabled`, one
+  allowlist, four hosts (argocd, grafana, vmui, vlogs). Add a platform UI = add a host here; change who may log
+  in = edit the one `allowlist`. The four hosts share ONE multi-SAN cert in the `platform-tls` Secret — so on
+  cutover cert-manager issues a fresh 4-name cert (the old per-UI `argocd-tls`/`grafana-tls`/… secrets are
+  pruned); validate against staging first, then flip `issuer` to prod.
+
 ## Google SSO
 
-An optional auth layer: Google login + an email allowlist, attached to a route by label, scaling to
-many apps across several domains without per-host config. Protect a host = put `sso: "<its-domain>"`
-on its `HTTPRoute`. Proven on `sample-workload-sso.<domain>` (protected) vs `sample-workload.<domain>`
-(open). Builds on Envoy Gateway's `SecurityPolicy`.
+An optional auth layer: Google login + an email allowlist, applied **per ingress**. Each ingress owns
+its own list of allowed emails, so the platform UIs (one allowlist) and a workload on the *same* domain
+(a different allowlist) no longer share one list. SSO is one optional block in the shared `ingress-edge`
+library (see [the wrapper-chart conventions](CLAUDE.md)); enabling it on an ingress emits that ingress's
+own `SecurityPolicy` alongside its routes. Proven on `sample-workload-sso.<domain>` (protected, its own
+allowlist) vs `sample-workload.<domain>` (open).
 
-Mostly GitOps, plus an interactive secret/allowlist helper:
+Two moving parts, both GitOps, plus one secret helper:
 
-- `argo_apps/platform/apps/04_google_sso.yaml`: the Application, sync-wave 4.
-- `argo_apps/platform/charts/04_google_sso/`: one `SecurityPolicy` per domain, the per-domain
-  `google-sso.<domain>` callback hosts (each its own Gateway + `:443` listener + Certificate +
-  `sso:`-labelled HTTPRoute sharing one tiny backend), and the shared sealed client secret.
-- `07_ingress/07_google_sso.sh`: interactive — shared client-id/secret once, an allowlist per domain.
+- `argo_apps/_lib/ingress-edge/`: renders each SSO ingress's `SecurityPolicy` (`_securitypolicy.tpl`) and
+  holds the shared, non-secret OIDC config (`values.yaml` `ingressEdge.oidc`: clientID, cookie names,
+  TTLs, `authSubdomain`, denyRedirect) — the single place those live.
+- `argo_apps/platform/charts/04_google_sso/` (wave 4): the SHARED per-domain callback hosts
+  `google-sso.<domain>` (each rendered by the same library as an SSO ingress in front of one tiny shared
+  whoami) + the sealed OAuth client secret.
+- `07_ingress/07_google_sso.sh`: writes the shared `clientID` into the library values and seals the client
+  secret. It does **not** touch allowlists (see below).
 
-### One shared callback host per domain
-One `SecurityPolicy` per domain selects every `HTTPRoute` labelled `sso: <domain>` and runs three
-filters at the Envoy edge: `oidc` (redirect to Google, set an ID-token cookie scoped to the domain
-via `cookieDomain`), `jwt` (validate the ID token against Google JWKS, reading the email claim from
-that cookie), `authorization` (email in the allowlist? `defaultAction: Deny`).
+### Per-ingress policy, shared callback host
+Each SSO ingress stamps `ingress-group: <ingressName>` on its `HTTPRoute`s and emits ONE `SecurityPolicy`
+selecting exactly that label. The policy runs three filters at the Envoy edge: `oidc` (no session ->
+302 to Google; the callback lands on `google-sso.<domain>` and sets an ID-token cookie scoped to the
+domain via `cookieDomain`), `jwt` (validate the ID token against Google JWKS, read the email claim),
+`authorization` (email in THIS ingress's allowlist? `defaultAction: Deny`).
 
 ```
-app1.D (no session) -> [oidc] 302 to Google -> callback to google-sso.D/oauth2/callback
-                    -> EG sets ID-token cookie scoped to .D -> back to app1.D
-app1.D (with cookie)-> [oidc] pass -> [jwt] validate -> [authorization] allowed? -> backend
+app.D (no session) -> [app policy: oidc] 302 to Google -> callback to google-sso.D/oauth2/callback
+                   -> [callback policy: oidc] exchanges code, sets ID-token cookie scoped to .D -> back to app.D
+app.D (with cookie)-> [app policy: oidc] pass -> [jwt] validate -> [authorization] in THIS allowlist? -> backend
 ```
 
-The callback always lands on the fixed `google-sso.<domain>` host, so Google needs exactly **one**
-redirect URI per domain, never per app. A single OAuth client (one `clientID` + one sealed
-`client-secret`) serves all domains; `redirectURL` and `cookieDomain` are derived in the chart from
-the domain.
+The callback always lands on the fixed `google-sso.<domain>` host, so Google needs exactly **one** redirect
+URI per domain, never per app or per ingress. That host is stood up ONCE per domain by `04_google_sso` and
+gets its OWN `SecurityPolicy` (via the library, `redirectURL` deriving to itself) whose only job is to
+complete the token exchange and set the domain-scoped session cookie. A single OAuth client (one `clientID`
++ one sealed `client-secret`) serves everything; `redirectURL`/`cookieDomain` are derived from the ingress's
+domain.
 
-### Cookies don't cross domains (the rule that shapes everything)
-A browser shares a session cookie across subdomains of one registrable domain but never across
-different domains. So within a domain -> one login shared via `cookieDomain`; across domains -> each
-has its own cookie, so the first visit to a new domain re-runs OIDC but you're already signed into
-Google (silent redirect, no re-login), same identity throughout. The unit of configuration is
-therefore the **domain**, never the app:
+**One login, per-ingress authorization.** The session cookie is scoped to `cookieDomain` (the registrable
+domain), so a single Google login covers every subdomain on that domain. Each ingress's policy still
+independently re-checks its *own* allowlist against the token, so a shared cookie never widens access: a
+user allowed on the platform UIs but absent from a workload's allowlist is signed in yet denied at that
+workload. Across *different* registrable domains cookies don't cross, so the first visit re-runs OIDC but
+you're already signed into Google (silent redirect), same identity throughout.
+
+Because `cookieDomain` and the callback host are per registrable domain, **an SSO ingress must stay within
+one registrable domain** — all its hosts under `sso.domain`. The library enforces this: it `fail`s the
+render (so ArgoCD reports the error, nothing applies) if an SSO ingress names a host outside its `sso.domain`,
+or sets `sso.enabled` without a `sso.domain`. Split a cross-domain group into one ingress per domain, or drop
+the `sso` block to leave it open (an *open* ingress's SAN cert may span domains — cert SANs have no such rule).
+
+### Adding a host / ingress / domain
 
 | You add | Google Console | Cluster |
 |---|---|---|
-| a subdomain/app on an existing domain | nothing | label its route `sso: "<domain>"` |
-| a brand-new root domain | +1 redirect URI (`google-sso.<newdomain>/oauth2/callback`) | one `ssoDomains` entry (ships its own Gateway+listener+cert+route) + an allowlist |
+| a subdomain to an existing ingress | nothing | add a host to that ingress's `hosts:` |
+| a new protected ingress on an existing domain | nothing | a new `ingresses:` entry with an `sso:` block + its own `allowlist` (platform UIs -> `08_platform_ingress`; a workload -> its own chart) |
+| a brand-new root domain | +1 redirect URI (`google-sso.<newdomain>/oauth2/callback`) | a callback `ingresses:` entry in `04_google_sso` + register the URI via `07_google_sso.sh` |
 
-### Allowlist inline, only the client secret sealed
-Envoy Gateway's `authorization` takes allowed emails as inline literals — they can't come from a
-Secret. We keep them inline in `values.yaml` (low-sensitivity email in a private repo), per domain,
-and seal **only** the OAuth client secret ([06_secrets.md](06_secrets.md)).
+### Allowlists are per-ingress values, only the client secret sealed
+Envoy Gateway's `authorization` takes allowed emails as inline literals — they can't come from a Secret. So
+each ingress keeps its `allowlist` inline in its own `values.yaml` (low-sensitivity email in a private repo);
+change who may log in by editing that list and pushing — it is **not** prompted by any script. Only the OAuth
+client secret is sealed ([06_secrets.md](06_secrets.md)). `SecurityPolicy` is namespaced, so protected routes
+stay in the `gateway` namespace (a policy only targets routes in its own namespace).
 
-### Fail-open until sealed
-Until `07_google_sso.sh` seals the client secret and you commit it, every policy references a
-missing Secret and won't attach, so labelled routes stay open — run the script first. The
-placeholder `clientID`/allowlist also deny everyone, so a half-configured policy never leaks access.
-`SecurityPolicy` is namespaced, so keep protected `HTTPRoute`s in the `gateway` namespace (a policy
-only targets routes in its own namespace).
+### Fail-closed until sealed
+Until `07_google_sso.sh` seals the client secret and you commit it, every policy references a missing Secret;
+the placeholder `clientID` also denies everyone — so a half-configured policy never leaks access. Run the
+script first.
 
 ### Apply / verify
 1. Put the shared `GOOGLE_SSO_CLIENT_ID` + `GOOGLE_SSO_CLIENT_SECRET` in the gitignored `.env`, then run
-   `./07_ingress/07_google_sso.sh` (needs the cluster reachable for `kubeseal`). It reads the domains from
-   `04_google_sso/values.yaml`, prints the redirect URIs to register, reads the client-id/secret from `.env` and
-   prompts an allowlist per domain, writes the values, seals the secret.
-2. Register each printed redirect URI on the one OAuth client; add each apex under "Authorized
-   domains". Publish the consent screen (in "Testing" only listed test users log in, regardless of
-   the allowlist).
-3. Commit + push; ArgoCD (wave 4) unseals the secret and applies the policies.
+   `./07_ingress/07_google_sso.sh` (needs the cluster reachable for `kubeseal`). It reads the callback domains
+   from `04_google_sso/values.yaml`, prints the redirect URIs to register, writes the shared `clientID` into the
+   library values, and seals the secret. Edit each ingress's `allowlist` by hand in its `values.yaml`.
+2. Register each printed redirect URI on the one OAuth client; add each apex under "Authorized domains".
+   Publish the consent screen (in "Testing" only listed test users log in, regardless of the allowlist).
+3. Commit + push; ArgoCD applies the callback hosts (wave 4) and each ingress's policy.
 
 Checks:
-- `kubectl -n gateway get securitypolicy` -> `google-sso-<slug>` per domain, `Accepted=True`
-  (not Accepted means the client-secret Secret is missing — run the script + push).
-- Browse the protected host -> Google login -> bounce through `google-sso.<domain>` -> an
-  allowlisted account reaches the app; a non-listed one is denied. The open control host loads with
-  no login.
-- If login loops or the allowlist never matches: confirm the ID-token cookie name lines up between
-  `oidc.cookieNames.idToken` and `jwt.extractFrom.cookies` (the riskiest wiring), and each domain's
-  callback URI is registered exactly. Changing `cookieDomain` on a live policy needs browser cookies
-  cleared first, or stale host-scoped cookies take precedence and break the flow.
+- `kubectl -n gateway get securitypolicy` -> one `sso-<ingressName>` per SSO ingress (`sso-platform`,
+  `sso-google-sso-<slug>`, `sso-sample-workload-sso`, ...), each `Accepted=True` (not Accepted means the
+  client-secret Secret is missing — run the script + push).
+- Browse a protected host -> Google login -> bounce through `google-sso.<domain>` -> an account on THAT
+  ingress's allowlist reaches the app; one off it is denied. The open control host loads with no login.
+- **Verify the split on the live cluster (the one thing `helm template` can't prove):** because the token
+  exchange now happens under the callback host's policy while each app is a *separate* policy, confirm login
+  actually completes end-to-end after the first sync. If it loops: confirm the ID-token cookie name lines up
+  between `oidc.cookieNames.idToken` and `jwt.extractFrom.cookies` (the riskiest wiring), the `client-secret`
+  is identical everywhere (it is — one sealed Secret), and each domain's callback URI is registered exactly.
+  Changing `cookieDomain` on a live policy needs browser cookies cleared first, or stale host-scoped cookies
+  take precedence and break the flow.

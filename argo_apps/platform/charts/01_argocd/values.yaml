@@ -43,9 +43,9 @@ argo-cd:
       timeout.reconciliation.jitter: 2s
       # No ArgoCD login screen: the anonymous user is auto-authenticated and (via rbac below) is admin, so
       # whoever clears the Google SSO edge lands straight in. SAFE ONLY because the Google SSO SecurityPolicy
-      # at the shared Gateway (06_argocd_ingress, wave 4/6) is the SOLE path to the UI/API — that edge is now
-      # the ONLY auth boundary. NB `kubectl -n argocd port-forward svc/argocd-server` bypasses the Gateway +
-      # SSO and lands in as admin with no login. See 05_gitops.md (Exposure) / 06_argocd_ingress.yaml.
+      # on the platform-ingress app (08_platform_ingress, wave 8) is the SOLE path to the UI/API — that edge
+      # is the ONLY auth boundary. NB `kubectl -n argocd port-forward svc/argocd-server` bypasses the Gateway
+      # + SSO and lands in as admin with no login. See 05_gitops.md (Exposure) / 08_platform_ingress.yaml.
       users.anonymous.enabled: "true"
       # Disable the built-in local admin account: no argocd-initial-admin-secret, no username/password
       # login. Redundant now that anonymous is admin, and removes a credential that could leak/brute-force.

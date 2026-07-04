@@ -1,10 +1,9 @@
 # ArgoCD Application for the monitoring core, victoria-metrics-k8s-stack
 # (argo_apps/charts/07_victoria_metrics_k8s_stack/). VMSingle + VMAgent + node-exporter + kube-state-metrics
 # + default dashboards. Shape B: the bundled operator, vmalert, Alertmanager and Grafana are all OFF,# the operator runs standalone (01_victoria_metrics_operator) and Grafana (07_grafana) owns alerting.
-# Replaces the retired kube-prometheus-stack in the same `monitoring` namespace. Also owns its own edge
-# (folded in from the retired 07_monitoring_ingress): the vmui Gateway/Certificate/HTTPRoute behind Google
-# SSO (templates/edge-*.yaml). vmui has no login of its own, so the `sso: example.com` label IS the only
-# barrier. See 15_monitoring.md.
+# Replaces the retired kube-prometheus-stack in the same `monitoring` namespace. The vmui UI is exposed by
+# the consolidated platform-ingress app (wave 8), not here; vmui has no login of its own, so that ingress's
+# Google-SSO gate is its only barrier. See 09_monitoring.md.
 #
 # AUTOMATED (prune + selfHeal): a safe leaf, it owns no CRDs (wave-0 app) and can't cut the cluster off
 # its network. The operator-created VM* objects carry ArgoCD-ignore annotations
@@ -13,9 +12,9 @@
 #
 # sync-wave "7": same wave as Grafana (07_grafana) and VictoriaLogs (07_victoria_logs), after the
 # operator (wave 1, long Healthy by now, so its webhook validates these VMSingle/VMAgent CRs) and Longhorn
-# (wave 2, for the vmsingle PVC). Co-locating the vmui edge here lets its HTTPRoute backendRef resolve the
-# instant the VMSingle Service appears. ServerSideApply for the large CRs; ServerSideDiff so operator- and
-# server-defaulted CR / Gateway API fields don't show perpetual OutOfSync.
+# (wave 2, for the vmsingle PVC). The vmui edge now lives in the platform-ingress app at a LATER wave (8),
+# so the VMSingle Service already exists when its route is created. ServerSideApply for the large CRs;
+# ServerSideDiff so operator-/server-defaulted CR fields don't show perpetual OutOfSync.
 apiVersion: argoproj.io/v1alpha1
 kind: Application
 metadata:
@@ -32,9 +31,7 @@ spec:
     path: argo_apps/platform/charts/07_victoria_metrics_k8s_stack
   destination:
     server: https://kubernetes.default.svc
-    # The stack lands in `monitoring`; its edge resources set their own metadata.namespace, the Gateway/
-    # Certificate/HTTPRoute in `gateway`, the ReferenceGrant in `monitoring`. The default AppProject permits
-    # all three, so this multi-namespace app is fine.
+    # The stack lands in `monitoring` (single-namespace now that the edge moved to platform-ingress).
     namespace: monitoring
   syncPolicy:
     managedNamespaceMetadata:

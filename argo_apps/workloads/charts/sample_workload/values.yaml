@@ -29,27 +29,34 @@ app:
     requests: { cpu: 25m, memory: 32Mi }
     limits:   { memory: 128Mi }
 
-# ---- ingress (per host: a Gateway + :443 listener + Certificate + HTTPRoute) ----------------------
-ingress:
-  # The class for each per-host Gateway + the namespace the Gateways/Certs/Routes live in (the shared
-  # ingress namespace, where the 04_google_sso SecurityPolicy selects protected routes by label).
-  gatewayClassName: eg
-  gatewayNamespace: gateway
-  # The label KEY a route opts into SSO with; the per-host `sso` VALUE is the domain (e.g. example.com).
-  routeLabelKey: sso
-  # Cert issuer (HTTP-01). STAGING for brand-new hosts; flip to letsencrypt-prod once each issues.
-  issuer: letsencrypt-staging
-  # Both hosts front the SAME app Service. `sso: ""` => OPEN; `sso: <domain>` => gated by that domain's
-  # SecurityPolicy. Each entry renders its own Gateway/listener/Certificate/HTTPRoute (one-place edit).
-  hosts:
-    - name: sample-workload
-      host: sample-workload.example.com
-      tlsSecretName: sample-workload-tls
-      sso: ""
-    - name: sample-workload-sso
-      host: sample-workload-sso.example.com
-      tlsSecretName: sample-workload-sso-tls
-      sso: "example.com"
+# ---- ingress (rendered by the shared ingress-edge library) ----------------------------------------
+# Config nests under `ingress-edge:` (the library dependency name). The shared OIDC/gateway defaults come
+# from the library's own values.yaml (merged under this key); here we only supply this workload's
+# `ingresses:` list. TWO ingresses front the SAME app Service on two hosts: one OPEN (no `sso:` block, no
+# SecurityPolicy) and one SSO with this workload's OWN allowlist — independent of the platform ingress,
+# which is the whole point of the per-ingress model. `backend.namespace` is omitted so it defaults to this
+# chart's release namespace (`sample-workload`). See 10_sample_workload.md / 07_ingress.md.
+ingress-edge:
+  ingresses:
+    - name: sample-workload            # the OPEN control host (single-host ingress => one-name cert, secret sample-workload-tls)
+      issuer: letsencrypt-staging      # STAGING for a brand-new host; flip to letsencrypt-prod once it issues
+      hosts:
+        - name: sample-workload
+          host: sample-workload.example.com
+          backend: { name: sample-workload, port: 8080 }   # namespace defaults to the release ns
+    - name: sample-workload-sso        # the PROTECTED host, gated by this workload's own allowlist (secret sample-workload-sso-tls)
+      issuer: letsencrypt-staging
+      sso:
+        enabled: true
+        domain: example.com            # shared callback host google-sso.example.com (stood up by 04_google_sso)
+        # This workload's OWN allowed Google accounts (Deny is the default). Edit here to change access;
+        # entirely separate from the platform ingress's allowlist even though both are on example.com.
+        allowlist:
+          - you@example.com
+      hosts:
+        - name: sample-workload-sso
+          host: sample-workload-sso.example.com
+          backend: { name: sample-workload, port: 8080 }   # namespace defaults to the release ns
 
 # ---- the CloudNativePG Postgres Cluster (upstream cnpg/cluster dependency) -------------------------
 # NOTE on nesting: everything is under `cluster:` because that's the dependency NAME (cnpg/cluster).

@@ -18,7 +18,7 @@
 #   7. git add/commit/push          : 05 refuses a dirty argo_apps/ tree; ArgoCD deploys the REMOTE
 #   8. 05_argocd.sh                 : bootstrap ArgoCD; it then delivers the whole platform from git
 #   9. wait sealed-secrets ctrl     : ArgoCD wave-2 app; kubeseal (steps 10-11, 13) needs it up
-#  10. 07_google_sso.sh </dev/null  : RE-SEAL google-oauth against the NEW key (keeps committed allowlists)
+#  10. 07_google_sso.sh </dev/null  : write shared clientID + RE-SEAL google-oauth against the NEW key
 #  11. 09_grafana_smtp.sh           : RE-SEAL grafana-smtp against the NEW key
 #  12. git add/commit/push          : push the re-sealed SealedSecrets so ArgoCD unseals them (waves 4 & 7)
 #  13. 06_backup_sealed_secrets_key.sh : back up the NEW master key so a future rebuild can restore it
@@ -176,12 +176,12 @@ done
 echo; ok "sealed-secrets controller Ready"
 
 # === STEP 10. re-seal Google SSO against the NEW key (best-effort) ============
-# </dev/null so the allowlist prompt reads EOF and KEEPS the committed allowlists (07 tweak), re-sealing
-# google-oauth against the fresh key. Skipped if the .env creds are empty.
-say "STEP 10/14, re-seal Google SSO (07_google_sso.sh, keeps committed allowlists)"
+# 07_google_sso.sh no longer prompts (allowlists are per-ingress values already in git); it just re-writes
+# the shared clientID + re-seals google-oauth against the fresh key. Skipped if the .env creds are empty.
+say "STEP 10/14, re-seal Google SSO (07_google_sso.sh: re-writes clientID + re-seals the client secret)"
 if [ -n "$GOOGLE_SSO_CLIENT_ID" ] && [ -n "$GOOGLE_SSO_CLIENT_SECRET" ]; then
   ( cd "$STEP_07_DIR" && bash ./07_google_sso.sh </dev/null ) \
-    || warn "07_google_sso didn't complete; re-run it by hand ('07_google_sso.sh </dev/null' keeps allowlists) + commit/push"
+    || warn "07_google_sso didn't complete; re-run it by hand ('07_google_sso.sh') + commit/push"
 else
   warn "GOOGLE_SSO_CLIENT_ID/SECRET empty in .env -> skipping SSO re-seal (google-oauth stays orphaned until you set them + run 07)"
 fi

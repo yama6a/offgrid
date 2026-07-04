@@ -8,12 +8,12 @@ database, and both ingress modes (open + SSO). One chart ships three slices:
   `app`-role password injected as `PG_PASSWORD` from the CNPG-generated Secret.
 - database: a CloudNativePG `Cluster` (the upstream `cnpg/cluster` dependency), 2-instance HA on the
   node-local `local-path` class.
-- ingress: two hosts, each owning its own Gateway + `:443` listener (folded onto the one shared
-  Envoy via `mergeGateways`, see [07_ingress.md](07_ingress.md)):
-  - `sample-workload.example.com`: OPEN (no `sso` label), the unprotected control.
-  - `sample-workload-sso.example.com`: PROTECTED, its `HTTPRoute` is labelled `sso: "example.com"`,
-    so the [`04_google_sso`](07_ingress.md) `SecurityPolicy` gates it behind Google login + the
-    example.com allowlist (auth bounces via the shared `google-sso.example.com` callback host).
+- ingress: two ingresses (rendered by the shared `ingress-edge` library, see [07_ingress.md](07_ingress.md)),
+  each host's Gateway folded onto the one shared Envoy via `mergeGateways`:
+  - `sample-workload.example.com`: OPEN (no `sso` block), the unprotected control.
+  - `sample-workload-sso.example.com`: PROTECTED by this workload's OWN `SecurityPolicy` (rendered by the
+    library) carrying its OWN allowlist — independent of the platform ingress even though both are on
+    example.com. Auth bounces via the shared `google-sso.example.com` callback host ([`04_google_sso`](07_ingress.md)).
 
 Both hosts front the same app Service.
 
@@ -21,20 +21,20 @@ Delivered purely by ArgoCD:
 
 - `argo_apps/workloads/apps/sample_workload.yaml`: the Application. A workload (in the workloads
   tree), so no `NN_` number and no `sync-wave`, see "Ordering" below.
-- `argo_apps/workloads/charts/sample_workload/`: wraps the `cnpg/cluster` dependency (`Chart.lock`
-  committed, vendored `charts/*.tgz` gitignored) and adds first-party templates for the app + ingress.
+- `argo_apps/workloads/charts/sample_workload/`: wraps two dependencies — the `cnpg/cluster` chart and the
+  shared `ingress-edge` library (both `Chart.lock`-committed, vendored `charts/*.tgz` gitignored) — and adds a
+  first-party template for the app plus a one-line `{{ include "ingress-edge.render" . }}` for the ingress.
 
 ## Namespaces: two, on purpose
 
 | Resource | Namespace | Why |
 |----------|-----------|-----|
 | app Deployment + Service, CNPG `Cluster`, generated `...-app` Secret, `ReferenceGrant` | `sample-workload` (the Application's `destination.namespace`, `CreateNamespace=true`) | the app must read `PG_PASSWORD` from a Secret in its own namespace, so app + DB + Secret co-locate. |
-| per-host `Gateway` + `:443` listener, `Certificate`, `HTTPRoute` | `gateway` (explicit `metadata.namespace`) | the merged-Envoy model + the `04_google_sso` `SecurityPolicy` (which selects routes in its own namespace) require routes in `gateway`. |
+| per-host `Gateway` + `:443` listener + `HTTPRoute`, one `Certificate` per ingress, this workload's own `SecurityPolicy` | `gateway` (the library's `ingressEdge.gatewayNamespace`) | the merged-Envoy model + a `SecurityPolicy` selecting routes in its own namespace require the routes in `gateway`. |
 
 So this is a deliberately multi-namespace Application. The HTTPRoutes (in `gateway`) reach the app
 Service (in `sample-workload`) via a `ReferenceGrant` in `sample-workload`, the same cross-namespace
-pattern `06_argocd_ingress` and the monitoring stacks (`07_grafana`, `07_victoria_logs`,
-`07_victoria_metrics_k8s_stack`) use.
+pattern the platform-ingress app uses for the argocd + monitoring UIs.
 
 ## The PG_PASSWORD wiring
 
@@ -65,18 +65,21 @@ app -> Postgres) and is the template for any stateful app behind the Gateway. Th
 platform app ([08_storage.md](08_storage.md)); only the cluster moved here, into the `sample-workload`
 namespace.
 
-### One-place edit: each host owns its whole ingress slice
-Per-host HTTP-01 (no wildcard without DNS-01) still means every HTTPS host needs its own `:443`
-listener, but that listener lives on the host's own Gateway (`templates/gateway.yaml`), folded onto
+### One-place edit: the whole ingress is a values list
+Per-host HTTP-01 (no wildcard without DNS-01) still means every HTTPS host needs its own `:443` listener,
+but that listener lives on the host's own Gateway (rendered by the `ingress-edge` library), folded onto
 the shared Envoy via `mergeGateways`, not on a shared Gateway in `03_gateway`. Adding a host is a single
-`ingress.hosts[]` entry that renders its Gateway + listener + cert + route together, nothing to keep in
-step in `03_gateway`.
+`hosts[]` entry under an `ingresses[]` block; adding a differently-gated group is a new `ingresses[]` entry
+with its own `sso.allowlist`. The library renders Gateway + listener + cert + route (+ the ingress's
+`SecurityPolicy` when SSO is on) together, nothing to keep in step in `03_gateway`.
 
 ### Ordering: a workload, gated behind the whole platform
 This workload needs the CNPG operator's `Cluster` CRD + the `local-path` class (platform wave 2), the
-Gateway listeners (`03_gateway`, platform wave 3) and the SSO policies (`04_google_sso`, platform wave
-4) to already exist, otherwise the `Cluster` CR would hit a missing CRD, or `sample-workload-sso` could
-be briefly exposed before its `SecurityPolicy` attaches. As a workload it gets all of that for free:
+shared `:80` Gateway (`03_gateway`, platform wave 3), the `SecurityPolicy` CRD (Envoy Gateway, wave 1) and
+the shared `google-sso.example.com` callback host + sealed secret (`04_google_sso`, platform wave 4) to
+already exist, otherwise the `Cluster` CR would hit a missing CRD, or login would fail with no callback. It
+renders its OWN `SecurityPolicy` beside its protected route, so that route is never briefly exposed. As a
+workload it gets all of that for free:
 the root-of-roots only creates the workloads tree after the entire platform is Synced + Healthy, so
 there's no per-app `sync-wave` to manage. See the two-tree model in [05_gitops.md](05_gitops.md) /
 [CLAUDE.md](CLAUDE.md).
@@ -107,12 +110,12 @@ Checks (`export KUBECONFIG=03_operating_system/talos-cluster/kubeconfig`):
 
 ## Caveats
 
-- One-place edit per host: a single `ingress.hosts[]` entry renders the whole slice (Gateway +
-  listener + cert + route), so keep its own fields consistent (`name`/`host`/`tlsSecretName`), or the
-  route won't bind / the cert won't fill the listener's Secret.
-- `sample-workload-sso` is only protected once `04_google_sso` is configured: run
-  `07_ingress/07_google_sso.sh` and commit, or the policy doesn't attach and the route is open (see
-  [07_ingress.md](07_ingress.md)).
+- One-place edit per host: a single `hosts[]` entry renders that host's Gateway + listener + route (+ a SAN
+  entry on the ingress's one shared cert), so keep its `name`/`host`/`backend` consistent, or the route won't
+  bind / the listener's hostname won't match the cert.
+- `sample-workload-sso` is only protected once the shared client secret is sealed: run
+  `07_ingress/07_google_sso.sh` and commit (its allowlist lives in this chart's `values.yaml`, edit it
+  there), or the policy references a missing Secret and login fails (see [07_ingress.md](07_ingress.md)).
 - `prune` is data-safe: the Postgres PVCs use `local-path` with `reclaimPolicy: Retain`, so removing
   the app never destroys the node-local volumes under `/var/mnt/cnpg` (see
   [08_storage.md](08_storage.md)).

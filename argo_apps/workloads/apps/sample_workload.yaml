@@ -1,8 +1,9 @@
 # ArgoCD Application for the sample workload (argo_apps/workloads/charts/sample_workload/), the merge of
 # the old gateway-test demo and the cnpg-cluster Postgres into one app. Ships the sample app (PG_PASSWORD
 # injected from the CNPG secret), its CloudNativePG Cluster, and two ingress hosts:
-# sample-workload.example.com (OPEN) + sample-workload-sso.example.com (PROTECTED by the platform SSO
-# policy). See 13_sample_workload.md / 17_cnpg.md.
+# sample-workload.example.com (OPEN) + sample-workload-sso.example.com (PROTECTED by this workload's OWN
+# Google-SSO allowlist). The whole edge is rendered by the shared ingress-edge library from the chart's
+# `ingress-edge:` values. See 10_sample_workload.md / 17_cnpg.md.
 #
 # AUTOMATED (prune + selfHeal): drift auto-corrects. A prune is data-safe, the Postgres PVCs use the
 # `local-path` class with reclaimPolicy: Retain, so removing the Cluster CR never destroys the node-local
@@ -14,8 +15,10 @@
 #
 # A WORKLOAD, not platform: lives in the workloads tree, which the root-of-roots only creates AFTER the
 # whole platform tree is Healthy, so the CNPG operator's Cluster CRD, the local-path class, the Gateway,
-# AND the SSO SecurityPolicies all exist before this app reconciles (the protected route is never briefly
-# exposed; the Cluster CR never hits a missing CRD). No per-app sync-wave needed. See 05_gitops.md.
+# the SecurityPolicy CRD AND the shared google-sso.example.com callback host (04_google_sso) all exist
+# before this app reconciles. This app renders its OWN SecurityPolicy alongside its protected route (so the
+# route is never briefly exposed) and its Cluster CR never hits a missing CRD. No per-app sync-wave needed.
+# See 05_gitops.md.
 apiVersion: argoproj.io/v1alpha1
 kind: Application
 metadata:

@@ -384,25 +384,3 @@ grafana:
     limits:
       memory: 1Gi
 
-# ---- edge / ingress (folded in from the retired 07_monitoring_ingress) -------------------------------
-# Exposes Grafana on `host` through its OWN Gateway (a single :443 listener, merged onto the one Envoy via
-# mergeGateways in 01_envoy_gateway), gated by Google SSO: the HTTPRoute is labelled `sso: <sso>` so the
-# 04_google_sso SecurityPolicy attaches Google login + the allowlist. Grafana's own login is disabled
-# (anonymous Admin), so this SSO gate is the ONLY barrier, same as the vmui/VictoriaLogs UIs. The
-# Gateway/listener/cert/route are named `grafana`; the ReferenceGrant lands in the backend namespace as
-# gateway-routes-to-grafana. `issuer` is STAGING until the cert issues, flip to letsencrypt-prod then.
-# See 16_grafana.md.
-ingress:
-  name: grafana
-  gatewayClassName: eg
-  gatewayNamespace: gateway
-  host: grafana.example.com
-  tlsSecretName: grafana-tls
-  issuer: letsencrypt-staging
-  routeLabelKey: sso
-  sso: "example.com"
-  # The grafana/grafana chart's Service (release name `grafana`, default ClusterIP on :80 -> :3000).
-  backend:
-    name: grafana
-    namespace: monitoring
-    port: 80

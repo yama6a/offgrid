@@ -1,0 +1,81 @@
+# Values for the ingress-edge LIBRARY chart. These are the SHARED, cross-cutting defaults every consumer
+# inherits (a dependency's values.yaml merges into each parent under the dependency name `ingress-edge`,
+# so the library templates read them at `.Values.ingressEdge.*`). SINGLE SOURCE OF TRUTH for everything
+# that is the same across every ingress; per-ingress data (hosts, domain, allowlist) lives in each
+# consumer chart's own `ingresses:` list. See 07_ingress.md.
+
+ingressEdge:
+  # Envoy Gateway's class (registered by 01_envoy_gateway). Every per-host Gateway folds onto the one
+  # merged Envoy + LB IP via mergeGateways, so no per-Gateway spec.addresses is ever set here.
+  gatewayClassName: eg
+  # Namespace the Gateways / Certificates / HTTPRoutes / SecurityPolicies live in (the merged-Envoy ns,
+  # where the callback hosts + sealed OAuth secret from 04_google_sso also live). ReferenceGrants instead
+  # land in each backend's OWN namespace (set per host below).
+  gatewayNamespace: gateway
+  # The label an SSO-enabled ingress stamps on its HTTPRoutes, VALUE = the ingress `name`, so THIS
+  # ingress's SecurityPolicy (targetSelectors matchLabels) attaches to exactly its own routes and nothing
+  # else. This REPLACES the old domain-central `sso: <domain>` label: attachment is now per-ingress, which
+  # is what lets each ingress carry its own allowlist even when several share a domain.
+  groupLabelKey: ingress-group
+  # Cert issuer used when an ingress (or host) doesn't set its own. ALWAYS staging for a brand-new host
+  # (generous limits, untrusted-but-harmless), flip that ingress/host to letsencrypt-prod once it issues.
+  defaultIssuer: letsencrypt-staging
+
+  # ---- shared Google-OIDC config (identical for every SSO ingress; only domain + allowlist differ) ----
+  # This block is the single home for what used to be 04_google_sso/values.yaml `oidc:`. The per-ingress
+  # SecurityPolicy the library renders reads all of it from here.
+  oidc:
+    # ONE Google OAuth client, shared across ALL domains/ingresses. NOT sensitive. Written by
+    # 07_google_sso.sh into THIS file (one place). An empty value denies login until set.
+    clientID: "000000000000-xxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxx.apps.googleusercontent.com"
+    # Sealed Secret (created by 04_google_sso) holding the client secret under key `client-secret` (the
+    # key Envoy Gateway expects). Lives in gatewayNamespace, same ns as the SecurityPolicies.
+    clientSecretName: google-oauth
+    # The shared callback subdomain: redirectURL = https://<authSubdomain>.<domain>/oauth2/callback. That
+    # host (its Gateway/cert/route + whoami) is stood up ONCE per domain by 04_google_sso and shared by
+    # every ingress on that domain, because Google registers one redirect URI per domain.
+    authSubdomain: google-sso
+    # Cookie Envoy Gateway stores the Google ID token in; the jwt provider extracts the email claim from it
+    # (Google's access token is opaque, so the email lives in the ID token).
+    idTokenCookie: "google-id-token"
+    # OIDC filter's OWN logout path, moved off the default /logout so it doesn't swallow a backend app's
+    # /logout (e.g. ArgoCD's).
+    logoutPath: "/oauth2/sign_out"
+    # Silently renew the id/access token so a session survives past Google's ~1h id-token expiry, up to
+    # sessionTTL. Without this the user is bounced back to Google every hour. (Google only ISSUES a refresh
+    # token when the auth request carries access_type=offline.)
+    refreshToken: true
+    sessionTTL: "24h"
+    # Lifetime of the per-flow CSRF (OauthNonce) + PKCE (CodeVerifier) cookies. A failed/abandoned flow
+    # orphans them for this long; keep it short so leftovers drain fast (EG default is 10m).
+    csrfTokenTTL: "5m"
+    # Sec-Fetch-Mode values that get a 401 instead of a 302->Google. A non-navigational request (XHR/
+    # fetch/websocket) can't render Google's login page, so the OIDC flow it kicks off never completes and
+    # leaks an OauthNonce/CodeVerifier cookie; a logged-out SPA spams these until Envoy resets the stream
+    # (http2.too_many_headers -> ERR_HTTP2_PROTOCOL_ERROR). Only real navigations should redirect to login.
+    # Empty string disables denyRedirect.
+    denyRedirectSecFetchMode: "cors|no-cors|same-origin|websocket"
+
+# ---- per-consumer data (documentation only; each consumer chart sets its own `ingresses:` list) -------
+# Shape of each entry the library iterates. SSO is OPTIONAL: omit the `sso:` block (or enabled: false) for
+# an open ingress (no SecurityPolicy, no group label). An ingress groups a set of subdomains that share
+# ONE allowlist.
+#
+# The whole ingress gets ONE multi-SAN Certificate covering all its hosts, into ONE Secret every host's
+# listener references (`<name>-tls` unless `tlsSecretName` is set). Fewer ACME orders and no per-host cert
+# bookkeeping; the trade-off is coupled issuance (a single failing SAN leaves the whole cert not-Ready).
+#
+# ingresses:
+#   - name: platform            # unique; the group-label value, the SAN cert name + <name>-tls Secret
+#     issuer: letsencrypt-prod  # optional; defaults to ingressEdge.defaultIssuer
+#     tlsSecretName: platform-tls  # optional; defaults to <name>-tls
+#     sso:
+#       enabled: true
+#       domain: example.com     # drives redirectURL + cookieDomain (override with `cookieDomain:`) + which callback host
+#       allowlist:              # THIS ingress's own allowed Google accounts (Deny is the default)
+#         - me@example.com
+#     hosts:
+#       - name: argocd                       # optional; defaults to the first DNS label of `host` (Gateway/listener/route name)
+#         host: argocd.example.com
+#         backend: { name: argocd-server, namespace: argocd, port: 80 }
+ingresses: []

@@ -2,5 +2,8 @@ dependencies:
 - name: cluster
   repository: https://cloudnative-pg.github.io/charts
   version: 0.7.0
-digest: sha256:6bd6198b18a888442bb260d1b0ba87bdcba7e8368e23c03db2d0b1c1e3847fe9
-generated: "2026-06-26T23:53:52.864103+02:00"
+- name: ingress-edge
+  repository: file://../../../_lib/ingress-edge
+  version: 0.1.0
+digest: sha256:464af60802550f1d691c34869c188fcdda35148784b0f163762559a9cd63f5bb
+generated: "2026-07-03T22:56:32.170051+02:00"

@@ -1,16 +1,18 @@
-# ArgoCD Application for the Google-SSO SecurityPolicy (argo_apps/charts/04_google_sso/), the OPTIONAL
-# auth layer that attaches Google OIDC + an email allowlist to any HTTPRoute labelled `auth: google-sso`.
-# See 12_google_sso.md.
+# ArgoCD Application for the Google-SSO PLATFORM layer (argo_apps/charts/04_google_sso/): the shared OIDC
+# callback hosts (google-sso.<domain>, one per domain, each with its own SecurityPolicy that completes the
+# token exchange) + the shared whoami backend + the sealed OAuth client secret. The per-APP allowlists no
+# longer live here; each ingress (platform-ingress, each workload) carries its own. See 07_ingress.md.
 #
 # AUTOMATED (prune + selfHeal): a safe leaf, it owns no CRDs and can't cut the cluster off its network.
 # Its only secret (the OAuth client secret) comes from a committed SealedSecret (unsealed by the wave-2
 # controller); the raw Secret is not in git, so prune never touches it.
 #
-# sync-wave "4": after the gateway (wave 3, the routes it targets + the Gateway exist) and
-# sealed-secrets (wave 2, unseals the client secret) and Envoy Gateway (wave 1, owns the SecurityPolicy
-# CRD). Last wave, nothing depends on it: until 12_google_sso.sh seals the client secret and you commit
-# it, the policy references a missing Secret and the labelled route is NOT protected (fail-open), run
-# the script first. Per CLAUDE.md the NN prefix IS the wave.
+# sync-wave "4": after the gateway (wave 3, the shared :80 Gateway + ClusterIssuers its callback certs
+# solve through) and sealed-secrets (wave 2, unseals the client secret) and Envoy Gateway (wave 1, owns
+# the SecurityPolicy CRD). It sits BEFORE the app ingresses (platform-ingress wave 8, workloads later), so
+# every protected app's redirectURL callback host already exists. Until 07_google_sso.sh seals the client
+# secret and you commit it, the callback policy references a missing Secret and login fails. Per CLAUDE.md
+# the NN prefix IS the wave.
 apiVersion: argoproj.io/v1alpha1
 kind: Application
 metadata:

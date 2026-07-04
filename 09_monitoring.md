@@ -45,8 +45,8 @@ the operator `VLSingle` CR (one operator for everything), not the standalone log
 the log collector are DaemonSets with `tolerations: [{operator: Exists}]` — this is an all-control-plane
 cluster, so a `node-role.kubernetes.io/control-plane: DoesNotExist` selector would match ZERO nodes.
 
-Each UI (vmui, vlogs) ships its own Gateway + Google SSO edge inside its own chart; see
-[07_ingress.md](07_ingress.md).
+Each UI (vmui, vlogs) is exposed by the consolidated platform-ingress app (wave 8) behind Google SSO,
+not by its own chart; see [07_ingress.md](07_ingress.md).
 
 ### Pinned versions
 
@@ -95,8 +95,8 @@ before it's sealed). Leave the var empty and the script offers to delete the sea
 Host/user/from are non-secret in the values. This is the only imperative script for this step; the VM stack
 and metrics-server are pure GitOps.
 
-Grafana ships its own `grafana.example.com` Gateway + Certificate + SSO HTTPRoute edge inside the `07_grafana`
-chart; see [07_ingress.md](07_ingress.md).
+Grafana's `grafana.example.com` edge (Gateway + Certificate + SSO HTTPRoute) is served by the consolidated
+platform-ingress app (wave 8), not the `07_grafana` chart; see [07_ingress.md](07_ingress.md).
 
 ### Verify
 ```bash

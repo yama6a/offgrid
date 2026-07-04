@@ -1,0 +1,6 @@
+{{/*
+The whole platform ingress is rendered by the shared ingress-edge library from this chart's values. This
+one line is deliberately the entire template: no edge YAML is hand-written here (or in any consumer), it
+all lives in argo_apps/_lib/ingress-edge/templates. See 07_ingress.md.
+*/}}
+{{ include "ingress-edge.render" . }}

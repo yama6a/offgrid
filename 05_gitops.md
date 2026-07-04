@@ -149,15 +149,15 @@ Google lands straight in as admin (one login, not two). The SSO gate is the only
 the UI, which is why it must be the sole path: the port-forward break-glass below now also lands in as
 admin with no login.
 
-Delivered purely by ArgoCD at sync-wave 6 (app `argo_apps/platform/apps/06_argocd_ingress.yaml`, chart
-`argo_apps/platform/charts/06_argocd_ingress/`): its own `argocd` `Gateway` (one `:443` listener) +
-`Certificate` + an `sso`-labelled cross-namespace `HTTPRoute` to `argocd-server` + a `ReferenceGrant`.
-ArgoCD is untouched — it keeps `server.insecure: true` and serves plain HTTP on `argocd-server:80`; the
-Gateway terminates TLS.
+Delivered purely by ArgoCD as one host of the consolidated platform-ingress app (sync-wave 8, app
+`argo_apps/platform/apps/08_platform_ingress.yaml`, chart `argo_apps/platform/charts/08_platform_ingress/`):
+its `argocd` `Gateway` (one `:443` listener) + `Certificate` + a cross-namespace `HTTPRoute` to
+`argocd-server` + a `ReferenceGrant`, all rendered by the shared `ingress-edge` library. ArgoCD is untouched
+— it keeps `server.insecure: true` and serves plain HTTP on `argocd-server:80`; the Gateway terminates TLS.
 
-Almost free: `argocd.<domain>` is a subdomain of the SSO domain, so the existing per-domain
-`SecurityPolicy`, the shared `google-sso.<domain>` callback, and `cookieDomain` already cover it — no new
-Google redirect URI, no new policy. Just label the route `sso: "<domain>"`.
+Almost free: `argocd.<domain>` shares the platform ingress's one `SecurityPolicy` + allowlist, the shared
+`google-sso.<domain>` callback, and `cookieDomain` with the other platform UIs — no new Google redirect URI,
+no new policy. Just add its host to the platform ingress's `hosts:` list.
 
 Decisions worth keeping:
 

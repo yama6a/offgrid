@@ -1,9 +1,9 @@
-# The shared OIDC callback hosts (google-sso.<domain>), ONE per SSO domain. Each is the fixed OAuth
-# redirect target for every protected app on its domain, the SecurityPolicy points its redirectURL here
-# and attaches via the `sso: <domain>` label. Envoy Gateway intercepts /oauth2/callback before it reaches
-# a backend, so all callback routes share ONE tiny whoami. Per domain this chart now ships the whole
-# stack: its own Gateway + :443 listener (templates/gateway.yaml), a Certificate, and an `sso`-labelled
-# HTTPRoute, one place, no 03_gateway edit. See 12_google_sso.md.
+# The shared OIDC callback BACKEND: one tiny whoami behind every domain's google-sso.<domain> host. Envoy
+# Gateway intercepts /oauth2/callback (via each callback host's SecurityPolicy) before it reaches this, so
+# this whoami only ever answers non-callback paths, and only to someone who cleared the callback host's
+# own gate. ONE shared Deployment+Service for every domain's callback host. The per-domain callback host
+# itself (Gateway + :443 listener + Certificate + HTTPRoute + SecurityPolicy) is rendered by the
+# ingress-edge library from the `ingress-edge:` block in values.yaml (templates/ingress.yaml). See 07_ingress.md.
 apiVersion: apps/v1
 kind: Deployment
 metadata:
@@ -43,46 +43,3 @@ spec:
     - name: http
       port: 80
       targetPort: http
-{{- range .Values.ssoDomains }}
-{{- $slug := .domain | replace "." "-" }}
-{{- $host := printf "%s.%s" $.Values.authSubdomain .domain }}
----
-# cert-manager mints this (HTTP-01 via the shared :80 listener) into the Secret this domain's own Gateway
-# listener (templates/gateway.yaml) references. Keep `issuer` on letsencrypt-prod once {{ .domain }}'s
-# HTTP-01 is validated, the browser is redirected THROUGH this host, so its cert must be trusted.
-apiVersion: cert-manager.io/v1
-kind: Certificate
-metadata:
-  name: google-sso-{{ $slug }}
-  namespace: {{ $.Values.namespace }}
-spec:
-  secretName: google-sso-{{ $slug }}-tls
-  dnsNames:
-    - {{ $host | quote }}
-  issuerRef:
-    name: {{ .issuer | quote }}
-    kind: ClusterIssuer
----
-# The callback route for {{ .domain }}. Labelled `sso: {{ .domain }}` so the matching SecurityPolicy
-# attaches and Envoy Gateway handles /oauth2/callback here. parentRef points at this domain's own Gateway
-# (templates/gateway.yaml), sectionName matches its google-sso-{{ $slug }} listener. Backed by the shared
-# callback whoami.
-apiVersion: gateway.networking.k8s.io/v1
-kind: HTTPRoute
-metadata:
-  name: google-sso-{{ $slug }}
-  namespace: {{ $.Values.namespace }}
-  labels:
-    {{ $.Values.routeLabelKey }}: {{ .domain | quote }}
-spec:
-  parentRefs:
-    - name: google-sso-{{ $slug }}
-      namespace: {{ $.Values.namespace }}
-      sectionName: google-sso-{{ $slug }}
-  hostnames:
-    - {{ $host | quote }}
-  rules:
-    - backendRefs:
-        - name: gateway-sso-callback
-          port: 80
-{{- end }}

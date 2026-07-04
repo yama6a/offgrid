@@ -1,85 +1,55 @@
-# Values for the 04_google_sso wrapper chart. SINGLE SOURCE OF TRUTH, ArgoCD (and any local
+# Values for the 04_google_sso wrapper chart. SINGLE SOURCE OF TRUTH; ArgoCD (and any local
 # `helm template`) consume this.
 #
-# This chart is the OPTIONAL Google-SSO layer. Per SSO domain it ships:
-#   - a SecurityPolicy (templates/securitypolicy.yaml) attaching Google OIDC + an email allowlist to
-#     every HTTPRoute labelled `sso: <domain>`, and
-#   - the shared callback host google-sso.<domain> (templates/callbacks.yaml, its Certificate + an
-#     `sso`-labelled HTTPRoute, sharing one tiny backend) plus that host's own Gateway + :443 listener
-#     (templates/gateway.yaml), the single OIDC redirect target for that domain.
-# Each domain's :443 listener now lives on this chart's own per-domain Gateway (merged onto the one Envoy
-# via mergeGateways), adding a domain is a one-place edit here, no 03_gateway change. ONE Google OAuth
-# client (clientID + sealed secret) is shared across all domains; the allowlist is per-domain and INLINE
-# (Envoy Gateway can't read authorization values from a Secret). Only the client secret is sealed.
-# See 12_google_sso.md.
+# This chart owns only the SHARED Google-SSO PLATFORM plumbing:
+#   - the sealed OAuth client secret (templates/google-oauth-sealedsecret.yaml, sealed by 07_google_sso.sh),
+#   - one tiny shared whoami backend (templates/callbacks.yaml), and
+#   - one CALLBACK HOST per domain (google-sso.<domain>), rendered by the ingress-edge library from the
+#     `ingress-edge:` block below: its Gateway + :443 listener + Certificate + HTTPRoute + its own
+#     SecurityPolicy. That SecurityPolicy completes the OAuth token exchange and sets the domain-scoped
+#     session cookie every app ingress on the domain then honours; its redirectURL derives to itself.
+# The per-APP email allowlists are NOT here anymore, each ingress (platform-ingress, each workload) owns
+# its own. The shared, non-secret OIDC config (clientID, cookie, TTLs, ...) lives once in the library's
+# values.yaml. See 07_ingress.md.
 
-# Namespace the SecurityPolicies, callback hosts and the sealed Secret live in. MUST equal the namespace
-# of the routes they target (a SecurityPolicy selects routes in its own namespace), all gateway routes
-# (callbacks here, the sample workload in sample-workload) are in `gateway`.
+# ---- this chart's own templates (the shared whoami) ----
+# Namespace the callback hosts, whoami and sealed Secret live in (the merged-Envoy ns; MUST match the
+# library's ingressEdge.gatewayNamespace so the callback routes/policies land beside the app ones).
 namespace: gateway
-# The GatewayClass for each per-domain callback Gateway (templates/gateway.yaml). MUST match the `eg`
-# class the 01_envoy_gateway chart registers.
-gatewayClassName: eg
-# The label KEY a route opts in with; the VALUE is the route's domain (e.g. `sso: "example.com"`). MUST
-# match the key apps stamp on protected routes (the callbacks here + the sample workload in sample-workload).
-routeLabelKey: sso
-# The shared OIDC callback subdomain, the redirect target is `https://<authSubdomain>.<domain>/oauth2/callback`.
-# Each domain's callback Gateway listener terminates `<authSubdomain>.<domain>`.
-authSubdomain: google-sso
-# Backend the callback hosts route to. Envoy intercepts /oauth2/callback before it reaches this, so it
-# only ever answers non-callback paths (behind SSO). One shared whoami for every domain's callback host.
+# The shared callback backend image. Envoy intercepts /oauth2/callback before it reaches this, so it only
+# ever answers non-callback paths (behind the callback host's own SSO gate).
 callbackImage: "traefik/whoami:v1.10.3"
-oidc:
-  # ONE Google OAuth client, shared across ALL domains (register one redirect URI per domain on it).
-  # NOT sensitive. Written by 12_google_sso/12_google_sso.sh. Placeholder denies login until set.
-  clientID: "000000000000-xxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxx.apps.googleusercontent.com"
-  # Sealed Secret holding the client secret under key `client-secret` (the key Envoy Gateway expects).
-  clientSecretName: google-oauth
-  # Cookie Envoy Gateway stores the Google ID token in; the jwt provider extracts the email claim from it
-  # (Google's access token is opaque, so the email lives in the ID token).
-  idTokenCookie: "google-id-token"
-  # Path the OIDC filter uses for ITS OWN logout, moved off the default /logout so it doesn't swallow a
-  # backend app's /logout (e.g. ArgoCD's). Applies to every domain's policy.
-  logoutPath: "/oauth2/sign_out"
-  # Keep a login session valid for a DAY without re-auth. Without refreshToken the session dies when
-  # Google's ~1h id token expires (Envoy honours the IdP's expiry; defaultTokenTTL only applies when the
-  # IdP omits one, which Google never does). refreshToken makes Envoy silently renew the id/access token
-  # using Google's refresh token; sessionTTL caps how long that renew-without-re-login lasts (Google's
-  # refresh token is opaque/non-JWT, so this value governs it, EG default is 1 week). See 12_google_sso.md.
-  # NOTE: Google only ISSUES a refresh token when the auth request carries access_type=offline; if sessions
-  # still drop at ~1h after this, that's the cause (revoke the app at myaccount.google.com + re-login to
-  # force a fresh consent, or confirm EG is sending offline access).
-  refreshToken: true
-  sessionTTL: "24h"
-  # Lifetime of the per-flow CSRF (OauthNonce-<uid>.<nonce>) + PKCE (CodeVerifier.<nonce>) cookies the
-  # OIDC filter mints when it starts a login. A flow that never reaches /oauth2/callback orphans them
-  # for this long; EG's default is 10m. Kept short so any leftovers drain quickly.
-  csrfTokenTTL: "5m"
-  # Sec-Fetch-Mode values that get a 401 instead of a 302->Google. Browsers tag real page navigations
-  # `navigate` (omitted here, so those still redirect to login) and everything else, XHR/fetch
-  # (`cors`/`no-cors`/`same-origin`) and websockets (`websocket`), with these. Those requests can't
-  # follow a redirect to render Google's login page, so without this each one initiates an OIDC flow
-  # that never completes and leaks an OauthNonce/CodeVerifier cookie; a logged-out SPA (Grafana Live's
-  # /api/live/ws, ArgoCD's polling) piles them up until Envoy rejects the request with
-  # http2.too_many_headers (browser shows ERR_HTTP2_PROTOCOL_ERROR). Empty string disables denyRedirect.
-  denyRedirectSecFetchMode: "cors|no-cors|same-origin|websocket"
-# One entry per SSO domain. `domain` becomes the label value, the cookieDomain, the google-sso.<domain>
-# redirect host, and (with `issuer`) the callback host's cert. `allowlist` is per-domain (inline; written
-# by the script, Deny is the default). Each entry renders its own callback Gateway + :443 listener +
-# Certificate + HTTPRoute (one place per domain). The callback host cert uses `issuer`, keep it
-# browser-trusted (prod) once the domain's HTTP-01 path is validated, because the login flow redirects
-# the browser THROUGH it.
-ssoDomains:
-  - domain: example.com
-    issuer: letsencrypt-staging
-    allowlist:
-      - you@example.com
-  - domain: yama.casa
-    issuer: letsencrypt-staging
-    allowlist:
-      - you@example.com
-      - user2@example.com
-      - user3@example.com
-      - user3@example.com
-      - user4@example.com
-      - user5@example.com
+
+# ---- the callback hosts (rendered by the ingress-edge library) ----
+# ONE ingress per SSO domain. Each stands up google-sso.<domain> in front of the shared whoami, SSO-enabled
+# so it gets a SecurityPolicy whose redirectURL (google-sso.<domain>/oauth2/callback) points at itself.
+# `allowlist` here is effectively unused for access control: Envoy intercepts the /oauth2/callback path
+# BEFORE the authorization filter, and any non-callback request to the whoami is Deny-by-default anyway, so
+# a single owner entry keeps it valid without widening anything. Single host each, so the SAN cert is a
+# one-name cert; its Secret defaults to `<name>-tls` (= google-sso-<slug>-tls, the existing callback cert
+# secret, so cert-manager adopts the already-issued cert). To add an SSO domain: add an entry here
+# (+ register one redirect URI on the Google OAuth client) — see 07_google_sso.sh.
+ingress-edge:
+  ingresses:
+    - name: google-sso-example-com
+      issuer: letsencrypt-staging
+      sso:
+        enabled: true
+        domain: example.com
+        allowlist:
+          - you@example.com   # unused for access (see note above); kept valid + minimal
+      hosts:
+        - name: google-sso-example-com
+          host: google-sso.example.com
+          backend: { name: gateway-sso-callback, namespace: gateway, port: 80 }
+    - name: google-sso-yama-casa
+      issuer: letsencrypt-staging
+      sso:
+        enabled: true
+        domain: yama.casa
+        allowlist:
+          - you@example.com   # unused for access (see note above); kept valid + minimal
+      hosts:
+        - name: google-sso-yama-casa
+          host: google-sso.yama.casa
+          backend: { name: gateway-sso-callback, namespace: gateway, port: 80 }
