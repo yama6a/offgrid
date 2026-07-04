@@ -1,0 +1,54 @@
+# Curated CNPG Postgres interface. All config is passed straight through to the upstream cnpg/cluster
+# dependency (pinned in Chart.yaml), so it keeps the chart's native `cluster.*` shape: outer `cluster:` is
+# the dependency name, and the chart itself has a top-level `cluster:` map + sibling `type:`/`backups:`,
+# hence the `cluster.cluster.*` double key. A consumer only sets the three REQUIRED fields (+ optionally the
+# three defaults); everything else here is pre-baked. See 10_sample_workload.md / 08_storage.md.
+cluster:
+  # REQUIRED — the consumer MUST set these three. They're seeded here with INVALID sentinels (empty type,
+  # empty resources, and instances left to fail the 1|2 check) rather than left undeclared: the upstream
+  # cnpg/cluster chart ships its own defaults (type=postgresql, instances=3, resources={}) that would
+  # otherwise coalesce up and silently satisfy a naive "required". These sentinels force templates/validate.yaml
+  # to fail the render with a clear message until the consumer overrides them. Do NOT give them real defaults.
+  type: ""                   # REQUIRED: postgresql | postgis | timescaledb (drives the container image).
+
+  cluster:
+    instances:               # REQUIRED: 1 (single) or 2 (primary + streaming replica on 2 nodes); only 1|2 allowed.
+    resources: {}            # REQUIRED: per-instance requests/limits (no sane default for a Pi; force a choice).
+
+    # Tune Postgres to the per-instance memory; optional, defaulted here (override only to diverge).
+    postgresql:
+      parameters:
+        max_connections: "50"      # keep the connection cap small; matched to the modest per-instance memory.
+        shared_buffers: "128MB"    # Postgres shared buffers; sized for a ~512Mi-class instance.
+
+    # PodMonitor + PrometheusRule -> auto-converted by the VM operator, scraped cluster-wide. See 09_monitoring.md.
+    monitoring:
+      enabled: true                # hardcoded — do not override.
+      podMonitor:
+        enabled: true              # hardcoded — do not override.
+      prometheusRule:
+        enabled: true              # DEFAULT: ship the 18 CNPG alert rules; set false to suppress them.
+
+    # ---- everything below is hardcoded — do not override (soft: settable, but shouldn't be) ----
+    storage:
+      # Node-local /var/mnt/cnpg partition (02_local_path_provisioner), isolated from Longhorn; Postgres
+      # replication is the only data-path redundancy. See 08_storage.md.
+      storageClass: local-path
+      # REQUIRED by the CR but a NO-OP under local-path (just makes a dir; Postgres statfs's the whole
+      # partition). Set to the honest partition budget in case the class is ever swapped for an enforcing one.
+      size: 45Gi
+
+    # Chart default spreads by zone, but bare Pi nodes have no zone label; spread by hostname so the
+    # primary + replica land on 2 distinct nodes (node-loss HA, required for node-local storage).
+    affinity:
+      topologyKey: kubernetes.io/hostname
+
+    # Bootstrap an `app` db + `app` role; the operator writes the owner creds into `<cluster>-app` (the app's PG_PASSWORD).
+    initdb:
+      database: app
+      owner: app
+
+  # No Barman/object-storage backups; durability rests on Postgres replication across the instances +
+  # local-path Retain (a lost instance is rebuilt from a survivor via streaming replication).
+  backups:
+    enabled: false

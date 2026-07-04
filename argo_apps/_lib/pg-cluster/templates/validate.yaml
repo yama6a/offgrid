@@ -1,0 +1,17 @@
+{{- /*
+Validation only — renders to empty (all branches either fail or produce nothing). Enforces the REQUIRED
+fields. NOTE: the upstream cnpg/cluster chart's own defaults (type=postgresql, instances=3, resources={})
+coalesce up into this scope, so a naive `required` would be satisfied by them — hence values.yaml seeds
+invalid sentinels (type="", resources={}, instances unset) and we check truthiness / the 1|2 range here.
+Runs in this wrapper's scope, so it sees the consumer's overrides merged over values.yaml.
+*/ -}}
+{{- $c := .Values.cluster.cluster -}}
+{{- if not .Values.cluster.type }}
+{{- fail "pg-cluster: cluster.type is required (postgresql | postgis | timescaledb)" }}
+{{- end }}
+{{- if not (has (int ($c.instances | default 0)) (list 1 2)) }}
+{{- fail (printf "pg-cluster: cluster.cluster.instances is required and must be 1 or 2 (got %v)" $c.instances) }}
+{{- end }}
+{{- if not $c.resources }}
+{{- fail "pg-cluster: cluster.cluster.resources is required (per-instance requests/limits)" }}
+{{- end }}

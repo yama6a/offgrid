@@ -1,7 +1,7 @@
 # The sample app, a single Deployment + Service in this chart's release namespace (sample-workload),
 # alongside the CNPG Cluster and its operator-generated password Secret. PG_PASSWORD is injected from
 # that Secret (`<release>-cluster-app`, key `password`) so the app can connect to its Postgres. Both
-# ingress hosts (open + SSO) route to this one Service. See 13_sample_workload.md.
+# ingress hosts (open + SSO) route to this one Service. See 10_sample_workload.md.
 apiVersion: apps/v1
 kind: Deployment
 metadata:
@@ -31,15 +31,16 @@ spec:
               value: {{ .Values.app.port | quote }}
             # Postgres connection, fed to the app's DSNFromEnv() as discrete PG_* parts (it assembles +
             # escapes the DSN itself, safer than passing a pre-built URL with the raw password). Points at
-            # THIS chart's CNPG cluster: the `<release>-cluster-rw` read-write Service in this namespace,
-            # with the initdb owner/database. PG_PASSWORD comes from the CNPG operator-generated Secret
-            # (blank pgPasswordSecret => derive `<release>-cluster-app`, the cnpg/cluster fullname + -app).
+            # THIS chart's CNPG cluster: the `<release>-cluster-rw` read-write Service in this namespace.
+            # User/database are `app`/`app` — pre-baked (hardcoded) in the pg-cluster wrapper's initdb, so
+            # they're literals here (a subchart default isn't visible at this chart's scope). PG_PASSWORD
+            # comes from the CNPG operator-generated Secret (blank pgPasswordSecret => `<release>-cluster-app`).
             - name: PG_HOST
               value: "{{ .Release.Name }}-cluster-rw.{{ .Release.Namespace }}.svc.cluster.local"
             - name: PG_USER
-              value: {{ .Values.cluster.cluster.initdb.owner | quote }}
+              value: "app"
             - name: PG_DATABASE
-              value: {{ .Values.cluster.cluster.initdb.database | quote }}
+              value: "app"
             - name: PG_PASSWORD
               valueFrom:
                 secretKeyRef:

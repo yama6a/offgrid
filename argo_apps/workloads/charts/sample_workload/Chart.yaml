@@ -13,19 +13,20 @@ description: >-
   its Postgres Cluster (+ the generated password Secret) live in the `sample-workload` namespace; each
   host's Gateway is merged onto the one Envoy via mergeGateways, in the `gateway` namespace, reaching the
   app cross-namespace via a ReferenceGrant.
-  Wraps the upstream cnpg/cluster dependency (the Cluster CR) on the node-local `local-path` class
-  (platform app 02_local_path_provisioner), reconciled by the CNPG operator (platform app
-  02_cnpg_operator). Single source of truth for the cluster chart version (this file) and all values
-  (values.yaml). A WORKLOAD: delivered purely by ArgoCD via argo_apps/workloads/apps/sample_workload.yaml,
-  no sync-wave; the workloads tree is only created after the whole platform (operator CRDs + local-path
-  class + Gateway + SSO policies) is Healthy. See 13_sample_workload.md, 17_cnpg.md, 18_local_path_provisioner.md.
+  Gets its Postgres from the shared pg-cluster wrapper (a file:// dependency): the CNPG Cluster CR on the
+  node-local `local-path` class (platform app 02_local_path_provisioner), reconciled by the CNPG operator
+  (platform app 02_cnpg_operator). The workload only sets pg-cluster's REQUIRED knobs (type/instances/
+  resources) in values.yaml; storage, affinity, monitoring, initdb and backups are pre-baked in the wrapper.
+  A WORKLOAD: delivered purely by ArgoCD via argo_apps/workloads/apps/sample_workload.yaml, no sync-wave;
+  the workloads tree is only created after the whole platform (operator CRDs + local-path class + Gateway +
+  SSO policies) is Healthy. See 10_sample_workload.md, 08_storage.md.
 type: application
 version: 0.1.0                 # this wrapper chart's own version
 
 dependencies:
-  - name: cluster
-    version: "0.7.0"          # cnpg/cluster chart, THE single source for the pin
-    repository: https://cloudnative-pg.github.io/charts
+  - name: pg-cluster
+    version: "0.1.0"          # shared CNPG wrapper (pins cnpg/cluster); renders this workload's Postgres from values below
+    repository: "file://../../../_lib/pg-cluster"
   - name: ingress-edge
     version: "0.1.0"          # shared edge library; renders this workload's ingress from values below
     repository: "file://../../../_lib/ingress-edge"

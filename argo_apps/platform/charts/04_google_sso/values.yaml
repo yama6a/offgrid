@@ -29,12 +29,17 @@ domains:
     issuer: letsencrypt-staging   # callback cert issuer (letsencrypt-staging | letsencrypt-prod)
     hosts:
       - host: argocd.example.com
-        allowlist: [you@example.com]
+        allowlist:
+          - you@example.com
       - host: grafana.example.com
-        allowlist: [you@example.com]
+        allowlist:
+          - you@example.com
       - host: vmui.example.com
-        allowlist: [you@example.com]
+        allowlist:
+          - you@example.com
       - host: vlogs.example.com
-        allowlist: [you@example.com]
+        allowlist:
+          - you@example.com
       - host: sample-workload-sso.example.com
-        allowlist: [you@example.com]
+        allowlist:
+          - you@example.com

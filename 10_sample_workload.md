@@ -6,7 +6,8 @@ database, and both ingress modes (open + SSO). One chart ships three slices:
 
 - app: a Deployment + Service running `ghcr.io/yama6a/pi5-k8s-sample-app:1`, with the Postgres
   `app`-role password injected as `PG_PASSWORD` from the CNPG-generated Secret.
-- database: a CloudNativePG `Cluster` (the upstream `cnpg/cluster` dependency), 2-instance HA on the
+- database: a CloudNativePG `Cluster` via the shared `pg-cluster` wrapper (which pins `cnpg/cluster` and
+  pre-bakes the boilerplate; this workload sets only `type`/`instances`/`resources`), 2-instance HA on the
   node-local `local-path` class.
 - ingress: one ingress, two hosts (plain edges rendered by the shared `ingress-edge` library, see
   [07_ingress.md](07_ingress.md)), each host's Gateway folded onto the one shared Envoy via `mergeGateways`.
@@ -22,9 +23,11 @@ Delivered purely by ArgoCD:
 
 - `argo_apps/workloads/apps/sample_workload.yaml`: the Application. A workload (in the workloads
   tree), so no `NN_` number and no `sync-wave`, see "Ordering" below.
-- `argo_apps/workloads/charts/sample_workload/`: wraps two dependencies — the `cnpg/cluster` chart and the
-  shared `ingress-edge` library (both `Chart.lock`-committed, vendored `charts/*.tgz` gitignored) — and adds a
-  first-party template for the app plus a one-line `{{ include "ingress-edge.render" . }}` for the ingress.
+- `argo_apps/workloads/charts/sample_workload/`: wraps two `file://` dependencies — the shared `pg-cluster`
+  wrapper (which itself pins `cnpg/cluster`) and the shared `ingress-edge` library (both `Chart.lock`-committed,
+  vendored `charts/*.tgz` gitignored) — and adds a first-party template for the app plus a one-line
+  `{{ include "ingress-edge.render" . }}` for the ingress. The Postgres needs no template: `pg-cluster` renders
+  the `Cluster` from the `pg-cluster:` values block. See the `_lib` shared-charts section in [CLAUDE.md](CLAUDE.md).
 
 ## Namespaces: two, on purpose
 
@@ -39,8 +42,10 @@ pattern the platform-ingress app uses for the argocd + monitoring UIs.
 
 ## The PG_PASSWORD wiring
 
-The `cnpg/cluster` chart names the `Cluster` `<release>-cluster` -> `sample-workload-cluster`, so the CNPG
-operator generates the `app`-role credentials into the Secret `sample-workload-cluster-app`. The app
+The `cnpg/cluster` chart (via the `pg-cluster` wrapper) names the `Cluster` `<release>-cluster` ->
+`sample-workload-cluster` — the extra wrapper layer doesn't change the name (it's the grandchild chart's own
+name + the release name) — so the CNPG operator generates the `app`-role credentials into the Secret
+`sample-workload-cluster-app`. The app
 Deployment injects only the password (as specced):
 
 ```yaml
@@ -74,6 +79,18 @@ the shared Envoy via `mergeGateways`, not on a shared Gateway in `03_gateway`. E
 or `subdomain: "@"` for the apex). A different-domain group is a new `ingresses[]` entry with its own
 `domain`. The library renders Gateway + listener + cert + route together (no SSO — that's central in
 `04_google_sso`), nothing to keep in step in `03_gateway`.
+
+### Postgres via the `pg-cluster` wrapper, not the raw `cnpg/cluster` chart
+The workload doesn't depend on `cnpg/cluster` directly; it depends on the shared `pg-cluster` wrapper
+(`argo_apps/_lib/pg-cluster`, see [CLAUDE.md](CLAUDE.md)), which pins `cnpg/cluster` and pre-bakes every
+value a workload shouldn't think about (node-local `local-path` storage + 45Gi, hostname anti-affinity,
+monitoring on, an `app`/`app` initdb, backups off). This workload's `pg-cluster:` values block sets only the
+three REQUIRED knobs — `type`, `instances` (1 or 2), `resources` — so a new Postgres-backed workload is ~6
+lines, not ~40. A validation template in the wrapper fails the render (with a clear message) if any required
+knob is missing. Trade-off, inherent to wrapping a subchart (Helm can't transform or lock a child's values):
+the pre-baked values are *soft* defaults a consumer could still override, and the values sit one level deeper
+(`pg-cluster.cluster.cluster.*`). Because `initdb` is a wrapper default (a subchart default isn't visible at
+this chart's scope), the app template hardcodes `PG_USER`/`PG_DATABASE` to the literal `app`.
 
 ### Ordering: a workload, gated behind the whole platform
 This workload needs the CNPG operator's `Cluster` CRD + the `local-path` class (platform wave 2), the
@@ -120,5 +137,5 @@ Checks (`export KUBECONFIG=03_operating_system/talos-cluster/kubeconfig`):
 - `prune` is data-safe: the Postgres PVCs use `local-path` with `reclaimPolicy: Retain`, so removing
   the app never destroys the node-local volumes under `/var/mnt/cnpg` (see
   [08_storage.md](08_storage.md)).
-- No PITR until backups are wired (`cluster.backups.enabled: false`): durability rests on Postgres
-  replication across the 2 instances; see [08_storage.md](08_storage.md).
+- No PITR until backups are wired (`backups.enabled: false`, hardcoded in the `pg-cluster` wrapper):
+  durability rests on Postgres replication across the 2 instances; see [08_storage.md](08_storage.md).

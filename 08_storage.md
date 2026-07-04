@@ -158,11 +158,13 @@ metrics). It ships as two apps split across the two trees so operator and databa
 The root-of-roots creates the workloads tree only after the whole platform is Healthy, so by the time the
 `Cluster` CR is applied both its real dependencies — the operator's `Cluster` CRD and the `local-path` class —
 are guaranteed present, no per-app `sync-wave` needed. Chart versions: operator dep `cnpg/cloudnative-pg`
-`0.28.3` (app `1.29.1`); cluster dep `cnpg/cluster` `0.7.0`. Images (`ghcr.io/cloudnative-pg/*`) are multi-arch
-incl. arm64.
+`0.28.3` (app `1.29.1`); the `Cluster` comes via the shared `pg-cluster` wrapper (`argo_apps/_lib/pg-cluster`),
+which pins cluster dep `cnpg/cluster` `0.7.0`. Images (`ghcr.io/cloudnative-pg/*`) are multi-arch incl. arm64.
 
-> Values nesting: the `sample_workload` wrapper key is the dependency name `cluster:`, and the upstream chart
-> has its own top-level `cluster:` map for the CR spec — hence `cluster.cluster.*`. Not a typo.
+> Values nesting: `sample_workload` depends on the `pg-cluster` wrapper (dependency key `pg-cluster:`), which
+> depends on `cnpg/cluster` (its `cluster:` map) — which itself has a top-level `cluster:` map for the CR spec.
+> So a workload's Postgres knobs live at `pg-cluster.cluster.cluster.*`. Not a typo. Most of that tree is
+> pre-baked in the wrapper; a workload only sets `type` + `instances` + `resources`.
 
 **Storage: node-local, off Longhorn.** CNPG runs on the node-local `local-path` class on the dedicated 50 GiB
 `/var/mnt/cnpg` partition — no Longhorn engine/CSI in the Postgres data path, isolated so the two can't starve
@@ -172,22 +174,27 @@ in [local-path-provisioner](#local-path-provisioner) above.
 
 **Values worth calling out.** Operator (`cloudnative-pg:`): `crds.create: true` (safe — the cluster is only
 created after the platform is Healthy), `monitoring.podMonitorEnabled: true`, modest `resources` (it only
-reconciles). Cluster (`cluster.cluster.*` in `sample_workload/values.yaml`):
+reconciles). Cluster — most of the following is pre-baked in the `pg-cluster` wrapper's `values.yaml`; the
+workload only overrides the ⭐ **set-per-workload** ones (in `sample_workload/values.yaml` under
+`pg-cluster.cluster.cluster.*`):
 
-- **`instances: 2`**: 1 primary + 1 streaming replica on two distinct nodes. Two is enough — losing 2 of 3
-  nodes breaks the cluster many other ways anyway.
-- **`affinity.topologyKey: kubernetes.io/hostname`**: the chart default spreads by
+- ⭐ **`instances: 2`** (REQUIRED): 1 primary + 1 streaming replica on two distinct nodes. Two is enough —
+  losing 2 of 3 nodes breaks the cluster many other ways anyway. The wrapper caps this at 1 or 2.
+- ⭐ **`resources`** (REQUIRED; here 256Mi/250m req, 512Mi/1cpu limit): sized for the Pi 5s. Per-instance.
+- ⭐ **`type: postgresql`** (REQUIRED): selects the container image (postgresql | postgis | timescaledb).
+- **`affinity.topologyKey: kubernetes.io/hostname`** (wrapper-baked): the chart default spreads by
   `topology.kubernetes.io/zone`, but bare Pi nodes carry no zone label, so both instances could land on one
   node. Spreading by hostname forces distinct nodes — the node-loss HA that node-local storage relies on.
-- `storage.storageClass: local-path`, `size: 45Gi`: the size is required by CNPG but a no-op under local-path
-  (Postgres sees the whole ~50 GiB partition via `statfs`); set to the honest partition budget so it stays sane
-  if the class is ever swapped.
-- `resources` (256Mi/250m req, 512Mi/1cpu limit) + `postgresql.parameters` (`shared_buffers: 128MB`,
-  `max_connections: 50`): sized for the Pi 5s.
-- `monitoring.enabled: true` (+ `podMonitor`/`prometheusRule`): per-instance Postgres metrics + CNPG alert
-  rules, auto-converted by the VM operator and discovered by the [monitoring](09_monitoring.md) stack.
-- `initdb: { database: app, owner: app }`: bootstraps a demo `app` DB; the operator auto-generates the owner's
-  credentials into the `sample-workload-cluster-app` Secret (no sealed-secret needed).
+- `storage.storageClass: local-path`, `size: 45Gi` (wrapper-baked): the size is required by CNPG but a no-op
+  under local-path (Postgres sees the whole ~50 GiB partition via `statfs`); set to the honest partition budget
+  so it stays sane if the class is ever swapped.
+- `postgresql.parameters` (`shared_buffers: 128MB`, `max_connections: 50`) (wrapper defaults, overridable):
+  sized for the Pi 5s.
+- `monitoring.enabled: true` (+ `podMonitor`; `prometheusRule` on by default) (wrapper-baked): per-instance
+  Postgres metrics + CNPG alert rules, auto-converted by the VM operator and discovered by the
+  [monitoring](09_monitoring.md) stack.
+- `initdb: { database: app, owner: app }` (wrapper-baked): bootstraps a demo `app` DB; the operator
+  auto-generates the owner's credentials into the `sample-workload-cluster-app` Secret (no sealed-secret needed).
 
 **Reclaim & durability.** PVCs are `reclaimPolicy: Retain`, so a `prune` is data-safe (and deleting the app
 leaks the `/var/mnt/cnpg` dirs by design — clean up manually). **No PITR / no continuous backup**:

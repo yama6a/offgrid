@@ -1,5 +1,5 @@
 # The end-to-end sample workload: a real app + its CloudNativePG Postgres, behind open + SSO ingress.
-# See 10_sample_workload.md / 17_cnpg.md. cnpg/cluster version pinned in Chart.yaml.
+# See 10_sample_workload.md / 08_storage.md. cnpg/cluster version pinned in the pg-cluster wrapper's Chart.yaml.
 
 app:
   name: sample-workload
@@ -28,58 +28,21 @@ ingress-edge:
           targetService: sample-workload
           targetPort: 8080
 
-# CloudNativePG Postgres Cluster (upstream cnpg/cluster dependency). Nested under `cluster:` (the dependency
-# name), and the chart itself has a top-level `cluster:` map, hence the `cluster.cluster.*` double key.
-cluster:
-  type: postgresql        # postgresql | postgis | timescaledb
-
+# CloudNativePG Postgres, via the shared pg-cluster wrapper (a file:// dependency; it pins cnpg/cluster and
+# pre-bakes storage/affinity/monitoring/initdb/backups). We only set the wrapper's REQUIRED knobs. Keeps the
+# upstream chart's `cluster.cluster.*` shape under the `pg-cluster:` dependency key. See 10_sample_workload.md.
+pg-cluster:
   cluster:
-    # 2 instances -> primary + streaming replica on 2 distinct nodes (HA via Postgres failover, not storage);
-    # 2 is enough here (losing 2 of 3 nodes breaks the cluster other ways anyway).
-    instances: 2
-
-    storage:
-      # Node-local /var/mnt/cnpg partition (02_local_path_provisioner), isolated from Longhorn; Postgres
-      # replication is the only data-path redundancy. See 18_local_path_provisioner.md.
-      storageClass: local-path
-      # REQUIRED by the CR but a NO-OP under local-path (just makes a dir; Postgres statfs's the whole
-      # partition). Set to the honest partition budget in case the class is ever swapped for an enforcing one.
-      size: 45Gi
-
-    # Chart default spreads by zone, but bare Pi nodes have no zone label; spread by hostname so the
-    # primary + replica land on 2 distinct nodes (node-loss HA, required for node-local storage).
-    affinity:
-      topologyKey: kubernetes.io/hostname
-
-    # Conservative footprint for the Pi 5s (8 GB RAM, lots already running). Per-instance.
-    resources:
-      requests:
-        cpu: 250m
-        memory: 256Mi
-      limits:
-        cpu: "1"
-        memory: 512Mi
-
-    # Tune Postgres to the 512Mi memory limit above.
-    postgresql:
-      parameters:
-        max_connections: "50"
-        shared_buffers: "128MB"
-
-    # PodMonitor + PrometheusRule -> auto-converted by the VM operator, scraped cluster-wide. See 15_monitoring.md.
-    monitoring:
-      enabled: true
-      podMonitor:
-        enabled: true
-      prometheusRule:
-        enabled: true
-
-    # Bootstrap an `app` db + `app` role; the operator writes the owner creds into `<cluster>-app` (the app's PG_PASSWORD).
-    initdb:
-      database: app
-      owner: app
-
-  # No Barman/object-storage backups yet; durability rests on Postgres replication across the 2 instances +
-  # local-path Retain (a lost instance is rebuilt from a survivor via streaming replication).
-  backups:
-    enabled: false
+    type: postgresql        # postgresql | postgis | timescaledb
+    cluster:
+      # 2 instances -> primary + streaming replica on 2 distinct nodes (HA via Postgres failover, not storage);
+      # 2 is enough here (losing 2 of 3 nodes breaks the cluster other ways anyway).
+      instances: 2
+      # Conservative footprint for the Pi 5s (8 GB RAM, lots already running). Per-instance.
+      resources:
+        requests:
+          cpu: 250m
+          memory: 256Mi
+        limits:
+          cpu: "1"
+          memory: 512Mi
