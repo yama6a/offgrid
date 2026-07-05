@@ -1,3 +1,12 @@
 # Static config — your real IPs / domains / usernames / versions. Gitignored so they stay out of git.
 # Copy the committed template and edit:  cp .env.example .env
 .env
+
+# Live cluster credentials (talosconfig, kubeconfig, secrets.yaml, sealed-secrets master key), written by
+# 03d into `secrets/`, which is a symlink to an off-repo store (a synced drive). Never commit the symlink
+# or anything it points at — the creds live and are backed up outside the repo.
+/secrets
+
+# Build scratch + output for the step-03 image build (03a writes, 03b reads) — talos-builder checkouts,
+# kernel tarball, staged image. Can grow to >100 GB; never commit it.
+/.cache/

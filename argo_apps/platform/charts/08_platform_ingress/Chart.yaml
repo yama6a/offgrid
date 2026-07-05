@@ -16,4 +16,4 @@ version: 0.1.0
 dependencies:
   - name: ingress-edge
     version: "0.1.0"                          # the shared library chart; THE single source for the edge templates
-    repository: "file://../../../_lib/ingress-edge"
+    repository: "file://../../../../lib/helm/ingress-edge"

@@ -26,7 +26,7 @@ version: 0.1.0                 # this wrapper chart's own version
 dependencies:
   - name: pg-cluster
     version: "0.1.0"          # shared CNPG wrapper (pins cnpg/cluster); renders this workload's Postgres from values below
-    repository: "file://../../../_lib/pg-cluster"
+    repository: "file://../../../../lib/helm/pg-cluster"
   - name: ingress-edge
     version: "0.1.0"          # shared edge library; renders this workload's ingress from values below
-    repository: "file://../../../_lib/ingress-edge"
+    repository: "file://../../../../lib/helm/ingress-edge"

@@ -1,9 +1,9 @@
 dependencies:
 - name: pg-cluster
-  repository: file://../../../_lib/pg-cluster
+  repository: file://../../../../lib/helm/pg-cluster
   version: 0.1.0
 - name: ingress-edge
-  repository: file://../../../_lib/ingress-edge
+  repository: file://../../../../lib/helm/ingress-edge
   version: 0.1.0
-digest: sha256:c7c8eb70f85b3c4752c2cfa81d2cc436360741f187bd794a39697f3c3d9a6f3d
-generated: "2026-07-04T23:27:04.13038+02:00"
+digest: sha256:a4d5d54ea9d19607b954be5787e3cc449524596b07bec236bd436c65fb50b49e
+generated: "2026-07-05T14:18:00.527384+02:00"
