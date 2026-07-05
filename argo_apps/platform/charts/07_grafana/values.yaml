@@ -14,6 +14,11 @@ grafana:
   persistence:
     enabled: false
 
+  # Pinned so the chart stops generating a random admin-password each render (churns checksum/secret,
+  # rolls the pod every sync). Value irrelevant, login is disabled.
+  adminUser: admin
+  adminPassword: raspi-cluster
+
   # Grafana's OWN auth is OFF, the gateway Google SSO allowlist (this chart's own `sso: example.com` edge
   # route, see the `ingress:` block below, + the 04_google_sso SecurityPolicy) is the only barrier, exactly
   # like the vmui/VictoriaLogs UIs.
