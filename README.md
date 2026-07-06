@@ -138,7 +138,7 @@ flowchart LR
 │   ├── roots/          #   0_platform → 1_workloads
 │   ├── platform/{apps,charts}/
 │   └── workloads/{apps,charts}/
-└── secrets/            # files generated on bootstrap (talos certs, talosconfig, kubeconfig, sealed key); gitignored
+└── secrets/            # gitignored: talos certs, talosconfig, kubeconfig, sealed key
 ```
 
 The `NN_` prefixes constitute the sync-wave, i.e. the order in which they are bootstrapped by Argo.
