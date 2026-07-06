@@ -51,10 +51,6 @@ STEP_DIR="$SCRIPT_DIR"                          # every step script is a sibling
 KUBECONFIG_FILE="${CLUSTER_DIR}/kubeconfig"
 INGRESS_GW_NS="gateway"                        # namespace of the shared Gateway (ingress verify)
 INGRESS_HOSTS=""                               # space-separated hosts to check; empty = derive from Gateways
-# generated artifacts archived (never `mv *`, so user files like .env.other-secrets survive):
-ARCHIVE_FILES=(secrets.yaml controlplane.yaml cp.yaml cp-patch.yaml volumes.yaml worker.yaml \
-  kubeconfig talosconfig sealed-secrets-master.key \
-  nic-discovery.txt nic-eth-delete.yaml nic-hardening-patch.yaml)
 MAINT_TIMEOUT=30                               # secs/node to confirm maintenance API before giving up
 CONTROLLER_WAIT=900                            # secs to wait for the sealed-secrets controller (ArgoCD wave 2)
 INGRESS_WAIT=900                               # secs to wait for the ingress to actually serve (HTTP-01 is slow)
@@ -106,19 +102,22 @@ done
 ok "all nodes in maintenance"
 
 # === STEP 2. archive existing local creds -> backup_<timestamp>/ ==============
-# Clears the canonical secrets dir of PKI-bearing files so 03d generates a FRESH secrets.yaml
-# (and thus a new CA). Critically this also moves controlplane.yaml, which would otherwise trigger 03d's
-# --from-controlplane-config migration and reuse the OLD PKI. Only a known file list is moved, never a
-# glob, so user files (.env.other-secrets, .DS_Store) are left untouched.
+# Clears the canonical secrets dir of PKI-bearing files so 03d generates a FRESH secrets.yaml (and thus a
+# new CA). Moves EVERY file present (incl. dotfiles like a stray .env.other-secrets) into the dated backup,
+# so nothing lingers to make 03d reuse the old identity — no fixed allowlist to keep in sync now that
+# 03d/03e's render scratch lives in an OS temp dir, not here. Skips DIRECTORIES (so prior backup_<ts>/ dirs
+# are never re-nested into the new one) and .DS_Store (macOS noise, not a cred).
 TS="$(date +%Y%m%d-%H%M%S)"
 BACKUP_SUBDIR="${CLUSTER_DIR}/backup_${TS}"
 step "archiving existing creds -> ${BACKUP_SUBDIR}"
 mkdir -p "$BACKUP_SUBDIR"
 moved=0
-for f in "${ARCHIVE_FILES[@]}"; do
-  if [ -e "${CLUSTER_DIR}/${f}" ]; then
-    mv "${CLUSTER_DIR}/${f}" "${BACKUP_SUBDIR}/" && moved=$((moved+1)) || die "could not archive ${f}"
-  fi
+for path in "${CLUSTER_DIR}"/* "${CLUSTER_DIR}"/.[!.]*; do
+  [ -e "$path" ] || continue                       # glob matched nothing (nullglob off)
+  [ -d "$path" ] && continue                        # files only; skips backup_<ts>/ and any other dirs
+  f="$(basename "$path")"
+  [ "$f" = ".DS_Store" ] && continue                # macOS noise, leave it
+  mv "$path" "${BACKUP_SUBDIR}/" && moved=$((moved+1)) || die "could not archive ${f}"
 done
 if [ "$moved" -gt 0 ]; then ok "archived ${moved} file(s)"; else rmdir "$BACKUP_SUBDIR" 2>/dev/null; ok "nothing to archive (already a clean start)"; fi
 

@@ -119,9 +119,13 @@ assert_api() { kubectl get nodes >/dev/null 2>&1 || die "kubectl can't reach the
 # ---- dockerized talosctl (talos-phase + reset scripts) ----------------------
 # Runs talosctl in Docker against the talosconfig in CLUSTER_DIR (host networking, stdin attached).
 # MacOS talosCTL is completely broken for some reason.
+# TALOS_SCRATCH (optional): a host temp dir (mktemp -d) mounted at /scratch, for a script's throwaway
+# render files (machine configs, patches) that must be container-visible but must NOT persist in the
+# durable secrets dir. Empty/unset => not mounted (the :+ form is nounset-safe). 03d/03e set it.
 talosctl() {
   docker run --rm -i --network host \
     -v "${CLUSTER_DIR}:/work" -w /work \
+    ${TALOS_SCRATCH:+-v "${TALOS_SCRATCH}:/scratch"} \
     -e TALOSCONFIG=/work/talosconfig \
     "ghcr.io/siderolabs/talosctl:${TALOSCTL_VERSION}" "$@"
 }

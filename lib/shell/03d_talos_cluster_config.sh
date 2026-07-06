@@ -23,10 +23,17 @@ source "${SCRIPT_DIR}/common.sh"
 
 require docker
 
-# Generated configs live in the canonical secrets dir (CLUSTER_DIR, from the lib). The lib's
-# talosctl() mounts it as /work, so the paths passed below are relative to /work (= ${OUTDIR} on the host).
+# Durable creds (secrets.yaml + talosconfig + kubeconfig) live in the canonical secrets dir (CLUSTER_DIR,
+# from the lib). The lib's talosctl() mounts it as /work, so /work == ${OUTDIR} on the host.
 OUTDIR="${CLUSTER_DIR}"
 mkdir -p "${OUTDIR}"
+
+# Throwaway render scratch (base config + patches) goes to an OS temp dir instead of the secrets dir, so
+# there's nothing to clean up (the OS reaps it) and it never lingers next to the durable creds. The lib's
+# talosctl() mounts it at /scratch when TALOS_SCRATCH is set; host paths use ${TALOS_SCRATCH}, container
+# args use /scratch. On a mid-run failure it survives here for inspection (path printed below).
+TALOS_SCRATCH="$(mktemp -d)"
+echo "Scratch:  ${TALOS_SCRATCH}   (throwaway render files; OS-reaped)"
 
 # Working vars from shared config (IFACE is used directly).
 CLUSTER="$CLUSTER_NAME"; DISK="$INSTALL_DISK"; EPHEMERAL="$EPHEMERAL_SIZE"; VIP="$CLUSTER_VIP"; CNPG_SIZE="$CNPG_VOLUME_SIZE"; KVER="$KUBERNETES_VERSION"
@@ -91,10 +98,13 @@ talosctl gen config "${CLUSTER}" "https://${VIP}:6443" \
   --kubernetes-version "${KVER}" \
   --output-types controlplane,talosconfig \
   --force
+# gen config emits BOTH into /work: talosconfig (durable, stays) and controlplane.yaml (throwaway base for
+# cp.yaml below). Move the throwaway one into the scratch dir so the secrets dir keeps only durable creds.
+mv "${OUTDIR}/controlplane.yaml" "${TALOS_SCRATCH}/controlplane.yaml"
 
 # 2. Cluster-wide control-plane patch: VIP on the wired NIC, schedulable CP, certSANs
 CERTSANS="$(printf '      - %s\n' "${VIP}" "${IPS[@]}")"
-cat > "${OUTDIR}/cp-patch.yaml" <<EOF
+cat > "${TALOS_SCRATCH}/cp-patch.yaml" <<EOF
 machine:
 ${REGISTRIES_BLOCK}
   nodeLabels:
@@ -143,7 +153,7 @@ EOF
 #    then 'longhorn' takes the remainder. The 'cnpg' volume is min==max (a fixed slice) so CNPG's
 #    local-path storage can't grow into Longhorn's space; 'longhorn' has no maxSize so it grows once
 #    at provision time to claim whatever is left. See 08_storage.md / 08_storage.md.
-cat > "${OUTDIR}/volumes.yaml" <<EOF
+cat > "${TALOS_SCRATCH}/volumes.yaml" <<EOF
 ---
 apiVersion: v1alpha1
 kind: VolumeConfig
@@ -176,8 +186,8 @@ filesystem:
 EOF
 
 # 4. Combined CP config = base + volume docs (rebuilt each run; same for all nodes)
-cp "${OUTDIR}/controlplane.yaml" "${OUTDIR}/cp.yaml"
-cat "${OUTDIR}/volumes.yaml" >> "${OUTDIR}/cp.yaml"
+cp "${TALOS_SCRATCH}/controlplane.yaml" "${TALOS_SCRATCH}/cp.yaml"
+cat "${TALOS_SCRATCH}/volumes.yaml" >> "${TALOS_SCRATCH}/cp.yaml"
 
 # 4b. Wait for every node to be in MAINTENANCE before applying. After a reset
 #     (DANGEROUS_reset_talos_cluster.sh / DANGEROUS_rebuild_cluster.sh) the nodes wipe + reboot
@@ -199,25 +209,21 @@ for i in "${!IPS[@]}"; do
   echo "ready"
 done
 
-# 5. Apply to each node (file paths are relative to /work inside the container).
-#    Hostname goes through the HostnameConfig document (Talos 1.12+), not the legacy
-#    machine.network.hostname, gen config now ships HostnameConfig (auto: stable), and
-#    setting both errors with "static hostname is already set in v1alpha1 config".
+# 5. Apply to each node. cp.yaml/cp-patch.yaml live in the scratch dir, mounted at /scratch in the
+#    container (the rest of the paths are relative to /work). Hostname goes through the HostnameConfig
+#    document (Talos 1.12+), not the legacy machine.network.hostname, gen config now ships HostnameConfig
+#    (auto: stable), and setting both errors with "static hostname is already set in v1alpha1 config".
 for i in "${!IPS[@]}"; do
   ip="${IPS[$i]}"; host="${HOSTNAMES[$i]}"
   say "applying config to ${host} (${ip})"
-  talosctl apply-config --insecure -n "${ip}" -f cp.yaml \
-    -p @cp-patch.yaml \
+  talosctl apply-config --insecure -n "${ip}" -f /scratch/cp.yaml \
+    -p @/scratch/cp-patch.yaml \
     -p '{"apiVersion":"v1alpha1","kind":"HostnameConfig","hostname":"'"${host}"'","auto":"off"}'
 done
 
-# 5b. All the rendered scratch — cp.yaml + controlplane.yaml (base config) and their inputs cp-patch.yaml +
-#     volumes.yaml — has now been applied to every node; the nodes hold their own live config from here on.
-#     Drop it so the only config left on disk is the durable secrets.yaml (plus the talosconfig/kubeconfig
-#     creds). cp.yaml/controlplane.yaml carry cluster secrets and cp-patch.yaml carries the GHCR pull token,
-#     so not leaving them lying around is a bonus; re-render is one `03d` run away. (On an apply failure
-#     `set -e` exits before this line, leaving them in place for inspection.)
-rm -f "${OUTDIR}/cp.yaml" "${OUTDIR}/controlplane.yaml" "${OUTDIR}/cp-patch.yaml" "${OUTDIR}/volumes.yaml"
+# The rendered scratch (cp.yaml + controlplane.yaml + cp-patch.yaml + volumes.yaml) has now been applied to
+# every node; the nodes hold their own live config from here on. It lives in ${TALOS_SCRATCH} (an OS temp
+# dir), so there's nothing to clean up — the OS reaps it, and it never sat next to the durable creds.
 
 # 6. Point talosctl at the real node IPs (NOT the VIP)
 talosctl config endpoint "${IPS[@]}"

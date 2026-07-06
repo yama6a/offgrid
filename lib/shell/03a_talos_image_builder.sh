@@ -179,6 +179,12 @@ KVER=$(grep -oE 'usr/lib/modules/[^/]+' "$BUILD_DIR/kfiles.txt" | head -1 | cut 
 grep "usr/lib/modules/${KVER}/" "$BUILD_DIR/kfiles.txt" | sed "s#usr/lib/modules/${KVER}/##" | grep -vE '/$' | sort -u > "$BUILD_DIR/kexist.txt"
 MF="$CHK/talos/hack/modules-arm64.txt"
 grep -Fxf "$BUILD_DIR/kexist.txt" "$MF" > "$MF.new" && mv "$MF.new" "$MF"
+# This rewrite is the ONLY change to the talos checkout, but it makes `git describe --dirty` report
+# `-dirty` — and that string stamps the OS version (--build-arg=TAG), so nodes report e.g. 1.13.5-dirty
+# and a clean talosctl warns it's "older than client" (semver ranks a -dirty prerelease below 1.13.5).
+# Mark the file assume-unchanged so every describe in the build (OS version + image tags) stays clean;
+# the modified content still feeds the installer build. Idempotent across re-runs / cached checkouts.
+git -C "$CHK/talos" update-index --assume-unchanged hack/modules-arm64.txt
 echo "   modules list pinned to kernel ${KVER}"
 
 # === 6. REBASE 3, port the overlay to the current machinery =================

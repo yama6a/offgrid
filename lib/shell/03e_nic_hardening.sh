@@ -28,6 +28,10 @@ source "${SCRIPT_DIR}/common.sh"
 
 # ---- knobs ------------------------------------------------------------------
 OUTDIR="${CLUSTER_DIR}"                    # talosconfig + kubeconfig live here (the lib's talosctl() mounts it); IFACE derived in lib/shell/common.sh
+# Throwaway scratch (discovery capture + patch files) -> an OS temp dir instead of the secrets dir: nothing
+# to clean up (OS-reaped), never lingers next to the creds. talosctl() mounts it at /scratch (TALOS_SCRATCH);
+# host paths use ${TALOS_SCRATCH}, the talosctl patch args use /scratch. Survives here for inspection on failure.
+TALOS_SCRATCH="$(mktemp -d)"
 KUBECTL_IMAGE="registry.k8s.io/kubectl:v${KUBERNETES_VERSION}"   # dockerized kubectl pinned to the cluster's k8s version (.env), no host/cluster skew; tag needs the 'v'
 DEBUG_IMAGE="alpine:3.21"                  # probe pod; apk-installs ethtool
 WATCHDOG_TIMEOUT="15s"                     # floored to 10s (Talos min); Pi hw max ~15s
@@ -42,7 +46,7 @@ SETTLE_INTERVAL=10                         # secs between /readyz probes, poll p
 OFFLOAD_KEYS=(tx-tcp-segmentation tx-generic-segmentation rx-gro)
 PROBE_NS="kube-system"                     # Talos exempts kube-system from Pod Security
 PROBE_POD="nic-hw-probe"
-PATCH_FILE="nic-hardening-patch.yaml"      # written into OUTDIR (=/work in the container)
+PATCH_FILE="nic-hardening-patch.yaml"      # written into TALOS_SCRATCH (=/scratch in the container)
 # -----------------------------------------------------------------------------
 
 # dockerized kubectl pinned to the cluster's k8s version (KUBERNETES_VERSION), mounting the secrets dir.
@@ -128,7 +132,7 @@ pexec() { kubectl exec -n "$PROBE_NS" "$PROBE_POD" -- sh -c "$1"; }
 pexec 'i=0; until command -v ethtool >/dev/null 2>&1; do i=$((i+1)); [ $i -gt 60 ] && exit 1; sleep 2; done' \
   >/dev/null || die "probe image lacks ethtool (override DEBUG_IMAGE, or give the node registry access)"
 
-DISC="${OUTDIR}/nic-discovery.txt"
+DISC="${TALOS_SCRATCH}/nic-discovery.txt"
 pexec '
   echo "=== EEE ==="; ethtool --show-eee '"$IFACE"' 2>&1
   echo "=== WATCHDOG_DEV ==="; ls -1 /dev/watchdog* 2>&1
@@ -155,7 +159,7 @@ say "generating patches"
 # strategic merge UNIONS maps, so a stale/renamed feature key would linger and fail the
 # WHOLE ethtool reconcile ("bit name not found"), leaving every offload unchanged.
 if [ "$ETH_DESIRED" = 1 ]; then
-  { echo "apiVersion: v1alpha1"; echo "kind: EthernetConfig"; echo "name: ${IFACE}"; echo '$patch: delete'; } > "${OUTDIR}/${DEL_FILE}"
+  { echo "apiVersion: v1alpha1"; echo "kind: EthernetConfig"; echo "name: ${IFACE}"; echo '$patch: delete'; } > "${TALOS_SCRATCH}/${DEL_FILE}"
 fi
 {
   if [ "$ETH_DESIRED" = 1 ]; then
@@ -166,15 +170,15 @@ fi
   fi
   echo "apiVersion: v1alpha1"; echo "kind: WatchdogTimerConfig"
   echo "device: ${WD_DEV}"; echo "timeout: ${WD_T}s"
-} > "${OUTDIR}/${PATCH_FILE}"
-sed 's/^/   /' "${OUTDIR}/${PATCH_FILE}"
+} > "${TALOS_SCRATCH}/${PATCH_FILE}"
+sed 's/^/   /' "${TALOS_SCRATCH}/${PATCH_FILE}"
 
 # === 4. apply to EVERY node (document merge, preserves v1alpha1 certSANs) ====
 say "applying to all nodes (talosctl patch mc, --mode ${APPLY_MODE})"
 for ip in "${NODES_ARR[@]}"; do
   # drop any prior EthernetConfig first (clears stale keys); ignore "not found" on fresh nodes
-  [ "$ETH_DESIRED" = 1 ] && talosctl -n "$ip" patch mc --patch "@${DEL_FILE}" --mode "${APPLY_MODE}" >/dev/null 2>&1
-  out="$(talosctl -n "$ip" patch mc --patch "@${PATCH_FILE}" --mode "${APPLY_MODE}" 2>&1)"; rc=$?
+  [ "$ETH_DESIRED" = 1 ] && talosctl -n "$ip" patch mc --patch "@/scratch/${DEL_FILE}" --mode "${APPLY_MODE}" >/dev/null 2>&1
+  out="$(talosctl -n "$ip" patch mc --patch "@/scratch/${PATCH_FILE}" --mode "${APPLY_MODE}" 2>&1)"; rc=$?
   if [ $rc -eq 0 ]; then ok "patched ${ip}"; else
     bad "patch ${ip} failed: $(tail -1 <<< "$out")"
     grep -qi 'reboot' <<< "$out" && echo "         (a reboot would be required, refusing; not rebooting control-plane nodes)"
@@ -244,10 +248,8 @@ summary
 if [ "$FAIL" -eq 0 ]; then
   echo "NIC machine-config defences applied + verified. Next (deferred, ArgoCD):"
   echo "  EEE-off + link-watchdog + 'ss -K' DaemonSet, see 03_operating_system.md."
-  # Applied + verified, so drop this run's scratch: the discovery capture and the patch files talosctl has
-  # already consumed. Kept on failure (this branch is skipped) so you can inspect what was attempted; a
-  # re-run regenerates them from a fresh probe.
-  rm -f "$DISC" "${OUTDIR}/${DEL_FILE}" "${OUTDIR}/${PATCH_FILE}"
+  # This run's scratch (discovery capture + the patch files talosctl consumed) lives in ${TALOS_SCRATCH},
+  # an OS temp dir — nothing to clean up (OS-reaped), and a re-run regenerates it from a fresh probe.
 else
   echo "Some checks failed. If 'patch mc' demanded a reboot it was refused (see above);"
   echo "if the watchdog wasn't armed, lower WATCHDOG_TIMEOUT (Pi hw max ~15s)."
