@@ -40,6 +40,9 @@ domains:
       - host: vlogs.example.com
         allowlist:
           - you@example.com
+      - host: hubble.example.com
+        allowlist:
+          - you@example.com
       - host: sample-workload-sso.example.com
         allowlist:
           - you@example.com

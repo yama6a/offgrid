@@ -43,6 +43,10 @@ cilium:
       enabled: [dns, drop, tcp, flow, icmp, port-distribution]
       serviceMonitor:
         enabled: true
+      # Emit Cilium's official Hubble dashboards as ConfigMaps (grafana_dashboard label) into
+      # kube-system; the 07_grafana sidecar (searchNamespace: ALL) imports them automatically.
+      dashboards:
+        enabled: true
   # Talos-specific: it doesn't auto-mount cgroup v2, and the agent needs an explicit cap set.
   cgroup:
     autoMount: {enabled: false}

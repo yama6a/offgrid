@@ -21,3 +21,7 @@ ingress-edge:
           targetNamespace: monitoring
           targetService: vlsingle-victoria-logs
           targetPort: 9428
+        - subdomain: hubble
+          targetNamespace: kube-system # hubble-ui ships with Cilium (00_cilium) in kube-system
+          targetService: hubble-ui
+          targetPort: 80

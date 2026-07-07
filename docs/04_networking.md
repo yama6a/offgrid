@@ -75,6 +75,22 @@ kubectl expose deploy nginx --type=LoadBalancer --port=80
 kubectl get svc nginx              # EXTERNAL-IP from your pool, reachable over ARP
 ```
 
+## Hubble observability
+
+Hubble (flow visibility) is on in the chart values: `hubble.enabled`, `relay`, and `ui` are all true, so
+`hubble-relay` + `hubble-ui` run in `kube-system`. Two ways it surfaces:
+
+- **Metrics + dashboards.** `hubble.metrics` exports a lean flow set (`dns, drop, tcp, flow, icmp,
+  port-distribution` — kept small to bound cardinality on the Pis) with a `serviceMonitor`, so the metrics
+  reach vmagent like every other platform scrape (see [09_monitoring.md](09_monitoring.md)).
+  `hubble.metrics.dashboards.enabled: true` makes the Cilium chart emit its official Hubble dashboards as
+  `grafana_dashboard`-labelled ConfigMaps into `kube-system`; the Grafana sidecar (`searchNamespace: ALL`)
+  imports them with no extra wiring.
+- **UI.** The `hubble-ui` Service is exposed as `hubble.<domain>` by the platform-ingress app (wave 8) and
+  gated by Google SSO — a plain cross-namespace edge into `kube-system`, added to the same `hosts` list and
+  `04_google_sso` allowlist as the other platform UIs (see [07_ingress.md](07_ingress.md)). Before it was
+  published this was `kubectl -n kube-system port-forward svc/hubble-ui 12000:80` only.
+
 ## Caveats
 
 - Run order: 03e before 04. Harden the NIC ahead of Cilium's network-heavy rollout. `04_cilium.sh`'s only

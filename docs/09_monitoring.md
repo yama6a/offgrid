@@ -46,7 +46,10 @@ the log collector are DaemonSets with `tolerations: [{operator: Exists}]` — th
 cluster, so a `node-role.kubernetes.io/control-plane: DoesNotExist` selector would match ZERO nodes.
 
 Each UI (vmui, vlogs) is exposed by the consolidated platform-ingress app (wave 8) behind Google SSO,
-not by its own chart; see [07_ingress.md](07_ingress.md).
+not by its own chart; see [07_ingress.md](07_ingress.md). The Hubble UI (`hubble.<domain>`) rides the same
+platform-ingress app. Cilium/Hubble also ships Grafana dashboards: `hubble.metrics.dashboards.enabled` in
+`00_cilium` emits `grafana_dashboard` ConfigMaps that this stack's Grafana sidecar picks up cluster-wide (see
+[04_networking.md](04_networking.md)).
 
 ### Pinned versions
 
