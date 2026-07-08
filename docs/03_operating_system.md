@@ -49,19 +49,20 @@ the upstream RP1 patches that allow step 04 to disable EEE on the NIC.
 
 ## Versions
 
-| Component  | Pin                                             | Notes                                                                            |
-|------------|-------------------------------------------------|----------------------------------------------------------------------------------|
-| Talos      | `v1.13.4`                                       | `siderolabs/talos`                                                               |
-| Kubernetes | `1.36.1`                                         | `KUBERNETES_VERSION` in `.env`; the pin `03d` passes to `gen config` + `03g` upgrades to. Ceiling = the Talos release default (v1.13.4 -> 1.36.1); raise it only after bumping Talos |
-| pkgs       | `v1.13.0`                                       | `siderolabs/pkgs`. Ships a stock 6.18 arm64 kernel config (already 4K pages)     |
-| Kernel     | `raspberrypi/linux` `stable_20260609`           | = Linux 6.18.34 on `rpi-6.18.y`; in-image string `6.18.34-talos`                 |
-| Overlay    | `talos-rpi5/sbc-raspberrypi5` `main`            | u-boot `v2025.04-rpi5-3`, rpi firmware `1.20250430`; ported to machinery v1.13.4 |
-| Extensions | `iscsi-tools:v0.2.0`, `util-linux-tools:2.41.4` | digest-pinned from the Image Factory                                             |
+| Component  | Pin                                             | Notes                                                                                                                                                                                |
+|------------|-------------------------------------------------|--------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------|
+| Talos      | `v1.13.5`                                       | `siderolabs/talos`                                                                                                                                                                   |
+| Kubernetes | `1.36.2`                                        | `KUBERNETES_VERSION` in `.env`; the pin `03d` passes to `gen config` + `03g` upgrades to. Ceiling = the Talos release default (v1.13.5 -> 1.36.2); raise it only after bumping Talos |
+| pkgs       | `v1.13.0`                                       | `siderolabs/pkgs`. Ships a stock 6.18 arm64 kernel config (already 4K pages)                                                                                                         |
+| Kernel     | `raspberrypi/linux` `stable_20260609`           | = Linux 6.18.34 on `rpi-6.18.y`; in-image string `6.18.34-talos`                                                                                                                     |
+| Overlay    | `talos-rpi5/sbc-raspberrypi5` `main`            | u-boot `v2025.04-rpi5-3`, rpi firmware `1.20250430`; ported to machinery v1.13.5                                                                                                     |
+| Extensions | `iscsi-tools:v0.2.0`, `util-linux-tools:2.41.4` | digest-pinned from the Image Factory                                                                                                                                                 |
 
 ## The build
 
-Script: `03a_talos_image_builder.sh` (macOS, Apple Silicon). All config (version knobs, kernel ref, registry,
-extensions) lives in `.env` (build-cache output path derived in `lib/shell/common.sh`), shared by all the step-03 scripts.
+Script: `03a_talos_image_builder.sh` (MacOS, Apple Silicon). All config (version knobs, kernel ref, registry,
+extensions) lives in `.env` (build-cache output path derived in `lib/shell/common.sh`), shared by all the step-03
+scripts.
 A clean run builds and validates; it exits non-zero if anything goes wrong.
 
 What it does:
@@ -77,9 +78,9 @@ What it does:
 
 Prerequisites (the script checks all of these, with the `brew` fix for each):
 
-- GNU make >= 4 (`brew install make` -> use `gmake`). macOS ships make 3.81, which the kres Makefiles refuse to run.
+- GNU make >= 4 (`brew install make` -> use `gmake`). MacOS ships make 3.81, which the kres Makefiles refuse to run.
 - xz, zstd, jq, curl, go, and Docker (Rancher Desktop works) with an arm64 Linux VM.
-- Disk space: give the Docker VM >= 120 GB. 98 GB ran out mid-kernel-build.
+- Disk space: give the Docker VM >= 120 GB. We had 98 GB and ran out mid-kernel-build.
 
 The four rebases (things the upstream pipeline can't handle at this Talos version, all automated by the script):
 
@@ -100,57 +101,46 @@ The four rebases (things the upstream pipeline can't handle at this Talos versio
 lib/shell/03a_talos_image_builder.sh
 ```
 
-First run takes a while. Full clang/ThinLTO kernel compile is 30-40 min on 12 cores (macBook Pro, M2 Pro). Later runs
-cache the kernel layer.
+The first run takes a while. Full clang/ThinLTO kernel compile is 30-40 min on 12 cores (macBook Pro, M2 Pro). Later
+runs faster with cache kernel layer.
 
 ## What's baked into the image
 
-- 4K kernel pages (`CONFIG_ARM64_4K_PAGES=y`, not the Pi defconfig's 16K). Etcd and Kubernetes
-  are fine on 16K, but there is some software has 16K compatibility issues. 4K is also what stock Talos `metal-arm64`
-  uses. Keep page size the same on all three nodes.
+- 4K kernel pages (`CONFIG_ARM64_4K_PAGES=y`, not the Pi defconfig's 16K). Etcd and Kubernetes are fine on 16K, but
+  there is some software that has 16K compatibility issues. 4K is also what stock Talos `metal-arm64` uses. We Keep page
+  size the same on all three nodes.
 - System extensions (baked at the installer step): `iscsi-tools` (iscsid, required by Longhorn) and
   `util-linux-tools` (fstrim).
 - Radios off: `dtoverlay=disable-wifi` + `dtoverlay=disable-bt` in the overlay's `config.txt`, plus the `.dtbo`
-  files. This saves some marginal power and CPU syscles (kernel probes). But we will never use WiFi or Bluetooth anyway.
+  files. This saves some marginal power and CPU cycles (kernel probes). And we will never use WiFi or Bluetooth anyway.
 - Built-in (`=y`) drivers needed for step 04 (hardening) and Longhorn: Pi 5 watchdog (`BCM2835_WDT`), NVMe + PCIe
   (`PCIE_BRCMSTB`), the Pi 5 NIC (`MACB` + PHYLINK/PHYLIB/BROADCOM_PHY), RP1 bring-up (`MFD_RP1`, `BCM2712_MIP`, ...).
 
 ## Registry & upgrades
 
-The build runs against a **local** registry (`localhost:5010`): it's fast, supports the BuildKit mergeop `bldr`
-needs, and works offline. That's where the kernel, overlay, and installer layers land while `03a` builds and
-validates. The local registry stays the build target — we don't point the build at GHCR, because that would push
-the large kernel/overlay layers over the network on every run for no benefit.
+The build runs against a **local** registry (`localhost:5010`): it's fast, supports the BuildKit mergeop `bldr` needs,
+and works offline. That's where we put the kernel, overlay, and installer layers which `03a` builds.
 
-**Publishing the installer (for network upgrades).** After validation, `03a` optionally publishes **only** the
-installer image to GHCR — the one artifact a node needs to upgrade. Set `GITHUB_GHCR_PUSH_TOKEN_SECRET` (a classic token
-scoped `write:packages`) in `.env` and `03a` re-tags the validated installer and pushes it to
-`ghcr.io/<GHCR_USER>/<INSTALLER_PACKAGE>:<TALOS_VERSION>-arm64` (the `INSTALLER_REF` derived in `lib/shell/common.sh`).
-Leave the token empty to build + validate without publishing. Push and pull tokens are kept separate on purpose: the
-write token lives only on the build host (here), never in node config, so a compromised node can't push to GHCR.
+**Publishing the installer (for network upgrades).** After validation, `03a` optionally publishes the finished
+installer image to GHCR that can be used for talos upgrades (`03f`). For that, set `GITHUB_GHCR_PUSH_TOKEN_SECRET` (a
+classic token scoped `write:packages`) in `.env`. This will let `03a` push the installer image to
+`ghcr.io/<GHCR_USER>/<INSTALLER_PACKAGE>:<TALOS_VERSION>-arm64`. Id you leave the token empty to skip publishing. This
+allows a first bootstrap of all nodes, but later upgrades won't work.
 
 **Upgrading the cluster.** During first setup, the NVMe is flashed once (`03b`). After that, Talos upgrades are
-atomic A/B over the network with rollback — no reflash. Bumping Talos = bump the version knobs in `.env`, re-run
-`03a` (the kernel layer caches, so a userspace-only bump skips the long compile) to build + publish the new
-installer, then run **`03f_talos_upgrade.sh`**. `03f` rolls `talosctl upgrade --image "$INSTALLER_REF"` one node at
-a time, waiting for full cluster health between nodes so etcd quorum is never at risk; it's re-run-safe (an
-already-upgraded node is a no-op). The nodes pull the installer using the `read:packages` auth `03d` baked into
-their machine config, so a private installer package needs no extra wiring (either that pull token was set in `03d`,
-or the GHCR package is public).
+atomic A/B over the network without needing manua reflashing. For that, bump the Talos version in `.env`, re-run
+`03a` to build + publish the new installer, then run **`03f_talos_upgrade.sh`** which runs
+`talosctl upgrade --image "$INSTALLER_REF"` one node at a time. This is re-run-safe (an already-upgraded node is a
+no-op). The nodes pull the installer using the `read:packages` auth `03d` baked into their machine config in `03d`.
 
-**Upgrading Kubernetes (separate from the OS).** The Talos OS version and the Kubernetes version upgrade
-independently, so they have separate scripts. `03f` (above) swaps the node OS and leaves k8s untouched;
-**`03g_k8s_upgrade.sh`** rolls the k8s control plane (`talosctl upgrade-k8s --to "$KUBERNETES_VERSION"`) and
-reboots nothing. So bumping *only* `KUBERNETES_VERSION` in `.env` = run `03g` (no `03a` rebuild, no installer
-publish — k8s images come from `registry.k8s.io`, not our GHCR). `KUBERNETES_VERSION` can't exceed the pinned
-Talos release's default k8s version (its supported ceiling), so raising it past that means bumping
-`TALOS_VERSION` and running `03a`/`03f` first. When both changed, upgrade Talos then k8s (`03f` then `03g`): a
-newer Talos always supports the k8s version it defaults to. The dockerized `kubectl` in `03e` reads the same
-`KUBERNETES_VERSION` for its image tag, so tooling never skews from the cluster.
+**Upgrading Kubernetes (separate from the OS).** The Talos OS version and the Kubernetes version upgrade independently.
+`03g_k8s_upgrade.sh` updates the k8s control plane (`talosctl upgrade-k8s --to "$KUBERNETES_VERSION"`). So bump *only*
+`KUBERNETES_VERSION` in `.env`, and then run `03g`. `KUBERNETES_VERSION` can't exceed the pinned Talos release's default
+k8s version (its supported ceiling). So it is useful to always first bump Talos.
 
 ## Validation (offline, no hardware)
 
-Runs at the end of the builder. macOS can't loop-mount Linux filesystems, so this runs inside a privileged Linux
+Runs at the end of the builder. MacOS can't loop-mount Linux filesystems, so this runs inside a privileged Linux
 container. Exits non-zero on any failure.
 
 - Integrity + size: `xz -t` passes; compressed image size is in a reasonable range.
@@ -164,20 +154,19 @@ container. Exits non-zero on any failure.
 
 ## Flash the NVMe
 
-Script: `03b_talos_image_flasher.sh` (macOS). `dd`s the local built image (`.raw.xz`) to an NVMe over a USB
-adapter. Has the usual safeguards: lists disks, requires typing `YES`, writes to `/dev/rdiskN`, ejects.
+Script: `03b_talos_image_flasher.sh` (MacOS). `dd`s the locally built image (`.raw.xz`) to an NVMe over a USB adapter.
+Has the usual safeguards: lists disks, requires typing `YES`, writes to `/dev/rdiskN`, ejects.
 
 ### Per drive
 
-Run the script, pick the USB-NVMe adapter's disk id, confirm. Repeat for each SSD, just swap drives in the adapter.
-
-Then slot the SSD into a Pi, power on with no SD card -> Talos boots into maintenance mode (no role assigned yet).
+Run the script, pick the USB-NVMe adapter's disk id, confirm. Repeat for each SSD, just swap drives in the adapter. Then
+slot the SSD into a Pi, power on with no SD card -> Talos boots into maintenance mode (no role assigned yet).
 
 ## Boot & verify (per node)
 
-Script: `03c_talos_boot_verify.sh`, reads the node IPs (`CLUSTER_NODES` in `.env`) and runs the checklist below
-against each (maintenance mode, `--insecure`), inspecting each output and printing PASS/FAIL + a summary. It uses
-the talosctl container (sidesteps the macOS gotcha below); `ping`/`nc` run natively.
+Script: `03c_talos_boot_verify.sh`, reads the node IPs (`CLUSTER_NODES` in `.env`) and runs the checklist below against
+each (maintenance mode, `--insecure`), inspecting each output and printing PASS/FAIL + a summary. It uses the talosctl
+container (sidesteps the MacOS gotcha below); `ping`/`nc` run natively.
 
 ```bash
 ./03c_talos_boot_verify.sh        # checks the nodes listed in .env
@@ -188,40 +177,38 @@ What it checks per node:
 ```bash
 ping <node-ip>                                       # on the network
 nc -vz <node-ip> 50000                               # Talos API reachable
-talosctl -n <node-ip> version --insecure             # responds; server = our v1.13.4(-dirty) build
+talosctl -n <node-ip> version --insecure             # responds; server = our v1.13.5(-dirty) build
 talosctl -n <node-ip> get links --insecure           # end0 (the wired NIC) present/up
 talosctl -n <node-ip> get disks --insecure           # /dev/nvme0n1 present
 talosctl -n <node-ip> get kernelcmdlines --insecure  # cmdline has console=ttyAMA0,115200 (rpi5 overlay)
 ```
 
 > Maintenance mode can't report the kernel version string: `dmesg` has no `--insecure` flag and needs certs. The
-> `6.18.34` kernel is already proven by the builder's offline validation; re-confirm it after the cluster is up
-> (certs present): `talosctl -n <ip> dmesg | grep 'Linux version'`.
+> `6.18.34` kernel is already proven by the builder's offline validation; re-confirm it after the cluster is up (certs
+> present): `talosctl -n <ip> dmesg | grep 'Linux version'`.
 
 All green -> proceed to [Cluster bring-up](#cluster-bring-up) below.
 
-### macOS `talosctl` gotcha
+### MacOS `talosctl` gotcha
 
-If `nc` succeeds but `talosctl ... --insecure` comes back with `no route to host`, the node is fine. The macOS
+If `nc` succeeds but `talosctl ... --insecure` comes back with `no route to host`, the node is fine. The MacOS
 `talosctl` binary is just misbehaving (confirmed by the official container reaching the same node without issues). Use
 the container:
 
 ```bash
-talosctl() { docker run --rm --network host -v "$HOME/.talos:/root/.talos" ghcr.io/siderolabs/talosctl:v1.13.4 "$@"; }
+talosctl() { docker run --rm --network host -v "$HOME/.talos:/root/.talos" ghcr.io/siderolabs/talosctl:v1.13.5 "$@"; }
 ```
 
-Drop that in `~/.zshrc`, reload, and `talosctl` works normally from there.
+Drop that in `~/.zshrc` or `~/.bash_profile`, reload, and `talosctl` works normally from there.
 
 ## Cluster bring-up
 
-Bring up the control-plane cluster from the NVMes flashed above. The same image is on every node; per-node identity
-(hostname, role) is applied now via `talosctl`. The CNI is disabled at the Talos layer (`cni: none`) and kube-proxy
-is off (`proxy.disabled: true`), both replaced by Cilium in [step 04](04_networking.md). All
-nodes are control-plane and schedulable. Nodes come up NotReady until Cilium lands, that's expected, not a
-fault.
+Per-node identity (hostname, role) is applied now via `talosctl`. The CNI is disabled at the Talos layer (`cni: none`)
+and kube-proxy is off (`proxy.disabled: true`), both replaced by Cilium in [step 04](04_networking.md). All three nodes
+are control-plane and schedulable. Nodes come up NotReady until Cilium lands, that's expected, not a fault.
 
-> The cluster name, VIP, install disk, NIC, and the node list (hostname + IP per node) all live in `.env`,
-> nothing is hardcoded in the script. Edit them there to match your network.
+> The cluster name, VIP, install disk, NIC, and the node list (hostname + IP per node) all live in `.env`, nothing is
+> hardcoded in the script. Edit them there to match your network.
 
 ### Router reservations (manual, once)
 
@@ -237,17 +224,15 @@ Boot the Pis one by one, read their MAC addresses from the router's client list,
 can do this with a standard PiOS image on an SD card first, or with the Talos image on the NVMe, as long as the Pi
 boots, its MAC shows up and you can reserve the IP.)
 
-The VIP is not reserved in the router: it's outside the DHCP pool, Talos claims it via ARP, and it can move between
-nodes, so it can't be pinned to a MAC. My subnet is `192.168.0.0/16` with DHCP `192.168.2.1`-`192.168.10.254`, so I
-picked `192.168.100.1` for the VIP.
+The VIP is not reserved in the router: it must be outside the DHCP pool, Talos claims it via ARP, and it can move
+between nodes, so it can't be pinned to a MAC. My subnet is `192.168.0.0/16` with DHCP `192.168.2.1`-`192.168.10.254`,
+so I picked `192.168.100.1` for the VIP (inside the subnet, outside the DHCP range)
 
 ### Prereqs
 
-- The nodes are all booted from NVMe and reachable in maintenance mode at their reserved IPs (this is exactly what
-  `03c_talos_boot_verify.sh` confirms, `talosctl -n <node-ip> version --insecure`).
-- Docker, with host networking enabled in Docker Desktop (Settings -> Resources -> Network -> Enable host networking).
-  The script runs `talosctl` as a pinned container, so no host `talosctl`/`kubectl` is required for bring-up (you'll
-  want `kubectl` for the verify step). If a native `talosctl` ever misbehaves, see the macOS gotcha above.
+- The nodes are all booted from NVMe and reachable in maintenance mode at their reserved IPs.
+- Docker, with host networking enabled in Docker Desktop. The script runs `talosctl` as a pinned container, so no host
+  `talosctl`/`kubectl` is required for bring-up.
 
 ### What `03d_talos_cluster_config.sh` does
 
@@ -299,7 +284,8 @@ picked `192.168.100.1` for the VIP.
 > and namespace-agnostic; the cost is that the token lives in the machine config (in the gitignored
 > `secrets/cp-patch.yaml`, never committed) rather than in the sealed-secrets pipeline, and rotating it means
 > editing `.env` and re-running `03d`. The host + username are plain config (`GHCR_SERVER`/`GHCR_USER`); leave
-> `GITHUB_GHCR_PULL_TOKEN_SECRET` empty to skip (the auth block is simply omitted). This is the **pull** token — distinct
+> `GITHUB_GHCR_PULL_TOKEN_SECRET` empty to skip (the auth block is simply omitted). This is the **pull** token —
+> distinct
 > from the `write:packages` `GITHUB_GHCR_PUSH_TOKEN_SECRET` `03a` uses to publish, which never touches node config. GHCR
 > only accepts a classic token; fine-grained tokens do not work for package pulls.
 
