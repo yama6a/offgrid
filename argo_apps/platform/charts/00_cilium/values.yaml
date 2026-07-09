@@ -3,6 +3,12 @@
 
 # Everything under `cilium:` is passed to the upstream cilium/cilium subchart (key == dependency name).
 cilium:
+  # CLUSTER-WIDE policy audit mode: every CiliumNetworkPolicy runs in log-only mode — a would-be drop is
+  # reported (Hubble verdict AUDIT, `cilium monitor --type policy-verdict`) but the packet is STILL FORWARDED.
+  # NOTHING is enforced anywhere while this is true; it's a rollout/iteration safety net, not a steady state.
+  # Renders `policy-audit-mode: "true"` into cilium-config. Set back to false (or remove) to re-enforce.
+  # NOTE: agents read this at startup — after changing it, roll the cilium DaemonSet to apply.
+  policyAuditMode: true
   # Talos on Raspberry Pi 5.
   ipam:
     mode: kubernetes
