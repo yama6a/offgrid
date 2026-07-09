@@ -43,6 +43,9 @@ domains:
       - host: hubble.example.com
         allowlist:
           - you@example.com
+      - host: longhorn.example.com
+        allowlist:
+          - you@example.com
       - host: sample-workload-sso.example.com
         allowlist:
           - you@example.com

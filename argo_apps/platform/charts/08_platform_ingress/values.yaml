@@ -25,3 +25,7 @@ ingress-edge:
           targetNamespace: kube-system # hubble-ui ships with Cilium (00_cilium) in kube-system
           targetService: hubble-ui
           targetPort: 80
+        - subdomain: longhorn
+          targetNamespace: longhorn-system # longhorn-frontend (the UI) ships with Longhorn (02_longhorn)
+          targetService: longhorn-frontend # UI has NO auth of its own -> gated by google-sso (wave 4)
+          targetPort: 80
