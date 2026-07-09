@@ -14,6 +14,12 @@ image:
   tag: v0.0.36                  # mirrors Chart.yaml appVersion
   pullPolicy: IfNotPresent
 
+# Provisioner Deployment footprint (KRR-sized). It only watches PVCs and spawns short-lived helper pods,
+# so it's tiny; requesting it stops the scheduler treating it as free. Wired into templates/deployment.yaml.
+resources:
+  requests: { cpu: 10m, memory: 32Mi }
+  limits:   { memory: 48Mi }
+
 # The busybox image the provisioner spawns as a short-lived helper pod to mkdir/rm the volume dirs
 # on the target node. Multi-arch (works on arm64). Pinned for reproducibility.
 helperImage:

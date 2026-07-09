@@ -93,6 +93,10 @@ grafana:
   # Dashboards: keep the sidecar (it ingests the k8s-stack's emitted `grafana_dashboard` ConfigMaps across
   # ALL namespaces). Datasources sidecar is OFF, datasources are provisioned directly above now.
   sidecar:
+    # Right-size the dashboard sidecar per KRR (applies to all sidecar containers in the pod).
+    resources:
+      requests: {cpu: 10m, memory: 96Mi}
+      limits: {memory: 128Mi}
     dashboards:
       enabled: true
       label: grafana_dashboard
@@ -384,8 +388,8 @@ grafana:
   # Modest footprint for a Pi 5.
   resources:
     requests:
-      cpu: 50m
-      memory: 128Mi
+      cpu: 10m
+      memory: 192Mi
     limits:
-      memory: 1Gi
+      memory: 320Mi
 

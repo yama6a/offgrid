@@ -21,8 +21,8 @@ sealed-secrets:
 
   # Modest footprint for a 3x 8GB Pi 5 cluster, the controller is light (decrypt-on-admission).
   resources:
-    requests: { cpu: 25m, memory: 64Mi }
-    limits:   { memory: 128Mi }
+    requests: { cpu: 10m, memory: 32Mi }
+    limits:   { memory: 48Mi }
 
   # Create the controller's ServiceMonitor so Prometheus scrapes seal/unseal + key-age metrics.
   # CRDs exist from wave 0, before this wave-2 app. See 15_monitoring.md.

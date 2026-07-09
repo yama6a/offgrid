@@ -22,6 +22,11 @@ spec:
   provider:
     type: Kubernetes
     kubernetes:
+      # Data-plane Envoy container resources (KRR-sized; EG's default reserves 512Mi). See values.yaml.
+      envoyDeployment:
+        container:
+          resources:
+            {{- toYaml .Values.envoyProxy.resources | nindent 12 }}
       envoyService:
         type: LoadBalancer
         # Cluster, not EG's default Local: the Cilium L2 announcer node isn't necessarily the node

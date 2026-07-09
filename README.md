@@ -268,3 +268,4 @@ Pi 5 Talos image builds on [talos-rpi5/talos-builder](https://github.com/talos-r
 - redis + sample workload
 - krr
 - check all logs/hubble for network policies in audit more that are dropping traffic that should be allowed
+- dependabot/renovate 

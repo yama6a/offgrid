@@ -50,3 +50,12 @@ longhorn:
     # count to 0 (default 3). We don't use Longhorn CSI VolumeSnapshots, so the sidecar is dead weight,
     # and it was generating constant log noise.
     snapshotterReplicaCount: 0
+
+  # longhorn-manager DaemonSet is a real ~134Mi/node consumer (KRR) that ships with NO resources set, so
+  # the scheduler treats it as free and a manager leak could pressure a node. Request + bound it. (The tiny
+  # CSI sidecars are settable via defaultSettings.systemManagedCSIComponentsResourceLimits but deliberately
+  # left unset: it only ADDS reservations for ~16Mi sidecars, is storage-critical, and takes a fiddly JSON.)
+  longhornManager:
+    resources:
+      requests: {cpu: 20m, memory: 160Mi}
+      limits: {memory: 192Mi}

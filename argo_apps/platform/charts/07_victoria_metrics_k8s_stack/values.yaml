@@ -31,8 +31,8 @@ victoria-metrics-k8s-stack:
           requests:
             storage: 50Gi
       resources:
-        requests: {cpu: 250m, memory: 512Mi}
-        limits: {memory: 1500Mi}     # no CPU limit, avoid throttling merges/queries
+        requests: {cpu: 50m, memory: 256Mi}
+        limits: {memory: 512Mi}     # no CPU limit, avoid throttling merges/queries
       # Reschedule fast on node loss instead of the default. Pair with Longhorn
       # nodeDownPodDeletionPolicy=delete-statefulset-pod (02_longhorn). See 15_monitoring.md (failover).
       tolerations:
@@ -114,8 +114,8 @@ victoria-metrics-k8s-stack:
           action: drop
           regex: "prober_probe_total|prober_probe_duration_seconds_(bucket|count|sum)|node_nfs_requests_total"
       resources:
-        requests: {cpu: 100m, memory: 256Mi}
-        limits: {memory: 512Mi}
+        requests: {cpu: 50m, memory: 128Mi}
+        limits: {memory: 256Mi}
 
   # ---- shape B: everything alerting/visualisation is OFF -------------------------------------------
   vmalert:
@@ -179,14 +179,14 @@ victoria-metrics-k8s-stack:
     tolerations:
       - operator: Exists
     resources:
-      requests: {cpu: 25m, memory: 32Mi}
-      limits: {memory: 64Mi}
+      requests: {cpu: 10m, memory: 32Mi}
+      limits: {memory: 48Mi}
 
   kube-state-metrics:
     enabled: true
     resources:
-      requests: {cpu: 25m, memory: 64Mi}
-      limits: {memory: 128Mi}
+      requests: {cpu: 10m, memory: 32Mi}
+      limits: {memory: 64Mi}
 
   # ---- Talos control-plane scrape targets ----------------------------------------------------------
   # Talos binds kube-controller-manager / kube-scheduler / etcd metrics to localhost by DEFAULT; we expose

@@ -13,8 +13,8 @@ app:
   db: sample-workload-db
   extraDbs: [sample-workload-analytics]
   resources:
-    requests: { cpu: 25m, memory: 32Mi }
-    limits:   { memory: 128Mi }
+    requests: { cpu: 10m, memory: 32Mi }
+    limits:   { memory: 48Mi }
 
 # Ingress edges for the app: two hosts on the same Service. Neither configures SSO — sample-workload-sso is
 # gated centrally by the google-sso chart (its domains[].hosts); sample-workload is left open there.

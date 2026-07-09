@@ -27,16 +27,16 @@ cert-manager:
   # Modest footprint for a 3x 8GB Pi 5 cluster, three light components (controller, webhook,
   # cainjector). Defaults are generous; trim requests, keep memory limits to bound the webhook.
   resources:
-    requests: { cpu: 25m, memory: 64Mi }
-    limits:   { memory: 128Mi }
+    requests: { cpu: 10m, memory: 48Mi }
+    limits:   { memory: 64Mi }
   webhook:
     resources:
-      requests: { cpu: 25m, memory: 64Mi }
-      limits:   { memory: 128Mi }
+      requests: { cpu: 10m, memory: 32Mi }
+      limits:   { memory: 48Mi }
   cainjector:
     resources:
-      requests: { cpu: 25m, memory: 64Mi }
-      limits:   { memory: 256Mi }
+      requests: { cpu: 10m, memory: 96Mi }
+      limits:   { memory: 128Mi }
 
   # HTTP-01 solving through the Cilium Gateway API. NOTE: since cert-manager 1.15 this is NOT a
   # feature gate any more, the old `ExperimentalGatewayAPISupport` gate is gone. It's enabled via
