@@ -1,0 +1,16 @@
+apiVersion: v2
+name: rabbitmq-topology
+description: >-
+  Shared LIBRARY chart (type: library, renders nothing on its own) that emits a workload's RabbitMQ messaging
+  topology against the ONE shared broker (03_rabbitmq_cluster): exactly one User (operator-GENERATED
+  credentials), the Exchanges/Queues/Bindings the workload owns, and ONE aggregated Permission. Consumed via a
+  `file://` dependency by any messaging workload, which adds a one-line `{{ include "rabbitmq-topology.render"
+  . }}` template + a values block under the `rabbitmq-topology` key. It encodes the two patterns as intent:
+  publishEvents / subscribeEvents (event topic, 1 publisher : N consumers) and consumeCommands / sendCommands
+  (command topic, N publishers : 1 consumer), with ownership on the correct side and per-consumer queue
+  isolation. Structurally mirrors lib/helm/ingress-edge (a library, so NO Chart.lock and NO vendored charts/).
+  See 11_messaging.md.
+# A library chart pins NO upstream dependency and renders no templates of its own, so there is no Chart.lock
+# here (the CONSUMERS that depend on this one carry the lock).
+type: library
+version: 0.1.0

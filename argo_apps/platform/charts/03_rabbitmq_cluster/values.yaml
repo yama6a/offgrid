@@ -1,0 +1,40 @@
+# Values for the 03_rabbitmq_cluster chart — the one shared broker. SINGLE SOURCE OF TRUTH; ArgoCD (and any
+# local `helm template`) consume this. See 11_messaging.md for the why behind each choice.
+
+# The RabbitmqCluster name. Also the name of the client Service (rabbitmq.rabbitmq.svc) workloads dial on 5672
+# and the management UI is exposed on (15672). Workloads reference this via the rabbitmq-topology chart's
+# `cluster.name` default, so changing it means changing that default too.
+name: rabbitmq
+
+# 3 replicas — one per Pi node. Quorum queues use Raft and need a MAJORITY, so 3 tolerates losing 1 node
+# (majority 2 of 3); the operator recommends odd counts. (2 would pay the cost of a cluster with no quorum
+# benefit; 1 has no HA.) Paired with the quorum default queue type below.
+replicas: 3
+
+# Pinned RabbitMQ server image. `-management` bundles the management plugin (the 15672 UI); `-alpine` is the
+# small variant (kind to the Pis). Multi-arch incl. arm64. 4.2.x matches the line the operator chart
+# (02_rabbitmq_operator, CloudPirates 0.3.3) is built/tested against; bump deliberately.
+image: rabbitmq:4.2.8-management-alpine
+
+# Per-instance requests/limits. RabbitMQ sizes its memory high-watermark off the memory LIMIT, so the limit
+# is the real knob — 1Gi gives ~400Mi of working set before back-pressure, ample for homelab messaging on the
+# 8GB Pi 5s that already run a lot. Tunable later via the repo's krr workflow.
+resources:
+  requests:
+    cpu: 200m
+    memory: 512Mi
+  limits:
+    cpu: "1"
+    memory: 1Gi
+
+# Persistent storage per replica, on Longhorn (as requested). NOTE (double redundancy, deliberate): quorum
+# queues already replicate messages across the 3 broker nodes AND Longhorn replicates each volume across
+# nodes. The upside is a lost node lets its broker pod reschedule and reattach its Longhorn volume with data
+# intact; the cost is extra storage. 5Gi is plenty for homelab message/quorum-log volumes.
+storage:
+  className: longhorn
+  size: 5Gi
+
+# The one shared vhost every workload's users/exchanges/queues live in (kept separate from the default `/`,
+# which stays admin-only). The rabbitmq-topology chart defaults `vhost` to this name — keep them in sync.
+vhost: apps

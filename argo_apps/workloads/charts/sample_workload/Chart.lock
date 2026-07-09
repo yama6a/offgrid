@@ -8,5 +8,8 @@ dependencies:
 - name: ingress-edge
   repository: file://../../../../lib/helm/ingress-edge
   version: 0.1.0
-digest: sha256:7db310f0b0bde53688690b38db0f93ef38e931466152265519bad5cd2838ed04
-generated: "2026-07-09T10:09:45.621062+02:00"
+- name: rabbitmq-topology
+  repository: file://../../../../lib/helm/rabbitmq-topology
+  version: 0.1.0
+digest: sha256:6a22f2572ebbc39e6ec4e2db3c5bfb34817e9d9b3d264354d2420ed4c9c1b18e
+generated: "2026-07-09T22:45:14.579504+02:00"

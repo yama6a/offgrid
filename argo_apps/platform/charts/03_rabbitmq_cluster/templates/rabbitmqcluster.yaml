@@ -1,0 +1,40 @@
+{{- /*
+The single shared broker. The operators (02_rabbitmq_operator) reconcile this into a 3-node StatefulSet + its
+Services (client `rabbitmq` on 5672 amqp / 15672 management / 15692 prometheus, headless `rabbitmq-nodes` for
+clustering) and the operator-generated `rabbitmq-default-user` (admin creds) + `rabbitmq-erlang-cookie`
+Secrets — none of which are committed to git (operator-generated, like CNPG's `<db>-app`; see 06_secrets.md).
+
+`topology-allowed-namespaces: "*"` lets workloads in ANY namespace point their Queue/Exchange/User/... CRs at
+this broker via `spec.rabbitmqClusterReference.namespace: rabbitmq`, so the generated `<user>-user-credentials`
+Secret lands in the workload's OWN namespace where its pod can mount it. Without this annotation only same-ns
+topology is allowed.
+*/ -}}
+apiVersion: rabbitmq.com/v1beta1
+kind: RabbitmqCluster
+metadata:
+  name: {{ .Values.name }}
+  namespace: {{ .Release.Namespace }}
+  annotations:
+    rabbitmq.com/topology-allowed-namespaces: "*"
+spec:
+  replicas: {{ .Values.replicas }}
+  image: {{ .Values.image | quote }}
+  resources:
+    {{- toYaml .Values.resources | nindent 4 }}
+  persistence:
+    storageClassName: {{ .Values.storage.className | quote }}
+    storage: {{ .Values.storage.size | quote }}
+  # Spread the broker pods one-per-node (matches replicas == node count) so a node loss drops exactly one
+  # quorum member. Bare Pi nodes have no zone label, so spread by hostname (same choice as the pg-cluster wrapper).
+  affinity:
+    podAntiAffinity:
+      requiredDuringSchedulingIgnoredDuringExecution:
+        - labelSelector:
+            matchLabels:
+              app.kubernetes.io/name: {{ .Values.name }}
+          topologyKey: kubernetes.io/hostname
+  rabbitmq:
+    additionalConfig: |
+      # Default new queues (incl. any an app declares directly, not just via a Queue CR) to quorum — the
+      # modern durable, replicated queue type; classic mirrored queues are gone in RabbitMQ 4.x.
+      default_queue_type = quorum

@@ -25,3 +25,6 @@ dependencies:
   - name: ingress-edge
     version: "*"              # shared edge library; renders this workload's ingress from values below
     repository: "file://../../../../lib/helm/ingress-edge"
+  - name: rabbitmq-topology
+    version: "*"              # shared messaging library; renders this workload's User/Exchange/Queue/... below
+    repository: "file://../../../../lib/helm/rabbitmq-topology"

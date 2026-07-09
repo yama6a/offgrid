@@ -1,0 +1,56 @@
+# Shared defaults every rabbitmq-topology consumer inherits (merged under the `rabbitmq-topology` key, the
+# repo's usual "config under the dependency name" convention). A workload overrides these under its own
+# `rabbitmq-topology:` block. This library renders only topology CRs (User/Exchange/Queue/Binding/Permission)
+# against the shared broker; it never touches the workload's Deployment (the pod wires the generated
+# credentials Secret itself, like the PG_PASSWORD block). Full schema + the ownership model: see 11_messaging.md.
+
+# The shared broker to point every CR at (03_rabbitmq_cluster). Cross-namespace: the CRs live in the
+# workload's namespace but reference the broker in `rabbitmq`, so the generated <user>-user-credentials Secret
+# lands in the workload namespace. Rarely overridden.
+cluster:
+  name: rabbitmq
+  namespace: rabbitmq
+
+# The one shared vhost (must match 03_rabbitmq_cluster's `vhost`). All this workload's users/topology live here.
+vhost: apps
+
+# This workload's ONE user (reusable for all its publish + consume needs). Empty => defaults to the release
+# name at render time. The operator generates its credentials into Secret `<user>-user-credentials`.
+user: ""
+
+# ---- EVENT topics this workload OWNS + publishes to (1 publisher : N consumers) ----
+# Each entry declares an Exchange this workload owns and grants this workload write on it. Consumers of these
+# events declare their own queues via `subscribeEvents` (below), each readable only by their own user.
+#   - name: sample-events      # the exchange name
+#     type: topic              # topic | fanout | direct | headers (default topic)
+publishEvents: []
+
+# ---- EVENT topics this workload SUBSCRIBES to (its OWN private queue per subscription) ----
+# For each, a Queue named "<user>.<exchange>" + a Binding to that exchange are created, and this workload's
+# user is granted read on that queue (only this user can consume it). The exchange itself is NOT declared here
+# — its owning publisher declares it via `publishEvents`.
+#   - exchange: other-events   # an event exchange owned by the publisher workload
+#     routingKey: "order.#"    # AMQP topic pattern (default "#" = all)
+subscribeEvents: []
+
+# ---- COMMAND topics this workload OWNS + consumes (N publishers : 1 consumer = me) ----
+# Each entry declares the Exchange + its single Queue + the Binding (all owned by this consumer) and grants
+# this workload read on the queue. Other workloads send to it via `sendCommands`.
+#   - name: sample-commands    # the command exchange + queue name (this workload is the sole consumer)
+#     type: direct             # direct | topic | fanout | headers (default direct)
+#     routingKey: ""           # binding key (default: the name itself, i.e. direct routing)
+consumeCommands: []
+
+# ---- COMMAND topics OWNED BY OTHER workloads that this workload SENDS to ----
+# Just grants this workload write on the named exchange(s); the exchange+queue are declared by their owning
+# consumer via its `consumeCommands`.
+#   - other-commands           # an exchange name owned by the consumer workload
+sendCommands: []
+
+# Optional escape hatch: override the auto-derived per-user Permission regexes (each key optional). Normally
+# leave unset — `write` is auto-built from publishEvents+sendCommands, `read` from the queues consumed, and
+# `configure` is "" (topology is declared by the operator's admin user, so the app user needs no configure).
+# permissionOverrides:
+#   configure: ""
+#   write: ""
+#   read: ""

@@ -32,6 +32,25 @@ ingress-edge:
           targetService: sample-workload
           targetPort: 8080
 
+# RabbitMQ messaging via the shared rabbitmq-topology library (file:// dependency). Renders this workload's
+# ONE user (operator-generated creds -> Secret sample-workload-user-credentials) + the topology it owns, all
+# against the single shared broker on the `apps` vhost. Demonstrates BOTH patterns in one workload:
+#   - publishEvents: it OWNS + publishes the `sample-events` event topic (1 publisher : N consumers).
+#   - subscribeEvents: it also SUBSCRIBES to that topic — its own private queue `sample-workload.sample-events`
+#     (in a real system the subscriber is a DIFFERENT workload; here it's a self-contained demo).
+#   - consumeCommands: it OWNS + is the sole consumer of the `sample-commands` command topic (N publishers : 1
+#     consumer). Other workloads would publish to it via their own `sendCommands: [sample-commands]`.
+# The derived per-user Permission is write=^(sample-events)$, read=^(sample-workload\.sample-events|sample-commands)$.
+# See 11_messaging.md.
+rabbitmq-topology:
+  user: sample-workload            # == app.name; the pod reads <user>-user-credentials (see templates/app.yaml)
+  publishEvents:
+    - { name: sample-events, type: topic }
+  subscribeEvents:
+    - { exchange: sample-events, routingKey: "sample.#" }
+  consumeCommands:
+    - { name: sample-commands, type: direct }
+
 # Two CloudNativePG Postgres instances, each an aliased instance of the shared pg-cluster wrapper (file://
 # dependency; pins cnpg/cluster, pre-bakes storage/affinity/monitoring/initdb/backups). The alias key routes
 # values; each instance sets its REQUIRED knobs — an explicit `cluster.fullnameOverride` (the instance name,

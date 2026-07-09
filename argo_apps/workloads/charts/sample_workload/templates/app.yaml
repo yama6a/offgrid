@@ -18,6 +18,7 @@ spec:
     metadata:
       labels:
         app: {{ .Values.app.name }}
+        messaging-client: "true"   # opts this pod into the broker's CiliumNetworkPolicy ingress on 5672. See 11_messaging.md.
     spec:
       containers:
         - name: app
@@ -45,6 +46,27 @@ spec:
               valueFrom:
                 secretKeyRef:
                   name: {{ .Values.app.db }}-app
+                  key: password
+            # RabbitMQ connection. This workload's single user has operator-GENERATED credentials in the Secret
+            # `<user>-user-credentials` (the rabbitmq-topology `user` is set to app.name, so it's
+            # `{{ .Values.app.name }}-user-credentials`). Host is the shared broker's client Service; vhost is the
+            # shared `apps`. The app assembles the AMQP URI from these discrete parts (username too — it's
+            # generated, so it can't be hardcoded). Same generated-secret pattern as PG_PASSWORD above.
+            - name: RABBITMQ_HOST
+              value: "rabbitmq.rabbitmq.svc.cluster.local"   # the shared broker's client Service (03_rabbitmq_cluster)
+            - name: RABBITMQ_PORT
+              value: "5672"
+            - name: RABBITMQ_VHOST
+              value: "apps"                                  # the shared vhost (matches rabbitmq-topology default)
+            - name: RABBITMQ_USERNAME
+              valueFrom:
+                secretKeyRef:
+                  name: {{ .Values.app.name }}-user-credentials
+                  key: username
+            - name: RABBITMQ_PASSWORD
+              valueFrom:
+                secretKeyRef:
+                  name: {{ .Values.app.name }}-user-credentials
                   key: password
           resources:
             {{- toYaml .Values.app.resources | nindent 12 }}

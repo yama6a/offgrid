@@ -1,0 +1,6 @@
+{{/*
+This workload's whole RabbitMQ topology (its user + the exchanges/queues/bindings it owns + one aggregated
+permission) is rendered by the shared rabbitmq-topology library from the `rabbitmq-topology:` block in
+values.yaml. One line by design: no topology YAML is hand-written here. See 11_messaging.md.
+*/}}
+{{ include "rabbitmq-topology.render" . }}

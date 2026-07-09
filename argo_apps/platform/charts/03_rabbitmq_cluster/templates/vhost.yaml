@@ -1,0 +1,15 @@
+{{- /*
+The ONE shared vhost every workload uses. Created centrally here (not per-workload) so there's a single place
+that owns it. The topology operator declares it as the broker's admin default-user, whose `administrator` tag
+lets it manage any vhost regardless of per-vhost grants. Workloads' Users get explicit per-vhost Permission on
+this vhost (rendered by lib/helm/rabbitmq-topology); the default `/` vhost stays admin-only.
+*/ -}}
+apiVersion: rabbitmq.com/v1beta1
+kind: Vhost
+metadata:
+  name: {{ .Values.vhost }}
+  namespace: {{ .Release.Namespace }}
+spec:
+  name: {{ .Values.vhost }}
+  rabbitmqClusterReference:
+    name: {{ .Values.name }}

@@ -49,3 +49,13 @@ spec:
         - ports:
             - { port: "5432", protocol: TCP }
     {{- end }}
+    # The shared RabbitMQ broker (ns rabbitmq) on AMQP 5672 — this workload publishes/consumes messages. The
+    # broker side allows this via its `messaging-client: "true"` ingress rule (the pod carries that label). See
+    # 11_messaging.md.
+    - toEndpoints:
+        - matchLabels:
+            k8s:io.kubernetes.pod.namespace: rabbitmq
+            app.kubernetes.io/name: rabbitmq
+      toPorts:
+        - ports:
+            - { port: "5672", protocol: TCP }

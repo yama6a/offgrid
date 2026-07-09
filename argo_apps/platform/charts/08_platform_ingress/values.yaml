@@ -29,3 +29,7 @@ ingress-edge:
           targetNamespace: longhorn-system # longhorn-frontend (the UI) ships with Longhorn (02_longhorn)
           targetService: longhorn-frontend # UI has NO auth of its own -> gated by google-sso (wave 4)
           targetPort: 80
+        - subdomain: rabbitmq
+          targetNamespace: rabbitmq        # the shared broker's client Service (03_rabbitmq_cluster)
+          targetService: rabbitmq          # management UI on 15672; gated by google-sso (wave 4), then RabbitMQ's own login
+          targetPort: 15672
