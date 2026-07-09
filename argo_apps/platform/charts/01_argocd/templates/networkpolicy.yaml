@@ -1,0 +1,61 @@
+# Namespace-wide default-deny for argocd (cluster-admin on the API + git creds — the highest-value target).
+# See 04_networking.md / 05_gitops.md.
+#
+# CARDINAL-RULE APP: if this is wrong when ENFORCED, argocd can lose API/git egress and fail to self-heal the
+# fix. It stages under Cilium's global audit mode; validate its flows in Hubble before enforcing. Break-glass:
+# `kubectl delete ciliumnetworkpolicy -n argocd argocd`.
+apiVersion: cilium.io/v2
+kind: CiliumNetworkPolicy
+metadata:
+  name: argocd
+  namespace: {{ .Release.Namespace }}
+spec:
+  endpointSelector: {}          # every pod in the argocd namespace
+  ingress:
+    # UI/API via the merged Envoy edge -> argocd-server:80.
+    - fromEndpoints:
+        - matchLabels:
+            k8s:io.kubernetes.pod.namespace: envoy-gateway-system
+            app.kubernetes.io/managed-by: envoy-gateway
+      toPorts:
+        - ports:
+            - { port: "80", protocol: TCP }
+    # vmagent scrapes each component's metrics (server / repo-server / controller / applicationset).
+    - fromEndpoints:
+        - matchLabels:
+            k8s:io.kubernetes.pod.namespace: monitoring
+            app.kubernetes.io/name: vmagent
+      toPorts:
+        - ports:
+            - { port: "8083", protocol: TCP }
+            - { port: "8084", protocol: TCP }
+            - { port: "8082", protocol: TCP }
+            - { port: "8080", protocol: TCP }
+    # kubectl port-forward to argocd-server (break-glass; source is the node host).
+    - fromEntities: [host]
+      toPorts:
+        - ports:
+            - { port: "80", protocol: TCP }
+    # Component mesh within the argocd namespace (repo-server :8081, redis :6379, ...).
+    - fromEndpoints:
+        - {}
+  egress:
+    # DNS (CoreDNS).
+    - toEndpoints:
+        - matchLabels:
+            k8s:io.kubernetes.pod.namespace: kube-system
+            k8s-app: kube-dns
+      toPorts:
+        - ports:
+            - { port: "53", protocol: UDP }
+            - { port: "53", protocol: TCP }
+    # application-controller reconciles the cluster with cluster-admin.
+    - toEntities: [kube-apiserver]
+    # repo-server / applicationset clone from GitHub.
+    - toEntities: [world]
+      toPorts:
+        - ports:
+            - { port: "443", protocol: TCP }
+    # Component mesh within the argocd namespace.
+    - toEndpoints:
+        - {}

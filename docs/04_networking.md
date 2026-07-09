@@ -93,11 +93,29 @@ Hubble (flow visibility) is on in the chart values: `hubble.enabled`, `relay`, a
 
 ## Network policy
 
-The cluster is default-allow: there are no cluster-wide policies. East-west lockdown is opt-in per workload
-via `CiliumNetworkPolicy`, first exercised by the `sample-workload` (app + its CNPG Postgres) — see
-[10_sample_workload.md](10_sample_workload.md) for the app/DB policies, the reusable opt-in DB policy in the
-`pg-cluster` wrapper, and the audit-first rollout. CNP over vanilla `NetworkPolicy` buys the `kube-apiserver`
-entity (no hardcoded API-server IP) and Hubble policy-verdict visibility (`hubble observe --verdict DROPPED`).
+Lockdown is opt-in per component via `CiliumNetworkPolicy` (there is no cluster-wide default-deny). CNP over
+vanilla `NetworkPolicy` buys the `kube-apiserver` / `world` entities (no hardcoded IPs) and Hubble
+policy-verdict visibility (`hubble observe --verdict DROPPED`). Two places carry policies:
+
+- **Workloads** — the `sample-workload` (app + its CNPG Postgres); see [10_sample_workload.md](10_sample_workload.md)
+  for the app/DB policies and the reusable DB policy baked into the `pg-cluster` wrapper.
+- **Platform (Tier 1 + 2)** — the secret-holders `sealed-secrets` / `cert-manager` / `argocd` (namespace-wide
+  default-deny) and the monitoring data stores `vmsingle` / `vlsingle` / `grafana` (pod-scoped, since `vmagent`
+  shares the `monitoring` namespace and scrapes the whole cluster, so it must stay unrestricted). Each is a
+  full, explicit `CiliumNetworkPolicy` written out in that chart's `templates/networkpolicy.yaml` — no shared
+  library or render abstraction; the policy reads as the resource it is. External egress (argocd→GitHub,
+  cert-manager→ACME, grafana→SMTP) is `toEntities: [world]` on the specific port, not `toFQDNs` — no DNS-proxy
+  dependency. Peer selectors (CoreDNS `k8s-app: kube-dns`, vmagent, the Envoy edge, the stores) are repeated
+  verbatim across the manifests; if a platform component is relabeled, grep and update each.
+
+  **Deliberately NOT policed** (documented so it's a decision, not an omission): the Envoy data-plane
+  (`mergeGateways` → egress fans out to every backend), `vmagent` (scrapes everything), `metrics-server` and
+  `nic-keeper` (kube-system / host-network), `longhorn` (node-to-node replication mesh), `vm-operator` /
+  `local-path-provisioner` (tiny apiserver-only surface), and `03_gateway` / `google-sso` (no or thin pods).
+  `kube-system` and Cilium itself are left alone — policing them risks cutting the cluster off its own network.
+
+Rollout is audit-first: with Cilium's global `policyAuditMode` on (see `00_cilium`), every policy stages as
+log-only (`hubble observe --verdict AUDIT`) until validated, then enforced by turning audit off.
 
 ## Caveats
 

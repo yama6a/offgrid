@@ -1,0 +1,45 @@
+# Namespace-wide default-deny for cert-manager (holds the ACME account key + every issued TLS private key).
+# See 04_networking.md / 07_ingress.md.
+apiVersion: cilium.io/v2
+kind: CiliumNetworkPolicy
+metadata:
+  name: cert-manager
+  namespace: {{ .Release.Namespace }}
+spec:
+  endpointSelector: {}          # controller + webhook + cainjector
+  ingress:
+    # vmagent scrapes metrics (all three pods expose :9402).
+    - fromEndpoints:
+        - matchLabels:
+            k8s:io.kubernetes.pod.namespace: monitoring
+            app.kubernetes.io/name: vmagent
+      toPorts:
+        - ports:
+            - { port: "9402", protocol: TCP }
+    # kube-apiserver calls the admission webhook (cert-manager-webhook Service :443).
+    - fromEntities: [kube-apiserver]
+      toPorts:
+        - ports:
+            - { port: "443", protocol: TCP }
+  egress:
+    # DNS (CoreDNS).
+    - toEndpoints:
+        - matchLabels:
+            k8s:io.kubernetes.pod.namespace: kube-system
+            k8s-app: kube-dns
+      toPorts:
+        - ports:
+            - { port: "53", protocol: UDP }
+            - { port: "53", protocol: TCP }
+    # Certificate/Order/Secret + HTTP-01 HTTPRoutes.
+    - toEntities: [kube-apiserver]
+    # Let's Encrypt ACME.
+    - toEntities: [world]
+      toPorts:
+        - ports:
+            - { port: "443", protocol: TCP }
+    # HTTP-01 self-check to the challenge URL via the gateway.
+    - toEntities: [world]
+      toPorts:
+        - ports:
+            - { port: "80", protocol: TCP }
