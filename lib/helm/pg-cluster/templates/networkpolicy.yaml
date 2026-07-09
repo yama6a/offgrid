@@ -36,11 +36,13 @@ spec:
         - ports:
             - { port: "5432", protocol: TCP }
     {{- end }}
-    # (b) Streaming replication between the instances (primary <-> replica).
+    # (b) Intra-cluster 5432: streaming replication (instance<->instance) AND bootstrap/join Job pods
+    # (pg_basebackup, e.g. sample-workload-db-2-join). Matched by cnpg.io/cluster ALONE — deliberately not
+    # podRole:instance, because CNPG's join/initdb pods carry cnpg.io/jobRole (not podRole), and a replica can't
+    # bootstrap without pg_basebackup'ing the primary. All same-cluster pods are trusted DB components.
     - fromEndpoints:
         - matchLabels:
             cnpg.io/cluster: {{ $cluster }}
-            cnpg.io/podRole: instance
       toPorts:
         - ports:
             - { port: "5432", protocol: TCP }
@@ -77,11 +79,10 @@ spec:
             - { port: "53", protocol: TCP }
     # (g) The instance-manager watches its own Cluster CR / reports status via the API server.
     - toEntities: [kube-apiserver]
-    # (h) Streaming replication egress to the peer instance.
+    # (h) Intra-cluster 5432 egress: replication + bootstrap/join to any same-cluster pod (symmetric with (b)).
     - toEndpoints:
         - matchLabels:
             cnpg.io/cluster: {{ $cluster }}
-            cnpg.io/podRole: instance
       toPorts:
         - ports:
             - { port: "5432", protocol: TCP }
