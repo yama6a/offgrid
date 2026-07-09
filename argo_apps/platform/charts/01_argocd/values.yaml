@@ -51,6 +51,13 @@ argo-cd:
       # login. Redundant now that anonymous is admin, and removes a credential that could leak/brute-force.
       # Recover (if you ever turn anonymous off too) with: kubectl -n argocd edit cm argocd-cm.
       admin.enabled: "false"
+      # Reconcile churn: activate the chart's shipped ignoreResourceUpdates rules (the `.all` rule ignores
+      # /status, so status-only updates on watched resources don't trigger a reconcile). v3.x defaults this
+      # ON, but we pin it so a chart bump can't silently flip it. NB this is a MINOR lever on THIS cluster:
+      # measured ~95% of application-controller reconciles come from the fast `timeout.reconciliation: 10s`
+      # poll above, not from watch-event churn (Longhorn/Node/VM-scrapes were <5%). Relaxing that poll (or
+      # adding a git webhook) is the real CPU lever, deliberately not taken to keep ~10s git-sync latency.
+      resource.ignoreResourceUpdatesEnabled: "true"
     # RBAC: give every request (i.e. the anonymous user above) full admin. No per-user roles — there are no
     # ArgoCD users, Google SSO already gated who can reach this at the edge.
     rbac:
