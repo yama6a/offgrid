@@ -73,6 +73,10 @@ install-cilium: ## 04: install/upgrade the Cilium CNI (+ monitoring CRDs, LB-IPA
 install-argocd: ## 05: bootstrap ArgoCD; it then delivers the whole platform from git.
 	bash lib/shell/05_argocd.sh
 
+.PHONY: configure-argocd-webhook
+configure-argocd-webhook: ## 08: generate+seal the ArgoCD GitHub webhook secret (-> secrets/) + set poll cadence from .env.
+	bash lib/shell/08_argocd_webhook.sh
+
 .PHONY: configure-gateway
 configure-gateway: ## 07: write LE_EMAIL/BASE_DOMAIN into the gateway chart values.
 	bash lib/shell/07_gateway.sh

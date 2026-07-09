@@ -111,8 +111,9 @@ The 2-replica components carry `global.topologySpreadConstraints` (`maxSkew 1`, 
 ## Git auth
 
 This repo is public, so ArgoCD clones it anonymously over HTTPS, no credential needed by default. Anonymous
-`git ls-remote` is git smart-HTTP, not the REST API, so the 10s poll stays well under GitHub's limits (rationale
-in `argo_apps/platform/charts/01_argocd/values.yaml`).
+`git ls-remote` is git smart-HTTP, not the REST API, so even the fast-poll setting stays well under GitHub's
+limits — but sync is webhook-driven now and the poll is only a slow fallback (see
+[Webhook-driven sync](#webhook-driven-sync-and-the-poll-fallback) below).
 
 For a private repo (or to lift the anonymous rate limit), `05_argocd.sh` seeds a credential: at hand-off it reads
 `ARGOCD_GITHUB_PAT_SECRET` (a fine-grained, read-only, single-repo PAT) from the gitignored `.env` — leave it empty for a
@@ -138,6 +139,56 @@ directly, and sealed-secrets is reserved for app/cluster secrets later (GitOps-m
 mirroring the repo credential for rebuild DR. Least privilege: single-repo, `Contents: Read-only`; rotate by
 re-running with a new token. A GitHub App is the upgrade path if you outgrow a PAT.
 
+## Webhook-driven sync (and the poll fallback)
+
+ArgoCD detects new commits one of two ways: it **polls** git on `timeout.reconciliation`, or a git **webhook**
+pushes it a `POST /api/webhook` on every push (refreshes in seconds instead of waiting out the poll). We run
+webhook-driven, with the poll demoted to a slow safety net.
+
+- **Poll = slow fallback, toggled from `.env`.** `POLL_SYNC_ENABLED` in `.env` drives
+  `timeout.reconciliation`: `false` (default) → `3600s` (a 1 h net for a dropped webhook), `true` → `60s` (fast
+  poll). `08_argocd_webhook.sh` writes it into `01_argocd/values.yaml` — that file is the single source ArgoCD
+  reads, so don't hand-edit `timeout.reconciliation`, flip the `.env` knob and re-run the script. We deliberately
+  don't use `0s` (fully off): a lost webhook would then never recover, and `0s` also needs
+  `ARGOCD_DEFAULT_CACHE_EXPIRATION` tuned.
+- **The webhook secret is generated, not configured.** `08_argocd_webhook.sh` mints a random shared secret,
+  writes the plaintext to `secrets/argocd-github-webhook-secret.txt` (the gitignored off-repo store — paste it
+  into GitHub) and seals it into `argocd-secret`'s `webhook.github.secret` key. Re-running reuses the stored value
+  (idempotent), so the secret you configured in GitHub keeps working; delete the file to rotate.
+- **`createSecret: false` + a *merged* sealed `argocd-secret`.** ArgoCD reads `webhook.github.secret` only from
+  the Secret named `argocd-secret`. We set `configs.secret.createSecret: false` so the chart doesn't own that
+  Secret (otherwise ArgoCD self-heal would fight the key we merge in). But `argocd-server` auto-creates
+  `argocd-secret` (with its own `server.secretkey`) during the wave-1 bootstrap, *before* the wave-2
+  sealed-secrets controller exists — and the controller refuses to overwrite a Secret it didn't create. So we seal
+  in **patch mode** (`sealedsecrets.bitnami.com/patch: "true"`): it *merges* `webhook.github.secret` in and leaves
+  `server.secretkey` intact. Patch mode only works if the **live** Secret already carries that annotation (the
+  controller checks the existing object, not the SealedSecret template), so `05_argocd.sh` annotates the live
+  `argocd-secret` right after ArgoCD rolls out — in both bootstrap and rebuild.
+- **Bootstrap nudge.** With the poll demoted to 3600s and no GitHub webhook yet (it needs public DNS + the prod
+  cert), `DANGEROUS_bootstrap_cluster.sh` hard-refreshes every Application after its final push so the re-sealed
+  secrets apply immediately instead of after the fallback. On a live cluster, refresh the `argocd` app (or wait
+  out the fallback) after pushing.
+
+Set up the GitHub webhook (once, after the cluster is reachable on its prod cert):
+
+```text
+# 1) Seal the secret + set the poll cadence (writes secrets/argocd-github-webhook-secret.txt):
+make configure-argocd-webhook          # == lib/shell/08_argocd_webhook.sh
+git add -A && git commit -m "argocd: github webhook sync" && git push
+
+# 2) GitHub repo -> Settings -> Webhooks -> Add webhook:
+#      Payload URL      : https://argocd.<domain>/api/webhook
+#      Content type     : application/json
+#      Secret           : the contents of secrets/argocd-github-webhook-secret.txt
+#      SSL verification : ENABLED   (needs the letsencrypt-PROD cert on argocd.<domain>)
+#      Events           : Just the push event
+# 3) Push a trivial commit and watch it refresh in seconds:
+kubectl -n argocd get applications -w
+```
+
+The `/api/webhook` path reaches ArgoCD **without** passing Google SSO — that bypass, and why it's safe, is in
+[07_ingress.md](07_ingress.md#bypassing-sso-for-a-path-the-argocd-webhook) and the Exposure note below.
+
 ## Exposure: the ArgoCD UI behind Google SSO
 
 The bootstrap reaches the UI over port-forward (above). For day-to-day access the UI is exposed through
@@ -147,7 +198,9 @@ login is turned off — the anonymous user is admin and the local admin account 
 (`argo_apps/platform/charts/01_argocd/values.yaml`, `configs.cm`/`rbac`), no Dex/OIDC — so whoever clears
 Google lands straight in as admin (one login, not two). The SSO gate is the only auth boundary in front of
 the UI, which is why it must be the sole path: the port-forward break-glass below now also lands in as
-admin with no login.
+admin with no login. The **one** deliberate exception is `POST /api/webhook` (the git webhook), which is
+served by a separate ungated route (see below) — it carries no session and is authenticated instead by the
+GitHub HMAC signature ArgoCD checks against `webhook.github.secret`, so it can't reach the UI/API.
 
 Delivered purely by ArgoCD as one host of the consolidated platform-ingress app (sync-wave 8, app
 `argo_apps/platform/apps/08_platform_ingress.yaml`, chart `argo_apps/platform/charts/08_platform_ingress/`):
@@ -169,8 +222,14 @@ Decisions worth keeping:
 - **Break-glass = port-forward.** The Google gate blocks the `argocd` CLI, which speaks gRPC and can't run
   the browser OIDC flow. Keep using `kubectl -n argocd port-forward svc/argocd-server 8080:80` for the CLI
   — it also bypasses the Gateway and the SSO gate entirely, so a broken route/policy never locks you out.
-- **Staging → prod cert.** The chart issues a `letsencrypt-staging` cert first (browser warning); flip
-  `issuer` to `letsencrypt-prod` once the host validates, since the UI is browser-facing.
+- **`/api/webhook` bypasses SSO by design.** A second `HTTPRoute` (`argocd-example-com-webhook`, in
+  `08_platform_ingress/templates/argocd-webhook-route.yaml`) matches only the Exact path `/api/webhook` on the
+  same host/Gateway and — because the `04_google_sso` `SecurityPolicy` targets routes by exact *name* — is never
+  gated. Safe because ArgoCD verifies the GitHub HMAC on that path; the Exact match means nothing else escapes SSO
+  (critical, since anonymous is admin). Details in [07_ingress.md](07_ingress.md#bypassing-sso-for-a-path-the-argocd-webhook).
+- **On the prod cert.** The whole platform ingress now issues `letsencrypt-prod` (not staging): GitHub's webhook
+  SSL verification against `argocd.<domain>` needs a publicly-trusted cert. Mind the prod ACME rate limits when
+  re-issuing.
 
 Self-management caveat: ArgoCD manages the app that exposes ArgoCD, so a bad push is reverted by selfHeal
 and port-forward is the escape hatch if you ever wedge it.

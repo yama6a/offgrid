@@ -99,6 +99,24 @@ kubectl -n "$NS" rollout status deploy/argocd-repo-server --timeout=180s >/dev/n
 kubectl -n "$NS" rollout status deploy/argocd-server --timeout=180s >/dev/null 2>&1 \
   && ok "server ready" || bad "server ready"
 
+# === 3b. let the sealed GitHub-webhook secret merge into argocd-secret =========
+# The chart is configured createSecret:false (01_argocd/values.yaml), so argocd-server auto-creates
+# argocd-secret (with its own server.secretkey) here — BEFORE the wave-2 sealed-secrets controller exists.
+# 08_argocd_webhook.sh ships a sealed argocd-secret that MERGES webhook.github.secret in (patch-mode), but
+# the controller refuses to touch a Secret it didn't create unless that LIVE Secret is annotated
+# patch-managed (it checks the annotation on the existing Secret, not on the SealedSecret template). So mark
+# it here. Idempotent, and runs in BOTH bootstrap and rebuild (rebuild doesn't run 08). Patch-mode = merge,
+# so server.secretkey is preserved. See 05_gitops.md (Webhook-driven sync).
+say "marking argocd-secret patch-managed (so the sealed webhook secret can merge in)"
+for _ in $(seq 1 30); do kubectl -n "$NS" get secret argocd-secret >/dev/null 2>&1 && break; sleep 2; done
+if kubectl -n "$NS" get secret argocd-secret >/dev/null 2>&1; then
+  kubectl -n "$NS" annotate secret argocd-secret sealedsecrets.bitnami.com/patch=true --overwrite >/dev/null 2>&1 \
+    && ok "argocd-secret annotated sealedsecrets.bitnami.com/patch=true" \
+    || bad "could not annotate argocd-secret (annotate it by hand so the webhook secret merges)"
+else
+  warn "argocd-secret not present yet; annotate it later (kubectl -n ${NS} annotate secret argocd-secret sealedsecrets.bitnami.com/patch=true) so the sealed webhook secret merges"
+fi
+
 # === 4. hand off to GitOps ===================================================
 # ArgoCD reads from GIT, not local disk. The root app (and the argocd self-app) point at paths
 # under argo_apps/ in the PUBLIC repo, they must be committed AND pushed first, or the apps show

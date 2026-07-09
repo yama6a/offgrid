@@ -234,6 +234,30 @@ so it attaches to routes created by *any* chart. To protect a host: add it here 
 exists wherever its ingress lives). A host not listed stays open. `sample-workload.example.com` is the open
 control (not listed); `sample-workload-sso.example.com` is listed → gated.
 
+### Bypassing SSO for a path (the ArgoCD webhook)
+
+Because the policy attaches **by route name**, the same trick that leaves a whole host open also leaves a single
+*path* open: give it its own `HTTPRoute` with a name the policy doesn't target. That's how the ArgoCD GitHub
+webhook works. `08_platform_ingress/templates/argocd-webhook-route.yaml` renders a second route on the argocd
+host — same Gateway/listener, but named `argocd-<domain>-webhook` (not `argocd-<domain>`) and matching only the
+Exact path `/api/webhook`:
+
+```
+argocd.D/               -> route argocd-D          (targeted by sso-D)      -> Google SSO gate
+argocd.D/api/webhook    -> route argocd-D-webhook  (NOT in sso-D targetRefs) -> straight to argocd-server
+```
+
+Gateway API prefers the more-specific path, so `/api/webhook` lands on the ungated route and everything else on
+the gated one. Safe because ArgoCD authenticates that path itself via the GitHub HMAC signature
+(`webhook.github.secret`), and the match is `type: Exact` so **only** the webhook endpoint escapes SSO — never
+the rest of the admin API (which matters here: ArgoCD's anonymous user is admin). No `ReferenceGrant` is added:
+the library's existing `gateway-routes-to-argocd-<domain>` grant already allows any route in `gateway` →
+`argocd-server`. Setup + the secret live in [05_gitops.md](05_gitops.md#webhook-driven-sync-and-the-poll-fallback).
+
+> The whole platform ingress (`08_platform_ingress`) is on `letsencrypt-prod`, not staging, precisely so GitHub's
+> webhook SSL verification trusts `argocd.<domain>`. (The `google-sso.<domain>` callback edge below is separate
+> and still follows its own `issuer`.)
+
 ### Adding a host / domain
 
 | You add | Google Console | Cluster |

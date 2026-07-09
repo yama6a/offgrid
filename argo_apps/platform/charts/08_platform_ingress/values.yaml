@@ -3,7 +3,7 @@ ingress-edge:
   ingresses:
     - name: platform
       domain: example.com
-      issuer: letsencrypt-staging # todo: switch to letsencrypt-prod once testing is done.
+      issuer: letsencrypt-prod # prod (publicly-trusted) cert: GitHub's webhook SSL verification must trust argocd.<domain>. See 07_ingress.md.
       hosts:
         - subdomain: argocd
           targetNamespace: argocd

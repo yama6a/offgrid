@@ -22,24 +22,31 @@ argo-cd:
       - maxSkew: 1
         topologyKey: kubernetes.io/hostname
         whenUnsatisfiable: DoNotSchedule
-
   # --- trim the footprint --------------------------------------------------------------------
   dex:
-    enabled: false                 # no SSO, drop the dex pod
+    enabled: false # no SSO, drop the dex pod
   notifications:
-    enabled: false                 # no notifications controller yet, drop the pod
+    enabled: false # no notifications controller yet, drop the pod
   redis-ha:
-    enabled: false                 # single redis (the default); it's only a cache, self-heals on restart
-
+    enabled: false # single redis (the default); it's only a cache, self-heals on restart
   # --- UI/API served plain HTTP so `kubectl port-forward` is simple (no ingress/LB yet) -------
   # Flip to false (and front it with a Gateway/LoadBalancer) when the UI gets real ingress.
   configs:
     params:
       server.insecure: true
-    # Fast 10s poll (no webhook). Safe on GitHub: one shared repoURL dedupes to ~1 ls-remote per
-    # poll regardless of app count, and ls-remote isn't on the REST rate limit. See 05_gitops.md.
+    # Don't let the chart create argocd-secret: we ship the GitHub webhook.github.secret into it out of
+    # band as a sealed Secret that MERGES in (08_argocd_webhook.sh, patch-mode; 05_argocd.sh marks the
+    # argocd-server-created argocd-secret patch-managed so the merge is allowed). If the chart also owned
+    # argocd-secret, ArgoCD self-heal would fight the merged-in webhook key. See 05_gitops.md (Webhook sync).
+    secret:
+      createSecret: false
+    # Webhook-driven sync: git pushes hit /api/webhook (the ungated bypass route in 08_platform_ingress),
+    # so the git poll is just a slow SAFETY NET (3600s) — the webhook does the fast sync. Toggle via
+    # POLL_SYNC_ENABLED in .env + re-run 08_argocd_webhook.sh: false=3600s (default) / true=60s. NB do NOT
+    # hand-edit timeout.reconciliation here — that script owns it (single source of truth = .env). A missed
+    # webhook still reconciles within the hour; we deliberately don't set 0s (no net). See 05_gitops.md.
     cm:
-      timeout.reconciliation: 10s
+      timeout.reconciliation: 3600s
       timeout.reconciliation.jitter: 2s
       # No ArgoCD login screen: the anonymous user is auto-authenticated and (via rbac below) is admin, so
       # whoever clears the Google SSO edge lands straight in. SAFE ONLY because the Google SSO SecurityPolicy
@@ -54,15 +61,14 @@ argo-cd:
       # Reconcile churn: activate the chart's shipped ignoreResourceUpdates rules (the `.all` rule ignores
       # /status, so status-only updates on watched resources don't trigger a reconcile). v3.x defaults this
       # ON, but we pin it so a chart bump can't silently flip it. NB this is a MINOR lever on THIS cluster:
-      # measured ~95% of application-controller reconciles come from the fast `timeout.reconciliation: 10s`
-      # poll above, not from watch-event churn (Longhorn/Node/VM-scrapes were <5%). Relaxing that poll (or
-      # adding a git webhook) is the real CPU lever, deliberately not taken to keep ~10s git-sync latency.
+      # measured ~95% of application-controller reconciles used to come from the fast git poll (now a slow
+      # 3600s fallback, see timeout.reconciliation above), not from watch-event churn (Longhorn/Node/VM-scrapes
+      # were <5%). With the poll relaxed + webhook-driven sync, watch-event churn is what's left, so this rule still earns its keep.
       resource.ignoreResourceUpdatesEnabled: "true"
     # RBAC: give every request (i.e. the anonymous user above) full admin. No per-user roles — there are no
     # ArgoCD users, Google SSO already gated who can reach this at the edge.
     rbac:
       policy.default: role:admin
-
   # --- Prometheus metrics: per-component metrics Service + ServiceMonitor. Discovered cluster-wide
   # via the stack's serviceMonitorSelectorNilUsesHelmValues:false. CRDs exist from wave 0, before this
   # wave-1 app. See 15_monitoring.md.
@@ -74,9 +80,8 @@ argo-cd:
       serviceMonitor:
         enabled: true
     resources:
-      requests: { cpu: 100m, memory: 512Mi }
-      limits:   { memory: 4Gi }
-
+      requests: {cpu: 100m, memory: 512Mi}
+      limits: {memory: 4Gi}
   # --- manifest generation: 2 replicas on 2 nodes + PDB (stays up across a node drain) -------
   repoServer:
     replicas: 2
@@ -88,9 +93,8 @@ argo-cd:
       enabled: true
       minAvailable: 1
     resources:
-      requests: { cpu: 50m, memory: 128Mi }
-      limits:   { memory: 1Gi }
-
+      requests: {cpu: 50m, memory: 128Mi}
+      limits: {memory: 1Gi}
   # --- API/UI: 2 replicas on 2 nodes + PDB ---------------------------------------------------
   server:
     replicas: 2
@@ -102,9 +106,8 @@ argo-cd:
       enabled: true
       minAvailable: 1
     resources:
-      requests: { cpu: 50m, memory: 128Mi }
-      limits:   { memory: 1Gi }
-
+      requests: {cpu: 50m, memory: 128Mi}
+      limits: {memory: 1Gi}
   # --- ApplicationSet controller: leader-elected; 2 replicas for fast failover ---------------
   # (drop to 1 if RAM gets tight once Longhorn + monitoring land.)
   applicationSet:
@@ -114,5 +117,5 @@ argo-cd:
       serviceMonitor:
         enabled: true
     resources:
-      requests: { cpu: 50m, memory: 128Mi }
-      limits:   { memory: 1Gi }
+      requests: {cpu: 50m, memory: 128Mi}
+      limits: {memory: 1Gi}

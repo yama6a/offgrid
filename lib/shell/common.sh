@@ -51,6 +51,8 @@ source "$ENV_FILE"
 : "${SMTP_GOOGLE_APP_PASSWORD_SECRET:=}"  # 09 seals it for Grafana email
 : "${GOOGLE_SSO_CLIENT_ID:=}"      # 07 writes into the google-sso values
 : "${GOOGLE_SSO_CLIENT_SECRET:=}"  # 07 seals it for Envoy Gateway OIDC
+# Not a secret, but defaulted here for the same reason (an older .env missing the key must not trip set -u).
+: "${POLL_SYNC_ENABLED:=false}"    # 08 patches timeout.reconciliation from this (false=3600s fallback / true=60s)
 
 # ---- derived config (computed from the .env scalars; not user-editable) ---------------------------
 # These can't live in a flat .env (arrays, interpolation, a shasum-keyed path), so they're computed here.
