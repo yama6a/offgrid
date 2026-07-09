@@ -107,6 +107,18 @@ talosctl: ## Run dockerized talosctl with args, e.g. `make talosctl get members`
 print-kubeconfig: ## Print the 03d kubeconfig export line (eval it to point your kubectl at the cluster).
 	@bash -c 'source lib/shell/common.sh && echo "export KUBECONFIG=$$CLUSTER_DIR/kubeconfig"'
 
+.PHONY: krr
+krr: ## Rightsizing: dockerized KRR vs vmsingle (port-forward); prints request->recommended per workload (table).
+	bash lib/shell/krr.sh
+
+.PHONY: krr-json
+krr-json: ## Rightsizing: same as `krr` but emits JSON.
+	bash lib/shell/krr.sh -f json
+
+.PHONY: krr-yaml
+krr-yaml: ## Rightsizing: same as `krr` but emits YAML.
+	bash lib/shell/krr.sh -f yaml
+
 # Words after `make talosctl ...` (get, members, services, ...) are extra goals to Make; this no-op catch-all
 # swallows them so they're passed to talosctl instead of erroring. Explicit targets above still take priority,
 # so a mistyped real target quietly no-ops rather than erroring — the one cost of positional passthrough args.

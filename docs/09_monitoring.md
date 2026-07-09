@@ -145,3 +145,74 @@ kubectl top pods -A
 ```
 A TLS error from `kubectl top` despite `--kubelet-insecure-tls` is the signal to move to the secure path,
 not to debug the flag.
+
+## Rightsizing (KRR)
+
+Two halves to catching over-/undersized containers, and the stack already provides one: **continuous
+visualization** is the Grafana `k8s_views_pods` dashboard (usage vs requests, always on). What it doesn't give
+is a concrete number to set. [KRR](https://github.com/robusta-dev/krr) (Robusta Kubernetes Resource
+Recommender) fills that gap: it reads usage history from the metrics store and prints, per workload, the
+current request next to a recommended one for CPU and memory. Run it on demand: `make krr` (table),
+`make krr-json`, or `make krr-yaml`. The script passes `"$@"` straight to KRR, so for any other flag (e.g.
+`-n <ns>` to scope) run it directly: `bash lib/shell/krr.sh -n <ns>`. It runs our custom **`conservative`**
+strategy by default (see below); the upstream `simple`/`simple-limit` still work
+(`bash lib/shell/krr.sh` with `KRR_STRATEGY` edited, or `--help` on either).
+
+### Why on-demand, not automated
+At 3-node homelab scale — a handful of workloads, one operator — a weekly in-cluster CronJob + a report store
++ a dedicated Robusta UI is overkill. `make krr` is the right-sized answer: run it when you want to retune,
+read the table, hand-edit the relevant chart `values.yaml`. It matches the repo's existing tooling
+conventions — KRR runs **dockerized** (like `talosctl()`), reaching the metrics store over the same
+documented break-glass port-forward (`kubectl -n monitoring port-forward svc/vmsingle-... 8428:8428`) that
+`07_victoria_metrics_k8s_stack` already advertises, and the kube API via the 03d kubeconfig. Reuses
+`MONITORING_NS`; adds no cluster workload, no ArgoCD app, no SSO host.
+
+### The `conservative` strategy (custom, RAM-frugal)
+`lib/krr/conservative.py` is a custom KRR strategy for this cluster's scarce RAM (3x 8GB). The built-in
+`simple` sets memory `request == limit == peak + buffer`; but `request` is what the scheduler **reserves**, so
+requesting the peak permanently books rarely-used memory and tanks pod density. `conservative` splits them:
+
+- **memory request = max(average working-set, 16Mi)** — scheduler packs on typical use, not peak; the 16Mi
+  floor (`--memory-request-min`) reflects the idle working set so the scheduler doesn't overcommit,
+- **memory limit = max(peak × 1.2, 32Mi)** (`--memory_limit_buffer_percentage` + `--memory-limit-min`), raised
+  further to the **OOMKilled limit + 25%** for any workload OOMKilled during the window (`--use-oomkill-data`,
+  on by default — an OOMKill proves the ceiling was too low; the bump lands on the limit, not the request),
+- **CPU unchanged** from `simple` (request = 95th percentile, no limit — CPU is compressible).
+
+The two memory floors are **asymmetric** (request 16Mi < limit 32Mi), which KRR's single `--mem-min` can't
+express — it floors request and limit to the *same* value. So the floors live inside the strategy
+(`lib/krr/conservative.py`) and `krr.sh` runs with `--mem-min 0` to hand floor control to it. Rationale for
+splitting them: the *request* floor is a scheduling concern (reserve ~the idle footprint; too low → node
+overcommit + eviction-prone), while the *limit* floor is the OOM-safety headroom (cold-start/GC spikes) — a
+low request never OOM-kills a pod, only the limit does. Both are knobs at the top of `krr.sh`
+(`KRR_REQ_MIN`, `KRR_LIM_MIN`).
+
+Deliberate trade-off: since requests no longer cover the peak, simultaneous peaks across pods can exhaust node
+RAM and trigger a kernel/node-pressure OOMKill even while each pod is under its own limit. That's the price of
+the density; keep a node eviction headroom and watch for OOMKills.
+
+It loads without rebuilding the image: `lib/shell/krr.sh` bind-mounts `conservative.py` into the image's
+`robusta_krr/strategies/` package plus a shadow `__init__.py` (`lib/krr/strategies_init.py`) that imports it,
+so KRR's `__subclasses__()` discovery registers it. Written against KRR **v1.28.0** internals — revisit both
+files on an image bump.
+
+### Metrics dependency
+`conservative` reads `container_cpu_usage_seconds_total` and `container_memory_working_set_bytes` (the latter
+via both `max_over_time` and `avg_over_time`), plus — for the OOMKill floor — `kube_pod_container_resource_limits`
+and `kube_pod_container_status_last_terminated_reason`. All four are **kept** by vmagent's `metricRelabelConfigs`
+drop list (the drops are otherwise aggressive), so `--use-oomkill-data` has data on this cluster. VictoriaMetrics
+speaks the Prometheus query API, so the queries run unchanged. If a future drop-list change removes the OOM
+series the flag degrades gracefully (that loader has `warning_on_no_data = False`), just stops bumping limits.
+
+### Docker networking note
+The script runs KRR on the **default bridge network** (not `--network host`) pointing at
+`http://host.docker.internal:<port>`: on Docker Desktop/macOS a host-network container can't see the
+host-side port-forward, whereas the bridge reaches it via `host.docker.internal`; the kube API VIP is a LAN
+IP reachable from the bridge via NAT.
+
+### Verify
+```bash
+make krr    # prints a KRR table: workload | cpu request->recommended | mem request->recommended
+# Expect no "metric not found" / connection-refused errors. Spot-check one row against the
+# k8s_views_pods Grafana dashboard — measured usage should sit near KRR's recommended request.
+```
