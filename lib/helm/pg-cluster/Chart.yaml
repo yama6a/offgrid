@@ -17,9 +17,10 @@ description: >-
     - "Hardcoded" values below are SOFT: fixed defaults a consumer *could* still override but shouldn't.
     - Consumers gain one nesting level (pg-cluster.cluster.cluster.*), offset by a far shorter values file.
   Required fields aren't left to the upstream default; a validation-only template (templates/validate.yaml)
-  fails the render with a clear message if type/instances/resources are unset. Consumed via a file://
-  dependency; see argo_apps/workloads/charts/sample_workload. Cluster/services are named off the release
-  (`<release>-cluster-rw`, `<release>-cluster-app`), unaffected by this wrapper. See 10_sample_workload.md.
+  fails the render with a clear message if fullnameOverride/type/instances/resources are unset. Consumed via a
+  file:// dependency; see argo_apps/workloads/charts/sample_workload. The Cluster + its services/secret are named
+  off the REQUIRED `cluster.fullnameOverride` (e.g. `<name>-rw`, `<name>-app`) — an explicit name you set, not
+  the release name, so a workload can alias this wrapper for multiple DBs. See 10_sample_workload.md.
 type: application
 version: 0.1.0                 # this wrapper chart's own version
 

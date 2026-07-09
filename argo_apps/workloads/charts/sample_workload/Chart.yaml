@@ -1,32 +1,27 @@
 apiVersion: v2
 name: sample-workload
 description: >-
-  The cluster's end-to-end sample workload, merges the old gateway-test demo and the cnpg-cluster
-  Postgres into ONE chart. Ships a sample app (ghcr.io/yama6a/pi5-k8s-sample-app) wired to its own
-  CloudNativePG Postgres (the `app` role's password injected as PG_PASSWORD from the operator-generated
-  `<release>-cluster-app` Secret), exposed on two hosts that exercise the ingress end to end:
-  sample-workload.example.com (OPEN, the unprotected control) and sample-workload-sso.example.com
-  (PROTECTED by this workload's OWN Google-SSO allowlist). The whole edge (per-host Gateway + :443
-  listener + Certificate + HTTPRoute + ReferenceGrant, plus the SSO ingress's own SecurityPolicy) is
-  rendered by the shared ingress-edge library (a file:// dependency) from the `ingress-edge:` block in
-  values.yaml, so this workload carries its own allowlist independent of the platform ingress. The app +
-  its Postgres Cluster (+ the generated password Secret) live in the `sample-workload` namespace; each
-  host's Gateway is merged onto the one Envoy via mergeGateways, in the `gateway` namespace, reaching the
-  app cross-namespace via a ReferenceGrant.
-  Gets its Postgres from the shared pg-cluster wrapper (a file:// dependency): the CNPG Cluster CR on the
-  node-local `local-path` class (platform app 02_local_path_provisioner), reconciled by the CNPG operator
-  (platform app 02_cnpg_operator). The workload only sets pg-cluster's REQUIRED knobs (type/instances/
-  resources) in values.yaml; storage, affinity, monitoring, initdb and backups are pre-baked in the wrapper.
-  A WORKLOAD: delivered purely by ArgoCD via argo_apps/workloads/apps/sample_workload.yaml, no sync-wave;
-  the workloads tree is only created after the whole platform (operator CRDs + local-path class + Gateway +
-  SSO policies) is Healthy. See 10_sample_workload.md, 08_storage.md.
+  A sample workload that exercises the platform's ingress end to end, with its own Postgres and Google-SSO
+  allowlist.
 type: application
 version: 0.1.0                 # this wrapper chart's own version
 
 dependencies:
+  # version: "*" for every file:// dep — the path IS the source, so the version is just a required constraint
+  # Helm insists on, not a selector; an exact pin would only force a bump here each time the local chart's
+  # version changes, for no benefit. (Remote pins like cnpg/cluster inside pg-cluster stay exact.)
+  #
+  # Two Postgres instances, each an ALIASED instance of the shared pg-cluster wrapper. Helm renders a dependency
+  # once, so N databases == N aliases; each alias is a values key (maindb/analyticsdb) and carries its own
+  # explicit cluster.fullnameOverride. Add another alias block to add another DB.
   - name: pg-cluster
-    version: "0.1.0"          # shared CNPG wrapper (pins cnpg/cluster); renders this workload's Postgres from values below
+    alias: maindb
+    version: "*"
+    repository: "file://../../../../lib/helm/pg-cluster"
+  - name: pg-cluster
+    alias: analyticsdb
+    version: "*"
     repository: "file://../../../../lib/helm/pg-cluster"
   - name: ingress-edge
-    version: "0.1.0"          # shared edge library; renders this workload's ingress from values below
+    version: "*"              # shared edge library; renders this workload's ingress from values below
     repository: "file://../../../../lib/helm/ingress-edge"

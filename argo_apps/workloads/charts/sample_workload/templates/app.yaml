@@ -1,7 +1,7 @@
 # The sample app, a single Deployment + Service in this chart's release namespace (sample-workload),
-# alongside the CNPG Cluster and its operator-generated password Secret. PG_PASSWORD is injected from
-# that Secret (`<release>-cluster-app`, key `password`) so the app can connect to its Postgres. Both
-# ingress hosts (open + SSO) route to this one Service. See 10_sample_workload.md.
+# alongside its two CNPG Postgres instances. PG_PASSWORD is injected from the primary DB's operator-generated
+# owner Secret (`<app.db>-app`, key `password`) so the app can connect. Both ingress hosts (open + SSO) route to
+# this one Service. See 10_sample_workload.md.
 apiVersion: apps/v1
 kind: Deployment
 metadata:
@@ -29,14 +29,14 @@ spec:
             # Make the chart's `app.port` authoritative (the app honours PORT; defaults to 8080).
             - name: PORT
               value: {{ .Values.app.port | quote }}
-            # Postgres connection, fed to the app's DSNFromEnv() as discrete PG_* parts (it assembles +
-            # escapes the DSN itself, safer than passing a pre-built URL with the raw password). Points at
-            # THIS chart's CNPG cluster: the `<release>-cluster-rw` read-write Service in this namespace.
-            # User/database are `app`/`app` — pre-baked (hardcoded) in the pg-cluster wrapper's initdb, so
-            # they're literals here (a subchart default isn't visible at this chart's scope). PG_PASSWORD
-            # comes from the CNPG operator-generated Secret (blank pgPasswordSecret => `<release>-cluster-app`).
+            # Postgres connection, fed to the app's DSNFromEnv() as discrete PG_* parts (it assembles + escapes
+            # the DSN itself, safer than a pre-built URL with the raw password). Points at the app's PRIMARY
+            # Postgres by its explicit instance name (`app.db`, == that DB's pg-cluster fullnameOverride) — its
+            # `<db>-rw` read-write Service in this namespace, no release-name derivation. User/database are
+            # `app`/`app`, pre-baked (hardcoded) in the pg-cluster wrapper's initdb, literals here. PG_PASSWORD
+            # comes from the CNPG operator-generated owner Secret, always `<db>-app` / key `password`.
             - name: PG_HOST
-              value: "{{ .Release.Name }}-cluster-rw.{{ .Release.Namespace }}.svc.cluster.local"
+              value: "{{ .Values.app.db }}-rw.{{ .Release.Namespace }}.svc.cluster.local"
             - name: PG_USER
               value: "app"
             - name: PG_DATABASE
@@ -44,8 +44,8 @@ spec:
             - name: PG_PASSWORD
               valueFrom:
                 secretKeyRef:
-                  name: {{ .Values.app.pgPasswordSecret | default (printf "%s-cluster-app" .Release.Name) }}
-                  key: {{ .Values.app.pgPasswordKey }}
+                  name: {{ .Values.app.db }}-app
+                  key: password
           resources:
             {{- toYaml .Values.app.resources | nindent 12 }}
 ---

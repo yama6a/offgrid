@@ -257,3 +257,13 @@ Built on the work of the Talos/[Sidero](https://www.talos.dev/), [Cilium](https:
 [Longhorn](https://longhorn.io/), [CloudNativePG](https://cloudnative-pg.io/),
 [VictoriaMetrics](https://victoriametrics.com/) and [Grafana](https://grafana.com/) communities. The custom
 Pi 5 Talos image builds on [talos-rpi5/talos-builder](https://github.com/talos-rpi5)
+
+
+## Todos
+
+- CNPG delete protection
+- desaster recovery exercise
+- add a worker node (4th bay in the rack)
+- rabbitmq + sample workload(s)
+- redis + sample workload
+- krr

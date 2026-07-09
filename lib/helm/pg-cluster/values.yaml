@@ -4,11 +4,17 @@
 # hence the `cluster.cluster.*` double key. A consumer only sets the three REQUIRED fields (+ optionally the
 # three defaults); everything else here is pre-baked. See 10_sample_workload.md / 08_storage.md.
 cluster:
-  # REQUIRED — the consumer MUST set these three. They're seeded here with INVALID sentinels (empty type,
+  # REQUIRED — the consumer MUST set these. They're seeded here with INVALID sentinels (empty name/type,
   # empty resources, and instances left to fail the 1|2 check) rather than left undeclared: the upstream
   # cnpg/cluster chart ships its own defaults (type=postgresql, instances=3, resources={}) that would
   # otherwise coalesce up and silently satisfy a naive "required". These sentinels force templates/validate.yaml
   # to fail the render with a clear message until the consumer overrides them. Do NOT give them real defaults.
+
+  # REQUIRED: the Postgres instance name, used VERBATIM by the official chart (Cluster CR, <name>-rw/-ro/-r
+  # services, <name>-app owner Secret, PodMonitor, PrometheusRule). No suffix, no `.Release.Name` derivation —
+  # you name it. This is the cnpg/cluster chart's own `fullnameOverride`, so it survives upstream version bumps.
+  # Two DBs in one workload are aliased instances of THIS wrapper, so each MUST carry a distinct name.
+  fullnameOverride: ""       # REQUIRED: e.g. sample-workload-db
   type: ""                   # REQUIRED: postgresql | postgis | timescaledb (drives the container image).
 
   cluster:
@@ -52,3 +58,14 @@ cluster:
   # local-path Retain (a lost instance is rebuilt from a survivor via streaming replication).
   backups:
     enabled: false
+
+# CiliumNetworkPolicy for the Postgres instance pods (templates/networkpolicy.yaml). A top-level key (NOT under
+# `cluster:`), so it's the wrapper's OWN value and is never passed to the cnpg/cluster subchart. ALWAYS ENFORCED
+# and not disableable: a database has no business being reachable from arbitrary sources, and there is no
+# "open to the world" mode — permissive cases (several clients, a whole namespace) are still expressed by
+# LISTING them below. The DB pods go default-deny both directions; the allowed flows (client + replication 5432,
+# CNPG operator API, kubelet probes, metrics scrape, DNS + kube-apiserver egress) and their fixed platform
+# selectors are baked into the template. The only decision is WHO may connect. See 10_sample_workload.md.
+networkPolicy:
+  # REQUIRED (validate.yaml fails an empty list, like type/instances/resources): who may open a 5432 connection.
+  allowedClients: []          # [{ namespace: <ns>, matchLabels: { <k>: <v> } }, ...]

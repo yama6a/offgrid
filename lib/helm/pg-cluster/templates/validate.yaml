@@ -6,6 +6,9 @@ invalid sentinels (type="", resources={}, instances unset) and we check truthine
 Runs in this wrapper's scope, so it sees the consumer's overrides merged over values.yaml.
 */ -}}
 {{- $c := .Values.cluster.cluster -}}
+{{- if not .Values.cluster.fullnameOverride }}
+{{- fail "pg-cluster: cluster.fullnameOverride is required (the explicit Postgres instance name; no release-name derivation, and it must be unique across a workload's DBs)" }}
+{{- end }}
 {{- if not .Values.cluster.type }}
 {{- fail "pg-cluster: cluster.type is required (postgresql | postgis | timescaledb)" }}
 {{- end }}
@@ -14,4 +17,7 @@ Runs in this wrapper's scope, so it sees the consumer's overrides merged over va
 {{- end }}
 {{- if not $c.resources }}
 {{- fail "pg-cluster: cluster.cluster.resources is required (per-instance requests/limits)" }}
+{{- end }}
+{{- if not .Values.networkPolicy.allowedClients }}
+{{- fail "pg-cluster: networkPolicy.allowedClients is required (who may reach Postgres on 5432); the DB policy is always enforced, so an empty list would wall off the database" }}
 {{- end }}

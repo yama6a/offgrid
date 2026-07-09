@@ -42,18 +42,17 @@ pattern the platform-ingress app uses for the argocd + monitoring UIs.
 
 ## The PG_PASSWORD wiring
 
-The `cnpg/cluster` chart (via the `pg-cluster` wrapper) names the `Cluster` `<release>-cluster` ->
-`sample-workload-cluster` — the extra wrapper layer doesn't change the name (it's the grandchild chart's own
-name + the release name) — so the CNPG operator generates the `app`-role credentials into the Secret
-`sample-workload-cluster-app`. The app
-Deployment injects only the password (as specced):
+Each `Cluster` is named by the wrapper's REQUIRED `cluster.fullnameOverride` — an explicit name, no
+`.Release.Name` derivation. The app's primary is `sample-workload-db` (its `app.db` value), so the CNPG
+operator generates the `app`-role credentials into the Secret `sample-workload-db-app`. The app Deployment
+injects only the password, referencing that same explicit name (`app.db`):
 
 ```yaml
 env:
   - name: PG_PASSWORD
     valueFrom:
       secretKeyRef:
-        name: sample-workload-cluster-app   # derived from the release name in values.yaml
+        name: sample-workload-db-app   # {{ .Values.app.db }}-app — the explicit instance name, not the release
         key: password
 ```
 
@@ -84,13 +83,26 @@ or `subdomain: "@"` for the apex). A different-domain group is a new `ingresses[
 The workload doesn't depend on `cnpg/cluster` directly; it depends on the shared `pg-cluster` wrapper
 (`lib/helm/pg-cluster`, see [CLAUDE.md](../CLAUDE.md)), which pins `cnpg/cluster` and pre-bakes every
 value a workload shouldn't think about (node-local `local-path` storage + 45Gi, hostname anti-affinity,
-monitoring on, an `app`/`app` initdb, backups off). This workload's `pg-cluster:` values block sets only the
-three REQUIRED knobs — `type`, `instances` (1 or 2), `resources` — so a new Postgres-backed workload is ~6
-lines, not ~40. A validation template in the wrapper fails the render (with a clear message) if any required
+monitoring on, an `app`/`app` initdb, backups off). Each instance sets only the REQUIRED knobs —
+`cluster.fullnameOverride` (the instance name), `type`, `instances` (1 or 2), `resources` — so a Postgres is
+~8 lines, not ~40. A validation template in the wrapper fails the render (with a clear message) if any required
 knob is missing. Trade-off, inherent to wrapping a subchart (Helm can't transform or lock a child's values):
 the pre-baked values are *soft* defaults a consumer could still override, and the values sit one level deeper
-(`pg-cluster.cluster.cluster.*`). Because `initdb` is a wrapper default (a subchart default isn't visible at
-this chart's scope), the app template hardcodes `PG_USER`/`PG_DATABASE` to the literal `app`.
+(`<alias>.cluster.cluster.*`). Because `initdb` is a wrapper default (a subchart default isn't visible at this
+chart's scope), the app template hardcodes `PG_USER`/`PG_DATABASE` to the literal `app`.
+
+**Explicit names, and multiple DBs per workload.** The instance name is the wrapper's own REQUIRED
+`cluster.fullnameOverride` (cnpg/cluster's native field) — used verbatim (`<name>-rw`/`-ro`/`-r` Services,
+`<name>-app` Secret, PodMonitor, PrometheusRule). There is no `-cluster` suffix and no `.Release.Name`
+derivation: the app's `PG_HOST`/secret and the network policies all reference the explicit name, so nothing
+drifts and the DB is decoupled from the release name. To run **more than one** Postgres in a workload you
+alias the wrapper per DB in `Chart.yaml` — Helm renders a dependency once, so N databases means N aliased
+`pg-cluster` entries (there's no values-list alternative). This sample declares two: `maindb`
+(`sample-workload-db`, 2-instance HA, the app's primary — `app.db`) and `analyticsdb`
+(`sample-workload-analytics`, single-instance, a second store the app is *permitted* to reach via `app.extraDbs`
+but the sample binary doesn't dial). Each alias carries its own name, sizing, and DB-lockdown allowlist. (The
+file:// deps use `version: "*"` — for a local-path dependency the version is a required-but-inert constraint,
+not a selector, so an exact pin would only force a bump here whenever the local chart's version changes.)
 
 ### Ordering: a workload, gated behind the whole platform
 This workload needs the CNPG operator's `Cluster` CRD + the `local-path` class (platform wave 2), the
@@ -103,8 +115,40 @@ there's no per-app `sync-wave` to manage. See the two-tree model in [05_gitops.m
 [CLAUDE.md](../CLAUDE.md).
 
 ### Storage: node-local, off Longhorn
-The `Cluster` runs on the node-local `local-path` class (2 instances on 2 distinct Pi nodes, Postgres
-streaming replication as the only replication layer). The full reasoning lives in [08_storage.md](08_storage.md).
+Both `Cluster`s run on the node-local `local-path` class (the primary `sample-workload-db` at 2 instances on 2
+distinct Pi nodes with Postgres streaming replication; the single-instance `sample-workload-analytics` with no
+replica). The full reasoning lives in [08_storage.md](08_storage.md).
+
+### Network policy: the cluster's first CiliumNetworkPolicy lockdown
+This workload is where east-west lockdown is exercised (the cluster is otherwise default-allow — see
+[04_networking.md](04_networking.md)). Three `CiliumNetworkPolicy` objects (one app + one per DB), all in the
+`sample-workload` namespace, each default-deny both directions (a CNP that lists ingress *and* egress makes its
+endpoints deny-by-default in each), then allow only what's needed:
+
+- **App** (`sample-workload-app`, in this chart's `templates/networkpolicy.yaml`): ingress ONLY from the
+  merged Envoy data-plane pod (`envoy-gateway-system`) on 8080; egress ONLY to CoreDNS (53) and its
+  Postgres instances on 5432 — one rule per DB it may reach (`app.db` + `app.extraDbs`). No monitoring rule —
+  the app has no metrics port and nothing scrapes it (add one here if that changes). Not toggleable — there's
+  no situation where we'd want the app reachable from arbitrary sources.
+- **DB** (one per instance — `sample-workload-db`, `sample-workload-analytics`): lives in the shared
+  **`pg-cluster`** wrapper, not here — DB lockdown is reusable, so every Postgres-backed instance inherits it
+  (`lib/helm/pg-cluster/templates/networkpolicy.yaml`); the CNP is named after the instance so aliased DBs
+  don't collide.
+  It is **always enforced, not disableable** (a database has no business being reachable from arbitrary
+  sources; there is no "open to the world" mode). A consumer just supplies its `allowedClients` — REQUIRED,
+  validated non-empty like `type`/`instances`/`resources`. Ingress: 5432 from the app + replication peer, plus
+  the flows CNPG needs to stay healthy — the operator's status/probe API (8000, from `cnpg-system` and from the
+  kubelet as `host`/`remote-node`) and the metrics scrape (9187, from vmagent). Egress: CoreDNS, the
+  peer instance (5432), and `toEntities: [kube-apiserver]` for the instance-manager. Using a CNP (not a vanilla
+  `NetworkPolicy`) is deliberate: the `kube-apiserver` entity avoids hardcoding the API-server IP.
+
+`allowedClients` is validated (render fails on an empty list — you'd wall off the database). The fixed platform
+selectors (Envoy, CoreDNS, the CNPG operator, vmagent) are hardcoded in the templates — they're cluster
+constants, not per-workload knobs; values carry only the one real decision (the DB's `allowedClients`).
+**Rollout is audit-first**: put the app + DB endpoints in Cilium
+`PolicyAuditMode` (drops logged, not enforced), watch `hubble observe --verdict DROPPED,AUDIT` while exercising
+every path, and only disable audit once clean. If a platform component was relabelled and a legitimate flow
+shows AUDIT, fix the selector in the template.
 
 ## Apply / verify
 
@@ -117,9 +161,11 @@ streaming replication as the only replication layer). The full reasoning lives i
 
 Checks (`export KUBECONFIG=secrets/kubeconfig`):
 
-- `kubectl -n sample-workload get cluster,pods` -> `sample-workload-cluster` with 2 instances Running on 2
-  distinct nodes; the `sample-workload` app pod Running.
-- `kubectl -n sample-workload get secret sample-workload-cluster-app` -> exists (the source of `PG_PASSWORD`).
+- `kubectl -n sample-workload get cluster,pods` -> two clusters: `sample-workload-db` (2 instances on 2
+  distinct nodes) and `sample-workload-analytics` (1 instance); the `sample-workload` app pod Running.
+- `kubectl -n sample-workload get secret sample-workload-db-app` -> exists (the source of `PG_PASSWORD`).
+- `kubectl -n sample-workload get ciliumnetworkpolicy` -> `sample-workload-app`, `sample-workload-db`,
+  `sample-workload-analytics`.
 - `kubectl -n gateway get certificate sample-workload sample-workload-sso` -> `READY=True` once DNS + the
   `:80` forward exist.
 - `https://sample-workload.example.com/` -> the app, no login (open control).

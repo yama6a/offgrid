@@ -91,6 +91,14 @@ Hubble (flow visibility) is on in the chart values: `hubble.enabled`, `relay`, a
   `04_google_sso` allowlist as the other platform UIs (see [07_ingress.md](07_ingress.md)). Before it was
   published this was `kubectl -n kube-system port-forward svc/hubble-ui 12000:80` only.
 
+## Network policy
+
+The cluster is default-allow: there are no cluster-wide policies. East-west lockdown is opt-in per workload
+via `CiliumNetworkPolicy`, first exercised by the `sample-workload` (app + its CNPG Postgres) — see
+[10_sample_workload.md](10_sample_workload.md) for the app/DB policies, the reusable opt-in DB policy in the
+`pg-cluster` wrapper, and the audit-first rollout. CNP over vanilla `NetworkPolicy` buys the `kube-apiserver`
+entity (no hardcoded API-server IP) and Hubble policy-verdict visibility (`hubble observe --verdict DROPPED`).
+
 ## Caveats
 
 - Run order: 03e before 04. Harden the NIC ahead of Cilium's network-heavy rollout. `04_cilium.sh`'s only

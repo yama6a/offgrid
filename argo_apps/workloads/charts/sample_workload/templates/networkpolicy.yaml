@@ -1,0 +1,51 @@
+{{- /*
+App lockdown. Default-deny both directions (listing ingress AND egress makes the selected endpoint
+deny-by-default in each), then allow only: ingress from the ingress edge (Envoy) on the app port, and egress
+for DNS + this app's own Postgres. The app has no probes and no metrics scrape, so nothing else is opened.
+
+Fixed platform selectors are hardcoded (they don't vary): the merged Envoy Gateway data-plane pod lives in
+envoy-gateway-system (mergeGateways => one Envoy for the whole cluster), CoreDNS in kube-system. The DB egress
+targets each CNPG instance the app may reach (`app.db` + `app.extraDbs`) by identity, so it covers the `-rw`
+Service too: with kube-proxy replacement Cilium enforces egress on the translated backend, not the ClusterIP.
+Always rendered: the app lockdown is not optional (there's no situation where we'd want it reachable from
+arbitrary sources).
+*/ -}}
+apiVersion: cilium.io/v2
+kind: CiliumNetworkPolicy
+metadata:
+  name: {{ .Values.app.name }}-app
+  namespace: {{ .Release.Namespace }}
+spec:
+  endpointSelector:
+    matchLabels:
+      app: {{ .Values.app.name }}
+  ingress:
+    # Only the ingress edge (Envoy) may reach the app, on its HTTP port.
+    - fromEndpoints:
+        - matchLabels:
+            k8s:io.kubernetes.pod.namespace: envoy-gateway-system
+            app.kubernetes.io/managed-by: envoy-gateway
+      toPorts:
+        - ports:
+            - { port: {{ .Values.app.port | quote }}, protocol: TCP }
+  egress:
+    # DNS to CoreDNS.
+    - toEndpoints:
+        - matchLabels:
+            k8s:io.kubernetes.pod.namespace: kube-system
+            k8s-app: kube-dns
+      toPorts:
+        - ports:
+            - { port: "53", protocol: UDP }
+            - { port: "53", protocol: TCP }
+    # Its Postgres instances — the primary (app.db) + any extraDbs it's permitted to reach. Selected by
+    # identity (covers each -rw Service via backend identity).
+    {{- range prepend .Values.app.extraDbs .Values.app.db }}
+    - toEndpoints:
+        - matchLabels:
+            cnpg.io/cluster: {{ . }}
+            cnpg.io/podRole: instance
+      toPorts:
+        - ports:
+            - { port: "5432", protocol: TCP }
+    {{- end }}

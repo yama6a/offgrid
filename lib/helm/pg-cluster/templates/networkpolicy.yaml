@@ -1,0 +1,87 @@
+{{- /*
+DB lockdown for the CNPG instance pods. Default-deny both directions (a CiliumNetworkPolicy that lists
+ingress AND egress makes the selected endpoints deny-by-default in each direction), then allow only the
+flows Postgres + CNPG actually need. Always enforced, not disableable; the only per-consumer knob is
+allowedClients (who may reach 5432) — every other peer here is fixed platform topology, hardcoded.
+
+Fixed selectors below are cluster constants for this repo (their namespaces/labels/ports don't vary between
+workloads): the CNPG operator (cnpg-system), vmagent (monitoring), CoreDNS (kube-system). If a platform
+component is ever relabelled, fix it here. Ports: 5432 Postgres, 8000 CNPG instance-manager API, 9187 CNPG
+metrics, 53 DNS. Cluster name is the consumer's explicit `cluster.fullnameOverride` (validated non-empty) — the
+same name the official chart stamps on the `cnpg.io/cluster` pod label; no `.Release.Name` derivation, so the
+CNP name is unique per DB even when a workload aliases this wrapper more than once. Namespace peers use Cilium's
+`k8s:io.kubernetes.pod.namespace` label. Always rendered — not disableable; only knob is allowedClients.
+*/ -}}
+{{- $cluster := .Values.cluster.fullnameOverride }}
+apiVersion: cilium.io/v2
+kind: CiliumNetworkPolicy
+metadata:
+  name: {{ $cluster }}
+  namespace: {{ .Release.Namespace }}
+spec:
+  endpointSelector:
+    matchLabels:
+      cnpg.io/cluster: {{ $cluster }}
+      cnpg.io/podRole: instance
+  ingress:
+    # (a) DB clients — the app(s) allowed to open Postgres connections.
+    {{- range .Values.networkPolicy.allowedClients }}
+    - fromEndpoints:
+        - matchLabels:
+            k8s:io.kubernetes.pod.namespace: {{ .namespace }}
+            {{- range $k, $v := .matchLabels }}
+            {{ $k }}: {{ $v | quote }}
+            {{- end }}
+      toPorts:
+        - ports:
+            - { port: "5432", protocol: TCP }
+    {{- end }}
+    # (b) Streaming replication between the instances (primary <-> replica).
+    - fromEndpoints:
+        - matchLabels:
+            cnpg.io/cluster: {{ $cluster }}
+            cnpg.io/podRole: instance
+      toPorts:
+        - ports:
+            - { port: "5432", protocol: TCP }
+    # (c) CNPG operator -> instance-manager status/pgctl API (reconciliation, failover).
+    - fromEndpoints:
+        - matchLabels:
+            k8s:io.kubernetes.pod.namespace: cnpg-system
+            app.kubernetes.io/name: cloudnative-pg
+      toPorts:
+        - ports:
+            - { port: "8000", protocol: TCP }
+    # (d) Kubelet liveness/readiness/startup probes hit the instance-manager (same port) from the node.
+    - fromEntities: [host, remote-node]
+      toPorts:
+        - ports:
+            - { port: "8000", protocol: TCP }
+    # (e) Metrics scrape (vmagent -> CNPG PodMonitor).
+    - fromEndpoints:
+        - matchLabels:
+            k8s:io.kubernetes.pod.namespace: monitoring
+            app.kubernetes.io/name: vmagent
+      toPorts:
+        - ports:
+            - { port: "9187", protocol: TCP }
+  egress:
+    # (f) DNS to CoreDNS.
+    - toEndpoints:
+        - matchLabels:
+            k8s:io.kubernetes.pod.namespace: kube-system
+            k8s-app: kube-dns
+      toPorts:
+        - ports:
+            - { port: "53", protocol: UDP }
+            - { port: "53", protocol: TCP }
+    # (g) The instance-manager watches its own Cluster CR / reports status via the API server.
+    - toEntities: [kube-apiserver]
+    # (h) Streaming replication egress to the peer instance.
+    - toEndpoints:
+        - matchLabels:
+            cnpg.io/cluster: {{ $cluster }}
+            cnpg.io/podRole: instance
+      toPorts:
+        - ports:
+            - { port: "5432", protocol: TCP }

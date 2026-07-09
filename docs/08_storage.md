@@ -194,7 +194,8 @@ workload only overrides the ⭐ **set-per-workload** ones (in `sample_workload/v
   Postgres metrics + CNPG alert rules, auto-converted by the VM operator and discovered by the
   [monitoring](09_monitoring.md) stack.
 - `initdb: { database: app, owner: app }` (wrapper-baked): bootstraps a demo `app` DB; the operator
-  auto-generates the owner's credentials into the `sample-workload-cluster-app` Secret (no sealed-secret needed).
+  auto-generates the owner's credentials into the `<name>-app` Secret (e.g. `sample-workload-db-app`, where the
+  name is the instance's REQUIRED `cluster.fullnameOverride`) — no sealed-secret needed.
 
 **Reclaim & durability.** PVCs are `reclaimPolicy: Retain`, so a `prune` is data-safe (and deleting the app
 leaks the `/var/mnt/cnpg` dirs by design — clean up manually). **No PITR / no continuous backup**:
@@ -222,6 +223,6 @@ kubectl -n sample-workload get pvc -o custom-columns=NAME:.metadata.name,SC:.spe
 kubectl get vmpodscrape -A | grep -i cnpg                                   # metrics wired into VictoriaMetrics
 ```
 
-Smoke test: delete the primary pod (`sample-workload-cluster-1`) and watch CNPG promote the replica, then heal
+Smoke test: delete the primary pod (`sample-workload-db-1`) and watch CNPG promote the replica, then heal
 back to 2. The `app` role's credentials for external clients live in the auto-generated
-`sample-workload-cluster-app` Secret; connect via the `sample-workload-cluster-rw` service.
+`sample-workload-db-app` Secret; connect via the `sample-workload-db-rw` service.

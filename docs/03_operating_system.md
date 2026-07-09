@@ -183,15 +183,11 @@ talosctl -n <node-ip> get disks --insecure           # /dev/nvme0n1 present
 talosctl -n <node-ip> get kernelcmdlines --insecure  # cmdline has console=ttyAMA0,115200 (rpi5 overlay)
 ```
 
-> Maintenance mode can't report the kernel version string: `dmesg` has no `--insecure` flag and needs certs. The
-> `6.18.34` kernel is already proven by the builder's offline validation; re-confirm it after the cluster is up (certs
-> present): `talosctl -n <ip> dmesg | grep 'Linux version'`.
-
 All green -> proceed to [Cluster bring-up](#cluster-bring-up) below.
 
 ### MacOS `talosctl` gotcha
 
-If `nc` succeeds but `talosctl ... --insecure` comes back with `no route to host`, the node is fine. The MacOS
+If `nc` succeeds but `talosctl ... --insecure` comes back with `no route to host`, the node is probably fine. The MacOS
 `talosctl` binary is just misbehaving (confirmed by the official container reaching the same node without issues). Use
 the container:
 

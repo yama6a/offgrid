@@ -6,8 +6,12 @@ app:
   image: "ghcr.io/yama6a/pi5-k8s-sample-app:2"
   port: 8080
   replicas: 1
-  pgPasswordSecret: ""     # blank => <release>-cluster-app (the CNPG-generated owner Secret)
-  pgPasswordKey: password
+  # Postgres wiring — explicit instance names (must match the pg-cluster fullnameOverride values below), no
+  # release-name derivation. `db` is the app's primary (PG_* env points at its -rw Service + -app Secret); the
+  # sample binary reads a single DSN. `extraDbs` are additional instances the app is permitted to reach — they
+  # only widen the app's egress NetworkPolicy (proving multi-DB reachability), the binary doesn't dial them.
+  db: sample-workload-db
+  extraDbs: [sample-workload-analytics]
   resources:
     requests: { cpu: 25m, memory: 32Mi }
     limits:   { memory: 128Mi }
@@ -28,15 +32,18 @@ ingress-edge:
           targetService: sample-workload
           targetPort: 8080
 
-# CloudNativePG Postgres, via the shared pg-cluster wrapper (a file:// dependency; it pins cnpg/cluster and
-# pre-bakes storage/affinity/monitoring/initdb/backups). We only set the wrapper's REQUIRED knobs. Keeps the
-# upstream chart's `cluster.cluster.*` shape under the `pg-cluster:` dependency key. See 10_sample_workload.md.
-pg-cluster:
+# Two CloudNativePG Postgres instances, each an aliased instance of the shared pg-cluster wrapper (file://
+# dependency; pins cnpg/cluster, pre-bakes storage/affinity/monitoring/initdb/backups). The alias key routes
+# values; each instance sets its REQUIRED knobs — an explicit `cluster.fullnameOverride` (the instance name,
+# no release derivation), type, instances, resources — plus its own DB-lockdown allowlist. Keeps the upstream
+# chart's `cluster.cluster.*` shape. See 10_sample_workload.md.
+
+# Primary DB: the app's main store (2-instance HA — primary + streaming replica on 2 distinct nodes).
+maindb:
   cluster:
+    fullnameOverride: sample-workload-db
     type: postgresql        # postgresql | postgis | timescaledb
     cluster:
-      # 2 instances -> primary + streaming replica on 2 distinct nodes (HA via Postgres failover, not storage);
-      # 2 is enough here (losing 2 of 3 nodes breaks the cluster other ways anyway).
       instances: 2
       # Conservative footprint for the Pi 5s (8 GB RAM, lots already running). Per-instance.
       resources:
@@ -46,3 +53,26 @@ pg-cluster:
         limits:
           cpu: "1"
           memory: 512Mi
+  networkPolicy:
+    allowedClients:
+      - namespace: sample-workload
+        matchLabels: { app: sample-workload }
+
+# Second DB: demonstrates multiple DBs per workload. Single-instance (no HA) to stay light on the Pis.
+analyticsdb:
+  cluster:
+    fullnameOverride: sample-workload-analytics
+    type: postgresql
+    cluster:
+      instances: 1
+      resources:
+        requests:
+          cpu: 100m
+          memory: 128Mi
+        limits:
+          cpu: "500m"
+          memory: 256Mi
+  networkPolicy:
+    allowedClients:
+      - namespace: sample-workload
+        matchLabels: { app: sample-workload }
