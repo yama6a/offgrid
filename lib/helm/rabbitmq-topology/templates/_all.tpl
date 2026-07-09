@@ -58,6 +58,14 @@ Regex metachars (`.` in the auto queue names) are escaped so a name matches only
 {{- if hasKey $ovr "write" }}{{ $write = $ovr.write }}{{ end }}
 {{- if hasKey $ovr "read" }}{{ $read = $ovr.read }}{{ end }}
 {{- if hasKey $ovr "configure" }}{{ $configure = $ovr.configure }}{{ end }}
+{{- /* Emit ONLY the non-empty permission fields. RabbitMQ treats a missing field as "" (no access), and the
+       topology operator drops empty strings from the stored object — so declaring `configure: ""` (the usual
+       case: an app user needs no configure) leaves ArgoCD owning a field the live object lacks, holding the
+       Permission permanently OutOfSync. Omitting empties makes the manifest match what the operator stores. */ -}}
+{{- $perms := dict -}}
+{{- if $configure }}{{ $perms = set $perms "configure" $configure }}{{ end -}}
+{{- if $write }}{{ $perms = set $perms "write" $write }}{{ end -}}
+{{- if $read }}{{ $perms = set $perms "read" $read }}{{ end }}
 ---
-{{ include "rabbitmq-topology.permission" (dict "ctx" $ctx "configure" $configure "write" $write "read" $read) }}
+{{ include "rabbitmq-topology.permission" (dict "ctx" $ctx "permissions" $perms) }}
 {{- end -}}

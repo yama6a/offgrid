@@ -1,7 +1,8 @@
 {{/* rabbitmq-topology.permission — the ONE per-user permission on the vhost (RabbitMQ has a single
      configure/write/read triple per user+vhost). References the User CR by name via userReference, because
-     the username is operator-GENERATED (not known at render time). ctx + {configure, write, read}.
-     squote (single quotes) so the escaped-regex backslashes stay literal (YAML double-quotes reject `\.`). */}}
+     the username is operator-GENERATED (not known at render time). ctx + {permissions} — a map of ONLY the
+     non-empty fields (see _all.tpl for why empties are omitted). toYaml handles quoting/escaping of the
+     regex strings. */}}
 {{- define "rabbitmq-topology.permission" -}}
 {{- $ctx := .ctx -}}
 apiVersion: rabbitmq.com/v1beta1
@@ -14,9 +15,7 @@ spec:
   userReference:
     name: {{ $ctx.user }}
   permissions:
-    configure: {{ .configure | squote }}
-    write: {{ .write | squote }}
-    read: {{ .read | squote }}
+    {{- toYaml .permissions | nindent 4 }}
   rabbitmqClusterReference:
     name: {{ $ctx.clusterName }}
     namespace: {{ $ctx.clusterNs }}

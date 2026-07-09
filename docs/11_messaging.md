@@ -189,5 +189,20 @@ Checks (`export KUBECONFIG=secrets/kubeconfig`):
   re-creating the `Queue` CR (the operator won't mutate a live queue). Plan queue names up front.
 - **Editing the generated credentials Secret does nothing.** The operator doesn't watch it; to rotate, add a
   label/annotation to the `User` CR to force reconciliation (or re-create it).
+- **Never emit empty `Permission` fields (they cause permanent OutOfSync).** RabbitMQ treats a missing
+  `configure`/`write`/`read` as `""` (no access), and the topology operator drops empty strings from the stored
+  object. So a manifest that declares `configure: ""` (the usual case — an app user needs no configure) leaves
+  ArgoCD owning a field the live object doesn't have, holding the `Permission` OutOfSync forever (only
+  `configure` in practice, since `write`/`read` are non-empty). The `rabbitmq-topology` library therefore emits
+  ONLY the non-empty permission fields (`_all.tpl` builds the map, `_permission.tpl` `toYaml`s it), so the
+  desired manifest matches what the operator stores. Don't reintroduce empty fields, and don't paper over it
+  with an ArgoCD `ignoreDifferences` — matching the stored shape is the correct fix.
+- **Delete `Permission` before `User` (latent stuck-`Terminating` risk).** On teardown, the operator needs the
+  User's credentials to remove the RabbitMQ-side permission; if the `User` (and its Secret) go first, the
+  `Permission` finalizer can't complete and the object hangs in `Terminating`. Today all a workload's topology
+  syncs in one wave, so this only bites on an out-of-order manual delete — clear it with
+  `kubectl patch permission <name> -p '{"metadata":{"finalizers":[]}}' --type=merge`. If it becomes a routine
+  problem, add sync-waves in the library (User at a lower wave than Permission, so prune — reverse-wave —
+  removes Permission first); see rabbitmq/messaging-topology-operator#324.
 - **`prune` deletes the RabbitmqCluster CR but not the data.** Longhorn PVCs are retained per Longhorn's reclaim
   policy, so a re-create recovers the volumes.
