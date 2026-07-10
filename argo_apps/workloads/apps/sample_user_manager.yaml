@@ -1,27 +1,30 @@
-# ArgoCD Application for the sample workload (argo_apps/workloads/charts/sample_workload/), the merge of
-# the old gateway-test demo and the cnpg-cluster Postgres into one app. Ships the sample app (PG_PASSWORD
-# injected from the CNPG secret), its CloudNativePG Cluster, and two ingress hosts:
-# sample-workload.example.com (OPEN) + sample-workload-sso.example.com (gated CENTRALLY by 04_google_sso,
-# which lists it in domains[].hosts — this chart configures no SSO). Both are plain edges rendered by the
-# shared ingress-edge library from the chart's `ingress-edge:` values. See 10_sample_workload.md / 17_cnpg.md.
+# ArgoCD Application for sample-user-manager (argo_apps/workloads/charts/sample_user_manager/): the DEFAULT
+# sample-app binary (`/manager`: HTTP GET /users + Postgres), and the hub of the messaging demo — it consumes
+# `create-user-command` and publishes `user-events` (users.created/users.deleted) + `user-audit-logger`
+# (sample-user-signup and sample-audit-logger run the `/signup` and `/auditor` binaries at the other ends).
+# Ships the app (PG_PASSWORD injected from the CNPG secret), its CloudNativePG Clusters, and two ingress
+# hosts: sample-user-manager.example.com (OPEN) + sample-user-manager-sso.example.com (gated CENTRALLY by
+# 04_google_sso, which lists it in domains[].hosts — this chart configures no SSO). Both are plain edges
+# rendered by the shared ingress-edge library from the chart's `ingress-edge:` values. See
+# 10_sample_workload.md / 17_cnpg.md.
 #
 # AUTOMATED (prune + selfHeal): drift auto-corrects. A prune is data-safe, the Postgres PVCs use the
 # `local-path` class with reclaimPolicy: Retain, so removing the Cluster CR never destroys the node-local
 # volumes (the dirs under /var/mnt/cnpg persist). The app + echo routes are safe leaves.
 #
 # MULTI-NAMESPACE: the app + Cluster (+ generated password Secret) land in the destination namespace
-# `sample-workload`; the per-host Gateways/Certs/HTTPRoutes set metadata.namespace: gateway explicitly
+# `sample-user-manager`; the per-host Gateways/Certs/HTTPRoutes set metadata.namespace: gateway explicitly
 # (where the central SSO policy + merged Envoy live), reaching the app via the chart's ReferenceGrant.
 #
 # A WORKLOAD, not platform: lives in the workloads tree, which the root-of-roots only creates AFTER the
 # whole platform tree is Healthy, so the CNPG operator's Cluster CRD, the local-path class, the Gateway and
-# 04_google_sso (whose policy already lists sample-workload-sso.example.com, and attaches to this route once
-# it appears) all exist before this app reconciles; the Cluster CR never hits a missing CRD. No per-app
+# 04_google_sso (whose policy already lists sample-user-manager-sso.example.com, and attaches to this route
+# once it appears) all exist before this app reconciles; the Cluster CR never hits a missing CRD. No per-app
 # sync-wave needed. See 05_gitops.md.
 apiVersion: argoproj.io/v1alpha1
 kind: Application
 metadata:
-  name: sample-workload
+  name: sample-user-manager
   namespace: argocd
   annotations:
     # Diff via a server-side-apply dry-run so server-defaulted Gateway API fields (HTTPRoute
@@ -33,10 +36,10 @@ spec:
   source:
     repoURL: https://github.com/yama6a/offgrid
     targetRevision: HEAD
-    path: argo_apps/workloads/charts/sample_workload
+    path: argo_apps/workloads/charts/sample_user_manager
   destination:
     server: https://kubernetes.default.svc
-    namespace: sample-workload
+    namespace: sample-user-manager
   syncPolicy:
     automated:
       prune: true

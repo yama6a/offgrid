@@ -1,0 +1,15 @@
+apiVersion: v2
+name: sample-audit-logger
+description: >-
+  The sample-app image's `/auditor` binary (no HTTP, no Postgres): a pure sink that subscribes to the
+  user-audit-logger fanout exchange and logs every audit message. The second fanout subscriber alongside
+  sample-user-signup, demonstrating broadcast from the sample-user-manager hub.
+type: application
+version: 0.1.0                 # this wrapper chart's own version
+
+dependencies:
+  # Only the shared messaging library — this worker has no Postgres and no ingress. version: "*" for the
+  # file:// dep (the path IS the source; the version is just a constraint Helm insists on). See 11_messaging.md.
+  - name: rabbitmq-topology
+    version: "*"
+    repository: "file://../../../../lib/helm/rabbitmq-topology"

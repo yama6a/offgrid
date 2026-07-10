@@ -1,0 +1,15 @@
+apiVersion: v2
+name: sample-user-signup
+description: >-
+  The sample-app image's `/signup` binary (no HTTP, no Postgres). Publishes create-user-command every 10s and
+  consumes the manager's users.created (topic) + audit (fanout) outputs, logging both. The command-publisher /
+  event-consumer end of the loop whose hub is sample-user-manager.
+type: application
+version: 0.1.0                 # this wrapper chart's own version
+
+dependencies:
+  # Only the shared messaging library — this worker has no Postgres and no ingress. version: "*" for the
+  # file:// dep (the path IS the source; the version is just a constraint Helm insists on). See 11_messaging.md.
+  - name: rabbitmq-topology
+    version: "*"
+    repository: "file://../../../../lib/helm/rabbitmq-topology"

@@ -46,7 +46,7 @@ domains:
       - host: longhorn.example.com
         allowlist:
           - you@example.com
-      - host: sample-workload-sso.example.com
+      - host: sample-user-manager-sso.example.com
         allowlist:
           - you@example.com
       - host: rabbitmq.example.com       # RabbitMQ management UI (08_platform_ingress); edge SSO + RabbitMQ's own login

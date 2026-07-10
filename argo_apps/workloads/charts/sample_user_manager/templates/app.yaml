@@ -1,7 +1,7 @@
-# The sample app, a single Deployment + Service in this chart's release namespace (sample-workload),
-# alongside its two CNPG Postgres instances. PG_PASSWORD is injected from the primary DB's operator-generated
-# owner Secret (`<app.db>-app`, key `password`) so the app can connect. Both ingress hosts (open + SSO) route to
-# this one Service. See 10_sample_workload.md.
+# sample-user-manager: a single Deployment + Service in this chart's release namespace, alongside its two
+# CNPG Postgres instances. Runs the image's `/manager` binary. PG_PASSWORD is injected from the primary DB's
+# operator-generated owner Secret (`<app.db>-app`, key `password`). Both ingress hosts (open + SSO) route to
+# this one Service. See 10_sample_workload.md / 11_messaging.md.
 apiVersion: apps/v1
 kind: Deployment
 metadata:
@@ -23,6 +23,7 @@ spec:
       containers:
         - name: app
           image: {{ .Values.app.image | quote }}
+          command: {{ .Values.app.command | toJson }}   # the /manager binary (default entrypoint; explicit for clarity)
           ports:
             - name: http
               containerPort: {{ .Values.app.port }}
@@ -68,6 +69,12 @@ spec:
                 secretKeyRef:
                   name: {{ .Values.app.name }}-user-credentials
                   key: password
+            # This workload's identity: the `sender`/`service` field in the messages it emits, and the prefix
+            # for any queues it derives. The exchange/routing-key/queue names themselves are compile-time
+            # constants in the binary (internal/messages) — nothing topology-related is passed via env, so a
+            # pod can't be pointed at the wrong topic. See 11_messaging.md.
+            - name: WORKLOAD_NAME
+              value: {{ .Values.app.name | quote }}
           resources:
             {{- toYaml .Values.app.resources | nindent 12 }}
 ---

@@ -264,8 +264,9 @@ Pi 5 Talos image builds on [talos-rpi5/talos-builder](https://github.com/talos-r
 - CNPG delete protection
 - desaster recovery exercise
 - add a worker node (4th bay in the rack)
-- rabbitmq + sample workload(s)
 - redis + sample workload
-- krr
 - check all logs/hubble for network policies in audit more that are dropping traffic that should be allowed
 - dependabot/renovate 
+- switch platform uis to *.platform.BASE_DOMAIN
+- rewrite git history to remove secrets and email addresses and domains from past comits
+- how to deal with local helm charts and version-tags?

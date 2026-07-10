@@ -16,7 +16,7 @@ Three pieces (the operators and the broker are platform; the topology is per-wor
   exactly ONE broker for the whole cluster (unlike Postgres, which is per-workload), so it lives in platform.
 - **the reusable chart** — `lib/helm/rabbitmq-topology/` (`type: library`, like `ingress-edge`). A workload
   consumes it via a `file://` dependency + a one-line `{{ include "rabbitmq-topology.render" . }}` template and
-  declares its topology in values. Demonstrated by `sample_workload` (see [10_sample_workload.md](10_sample_workload.md)).
+  declares its topology in values. Demonstrated by the sample-user-* workloads (see [10_sample_workload.md](10_sample_workload.md)).
 
 ## The two patterns, and who owns what
 
@@ -60,20 +60,43 @@ dependencies:
 # templates/messaging.yaml — the whole thing
 {{ include "rabbitmq-topology.render" . }}
 ```
+The sample app demonstrates all three exchange types across three real workloads — a user-lifecycle loop
+(`sample-user-signup` → `sample-user-manager` → `sample-user-signup`/`sample-audit-logger`). The manager (the
+hub) owns every exchange; one of each type:
+
 ```yaml
-# values.yaml — sample-workload as BOTH a publisher and a command consumer
+# sample_user_manager/values.yaml — the hub: command consumer + event/audit publisher
 rabbitmq-topology:
-  user: sample-workload                 # defaults to the release name; -> Secret <user>-user-credentials
-  publishEvents:
-    - { name: sample-events, type: topic }
-  subscribeEvents:
-    - { exchange: sample-events, routingKey: "sample.#" }   # its own queue sample-workload.sample-events
+  user: sample-user-manager             # defaults to the release name; -> Secret <user>-user-credentials
   consumeCommands:
-    - { name: sample-commands, type: direct }
-  # sendCommands: [other-commands]       # write on another workload's command exchange
+    - { name: create-user-command, type: direct }  # OWNS + sole consumer (direct: N publishers → 1 consumer)
+  publishEvents:
+    - { name: user-events, type: topic }            # OWNS; publishes users.created AND users.deleted
+    - { name: user-audit-logger, type: fanout }     # OWNS; broadcast to every subscriber
+# -> Permission write: ^(user-events|user-audit-logger)$, read: ^(create-user-command)$
 ```
-That renders one `User`, the `Exchange`/`Queue`/`Binding` CRs it owns, and one aggregated `Permission`
-(`write: ^(sample-events)$`, `read: ^(sample-commands|sample-workload\.sample-events)$`, `configure: ""`).
+```yaml
+# sample_user_signup/values.yaml — command publisher + event/audit consumer
+rabbitmq-topology:
+  user: sample-user-signup
+  sendCommands: [create-user-command]                          # write on the manager's command exchange
+  subscribeEvents:
+    - { exchange: user-events, routingKey: "users.created" }   # own queue; binds ONLY users.created
+    - { exchange: user-audit-logger }                          # fanout: routingKey ignored; gets all audits
+# -> write: ^(create-user-command)$, read: ^(sample-user-signup\.user-events|sample-user-signup\.user-audit-logger)$
+```
+```yaml
+# sample_audit_logger/values.yaml — a pure audit sink (no write permission at all)
+rabbitmq-topology:
+  user: sample-audit-logger
+  subscribeEvents:
+    - { exchange: user-audit-logger }                          # fanout; own queue sample-audit-logger.user-audit-logger
+# -> read: ^(sample-audit-logger\.user-audit-logger)$   (no write — it publishes nothing)
+```
+This is the teaching payoff: **direct** (`create-user-command`) point-to-point; **topic** (`user-events`) where
+signup binds only `users.created`, so `users.deleted` — which the manager still publishes — reaches no queue
+and is dropped by the broker; **fanout** (`user-audit-logger`) broadcast to two independent subscribers
+(signup + audit-logger), each with its OWN `<user>.user-audit-logger` queue, so neither can read the other's.
 `cluster.{name,namespace}` and `vhost` are library defaults (`rabbitmq`/`rabbitmq`/`apps`) a workload rarely
 touches. `permissionOverrides` is an escape hatch for the rare app that must re-declare topology at runtime.
 
@@ -88,16 +111,19 @@ originate *outside* the cluster — OAuth/SMTP. RabbitMQ has none.) The username
 from the Secret too (it can't be hardcoded), and the `Permission` references the user via `userReference` (the
 User CR name), not a literal username.
 
-`sample_workload` wires it (`templates/app.yaml`):
+`sample_user_manager` wires it (`templates/app.yaml`; signup + audit-logger wire the same block, each with its
+own `<user>-user-credentials`). Note only connection + `WORKLOAD_NAME` are env — the exchange/queue names are
+compile-time constants in the binary, so a pod can't be pointed at the wrong topic:
 ```yaml
 - name: RABBITMQ_HOST
   value: "rabbitmq.rabbitmq.svc.cluster.local"   # the shared broker client Service
 - { name: RABBITMQ_PORT, value: "5672" }
 - { name: RABBITMQ_VHOST, value: "apps" }
 - name: RABBITMQ_USERNAME
-  valueFrom: { secretKeyRef: { name: sample-workload-user-credentials, key: username } }
+  valueFrom: { secretKeyRef: { name: sample-user-manager-user-credentials, key: username } }
 - name: RABBITMQ_PASSWORD
-  valueFrom: { secretKeyRef: { name: sample-workload-user-credentials, key: password } }
+  valueFrom: { secretKeyRef: { name: sample-user-manager-user-credentials, key: password } }
+- { name: WORKLOAD_NAME, value: "sample-user-manager" }   # message sender + queue-name prefix
 ```
 On a cold start the pod may briefly `CreateContainerConfigError` until the operator writes the Secret, then
 self-heals (same as the CNPG cold-start note in [10_sample_workload.md](10_sample_workload.md)).
@@ -146,7 +172,7 @@ root-of-roots creates the workloads tree only after the whole platform is Health
 The broker's `CiliumNetworkPolicy` (`03_rabbitmq_cluster/templates/networkpolicy.yaml`) is default-deny both
 ways, then allows: AMQP `5672` from any pod labelled `messaging-client: "true"` (label-based, so this platform
 app never needs editing when a new messaging workload appears — the workload opts in by labelling its pod +
-adding a matching egress rule, as `sample_workload` does); management `15672` from Envoy (the SSO-gated UI) and
+adding a matching egress rule, as the sample-user-* workloads do); management `15672` from Envoy (the SSO-gated UI) and
 from the operators in-namespace; metrics `15692` from vmagent; and ALL ports among the broker's own pods
 (clustering uses several — 4369 epmd, 25672 inter-node, CLI — so a missed one can't break quorum formation).
 Egress: DNS, the API server entity, and peers. **Roll out audit-first** like every netpol here (see
@@ -162,29 +188,41 @@ credentials from the `rabbitmq-default-user` Secret. It's the last wave, so the 
 ## Apply / verify
 
 1. `helm dependency build argo_apps/platform/charts/02_rabbitmq_operator` and
-   `helm dependency build argo_apps/workloads/charts/sample_workload`, commit the refreshed `Chart.lock`s
-   (ArgoCD's repo-server runs `helm dependency build`; a missing/stale lock breaks sync).
+   `helm dependency build` each of `argo_apps/workloads/charts/sample_user_{manager,signup}` +
+   `sample_audit_logger`, commit the refreshed `Chart.lock`s (ArgoCD's repo-server runs `helm dependency
+   build`; a missing/stale lock breaks sync).
 2. `git add -A && git commit && git push` — ArgoCD reconciles the pushed remote, not your working tree.
 
 Checks (`export KUBECONFIG=secrets/kubeconfig`):
 
 - `kubectl -n rabbitmq get pods` → 2 operator pods Running; `rabbitmq-server-0..2` Running on 3 distinct nodes.
 - `kubectl -n rabbitmq get rabbitmqcluster,vhost` → `AllReplicasReady=True`; vhost `apps` Ready.
-- `kubectl -n sample-workload get user.rabbitmq.com,exchange.rabbitmq.com,queue.rabbitmq.com,binding.rabbitmq.com,permission.rabbitmq.com`
-  → all `Ready=True`.
-- `kubectl -n sample-workload get secret sample-workload-user-credentials` → exists (`username`/`password`);
-  the app pod Running with the `RABBITMQ_*` env wired.
+- `kubectl -n sample-user-manager get user.rabbitmq.com,exchange.rabbitmq.com,queue.rabbitmq.com,binding.rabbitmq.com,permission.rabbitmq.com`
+  → all `Ready=True` (three exchanges: `user-events`/`user-audit-logger`/`create-user-command`; one command
+  queue). Likewise `-n sample-user-signup` / `-n sample-audit-logger` for each subscriber's user + queue(s) + binding(s) + permission.
+- `kubectl -n sample-user-manager get secret sample-user-manager-user-credentials` → exists (`username`/`password`);
+  the manager pod Running with the `RABBITMQ_*` env wired.
+- **Live loop** — `kubectl -n sample-user-signup logs deploy/sample-user-signup` shows it publishing
+  `create-user-command` every 10s and receiving `users.created` + audit messages; `kubectl -n
+  sample-user-manager logs deploy/sample-user-manager` shows it persisting users and emitting events (and, past
+  10 users, evicting the oldest with `users.deleted` + audit); `kubectl -n sample-audit-logger logs
+  deploy/sample-audit-logger` shows audit messages only. `curl https://sample-user-manager.example.com/users`
+  → the JSON user list.
 - Topology + isolation — `kubectl -n rabbitmq exec rabbitmq-server-0 -c rabbitmq -- rabbitmqctl list_permissions -p apps`
-  → each workload user has only its own `read`/`write` regexes, `configure` empty.
+  → each workload user has only its own `read`/`write` regexes (audit-logger has read only), `configure` empty.
 - Management UI — `https://rabbitmq.example.com/`: Google login → RabbitMQ login (creds from
   `kubectl -n rabbitmq get secret rabbitmq-default-user -o jsonpath='{.data}'`, base64-decoded) → the `apps`
   vhost, the workload users, and their queues/exchanges.
 
 ## Caveats
 
-- **Declaring topology exercises the wiring, not message flow.** The topology CRs, generated credentials, and
-  env are all validated end-to-end, but actually publishing/consuming needs an AMQP-speaking app. If the sample
-  binary (`ghcr.io/yama6a/pi5-k8s-sample-app`) doesn't speak AMQP yet, live message flow is a follow-up.
+- **Live message flow is exercised end-to-end.** The sample-app image speaks AMQP across three binaries:
+  `/signup` (sample-user-signup) publishes `create-user-command` every 10s; `/manager` (sample-user-manager)
+  persists each user and emits `users.created` + an audit message, evicting the oldest past 10 users
+  (`users.deleted` + audit); `/auditor` (sample-audit-logger) logs audit messages. So the topology CRs,
+  generated credentials, AND real publish/consume are all validated — tail the three deployments' logs to
+  watch the loop, and note `users.deleted` reaches no consumer (topic routing) while every audit message
+  reaches both subscribers (fanout).
 - **A queue's properties are immutable once declared.** Changing a queue's `type`/`durable` means deleting and
   re-creating the `Queue` CR (the operator won't mutate a live queue). Plan queue names up front.
 - **Editing the generated credentials Secret does nothing.** The operator doesn't watch it; to rotate, add a

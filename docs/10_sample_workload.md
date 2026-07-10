@@ -1,19 +1,32 @@
-# 10: sample-workload, a real app + its Postgres behind the Gateway
+# 10: sample-user-manager, a real app + its Postgres behind the Gateway
 
-The cluster's one end-to-end sample workload, the merge of the `gateway-test` demo and the
+The cluster's end-to-end sample workload, the merge of the `gateway-test` demo and the
 `cnpg-cluster` Postgres into a single chart. It proves the whole stack at once: a real app, its own
-database, and both ingress modes (open + SSO). One chart ships three slices:
+database, both ingress modes (open + SSO), **and** a live RabbitMQ message loop.
 
-- app: a Deployment + Service running `ghcr.io/yama6a/pi5-k8s-sample-app:1`, with the Postgres
-  `app`-role password injected as `PG_PASSWORD` from the CNPG-generated Secret.
+> **Three workloads, one image, three binaries.** The sample-app image bakes three binaries (see the
+> pi5-k8s-sample-app repo). This chart, renamed **`sample-user-manager`** (`charts/sample_user_manager`), runs
+> the default `/manager` binary — everything below, plus it's the hub of a user-lifecycle messaging demo: it
+> consumes `create-user-command`, persists each user, and emits `users.created`/`users.deleted` on the
+> `user-events` topic + audit messages on the `user-audit-logger` fanout. Two sibling charts
+> **`sample-user-signup`** (`/signup` — emits the command every 10s, consumes created + audit) and
+> **`sample-audit-logger`** (`/auditor` — consumes audit only) run the other binaries; both are messaging-only
+> (no Postgres, no ingress). The messaging topology + isolation is documented in
+> [11_messaging.md](11_messaging.md); the rest of this doc covers `sample-user-manager`'s app + Postgres + ingress.
+
+`sample-user-manager` ships three slices:
+
+- app: a Deployment + Service running the sample-app image's `/manager` binary, with the Postgres `app`-role
+  password injected as `PG_PASSWORD` from the CNPG-generated Secret, plus the `RABBITMQ_*` + `WORKLOAD_NAME`
+  env for the messaging hub. It serves `GET /users` (the persisted users as JSON).
 - database: a CloudNativePG `Cluster` via the shared `pg-cluster` wrapper (which pins `cnpg/cluster` and
   pre-bakes the boilerplate; this workload sets only `type`/`instances`/`resources`), 2-instance HA on the
   node-local `local-path` class.
 - ingress: one ingress, two hosts (plain edges rendered by the shared `ingress-edge` library, see
   [07_ingress.md](07_ingress.md)), each host's Gateway folded onto the one shared Envoy via `mergeGateways`.
   This chart configures **no SSO** — gating is central in [`04_google_sso`](07_ingress.md):
-  - `sample-workload.example.com`: OPEN — not listed in `04_google_sso`, the unprotected control.
-  - `sample-workload-sso.example.com`: GATED — listed in `04_google_sso` `domains[].hosts` with its own
+  - `sample-user-manager.example.com`: OPEN — not listed in `04_google_sso`, the unprotected control.
+  - `sample-user-manager-sso.example.com`: GATED — listed in `04_google_sso` `domains[].hosts` with its own
     allowlist; that chart's per-domain `SecurityPolicy` targetRefs this route and gates it. Auth bounces via
     the shared `google-sso.example.com` callback host.
 

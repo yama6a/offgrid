@@ -1,8 +1,10 @@
 apiVersion: v2
-name: sample-workload
+name: sample-user-manager
 description: >-
-  A sample workload that exercises the platform's ingress end to end, with its own Postgres and Google-SSO
-  allowlist.
+  The user-domain hub: the sample-app image's /manager binary (HTTP GET /users + Postgres) and the owner of
+  all three messaging exchanges — consumes create-user-command (direct), publishes user-events (topic:
+  users.created/users.deleted) and user-audit-logger (fanout). Exercises ingress end to end with its own
+  Postgres + Google-SSO allowlist.
 type: application
 version: 0.1.0                 # this wrapper chart's own version
 

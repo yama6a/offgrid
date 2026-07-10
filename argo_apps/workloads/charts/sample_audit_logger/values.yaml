@@ -1,0 +1,24 @@
+# sample-audit-logger: the sample-app image's `/auditor` binary. No Postgres, no ingress, no Service, no
+# publishing — a pure sink. It subscribes to the `user-audit-logger` fanout exchange and logs every audit
+# message to stdout. Together with sample-user-signup (which also subscribes to that fanout) it shows fanout
+# broadcast: one publisher (the manager), two independent consumers, each with its own queue. See 11_messaging.md.
+
+app:
+  name: sample-audit-logger
+  image: "ghcr.io/yama6a/pi5-k8s-sample-app:3"   # three-binary image (/manager, /signup, /auditor)
+  command: ["/auditor"]
+  replicas: 1
+  resources:
+    requests: { cpu: 10m, memory: 24Mi }
+    limits:   { memory: 48Mi }
+
+# RabbitMQ topology this workload uses via the shared rabbitmq-topology library (file:// dependency). Renders
+# its ONE user (operator-generated creds -> Secret sample-audit-logger-user-credentials) plus:
+#   - subscribeEvents user-audit-logger (fanout): its OWN queue sample-audit-logger.user-audit-logger; the
+#     routingKey is omitted because a fanout ignores it — it gets every audit message.
+# It publishes nothing, so its user gets NO write permission — the derived Permission is
+# read=^(sample-audit-logger\.user-audit-logger)$ only. See 11_messaging.md.
+rabbitmq-topology:
+  user: sample-audit-logger        # == app.name; the pod reads <user>-user-credentials (see templates/app.yaml)
+  subscribeEvents:
+    - { exchange: user-audit-logger }   # fanout: routingKey ignored; own queue sample-audit-logger.user-audit-logger

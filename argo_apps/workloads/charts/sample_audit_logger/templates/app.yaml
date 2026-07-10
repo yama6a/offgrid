@@ -1,0 +1,53 @@
+# sample-audit-logger: a single Deployment in this chart's release namespace. Runs the sample-app image's
+# `/auditor` binary (overriding the default `/manager` entrypoint), so no HTTP, no Service, no Postgres — it
+# only consumes the user-audit-logger fanout and logs. RABBITMQ_USERNAME/PASSWORD come from this workload's
+# operator-generated `<user>-user-credentials` Secret (rabbitmq-topology sets the user to app.name). Topology
+# names are compile-time constants in the binary; only connection + WORKLOAD_NAME are passed as env. See 11_messaging.md.
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: {{ .Values.app.name }}
+  namespace: {{ .Release.Namespace }}
+  labels:
+    app: {{ .Values.app.name }}
+spec:
+  replicas: {{ .Values.app.replicas }}
+  selector:
+    matchLabels:
+      app: {{ .Values.app.name }}
+  template:
+    metadata:
+      labels:
+        app: {{ .Values.app.name }}
+        messaging-client: "true"   # opts this pod into the broker's CiliumNetworkPolicy ingress on 5672. See 11_messaging.md.
+    spec:
+      containers:
+        - name: auditor
+          image: {{ .Values.app.image | quote }}
+          command: {{ .Values.app.command | toJson }}
+          env:
+            # RabbitMQ connection — the shared broker's client Service + the shared `apps` vhost. Username +
+            # password are operator-GENERATED into `<user>-user-credentials` (user == app.name). The binary
+            # assembles the AMQP URI from these discrete parts.
+            - name: RABBITMQ_HOST
+              value: "rabbitmq.rabbitmq.svc.cluster.local"
+            - name: RABBITMQ_PORT
+              value: "5672"
+            - name: RABBITMQ_VHOST
+              value: "apps"
+            - name: RABBITMQ_USERNAME
+              valueFrom:
+                secretKeyRef:
+                  name: {{ .Values.app.name }}-user-credentials
+                  key: username
+            - name: RABBITMQ_PASSWORD
+              valueFrom:
+                secretKeyRef:
+                  name: {{ .Values.app.name }}-user-credentials
+                  key: password
+            # This workload's identity: the prefix for the queue it derives (`<WORKLOAD_NAME>.user-audit-logger`).
+            # The exchange name is a compile-time constant in the binary — nothing topology-related via env.
+            - name: WORKLOAD_NAME
+              value: {{ .Values.app.name | quote }}
+          resources:
+            {{- toYaml .Values.app.resources | nindent 12 }}

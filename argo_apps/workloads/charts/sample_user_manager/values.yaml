@@ -1,0 +1,101 @@
+# sample-user-manager: the user-domain hub — a real app (HTTP GET /users) + its CloudNativePG Postgres,
+# behind open + SSO ingress, and the command/event hub of the messaging demo. Runs the sample-app image's
+# `/manager` binary. See 10_sample_workload.md / 08_storage.md / 11_messaging.md.
+
+app:
+  name: sample-user-manager
+  image: "ghcr.io/yama6a/pi5-k8s-sample-app:3"   # three-binary image (/manager, /signup, /auditor)
+  command: ["/manager"]
+  port: 8080
+  replicas: 1
+  # Postgres wiring — explicit instance names (must match the pg-cluster fullnameOverride values below), no
+  # release-name derivation. `db` is the app's primary (PG_* env points at its -rw Service + -app Secret); the
+  # manager binary reads a single DSN. `extraDbs` are additional instances the app is permitted to reach — they
+  # only widen the app's egress NetworkPolicy (proving multi-DB reachability), the binary doesn't dial them.
+  db: sample-user-manager-db
+  extraDbs: [sample-user-manager-analytics]
+  resources:
+    requests: { cpu: 10m, memory: 32Mi }
+    limits:   { memory: 48Mi }
+
+# Ingress edges for the app: two hosts on the same Service. Neither configures SSO — sample-user-manager-sso
+# is gated centrally by the google-sso chart (its domains[].hosts); sample-user-manager is left open there.
+ingress-edge:
+  ingresses:
+    - name: sample-user-manager
+      domain: example.com
+      issuer: letsencrypt-staging      # todo: letsencrypt-prod once tested
+      # targetNamespace omitted => the chart's release namespace (sample-user-manager).
+      hosts:
+        - subdomain: sample-user-manager       # open control (not in google-sso)
+          targetService: sample-user-manager
+          targetPort: 8080
+        - subdomain: sample-user-manager-sso   # gated centrally by google-sso
+          targetService: sample-user-manager
+          targetPort: 8080
+
+# RabbitMQ messaging via the shared rabbitmq-topology library (file:// dependency). Renders this workload's
+# ONE user (operator-generated creds -> Secret sample-user-manager-user-credentials) + the topology it OWNS,
+# all against the single shared broker on the `apps` vhost. This is the hub — it owns all three exchanges,
+# one of each type, to showcase the three patterns:
+#   - consumeCommands: it OWNS + is the sole consumer of `create-user-command` (direct; N publishers : 1
+#     consumer). sample-user-signup publishes to it via `sendCommands: [create-user-command]`.
+#   - publishEvents `user-events` (topic): the manager publishes `users.created` AND `users.deleted` here.
+#     sample-user-signup subscribes to `users.created` only; `users.deleted` is emitted but INTENTIONALLY has
+#     NO consumer — it demonstrates a topic exchange dropping a routing key nothing is bound to.
+#   - publishEvents `user-audit-logger` (fanout): every create/delete is broadcast here; BOTH
+#     sample-user-signup and sample-audit-logger receive every message (fanout ignores the routing key).
+# The derived per-user Permission is write=^(user-events|user-audit-logger)$, read=^(create-user-command)$.
+# The exchange names + routing keys are compile-time constants in the app (internal/messages) and MUST match
+# these. See 11_messaging.md.
+rabbitmq-topology:
+  user: sample-user-manager        # == app.name; the pod reads <user>-user-credentials (see templates/app.yaml)
+  consumeCommands:
+    - { name: create-user-command, type: direct }
+  publishEvents:
+    - { name: user-events, type: topic }        # carries users.created (consumed) + users.deleted (no consumer)
+    - { name: user-audit-logger, type: fanout }  # broadcast to signup + audit-logger
+
+# Two CloudNativePG Postgres instances, each an aliased instance of the shared pg-cluster wrapper (file://
+# dependency; pins cnpg/cluster, pre-bakes storage/affinity/monitoring/initdb/backups). The alias key routes
+# values; each instance sets its REQUIRED knobs — an explicit `cluster.fullnameOverride` (the instance name,
+# no release derivation), type, instances, resources — plus its own DB-lockdown allowlist. See 10_sample_workload.md.
+
+# Primary DB: the manager's users store (2-instance HA — primary + streaming replica on 2 distinct nodes).
+maindb:
+  cluster:
+    fullnameOverride: sample-user-manager-db
+    type: postgresql        # postgresql | postgis | timescaledb
+    cluster:
+      instances: 2
+      # Conservative footprint for the Pi 5s (8 GB RAM, lots already running). Per-instance.
+      resources:
+        requests:
+          cpu: 250m
+          memory: 256Mi
+        limits:
+          cpu: "1"
+          memory: 512Mi
+  networkPolicy:
+    allowedClients:
+      - namespace: sample-user-manager
+        matchLabels: { app: sample-user-manager }
+
+# Second DB: demonstrates multiple DBs per workload (the manager binary doesn't dial it). Single-instance.
+analyticsdb:
+  cluster:
+    fullnameOverride: sample-user-manager-analytics
+    type: postgresql
+    cluster:
+      instances: 1
+      resources:
+        requests:
+          cpu: 100m
+          memory: 128Mi
+        limits:
+          cpu: "500m"
+          memory: 256Mi
+  networkPolicy:
+    allowedClients:
+      - namespace: sample-user-manager
+        matchLabels: { app: sample-user-manager }

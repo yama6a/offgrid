@@ -1,0 +1,37 @@
+# ArgoCD Application for sample-user-signup (argo_apps/workloads/charts/sample_user_signup/): a messaging-only
+# service running the sample-app image's `/signup` binary (no HTTP, no Postgres, no ingress). Every 10s it
+# publishes a `create-user-command`, and it consumes the manager's `users.created` (topic, its own queue) +
+# `user-audit-logger` (fanout, its own queue) outputs, logging both. sample-user-manager is the hub at the
+# other end; sample-audit-logger is the other audit subscriber.
+#
+# AUTOMATED (prune + selfHeal): drift auto-corrects. Nothing here holds data — the only stateful side is the
+# operator-generated <user>-user-credentials Secret + the RabbitMQ topology CRs, all safe to reconcile.
+#
+# A WORKLOAD, not platform: lives in the workloads tree, which the root-of-roots only creates AFTER the whole
+# platform tree is Healthy, so the RabbitMQ operators + broker + `apps` vhost already exist when this app's
+# topology CRs land. No per-app sync-wave needed. See 05_gitops.md / 11_messaging.md.
+apiVersion: argoproj.io/v1alpha1
+kind: Application
+metadata:
+  name: sample-user-signup
+  namespace: argocd
+  annotations:
+    # SSA dry-run diff so server-defaulted fields on the topology CRs don't show as perpetual OutOfSync.
+    # Pairs with ServerSideApply below. Needs ArgoCD >= 2.10.
+    argocd.argoproj.io/compare-options: ServerSideDiff=true
+spec:
+  project: default
+  source:
+    repoURL: https://github.com/yama6a/offgrid
+    targetRevision: HEAD
+    path: argo_apps/workloads/charts/sample_user_signup
+  destination:
+    server: https://kubernetes.default.svc
+    namespace: sample-user-signup
+  syncPolicy:
+    automated:
+      prune: true
+      selfHeal: true
+    syncOptions:
+      - CreateNamespace=true
+      - ServerSideApply=true

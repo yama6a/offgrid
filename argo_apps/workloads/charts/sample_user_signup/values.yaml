@@ -1,0 +1,29 @@
+# sample-user-signup: the sample-app image's `/signup` binary. No Postgres, no ingress, no Service — it only
+# speaks AMQP. Every 10s it publishes a `create-user-command` (a new uuid + timestamp) for the manager to
+# persist, and it consumes the manager's outputs to log them: `users.created` on the user-events topic (NOT
+# users.deleted — its queue binds only that key) and every user-audit-logger fanout message. See 11_messaging.md.
+
+app:
+  name: sample-user-signup
+  image: "ghcr.io/yama6a/pi5-k8s-sample-app:3"   # three-binary image (/manager, /signup, /auditor)
+  command: ["/signup"]
+  replicas: 1
+  resources:
+    requests: { cpu: 10m, memory: 24Mi }
+    limits:   { memory: 48Mi }
+
+# RabbitMQ topology this workload uses via the shared rabbitmq-topology library (file:// dependency). Renders
+# its ONE user (operator-generated creds -> Secret sample-user-signup-user-credentials) plus:
+#   - sendCommands: write on the `create-user-command` exchange (owned by the manager); no queue of its own.
+#   - subscribeEvents user-events (topic): its OWN queue sample-user-signup.user-events, bound with routing key
+#     `users.created` — so it receives created events but NOT users.deleted (that key is bound by no one).
+#   - subscribeEvents user-audit-logger (fanout): its OWN queue sample-user-signup.user-audit-logger; the
+#     routingKey is omitted because a fanout ignores it — it gets every audit message.
+# The derived per-user Permission is write=^(create-user-command)$,
+# read=^(sample-user-signup\.user-events|sample-user-signup\.user-audit-logger)$. See 11_messaging.md.
+rabbitmq-topology:
+  user: sample-user-signup         # == app.name; the pod reads <user>-user-credentials (see templates/app.yaml)
+  sendCommands: [create-user-command]                          # write on the manager's command exchange
+  subscribeEvents:
+    - { exchange: user-events, routingKey: "users.created" }   # own queue sample-user-signup.user-events
+    - { exchange: user-audit-logger }                          # fanout: routingKey ignored; gets all audits
