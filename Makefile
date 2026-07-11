@@ -98,6 +98,11 @@ backup-secrets-key: ## 06: back up the sealed-secrets master key (do this BEFORE
 restore-secrets-key: ## 06: restore the sealed-secrets master key so committed SealedSecrets decrypt.
 	bash lib/shell/06_restore_sealed_secrets_key.sh
 
+##@ Data recovery  (CNPG — reattach a deleted database to its retained local-path PV)
+.PHONY: recover-cnpg
+recover-cnpg: ## Reattach a deleted CNPG Cluster to its RETAINED PV (pauses ArgoCD, recreates the adopt PVC).
+	bash lib/shell/recover_cnpg_from_pv.sh
+
 ##@ Health & inspection  (read-only; use the dockerized talosctl + the 03d kubeconfig)
 .PHONY: check-health
 check-health: ## Talos: wait for and report overall cluster health.

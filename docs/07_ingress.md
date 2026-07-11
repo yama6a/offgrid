@@ -35,9 +35,10 @@ Pure GitOps, no imperative script:
 `cilium.gatewayAPI.enabled: false` drops the `cilium` `GatewayClass` and Cilium's gateway
 controller. `gateway-helm` vendors the Gateway API CRDs (v1.5.1, newer than the v1.4.1 Cilium
 vendored), so we remove `argo_apps/platform/charts/00_cilium/crds/gateway.networking.k8s.io_*.yaml`
-and let Envoy Gateway be the single owner. The handover is safe: Cilium's app is `prune: false`, so
-dropping the CRD files never cascade-deletes the live CRDs; Envoy Gateway re-applies them via
-ServerSideApply and adopts field ownership. This ordering matters downstream: Envoy Gateway
+and let Envoy Gateway be the single owner. The handover is safe because Envoy Gateway re-applies the
+same CRDs via ServerSideApply and takes over ArgoCD ownership of them, so they stay present in the
+cluster's desired state as ownership moves off Cilium's app — the safety rests on that transfer, NOT
+on Cilium refusing to prune (Cilium's app runs `prune: true`). This ordering matters downstream: Envoy Gateway
 installs the CRDs at wave 1, before cert-manager's `enableGatewayAPI` (wave 2) wants them present.
 
 ### One Envoy, one pinned LB IP (mergeGateways)
@@ -85,8 +86,9 @@ Pure GitOps, a plain wave-2 leaf, no imperative script:
 ### CRDs installed by the chart, kept on prune
 `values.yaml` sets `crds.enabled: true` (the chart owns/installs the CRDs) and `crds.keep: true`.
 The Application runs `prune: true`; `keep` matters because a prune that removed a CRD would
-cascade-delete every `Certificate`/`Issuer`/`Order` depending on it. Same "never cascade-delete
-CRDs" posture Cilium takes (there via `prune: false`; here, more narrowly, via `crds.keep`).
+cascade-delete every `Certificate`/`Issuer`/`Order` depending on it. Cilium's app has no such guard
+(it runs `prune: true`); its gateway CRDs are instead kept safe by Envoy Gateway owning/re-applying
+them (see "Envoy Gateway owns the Gateway API CRDs" above).
 `ServerSideApply=true` because the CRDs are large enough to blow the client-side
 last-applied-annotation limit (same reason `01_argocd` uses SSA). Runs in its own `cert-manager`
 namespace (`CreateNamespace=true`).

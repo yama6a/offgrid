@@ -44,6 +44,16 @@ cilium:
     enabled: true
     relay: {enabled: true}
     ui: {enabled: true}
+    tls:
+      auto:
+        # GITOPS-CRITICAL: generate the Hubble mTLS certs (and the SHARED `cilium-ca` secret, which the
+        # chart labels cilium.io/helm-template-non-idempotent) via an in-cluster Job, NOT at Helm render
+        # time. The upstream default `helm` re-runs genCA/genSelfSignedCert on every render, so ArgoCD's
+        # repo-server minted fresh certs on each git push -> perpetual drift on cilium-ca + hubble-*-certs
+        # -> selfHeal rewrote them and bounced hubble-relay/ui every push. `cronJob` renders a stable
+        # manifest (the certs live in the cluster, generated once), so there's nothing for Argo to diff.
+        # Not `certmanager`: that needs cert-manager (wave 2) present, but this app is wave 0.
+        method: cronJob
     # Hubble flow metrics (a lean set, keeps cardinality bounded on the Pis; add httpV2 if wanted).
     metrics:
       enabled: [dns, drop, tcp, flow, icmp, port-distribution]

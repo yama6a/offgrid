@@ -2,14 +2,18 @@
 # 04_networking/04_cilium.sh from the SAME chart). Same chart/namespace/release -> Argo sees it
 # in-sync, not fighting it. See 05_gitops.md.
 #
-# AUTOMATED, but DELIBERATELY without selfHeal (and prune: false): Cilium is the one app that can
-# cut the whole cluster, and ArgoCD itself, off the network. Auto-sync applies git changes
-# hands-off, but with selfHeal OFF Argo never reverts an out-of-band break-glass fix (04_cilium.sh)
-# back to a bad git state mid-incident, and prune: false means it never cascade-deletes a CRD.
-# Recovery rule: after any break-glass, COMMIT the fix to git so the app reconciles (and doesn't
-# stall its sync-wave). The price of auto-sync: a bad Cilium change PUSHED to git applies unattended
-#, mind your pushes. First sync auto-adopts the running release with no pod churn (values.yaml
-# already has loadBalancer.enabled: true).
+# FULL AUTOMATED posture (selfHeal + prune), the SAME as every other leaf, chosen for convenience
+# even though Cilium is the one app that can cut the whole cluster, and ArgoCD itself, off the
+# network. We knowingly accept the danger:
+#   - selfHeal: true -> an out-of-band break-glass fix (04_cilium.sh) IS reverted by Argo unless you
+#                       commit it to git promptly; drift is always dragged back to the pushed state.
+#   - prune: true    -> a resource/CRD removed from the chart IS cascade-deleted on the next sync.
+#   - a bad Cilium change PUSHED to git applies unattended AND is self-healed in place -> mind your
+#     pushes; this is the one app that can take the whole cluster (and Argo) down.
+# Break-glass rule: use 04_cilium.sh to recover, then COMMIT the fix to git FAST, because selfHeal
+# will otherwise revert your out-of-band change back to the (bad) git state.
+# First sync auto-adopts the running release with no pod churn (values.yaml already has
+# loadBalancer.enabled: true).
 #
 # sync-wave "0": the CNI comes before ArgoCD (wave 1) and all later apps. This only works because
 # Cilium auto-syncs to Healthy on its own; a MANUAL app here would start OutOfSync, stall the wave,

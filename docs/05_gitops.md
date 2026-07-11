@@ -27,7 +27,7 @@ argo_apps/
     1_workloads.yaml     #   Application "workloads" (sync-wave 1), recurses workloads/apps
   platform/
     apps/                #   one Application per platform app (numbered = wave)
-      00_cilium.yaml     #     adopts Cilium      (auto-sync, no selfHeal),  wave 0
+      00_cilium.yaml     #     adopts Cilium      (auto-sync, selfHeal+prune), wave 0
       01_argocd.yaml     #     ArgoCD self-manage (automated),               wave 1
     charts/              #   the wrapper charts those Applications point at
       00_cilium/         #     step 04's chart
@@ -92,13 +92,14 @@ The 2-replica components carry `global.topologySpreadConstraints` (`maxSkew 1`, 
   public, so ArgoCD clones it anonymously over HTTPS, no secret needed. To run this project against a private
   repo (or to lift the anonymous git rate limit), `05_argocd.sh` seeds a read-only PAT before hand-off. See
   [Git auth](#git-auth) below for the how + why-imperative.
-- Cilium auto-syncs, but without `selfHeal`, with `prune: false`. A deliberate compromise for the one app that can
-  cut Argo (and the cluster) off its own network, the circular dependency called out in
-  [04_networking.md](04_networking.md). Auto-sync gives hands-off upgrades; `selfHeal: false` means an out-of-band
-  break-glass fix via `04_cilium.sh` is never reverted mid-incident; `prune: false` means a removed CRD is never
-  cascade-deleted. The price: a bad Cilium change pushed to git applies unattended, mind your pushes, and after
-  any break-glass commit the fix back to git. First sync auto-adopts the running release with no pod churn, because
-  the chart's `values.yaml` already commits `loadBalancer.enabled: true`, so Argo's rendered desired state matches live.
+- Cilium auto-syncs with full `selfHeal` + `prune` (the same posture as every leaf), chosen for convenience even
+  though it's the one app that can cut Argo (and the cluster) off its own network, the circular dependency called out
+  in [04_networking.md](04_networking.md). Auto-sync gives hands-off upgrades; the knowingly-accepted danger is that
+  `selfHeal: true` reverts an out-of-band break-glass fix (`04_cilium.sh`) unless you commit it to git fast, and
+  `prune: true` cascade-deletes any resource/CRD dropped from the chart. The price: a bad Cilium change pushed to git
+  applies unattended AND is self-healed in place, mind your pushes, and after any break-glass commit the fix back to
+  git before `selfHeal` drags it back. First sync auto-adopts the running release with no pod churn, because the
+  chart's `values.yaml` already commits `loadBalancer.enabled: true`, so Argo's rendered desired state matches live.
 - `Chart.lock` must be committed for any wrapper chart with dependencies. ArgoCD's repo-server renders charts with
   `helm dependency build`, which requires the lock. `00_cilium` already has one; `01_argocd`'s is generated on the
   first run of `05_argocd.sh` (`helm dependency update`), commit it before the `argocd` app reconciles (the script
@@ -285,8 +286,9 @@ kubectl -n argocd port-forward svc/argocd-server 8080:80
   `argo_apps/**` (incl. `Chart.lock`), then re-sync.
 - `argocd` app `OutOfSync` with a `helm dependency build` error -> `Chart.lock` isn't committed (or is stale). Run
   `helm dependency update argo_apps/platform/charts/01_argocd`, commit the lock, re-sync.
-- `cilium` app `OutOfSync` -> it auto-syncs, so this means live drift (a break-glass `04_cilium.sh` fix not yet in
-  git, or `Chart.lock`/CRD issues). With `selfHeal` off Argo won't self-correct, commit the fix to git, then it reconciles.
+- `cilium` app `OutOfSync` -> it auto-syncs with `selfHeal`, so a transient OutOfSync is normally dragged straight
+  back to the git state (a break-glass `04_cilium.sh` fix NOT yet in git gets reverted — commit it fast). A persistent
+  OutOfSync means Argo can't sync at all (`Chart.lock`/CRD/path issues); fix those and it reconciles.
 - `server`/`repo-server` pods pending -> the `DoNotSchedule` topology spread needs 2 schedulable nodes free; check
   `kubectl -n argocd get pods -o wide` and node pressure (Longhorn/monitoring not yet installed, so this is rare now).
 - No login prompt (expected) -> the anonymous user is admin and the local admin account is disabled

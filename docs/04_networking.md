@@ -130,11 +130,11 @@ log-only (`hubble observe --verdict AUDIT`) until validated, then enforced by tu
   throttling, raise `k8sClientRateLimit` in the values.
 - Circular dependency once Argo owns it: ArgoCD runs on Cilium's network, so a bad Cilium change synced through Argo
   can cut Argo off. Cilium upgrades are normally non-disruptive (per-node agent restart, eBPF datapath persists). The
-  Cilium Argo Application auto-syncs but deliberately without `selfHeal` (and `prune: false`): hands-off upgrades,
-  but Argo never reverts an out-of-band fix mid-incident nor cascade-deletes a CRD. Keep `04_cilium.sh` as
-  break-glass; after using it, commit the fix to git so the app reconciles. The trade-off is that a bad change pushed
-  to git applies unattended, so mind your pushes, it's the one app that can take the whole cluster down. See
-  [05_gitops.md](05_gitops.md) "sync-wave convention".
+  Cilium Argo Application auto-syncs with full `selfHeal` + `prune` (chosen for convenience): hands-off upgrades, but
+  Argo WILL revert an out-of-band fix and WILL cascade-delete a resource/CRD dropped from the chart. Keep `04_cilium.sh`
+  as break-glass; after using it, commit the fix to git FAST, before `selfHeal` reverts it. The trade-off is that a bad
+  change pushed to git applies unattended and is self-healed in place, so mind your pushes, it's the one app that can
+  take the whole cluster down. See [05_gitops.md](05_gitops.md) "sync-wave convention".
 - LB pool placement: must sit outside the Archer's DHCP lease range and clear of the `.100.1` VIP, or you'll get IP
   conflicts.
 
