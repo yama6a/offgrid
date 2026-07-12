@@ -12,14 +12,15 @@ metadata:
 spec:
   endpointSelector: {}          # every pod in the argocd namespace
   ingress:
-    # UI/API via the merged Envoy edge -> argocd-server:80.
+    # UI/API via the merged Envoy edge -> argocd-server. The edge routes to the pod's container port 8080
+    # (the Service maps 80->8080); Cilium enforces on the destination pod port, so this must be 8080, not 80.
     - fromEndpoints:
         - matchLabels:
             k8s:io.kubernetes.pod.namespace: envoy-gateway-system
             app.kubernetes.io/managed-by: envoy-gateway
       toPorts:
         - ports:
-            - { port: "80", protocol: TCP }
+            - { port: "8080", protocol: TCP }
     # vmagent scrapes each component's metrics (server / repo-server / controller / applicationset).
     - fromEndpoints:
         - matchLabels:
@@ -31,11 +32,12 @@ spec:
             - { port: "8084", protocol: TCP }
             - { port: "8082", protocol: TCP }
             - { port: "8080", protocol: TCP }
-    # kubectl port-forward to argocd-server (break-glass; source is the node host).
+    # kubectl port-forward to argocd-server (break-glass; source is the node host). Port-forward lands on the
+    # pod's container port 8080 (not the Service's 80).
     - fromEntities: [host]
       toPorts:
         - ports:
-            - { port: "80", protocol: TCP }
+            - { port: "8080", protocol: TCP }
     # Component mesh within the argocd namespace (repo-server :8081, redis :6379, ...).
     - fromEndpoints:
         - {}

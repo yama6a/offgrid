@@ -54,6 +54,14 @@ spec:
       toPorts:
         - ports:
             - { port: "8000", protocol: TCP }
+    # (c2) Intra-cluster 8000: instances query each other's instance-manager API (peer WAL/replication status
+    # for the failover/switchover logic). Same cnpg.io/cluster selector as (b); symmetric egress in (h2).
+    - fromEndpoints:
+        - matchLabels:
+            cnpg.io/cluster: {{ $cluster }}
+      toPorts:
+        - ports:
+            - { port: "8000", protocol: TCP }
     # (d) Kubelet liveness/readiness/startup probes hit the instance-manager (same port) from the node.
     - fromEntities: [host, remote-node]
       toPorts:
@@ -86,3 +94,10 @@ spec:
       toPorts:
         - ports:
             - { port: "5432", protocol: TCP }
+    # (h2) Intra-cluster 8000 egress: instance-manager peer status queries (symmetric with (c2)).
+    - toEndpoints:
+        - matchLabels:
+            cnpg.io/cluster: {{ $cluster }}
+      toPorts:
+        - ports:
+            - { port: "8000", protocol: TCP }
