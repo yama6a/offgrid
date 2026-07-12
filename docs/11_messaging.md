@@ -98,7 +98,27 @@ signup binds only `users.created`, so `users.deleted` — which the manager stil
 and is dropped by the broker; **fanout** (`user-audit-logger`) broadcast to two independent subscribers
 (signup + audit-logger), each with its OWN `<user>.user-audit-logger` queue, so neither can read the other's.
 `cluster.{name,namespace}` and `vhost` are library defaults (`rabbitmq`/`rabbitmq`/`apps`) a workload rarely
-touches. `permissionOverrides` is an escape hatch for the rare app that must re-declare topology at runtime.
+touches.
+
+### Why there is no permission escape hatch (apps never create topology)
+
+A workload's `Permission` is fully DERIVED — `write` from `publishEvents`+`sendCommands`, `read` from the
+queues it consumes — and `configure` is **always** empty. There is intentionally no knob to widen it (an
+earlier `permissionOverrides` field was dropped). An app user therefore can never create or delete exchanges,
+queues, or bindings at runtime: it can only publish to / consume from topology that already exists.
+
+This is a GitOps decision, not a RabbitMQ limitation. All infra — every exchange, queue, and binding — is
+declared in this repo as Kubernetes manifests and reconciled by ArgoCD + the Messaging Topology Operator.
+Topology is therefore reviewable in a diff, versioned, and self-healing; the live broker matches git, full
+stop. If apps could declare their own topology (many client libraries, e.g. Spring AMQP, do so by default),
+that state would be created out-of-band, invisible to git, un-diffable, and not pruned when the app changes —
+exactly the config drift GitOps exists to eliminate. So the app side must be configured to attach to existing
+resources, never to declare (Spring AMQP: disable `RabbitAdmin` auto-declaration / `shouldDeclare: false`;
+equivalents exist in every client). Granting `configure` would reopen that door, so the chart doesn't offer it.
+
+The rare patterns that genuinely need hand-written permissions — publishing via the default exchange
+(`amq.default`), or direct-reply-to RPC (`amq.rabbitmq.reply-to`) — don't occur in this cluster's model (async
+events pub/sub + N:1 commands, all over declared exchanges), which is why removing the hatch cost nothing.
 
 ## Secrets: generated, never sealed
 

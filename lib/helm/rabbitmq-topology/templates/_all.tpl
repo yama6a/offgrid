@@ -49,22 +49,18 @@ Regex metachars (`.` in the auto queue names) are escaped so a name matches only
 {{- range $x := ($cfg.sendCommands | default list) }}
 {{- $writeSet = append $writeSet $x }}
 {{- end }}
-{{- /* Build the aggregated permission regexes (metachars escaped), then apply any explicit overrides. */ -}}
-{{- $ovr := $cfg.permissionOverrides | default dict -}}
+{{- /* Build the aggregated permission regexes (metachars escaped). There is no configure field and no override
+       hook: the operator's admin user declares ALL topology, so an app user is NEVER granted create/delete. */ -}}
 {{- $writeEsc := list -}}{{- range $w := $writeSet }}{{ $writeEsc = append $writeEsc (replace "." "\\." $w) }}{{- end -}}
 {{- $readEsc := list -}}{{- range $r := $readSet }}{{ $readEsc = append $readEsc (replace "." "\\." $r) }}{{- end -}}
 {{- $write := ternary (printf "^(%s)$" (join "|" $writeEsc)) "" (gt (len $writeSet) 0) -}}
 {{- $read := ternary (printf "^(%s)$" (join "|" $readEsc)) "" (gt (len $readSet) 0) -}}
-{{- $configure := "" -}}
-{{- if hasKey $ovr "write" }}{{ $write = $ovr.write }}{{ end }}
-{{- if hasKey $ovr "read" }}{{ $read = $ovr.read }}{{ end }}
-{{- if hasKey $ovr "configure" }}{{ $configure = $ovr.configure }}{{ end }}
 {{- /* Emit ONLY the non-empty permission fields. RabbitMQ treats a missing field as "" (no access), and the
-       topology operator drops empty strings from the stored object — so declaring `configure: ""` (the usual
-       case: an app user needs no configure) leaves ArgoCD owning a field the live object lacks, holding the
-       Permission permanently OutOfSync. Omitting empties makes the manifest match what the operator stores. */ -}}
+       topology operator drops empty strings from the stored object — so a pure event-consumer (write="") or a
+       pure publisher (read="") that declared an empty field would leave ArgoCD owning a field the live object
+       lacks, holding the Permission permanently OutOfSync. Omitting empties makes the manifest match what the
+       operator stores. */ -}}
 {{- $perms := dict -}}
-{{- if $configure }}{{ $perms = set $perms "configure" $configure }}{{ end -}}
 {{- if $write }}{{ $perms = set $perms "write" $write }}{{ end -}}
 {{- if $read }}{{ $perms = set $perms "read" $read }}{{ end }}
 ---

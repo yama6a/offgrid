@@ -270,7 +270,6 @@ Pi 5 Talos image builds on [talos-rpi5/talos-builder](https://github.com/talos-r
 - fix numbering gap in waves (4->7)
 - rmq reusable helm char should not havve publishEvents.type default falue.
 - rmq should publishEvents.type always be "direct"?
-- rmq make example in values.yaml comments for what permissionOverrides can be set to and in what situation we want to use them. If useless, consider dropping.
 - rmq 2 longhorn replicas enough? what about persistence and recovery? reclaim PV or rebuild new replicas? Do we even need longhorn or should we reply on rmq cluster replication?
 - cnpg backups
 - longhorn backups

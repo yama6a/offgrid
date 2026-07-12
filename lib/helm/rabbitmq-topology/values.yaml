@@ -47,11 +47,3 @@ consumeCommands: []
 # consumer via its `consumeCommands`.
 #   - other-commands           # an exchange name owned by the consumer workload
 sendCommands: []
-
-# Optional escape hatch: override the auto-derived per-user Permission regexes (each key optional). Normally
-# leave unset — `write` is auto-built from publishEvents+sendCommands, `read` from the queues consumed, and
-# `configure` is "" (topology is declared by the operator's admin user, so the app user needs no configure).
-# permissionOverrides:
-#   configure: ""
-#   write: ""
-#   read: ""
