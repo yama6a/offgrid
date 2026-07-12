@@ -31,15 +31,27 @@ helperImage:
 # every node uses this same path for its OWN disk (NOT a shared filesystem).
 dataPath: /var/mnt/cnpg
 
-storageClass:
-  name: local-path
-  # NOT the cluster default, Longhorn stays the default class; CNPG opts in by name.
-  defaultClass: false
-  # WaitForFirstConsumer is mandatory for true node-local storage: the volume only exists on one node,
-  # so the scheduler must place the pod first (honoring CNPG's hostname anti-affinity) and provision
-  # the volume on that node. (Longhorn's class can use Immediate because its CSI is network-reachable.)
-  volumeBindingMode: WaitForFirstConsumer
-  # Retain so deleting a PVC/Cluster never silently destroys DB data (matches the old longhorn-single
-  # rationale). NOTE: local-path's reclaim runs the teardown script (rm -rf $VOL_DIR) only on Delete;
-  # with Retain the host dir under /var/mnt/cnpg is left behind, clean up manually to reclaim space.
-  reclaimPolicy: Retain
+# StorageClasses served by the one provisioner above (both provision under `dataPath` on the pod's own node).
+# Neither is the cluster default — Longhorn stays default; a consumer opts in by name. Both use
+# WaitForFirstConsumer, mandatory for true node-local storage: the volume exists on one node only, so the
+# scheduler must place the pod first (honoring the consumer's hostname anti-affinity) before the volume is
+# provisioned there — Immediate would bind to an arbitrary node first. They differ ONLY in reclaim policy, and
+# that choice tracks who owns replication:
+storageClasses:
+    # local-path (Retain): for CNPG. Postgres data is the source of truth, so deleting a PVC/Cluster must never
+    # silently destroy it. NOTE: local-path only runs its teardown (rm -rf $VOL_DIR) on Delete, so with Retain
+    # the host dir under /var/mnt/cnpg is left behind — clean up manually to reclaim space.
+  - name: local-path
+    defaultClass: false
+    volumeBindingMode: WaitForFirstConsumer
+    reclaimPolicy: Retain
+    # local-path-ephemeral (Delete): for self-replicating stateful apps whose HA + durability live in the app,
+    # not the volume (RabbitMQ quorum queues replicate across brokers via Raft). The per-broker volume is
+    # disposable — a replacement broker rebuilds it from healthy peers — so a deleted PVC SHOULD reclaim: Delete
+    # runs the teardown and frees the dir automatically (no manual cleanup, which matters on the shared
+    # /var/mnt/cnpg slice). Follows the repo's -ephemeral(=Delete) / -persistent(=Retain) class-naming
+    # convention (see the longhorn-redis-* classes).
+  - name: local-path-ephemeral
+    defaultClass: false
+    volumeBindingMode: WaitForFirstConsumer
+    reclaimPolicy: Delete

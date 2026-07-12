@@ -1,10 +1,11 @@
 # ArgoCD Application for the single shared RabbitMQ broker (argo_apps/platform/charts/03_rabbitmq_cluster/):
-# the RabbitmqCluster CR (3 replicas on Longhorn) + the one shared Vhost + the broker CiliumNetworkPolicy.
-# The operators + CRDs are 02_rabbitmq_operator (wave 2); workloads add their own topology via the shared
-# lib/helm/rabbitmq-topology chart. See 11_messaging.md.
+# the RabbitmqCluster CR (3 replicas on the node-local local-path-ephemeral class) + the one shared Vhost +
+# the broker CiliumNetworkPolicy. The operators + CRDs are 02_rabbitmq_operator (wave 2); workloads add their
+# own topology via the shared lib/helm/rabbitmq-topology chart. See 11_messaging.md.
 #
-# AUTOMATED (prune + selfHeal): drift auto-corrects. Note: a prune here would delete the RabbitmqCluster CR,
-# but the Longhorn PVCs are retained per Longhorn's reclaim policy, so broker data survives a re-create.
+# AUTOMATED (prune + selfHeal): drift auto-corrects. Note: a prune here would delete the RabbitmqCluster CR
+# and its Delete-reclaim PVCs — broker data is disposable BY DESIGN (HA is the running quorum, not the volume),
+# so a re-created broker rebuilds its state from the healthy peers rather than reattaching old data.
 #
 # sync-wave "3": after the operators + CRDs at wave 2 are Synced + Healthy (so the RabbitmqCluster/Vhost CRDs
 # exist and a controller is running to reconcile these CRs) — the same operator-then-CR ordering the repo uses

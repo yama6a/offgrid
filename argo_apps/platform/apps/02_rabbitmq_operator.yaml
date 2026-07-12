@@ -4,8 +4,9 @@
 # topology via the shared lib/helm/rabbitmq-topology chart. See 11_messaging.md.
 #
 # AUTOMATED (prune + selfHeal): a safe leaf, like cert-manager / longhorn / cnpg-operator, it can't cut the
-# cluster off its own network, so drift auto-corrects. A prune won't cascade-delete broker data: the
-# RabbitmqCluster is a separate app (wave 3) and its PVCs are Longhorn (not owned by this app).
+# cluster off its own network, so drift auto-corrects. A prune of THIS app won't touch broker data: the
+# RabbitmqCluster and its PVCs are a separate app (wave 3), not owned here. (That broker's own PVCs are on the
+# local-path-ephemeral Delete class, so a prune of the BROKER app is a deliberate wipe — see 11_messaging.md.)
 #
 # sync-wave "2": same wave as cert-manager / longhorn / cnpg-operator, independent leaves that only need the
 # CNI (the topology operator self-signs its webhook, so it does NOT depend on cert-manager — see values.yaml).

@@ -266,12 +266,9 @@ Pi 5 Talos image builds on [talos-rpi5/talos-builder](https://github.com/talos-r
 - check all logs/hubble for network policies in audit more that are dropping traffic that should be allowed
 - dependabot/renovate 
 - rewrite git history to remove secrets and email addresses and domains from past commits
-- merge rabbitmq cluster and operator into one wave3 chart
 - fix numbering gap in waves (4->7)
-- rmq reusable helm char should not havve publishEvents.type default falue.
-- rmq should publishEvents.type always be "direct"?
-- rmq 2 longhorn replicas enough? what about persistence and recovery? reclaim PV or rebuild new replicas? Do we even need longhorn or should we reply on rmq cluster replication?
 - cnpg backups
-- longhorn backups
+- longhorn backups?
 - ingress-edge chart should be only called "ingress"?
 - ingress-edge chart, should ingressEdge:... even be configurable if hard coded in the tempaltes?
+- ensure anti-affinity rules spread replica-pods for everything onto different nodes.

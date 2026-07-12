@@ -2,7 +2,8 @@ apiVersion: v2
 name: rabbitmq-cluster
 description: >-
   The single, shared RabbitMQ broker for the whole cluster: one RabbitmqCluster CR (3 replicas, one per Pi
-  node, on Longhorn) + the one shared Vhost every workload uses + the broker's CiliumNetworkPolicy lockdown.
+  node, on the node-local local-path-ephemeral class) + the one shared Vhost every workload uses + the broker's
+  CiliumNetworkPolicy lockdown.
   A first-party chart (no upstream dependency — pure templates); the CRDs it renders come from the operators
   installed by 02_rabbitmq_operator. There is exactly ONE broker for all workloads (unlike Postgres, which is
   per-workload), so the broker is platform infrastructure here; workloads add only their own topology

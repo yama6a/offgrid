@@ -1,14 +1,21 @@
 # Vendored from rancher/local-path-provisioner v0.0.36, parameterized from values.yaml.
-# This is the class CNPG points at (workloads/charts/sample_workload). Node-local: a PV lives only on the
-# node where its consumer pod is scheduled, hence WaitForFirstConsumer. Not the cluster default,# Longhorn keeps that; CNPG opts in by name. See 18_local_path_provisioner.md.
+# One StorageClass per entry in .Values.storageClasses, all served by the single rancher.io/local-path
+# provisioner: `local-path` (Retain) for CNPG, `local-path-ephemeral` (Delete) for RabbitMQ. Node-local: a PV
+# lives only on the node where its consumer pod is scheduled, hence WaitForFirstConsumer. Not the cluster
+# default — Longhorn keeps that; consumers opt in by name. See 18_local_path_provisioner.md.
+{{- range $i, $sc := .Values.storageClasses }}
+{{- if $i }}
+---
+{{- end }}
 apiVersion: storage.k8s.io/v1
 kind: StorageClass
 metadata:
-  name: {{ .Values.storageClass.name }}
-  {{- if .Values.storageClass.defaultClass }}
+  name: {{ $sc.name }}
+  {{- if $sc.defaultClass }}
   annotations:
     storageclass.kubernetes.io/is-default-class: "true"
   {{- end }}
 provisioner: rancher.io/local-path
-volumeBindingMode: {{ .Values.storageClass.volumeBindingMode }}
-reclaimPolicy: {{ .Values.storageClass.reclaimPolicy }}
+volumeBindingMode: {{ $sc.volumeBindingMode }}
+reclaimPolicy: {{ $sc.reclaimPolicy }}
+{{- end }}

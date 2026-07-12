@@ -27,12 +27,17 @@ resources:
     cpu: "1"
     memory: 1Gi
 
-# Persistent storage per replica, on Longhorn (as requested). NOTE (double redundancy, deliberate): quorum
-# queues already replicate messages across the 3 broker nodes AND Longhorn replicates each volume across
-# nodes. The upside is a lost node lets its broker pod reschedule and reattach its Longhorn volume with data
-# intact; the cost is extra storage. 5Gi is plenty for homelab message/quorum-log volumes.
+# Per-broker storage on the node-local `local-path-ephemeral` class (NOT Longhorn). Quorum queues already
+# replicate every message across the 3 brokers via Raft and fsync locally, so HA + durability live in the app;
+# replicating the volume underneath too would just be write amplification — the same reason CNPG runs Postgres
+# on local-path. So each broker gets a plain node-local volume, and it's disposable: lose a node and its
+# replacement broker starts empty and rebuilds from the 2 healthy peers, which is why the class is reclaimPolicy
+# Delete, not Retain (nothing to preserve; the dir is auto-cleaned). Trade-offs, all accepted: while a node is
+# down there's no spare fault tolerance (a 2nd loss drops quorum below majority), and this shares Postgres's
+# fixed 50GiB /var/mnt/cnpg slice (fine — quorum-log volumes are tiny). `size` is nominal: local-path enforces
+# no quota (same as CNPG's value).
 storage:
-  className: longhorn
+  className: local-path-ephemeral
   size: 5Gi
 
 # The one shared vhost every workload's users/exchanges/queues live in (kept separate from the default `/`,

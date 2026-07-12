@@ -87,7 +87,9 @@ Longhorn is the right default for most workloads but the wrong layer for [CloudN
 Postgres already replicates at the database layer, so replicated block storage underneath is redundant work
 (write amplification, the Longhorn engine/CSI in the hot path, and Postgres competing with Longhorn for the one
 big XFS partition). local-path-provisioner gives CNPG its own node-local storage on a dedicated partition, so
-Postgres streaming replication is the only replication layer.
+Postgres streaming replication is the only replication layer. RabbitMQ shares this provisioner for the same
+reason — quorum queues replicate at the app layer — via a second `Delete`-reclaim class (see the two classes
+below and [11_messaging.md](11_messaging.md)).
 
 **Why local-path (not TopoLVM / OpenEBS-LVM).** The capacity-awareness and PVC-size enforcement those buy are
 moot here: hostname anti-affinity puts exactly one CNPG instance per node on a dedicated 50 GiB partition, so
@@ -121,9 +123,14 @@ re-diff `templates/` against the upstream `deploy/local-path-storage.yaml` at th
 Config worth calling out (`values.yaml`):
 
 - `dataPath: /var/mnt/cnpg`: the dedicated partition; node-local (the `DEFAULT_PATH_FOR_NON_LISTED_NODES`
-  catch-all means every node uses this path on its own disk).
-- `storageClass`: name `local-path`, `defaultClass: false` (Longhorn stays the cluster default; CNPG opts in by
-  name), `volumeBindingMode: WaitForFirstConsumer`, `reclaimPolicy: Retain` (data safety).
+  catch-all means every node uses this path on its own disk). Shared by both classes below — RabbitMQ's
+  quorum-log volumes co-tenant this 50 GiB slice with Postgres (tiny, accepted; see
+  [11_messaging.md](11_messaging.md)).
+- `storageClasses`: two classes on the one provisioner, both `defaultClass: false` (Longhorn stays the cluster
+  default; consumers opt in by name) and `volumeBindingMode: WaitForFirstConsumer`, differing only in reclaim
+  policy — `local-path` (`Retain`, for CNPG: Postgres data is the source of truth) and `local-path-ephemeral`
+  (`Delete`, for RabbitMQ: quorum queues replicate at the app layer, so the volume is disposable and a deleted
+  PVC auto-cleans its dir).
 - `helperImage` pinned (`busybox:1.37`) for reproducibility.
 
 **Privileged PSA required** (like Longhorn): the provisioner runs unprivileged, but the short-lived helper pods
@@ -135,7 +142,7 @@ provisioning fails. No CRDs, so no SSA needed.
 **Verify:**
 
 ```bash
-helm template argo_apps/platform/charts/02_local_path_provisioner   # Deployment + local-path SC + RBAC + ConfigMap
+helm template argo_apps/platform/charts/02_local_path_provisioner   # Deployment + 2 SCs (local-path + -ephemeral) + RBAC + ConfigMap
 export KUBECONFIG=secrets/kubeconfig
 talosctl -n 192.168.10.201 get volumestatus | grep -E 'cnpg|longhorn'  # u-cnpg (50GiB) + u-longhorn present
 talosctl -n 192.168.10.201 read /proc/mounts | grep /var/mnt/cnpg      # mounted + visible to the kubelet

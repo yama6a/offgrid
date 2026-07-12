@@ -12,7 +12,8 @@ Three pieces (the operators and the broker are platform; the topology is per-wor
   `RabbitmqCluster` CR into the broker StatefulSet) and the **Messaging Topology Operator** (reconciles
   `Queue`/`Exchange`/`Binding`/`User`/`Permission`/`Vhost` CRs) + their CRDs. Operators + CRDs only.
 - **the broker** — `argo_apps/platform/{apps,charts}/03_rabbitmq_cluster` (wave 3). The single `RabbitmqCluster`
-  (3 replicas on Longhorn) + the one shared `Vhost` (`apps`) + the broker's `CiliumNetworkPolicy`. There is
+  (3 replicas on the node-local `local-path-ephemeral` class) + the one shared `Vhost` (`apps`) + the broker's
+  `CiliumNetworkPolicy`. There is
   exactly ONE broker for the whole cluster (unlike Postgres, which is per-workload), so it lives in platform.
 - **the reusable chart** — `lib/helm/rabbitmq-topology/` (`type: library`, like `ingress-edge`). A workload
   consumes it via a `file://` dependency + a one-line `{{ include "rabbitmq-topology.render" . }}` template and
@@ -174,11 +175,19 @@ one node down stalls writes); 1 has no HA. The operator recommends odd counts. T
 `quorum` (`default_queue_type = quorum` in `additionalConfig`), and the topology chart sets `spec.type: quorum`
 explicitly on every queue — classic mirrored queues are gone in RabbitMQ 4.x.
 
-### Storage: Longhorn (deliberate double redundancy)
-Per-replica volumes on the Longhorn class. Note this is redundant on purpose: quorum queues already replicate
-messages across the 3 broker nodes AND Longhorn replicates each volume across nodes. The upside is a lost node
-lets its broker pod reschedule and reattach its volume with data intact; the cost is extra storage. 5Gi per
-replica is ample for homelab message/quorum-log volumes.
+### Storage: node-local, disposable (not Longhorn)
+Per-broker volumes on the node-local `local-path-ephemeral` class, **not** Longhorn. Quorum queues already
+replicate every message across the 3 brokers (Raft) and fsync locally, so HA and durability live in the app;
+replicating the volume underneath too would just be write amplification — the same reason CNPG runs Postgres on
+`local-path` (see [08_storage.md](08_storage.md)). Each broker therefore gets a plain node-local volume, and
+it's **disposable**: lose a node and the replacement broker starts empty and self-reconciles from the 2 healthy
+peers. That's why the class is `reclaimPolicy: Delete` (nothing to preserve; the host dir is auto-cleaned)
+rather than the `Retain` CNPG relies on. Trade-offs, all accepted: while a node is down there's no spare fault
+tolerance (a 2nd node loss drops quorum queues below majority → read-unavailable until a majority returns); the
+volumes share Postgres's fixed 50 GiB `/var/mnt/cnpg` slice (quorum-log volumes are tiny); and a broker
+rejoining with a wiped volume under the same node name usually re-adds itself automatically in RabbitMQ 4.x but
+occasionally needs a manual `rabbitmq-queues grow` — never data loss. `5Gi` per replica is nominal (local-path
+enforces no quota).
 
 ### Two apps, operator then broker
 The `RabbitmqCluster` CR can't reconcile until its CRD exists and a controller is running, so the operators
@@ -262,5 +271,8 @@ Checks (`export KUBECONFIG=secrets/kubeconfig`):
   `kubectl patch permission <name> -p '{"metadata":{"finalizers":[]}}' --type=merge`. If it becomes a routine
   problem, add sync-waves in the library (User at a lower wave than Permission, so prune — reverse-wave —
   removes Permission first); see rabbitmq/messaging-topology-operator#324.
-- **`prune` deletes the RabbitmqCluster CR but not the data.** Longhorn PVCs are retained per Longhorn's reclaim
-  policy, so a re-create recovers the volumes.
+- **`prune` deletes the RabbitmqCluster CR *and* the data — by design.** The broker PVCs are on the
+  `local-path-ephemeral` (`Delete`) class, so a prune tears them down; there is no volume to recover. That's
+  intentional: HA is the running quorum, not the volume, so a re-created broker rebuilds its state from the
+  healthy peers. (Contrast CNPG, whose `local-path` class is `Retain` precisely because Postgres data is *not*
+  disposable.)
