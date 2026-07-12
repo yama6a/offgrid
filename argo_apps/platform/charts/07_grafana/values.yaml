@@ -31,8 +31,8 @@ grafana:
     log:
       level: warn
     server:
-      domain: grafana.example.com
-      root_url: https://grafana.example.com
+      domain: grafana.ops.example.com
+      root_url: https://grafana.ops.example.com
     auth:
       disable_login_form: true       # no built-in login, SSO is the front door
     auth.anonymous:

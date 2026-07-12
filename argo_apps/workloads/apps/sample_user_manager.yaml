@@ -3,7 +3,7 @@
 # `create-user-command` and publishes `user-events` (users.created/users.deleted) + `user-audit-logger`
 # (sample-user-signup and sample-audit-logger run the `/signup` and `/auditor` binaries at the other ends).
 # Ships the app (PG_PASSWORD injected from the CNPG secret), its CloudNativePG Clusters, and two ingress
-# hosts: sample-user-manager.example.com (OPEN) + sample-user-manager-sso.example.com (gated CENTRALLY by
+# hosts: sample-user-manager.app.example.com (OPEN) + sample-user-manager-sso.app.example.com (gated CENTRALLY by
 # 04_google_sso, which lists it in domains[].hosts — this chart configures no SSO). Both are plain edges
 # rendered by the shared ingress-edge library from the chart's `ingress-edge:` values. See
 # 10_sample_workload.md / 17_cnpg.md.
@@ -18,7 +18,7 @@
 #
 # A WORKLOAD, not platform: lives in the workloads tree, which the root-of-roots only creates AFTER the
 # whole platform tree is Healthy, so the CNPG operator's Cluster CRD, the local-path class, the Gateway and
-# 04_google_sso (whose policy already lists sample-user-manager-sso.example.com, and attaches to this route
+# 04_google_sso (whose policy already lists sample-user-manager-sso.app.example.com, and attaches to this route
 # once it appears) all exist before this app reconciles; the Cluster CR never hits a missing CRD. No per-app
 # sync-wave needed. See 05_gitops.md.
 apiVersion: argoproj.io/v1alpha1

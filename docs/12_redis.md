@@ -240,5 +240,5 @@ kubectl get vmservicescrape -A | grep -i redis                            # metr
 ```
 
 Smoke test: drive a user create/delete (via the `sample-user-signup` command flow the manager consumes), then
-`curl https://sample-user-manager.example.com/audit` → events grouped by UUID; confirm the 1h TTL with
+`curl https://sample-user-manager.app.example.com/audit` → events grouped by UUID; confirm the 1h TTL with
 `kubectl -n sample-user-manager exec sample-user-manager-redis-cache-0 -- redis-cli TTL audit:<uuid>` (entries self-expire).

@@ -185,7 +185,12 @@ Each ingress declares exactly one registrable `domain`; every host gives a `subd
 (host = `<subdomain>.<domain>`; `subdomain: "@"` = the apex). The library `fail`s the render (so ArgoCD
 reports it, nothing applies) if an ingress has **no `domain`**, a host has **no `subdomain`**, or a
 `subdomain` **looks like a full hostname** (already ends with the domain — the classic copy-paste slip).
-Per-host resource names derive from the full host (`argocd.example.com` -> `argocd-example-com`).
+Per-host resource names derive from the full host (`argocd.ops.example.com` -> `argocd-ops-example-com`).
+
+Two tiers under the one base domain: **platform UIs** (`08_platform_ingress`) sit under `*.ops.<base>`,
+**workloads** under `*.app.<base>` (e.g. `grafana.ops.example.com`, `sample-user-manager.app.example.com`).
+Each is still one registrable `domain` from the library's point of view (`ops.example.com` / `app.example.com`),
+so they get separate per-ingress multi-SAN certs; SSO keeps them under a single `example.com` entry (below).
 
 ## Google SSO — one policy per domain, per-host allowlists
 
@@ -222,19 +227,21 @@ whom, is the **central `domains[].hosts` map** in `04_google_sso/values.yaml`:
 
 ```yaml
 domains:
-  - domain: example.com
+  - domain: example.com                          # ONE entry gates both tiers (ops. + app.): cookieDomain/callback are its parent
     issuer: letsencrypt-staging
     hosts:
-      - host: argocd.example.com
+      - host: argocd.ops.example.com             # a platform UI (*.ops.<base>)
         allowlist: [admin@…]
-      - host: sample-workload-sso.example.com   # a workload host, gated centrally
+      - host: sample-workload-sso.app.example.com   # a workload host (*.app.<base>), gated centrally
         allowlist: [user@…]
 ```
 
 The policy `targetRefs` each host's route **by name** (the full host, dots -> dashes — the library's naming),
 so it attaches to routes created by *any* chart. To protect a host: add it here with its allowlist (its route
-exists wherever its ingress lives). A host not listed stays open. `sample-workload.example.com` is the open
-control (not listed); `sample-workload-sso.example.com` is listed → gated.
+exists wherever its ingress lives). A host not listed stays open. `sample-workload.app.example.com` is the open
+control (not listed); `sample-workload-sso.app.example.com` is listed → gated. Note the single `example.com`
+domain entry gates hosts across *both* the `ops.` and `app.` tiers — `cookieDomain: example.com` and the
+`google-sso.example.com` callback are a parent of each, so no per-tier policy/redirect-URI split is needed.
 
 ### Bypassing SSO for a path (the ArgoCD webhook)
 

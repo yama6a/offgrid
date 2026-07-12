@@ -206,11 +206,11 @@ Checks (`export KUBECONFIG=secrets/kubeconfig`):
   `create-user-command` every 10s and receiving `users.created` + audit messages; `kubectl -n
   sample-user-manager logs deploy/sample-user-manager` shows it persisting users and emitting events (and, past
   10 users, evicting the oldest with `users.deleted` + audit); `kubectl -n sample-audit-logger logs
-  deploy/sample-audit-logger` shows audit messages only. `curl https://sample-user-manager.example.com/users`
+  deploy/sample-audit-logger` shows audit messages only. `curl https://sample-user-manager.app.example.com/users`
   → the JSON user list.
 - Topology + isolation — `kubectl -n rabbitmq exec rabbitmq-server-0 -c rabbitmq -- rabbitmqctl list_permissions -p apps`
   → each workload user has only its own `read`/`write` regexes (audit-logger has read only), `configure` empty.
-- Management UI — `https://rabbitmq.example.com/`: Google login → RabbitMQ login (creds from
+- Management UI — `https://rabbitmq.ops.example.com/`: Google login → RabbitMQ login (creds from
   `kubectl -n rabbitmq get secret rabbitmq-default-user -o jsonpath='{.data}'`, base64-decoded) → the `apps`
   vhost, the workload users, and their queues/exchanges.
 

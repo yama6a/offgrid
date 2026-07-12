@@ -2,7 +2,7 @@
 ingress-edge:
   ingresses:
     - name: platform
-      domain: example.com
+      domain: ops.example.com # platform UIs live under the *.ops.<base> tier (workloads use *.app.<base>). See 07_ingress.md.
       issuer: letsencrypt-prod # prod (publicly-trusted) cert: GitHub's webhook SSL verification must trust argocd.<domain>. See 07_ingress.md.
       hosts:
         - subdomain: argocd

@@ -2,7 +2,7 @@
 # monitoring core. The grafana/grafana chart (no CRDs); its sidecar ingests kube-prometheus-stack's
 # emitted datasource + dashboard ConfigMaps (search-all-namespaces). Grafana's own auth is off
 # (anonymous Admin); the only gate is Google SSO, applied by the consolidated platform-ingress app (wave
-# 8) which fronts grafana.example.com. No persistence. See 09_monitoring.md.
+# 8) which fronts grafana.ops.example.com. No persistence. See 09_monitoring.md.
 #
 # AUTOMATED (prune + selfHeal): a leaf workload in the `monitoring` namespace, it can't cut the cluster
 # off its network, and it owns no CRDs.

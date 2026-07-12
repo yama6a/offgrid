@@ -205,12 +205,12 @@ GitHub HMAC signature ArgoCD checks against `webhook.github.secret`, so it can't
 
 Delivered purely by ArgoCD as one host of the consolidated platform-ingress app (sync-wave 8, app
 `argo_apps/platform/apps/08_platform_ingress.yaml`, chart `argo_apps/platform/charts/08_platform_ingress/`):
-its own `:443` `Gateway` (named `argocd-example-com`, from the hostname) + a cross-namespace `HTTPRoute` to
+its own `:443` `Gateway` (named `argocd-ops-example-com`, from the hostname) + a cross-namespace `HTTPRoute` to
 `argocd-server` + a `ReferenceGrant`, plus a SAN entry on the platform ingress's shared `platform-tls` cert,
 all rendered by the shared `ingress-edge` library. ArgoCD is untouched — it keeps `server.insecure: true` and
 serves plain HTTP on `argocd-server:80`; the Gateway terminates TLS.
 
-Gating is central: `argocd.example.com` is listed in `04_google_sso` `domains[].hosts` with its allowlist, so
+Gating is central: `argocd.ops.example.com` is listed in `04_google_sso` `domains[].hosts` with its allowlist, so
 the domain's one `SecurityPolicy` targetRefs its route and gates it — sharing the `google-sso.<domain>`
 callback + `cookieDomain` with the other platform UIs, no new Google redirect URI, no new policy. To expose a
 new platform UI: add its edge to the platform ingress `hosts:` list AND list its host in `04_google_sso`.
@@ -223,7 +223,7 @@ Decisions worth keeping:
 - **Break-glass = port-forward.** The Google gate blocks the `argocd` CLI, which speaks gRPC and can't run
   the browser OIDC flow. Keep using `kubectl -n argocd port-forward svc/argocd-server 8080:80` for the CLI
   — it also bypasses the Gateway and the SSO gate entirely, so a broken route/policy never locks you out.
-- **`/api/webhook` bypasses SSO by design.** A second `HTTPRoute` (`argocd-example-com-webhook`, in
+- **`/api/webhook` bypasses SSO by design.** A second `HTTPRoute` (`argocd-ops-example-com-webhook`, in
   `08_platform_ingress/templates/argocd-webhook-route.yaml`) matches only the Exact path `/api/webhook` on the
   same host/Gateway and — because the `04_google_sso` `SecurityPolicy` targets routes by exact *name* — is never
   gated. Safe because ArgoCD verifies the GitHub HMAC on that path; the Exact match means nothing else escapes SSO

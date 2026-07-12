@@ -29,7 +29,7 @@ app:
 ingress-edge:
   ingresses:
     - name: sample-user-manager
-      domain: example.com
+      domain: app.example.com          # workloads live under the *.app.<base> tier (platform UIs use *.ops.<base>). See 07_ingress.md.
       issuer: letsencrypt-staging      # todo: letsencrypt-prod once tested
       # targetNamespace omitted => the chart's release namespace (sample-user-manager).
       hosts:

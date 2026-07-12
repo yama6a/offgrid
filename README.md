@@ -265,7 +265,6 @@ Pi 5 Talos image builds on [talos-rpi5/talos-builder](https://github.com/talos-r
 - add a worker node (4th bay in the rack)
 - check all logs/hubble for network policies in audit more that are dropping traffic that should be allowed
 - dependabot/renovate 
-- switch platform uis to *.platform.BASE_DOMAIN
 - rewrite git history to remove secrets and email addresses and domains from past commits
 - merge rabbitmq cluster and operator into one wave3 chart
 - fix numbering gap in waves (4->7)

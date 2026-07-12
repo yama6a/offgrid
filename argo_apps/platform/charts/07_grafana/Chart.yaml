@@ -5,7 +5,7 @@ description: >-
   AND the alerting owner for the monitoring core (no Alertmanager, no vmalert). Single source of truth
   for the Grafana chart version (this file) and its values (values.yaml, under the `grafana:` key).
   Grafana's OWN auth is off (anonymous Admin, no login form), the only gate is Google SSO applied by the
-  consolidated platform-ingress app (08_platform_ingress), which fronts grafana.example.com alongside the
+  consolidated platform-ingress app (08_platform_ingress), which fronts grafana.ops.example.com alongside the
   other platform UIs; this chart no longer ships its own edge. No persistence (ephemeral pod); the VictoriaMetrics + VictoriaLogs datasources
   (pinned UIDs), the contact point / notification policy / alert rules, and the SMTP config are all
   PROVISIONED as code here (the Gmail app-password comes from the sealed grafana-smtp Secret). Curated
