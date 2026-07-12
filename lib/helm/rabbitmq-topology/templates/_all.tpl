@@ -22,8 +22,9 @@ Regex metachars (`.` in the auto queue names) are escaped so a name matches only
 {{ include "rabbitmq-topology.user" (dict "ctx" $ctx) }}
 {{- range $e := ($cfg.publishEvents | default list) }}
 {{- if not $e.name }}{{ fail "rabbitmq-topology: every publishEvents entry needs a name (the event exchange this workload owns)" }}{{ end }}
+{{- if not $e.type }}{{ fail "rabbitmq-topology: every publishEvents entry needs a type (topic | fanout | direct | headers)" }}{{ end }}
 ---
-{{ include "rabbitmq-topology.exchange" (dict "ctx" $ctx "name" $e.name "type" ($e.type | default "topic")) }}
+{{ include "rabbitmq-topology.exchange" (dict "ctx" $ctx "name" $e.name "type" $e.type) }}
 {{- $writeSet = append $writeSet $e.name }}
 {{- end }}
 {{- range $c := ($cfg.consumeCommands | default list) }}

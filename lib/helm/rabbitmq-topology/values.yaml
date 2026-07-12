@@ -22,7 +22,7 @@ user: ""
 # Each entry declares an Exchange this workload owns and grants this workload write on it. Consumers of these
 # events declare their own queues via `subscribeEvents` (below), each readable only by their own user.
 #   - name: sample-events      # the exchange name
-#     type: topic              # topic | fanout | direct | headers (default topic)
+#     type: topic              # topic | fanout | direct | headers (REQUIRED, no default)
 publishEvents: []
 
 # ---- EVENT topics this workload SUBSCRIBES to (its OWN private queue per subscription) ----
