@@ -4,7 +4,7 @@
 
 app:
   name: sample-user-manager
-  image: "ghcr.io/yama6a/pi5-k8s-sample-app:3"   # three-binary image (/manager, /signup, /auditor)
+  image: "ghcr.io/yama6a/pi5-k8s-sample-app:4"   # three-binary image (/manager, /signup, /auditor); :4 adds the Redis audit store + GET /audit
   command: ["/manager"]
   port: 8080
   replicas: 1
@@ -14,6 +14,12 @@ app:
   # only widen the app's egress NetworkPolicy (proving multi-DB reachability), the binary doesn't dial them.
   db: sample-user-manager-db
   extraDbs: [sample-user-manager-analytics]
+  # Redis wiring — same shape as db/extraDbs. `redis` is the app's PRIMARY (REDIS_ADDR env points at its
+  # ClusterIP Service; the manager stores audit logs there); `extraRedis` are additional instances the app may
+  # reach — they only widen the app's egress NetworkPolicy (proving multi-instance reachability), the binary
+  # doesn't dial them. Names must match the redis-instance `name` values below. See 12_redis.md.
+  redis: sample-user-manager-redis-cache
+  extraRedis: [sample-user-manager-redis-sessions]
   resources:
     requests: { cpu: 10m, memory: 32Mi }
     limits:   { memory: 48Mi }
@@ -99,3 +105,37 @@ analyticsdb:
     allowedClients:
       - namespace: sample-user-manager
         matchLabels: { app: sample-user-manager }
+
+# Two standalone Redis instances, each an aliased instance of the shared redis-instance wrapper (file://
+# dependency; renders a `Redis` CR + ServiceMonitor + a default-deny CiliumNetworkPolicy). Everything else —
+# images, the 2-replica Longhorn storage class, AOF persistence, the exporter, maxmemory, non-root, no-auth — is
+# hardcoded in the wrapper; a workload sets name / resources / allowedClients plus optional persistence (durable
+# vs ephemeral cache) and the create-time initialFixedDiskSize (changing it later has NO effect). The two
+# instances below deliberately showcase BOTH persistence modes. See 12_redis.md.
+
+# Primary Redis: the manager's audit-log store (RPUSH per user UUID, 1h TTL; read back by GET /audit). EPHEMERAL.
+redis-cache:
+  name: sample-user-manager-redis-cache
+  # For the sake of the demo we treat the audit-log cache as EPHEMERAL: Delete class + RDB-only, no AOF. Real
+  # audit logs might warrant durability, but these are 1h-TTL and regenerable — so this also exercises (and
+  # showcases) the non-durable path. See 12_redis.md.
+  persistence: false
+  initialFixedDiskSize: 1Gi   # create-time ONLY — changing this does NOT resize a live instance (see 12_redis.md)
+  resources:
+    requests: { cpu: 25m, memory: 64Mi }
+    limits:   { memory: 96Mi }
+  allowedClients:
+    - namespace: sample-user-manager
+      matchLabels: { app: sample-user-manager }
+
+# Second Redis: demonstrates multiple instances per workload AND the DURABLE mode (the manager doesn't dial it).
+redis-sessions:
+  name: sample-user-manager-redis-sessions
+  persistence: true           # durable: Retain class + AOF (crash-durable) — showcases the persistent mode
+  initialFixedDiskSize: 1Gi   # create-time ONLY — changing this does NOT resize a live instance (see 12_redis.md)
+  resources:
+    requests: { cpu: 25m, memory: 64Mi }
+    limits:   { memory: 96Mi }
+  allowedClients:
+    - namespace: sample-user-manager
+      matchLabels: { app: sample-user-manager }

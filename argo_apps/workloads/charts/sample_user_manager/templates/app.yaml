@@ -48,6 +48,15 @@ spec:
                 secretKeyRef:
                   name: {{ .Values.app.db }}-app
                   key: password
+            # Redis (audit-log cache) connection. Points at the app's PRIMARY Redis by its explicit instance
+            # name (`app.redis`, == that instance's redis-instance fullnameOverride) — its ClusterIP Service in
+            # this namespace, no release derivation. NO password env: the instance is locked to this workload by
+            # the redis-instance CiliumNetworkPolicy (network-RBAC), not requirepass, so there's no secret to
+            # inject. The manager RPUSHes each AuditLog under audit:<uuid> with a 1h TTL and reads it back on
+            # GET /audit. The second instance (app.extraRedis) is provisioned + egress-allowed but never dialed.
+            # See 12_redis.md.
+            - name: REDIS_ADDR
+              value: "{{ .Values.app.redis }}.{{ .Release.Namespace }}.svc.cluster.local:6379"
             # RabbitMQ connection. This workload's single user has operator-GENERATED credentials in the Secret
             # `<user>-user-credentials` (the rabbitmq-topology `user` is set to app.name, so it's
             # `{{ .Values.app.name }}-user-credentials`). Host is the shared broker's client Service; vhost is the

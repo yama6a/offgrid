@@ -264,9 +264,18 @@ Pi 5 Talos image builds on [talos-rpi5/talos-builder](https://github.com/talos-r
 - CNPG delete protection
 - desaster recovery exercise
 - add a worker node (4th bay in the rack)
-- redis + sample workload
 - check all logs/hubble for network policies in audit more that are dropping traffic that should be allowed
 - dependabot/renovate 
 - switch platform uis to *.platform.BASE_DOMAIN
-- rewrite git history to remove secrets and email addresses and domains from past comits
-- how to deal with local helm charts and version-tags?
+- rewrite git history to remove secrets and email addresses and domains from past commits
+- how to deal with local helm charts and version-tags? in workloads we reference * but what shold the chart versions be? 1.0.0? 0.0.1? "local"? any common practice for this?
+- merge rabbitmq cluster and operator into one wave3 chart
+- fix numbering gap in waves (4->7)
+- rmq helm char should not havve publishEvents.type default falue.
+- rmq should publishEvents.type always be "direct"?
+- rmq make example in values.yaml comments for what permissionOverrides can be set to and in what situation we want to use them. If useless, consider dropping.
+- rmq 2 longhorn replicas enough? what about persistence and recovery? reclaim PV or rebuild new replicas? Do we even need longhorn or should we reply on rmq cluster replication?
+- cnpg backups
+- longhorn backups
+- ingress-edge chart should be only called "igress"?
+- ingress-edge chart, whould ingressEdge:... even be configurable of hard coded in the tempaltes?

@@ -1,0 +1,69 @@
+{{- /*
+The standalone OpsTree Redis instance. `kind: Redis` (redis.redis.opstreelabs.in/v1beta2) => the operator
+reconciles a single-pod StatefulSet with ONE PVC. Single-instance by design (no HA/replication): on node loss
+Longhorn reattaches the volume elsewhere and the pod reschedules — a brief availability gap, the volume follows.
+Field shape mirrors the upstream ot-helm/redis chart's standalone template (verified against redis 0.16.9).
+
+A workload sets name / resources / allowedClients (+ optional persistence + initialFixedDiskSize). EVERYTHING
+ELSE IS PINNED HERE, once, for every instance at once:
+  redis image      quay.io/opstree/redis:v7.0.15           (multi-arch incl. arm64)
+  exporter image   quay.io/opstree/redis-exporter:v1.84.0  (the chart default v1.44.0 is amd64-ONLY — would
+                                                             crash-loop on the Pi 5; verify arm64 via the quay
+                                                             v2 manifest-list API before bumping)
+  storage class    persistence=true -> longhorn-redis-persistent (Retain); false -> longhorn-redis-ephemeral
+                   (Delete); both 2-replica, from the platform 03_redis_operator app. initialFixedDiskSize is the
+                   only storage knob, create-time only — default 1Gi (see docs/12_redis.md "Resizing an instance")
+  persistence      REQUIRED (no default). true: AOF appendfsync everysec + RDB, crash-durable. false: RDB only, no AOF
+  maxmemory        80% of the container memory limit (noeviction: writes fail at the cap, never drop data)
+  security         non-root uid/gid 1000
+  auth             OFF — access is gated by the CiliumNetworkPolicy (see networkpolicy.yaml), not requirepass
+Single standalone instance by design: no HA / replication / sentinel / cluster, and no off-cluster backups.
+Bump a tag / image here and every instance the chart renders picks it up.
+*/ -}}
+apiVersion: redis.redis.opstreelabs.in/v1beta2
+kind: Redis
+metadata:
+  name: {{ .Values.name }}
+  namespace: {{ .Release.Namespace }}
+  labels:
+    app.kubernetes.io/name: {{ .Values.name }}
+    app.kubernetes.io/managed-by: {{ .Release.Service }}
+    app.kubernetes.io/component: cache
+spec:
+  kubernetesConfig:
+    image: "quay.io/opstree/redis:v7.0.15"
+    imagePullPolicy: IfNotPresent
+    resources:
+      {{- toYaml .Values.resources | nindent 6 }}
+    # No auth: access is gated by the CiliumNetworkPolicy (network-RBAC), not requirepass — so there is no
+    # secret to commit or generate. To add a password, drop a `redisSecret: { name, key }` here pointing at a
+    # (sealed) Secret; deliberately not a per-workload knob. See docs/12_redis.md.
+  redisExporter:
+    enabled: true
+    image: "quay.io/opstree/redis-exporter:v1.84.0"
+    imagePullPolicy: IfNotPresent
+  redisConfig:
+    {{- if .Values.persistence }}
+    # Persistent mode: templates/configmap.yaml sets `appendonly yes` + `appendfsync everysec`, so the instance
+    # replays its append-only log on restart (at most ~1s of writes lost on a hard crash, not the whole window
+    # back to the last RDB snapshot). AOF + RDB both land on the PVC (operator sets dir=/data). Ephemeral mode
+    # (persistence=false) skips this entirely — RDB only, less write overhead.
+    additionalRedisConfig: {{ .Values.name }}-ext-config
+    {{- end }}
+    # maxmemory = 80% of the container memory limit (operator computes the byte value at reconcile), so Redis
+    # can't OOM its own cgroup. BOTH modes (OOM protection, unrelated to persistence). Requires
+    # resources.limits.memory. Eviction stays the Redis default (noeviction): at the cap, writes fail.
+    maxMemoryPercentOfLimit: 80
+  storage:
+    volumeClaimTemplate:
+      spec:
+        accessModes: ["ReadWriteOnce"]
+        # persistence -> Retain class (volume survives a PVC delete); ephemeral -> Delete class. Both 2-replica,
+        # defined by the platform 03_redis_operator app.
+        storageClassName: {{ if .Values.persistence }}longhorn-redis-persistent{{ else }}longhorn-redis-ephemeral{{ end }}
+        resources:
+          requests:
+            storage: {{ .Values.initialFixedDiskSize }}
+  podSecurityContext:
+    runAsUser: 1000
+    fsGroup: 1000

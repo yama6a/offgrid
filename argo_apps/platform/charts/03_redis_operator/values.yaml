@@ -1,0 +1,46 @@
+# Values for the 03_redis_operator chart (the OpsTree operator + the two Redis StorageClasses). SINGLE SOURCE OF
+# TRUTH, ArgoCD (and any local `helm template`) consume this. Chart version pinned in Chart.yaml. See 12_redis.md.
+#
+# The operator runs in its own `redis-operator` namespace (CreateNamespace=true in the Application) and watches
+# ALL namespaces (cluster RBAC scope, the chart default), so per-workload `Redis` CRs in the workloads tree are
+# reconciled. No privileged PSA needed: the controller + the redis pods it spawns run non-root (uid 1000).
+#
+# Everything under `redis-operator:` is passed to the upstream ot-helm/redis-operator subchart (key == dependency name).
+redis-operator:
+  redisOperator:
+    # Admission webhook DISABLED. It only guards the master-slave anti-affinity feature (RedisReplication),
+    # which we don't use — we run standalone `Redis` only. Off means there's no webhook serving-cert to manage at
+    # all (no cert-manager dependency). (Even with webhook=true + certmanager.enabled=false the chart would
+    # self-sign, but we don't need the feature.)
+    webhook: false
+    # Expose the controller's /metrics endpoint (:8080). No PodMonitor is shipped from here (the upstream chart
+    # has no toggle for one, and the signal that matters is the per-instance redis-exporter, scraped by the
+    # redis-instance ServiceMonitor); this just keeps the endpoint live for a future PodMonitor. See 12_redis.md.
+    metrics:
+      enabled: true
+
+  # Modest footprint for the single controller pod on the Pi 5s (trimmed from the chart's 500m/500Mi default);
+  # it only reconciles CRs — the real work lives in the redis pods (the workloads). Fully specified (not just
+  # memory) because Helm deep-merges this map: an omitted key would silently inherit the chart's 500m default.
+  resources:
+    requests:
+      cpu: 25m
+      memory: 128Mi
+    limits:
+      cpu: 250m
+      memory: 256Mi
+
+# ---- The two Redis Longhorn StorageClasses (rendered by templates/storageclasses.yaml — this app's OWN
+# resources, NOT the operator subchart). The redis-instance chart picks between them via its `persistence` flag.
+# Both are 2-replica (flaky nodes — even a cache should survive a node loss, see 08_storage.md); they differ ONLY
+# in reclaimPolicy: Retain keeps the volume when its PVC is deleted/pruned (durable), Delete cleans it up
+# (disposable cache). Top-level keys (NOT under `redis-operator:`). See 12_redis.md.
+persistent:
+  name: longhorn-redis-persistent
+  numberOfReplicas: "2"
+  reclaimPolicy: Retain
+
+ephemeral:
+  name: longhorn-redis-ephemeral
+  numberOfReplicas: "2"
+  reclaimPolicy: Delete

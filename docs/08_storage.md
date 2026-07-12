@@ -51,6 +51,10 @@ pods come up but every node's disk shows unschedulable.
   usable capacity ~1/3 of raw.
 - `persistence.defaultClass: true` (+ `defaultClassReplicaCount: 3`): Longhorn is the cluster default
   `StorageClass`; unqualified PVCs land on it.
+- Per-workload **Redis** defines its own two Longhorn classes (`longhorn-redis-persistent` /
+  `longhorn-redis-ephemeral`, both `numberOfReplicas: 2`, differing in reclaimPolicy) in the wave-3
+  `03_redis_operator` app (alongside the operator), not here — that's Redis's storage policy, not Longhorn's. See
+  [12_redis.md](12_redis.md).
 - `preUpgradeChecker.jobEnabled: false`: that Helm pre-upgrade hook Job can stall an ArgoCD sync waiting on
   completion; version control lives in git anyway.
 - `storageMinimalAvailablePercentage: 15`: leave headroom on the Pi NVMes; don't schedule onto a disk under

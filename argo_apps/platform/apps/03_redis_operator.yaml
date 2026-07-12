@@ -1,0 +1,41 @@
+# ArgoCD Application for the OpsTree Redis operator + the two Redis StorageClasses
+# (argo_apps/platform/charts/03_redis_operator/): the ot-container-kit redis-operator controller + its CRDs
+# (Redis / RedisReplication / RedisCluster / RedisSentinel), PLUS the two Longhorn classes the per-workload
+# redis-instance chart selects between via its `persistence` flag — `longhorn-redis-persistent` (Retain) and
+# `longhorn-redis-ephemeral` (Delete), both 2-replica. The actual instances (single-node `Redis` CRs) are
+# PER-WORKLOAD, rendered by lib/helm/redis-instance in the workloads tree (like Postgres via pg-cluster). See 12_redis.md.
+#
+# AUTOMATED (prune + selfHeal): a safe leaf, like cert-manager / longhorn / cnpg-operator. A prune won't
+# cascade-delete cache data: the Redis CRs live in the workloads tree and their PVCs are Longhorn (not this app);
+# pruning a StorageClass only affects NEW PVCs (already-bound volumes reference their PV, not the class).
+#
+# sync-wave "3": the operator ALONE would be a wave-2 independent leaf (needs only the CNI, like cnpg-operator).
+# But this app ALSO ships the two StorageClasses, which use the driver.longhorn.io provisioner — so the whole app
+# lands at wave 3, after Longhorn (wave 2) is Healthy (the same operator/engine-then-consumer ordering the waves
+# exist for). Bundling the classes with the operator keeps all Redis platform setup in ONE app; the only cost is
+# the operator installing one wave later, invisible in practice (redis workloads are post-platform and need
+# Longhorn anyway). The operator's admission webhook is DISABLED (values.yaml: webhook=false — it only guards the
+# master-slave anti-affinity feature we don't use), so this has NO dependency on cert-manager for a serving-cert.
+apiVersion: argoproj.io/v1alpha1
+kind: Application
+metadata:
+  name: redis-operator
+  namespace: argocd
+  annotations:
+    argocd.argoproj.io/sync-wave: "3"
+spec:
+  project: default
+  source:
+    repoURL: https://github.com/yama6a/offgrid
+    targetRevision: HEAD
+    path: argo_apps/platform/charts/03_redis_operator
+  destination:
+    server: https://kubernetes.default.svc
+    namespace: redis-operator
+  syncPolicy:
+    automated:
+      prune: true
+      selfHeal: true
+    syncOptions:
+      - CreateNamespace=true
+      - ServerSideApply=true   # the Redis operator CRDs are large, SSA avoids the last-applied-annotation limit

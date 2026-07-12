@@ -1,0 +1,31 @@
+{{- /*
+Scrape THIS instance's redis-exporter. The operator stamps its per-instance Service with the labels below
+(app / redis_setup_type / role) and exposes the exporter on a named port `redis-exporter` — selectors + port
+name verified against the upstream ot-helm/redis chart's own ServiceMonitor. Scoped to this instance + its
+namespace (not the broad redis_setup_type=standalone alone) so a workload's two Redis instances don't cross-scrape.
+
+Wiring: the VM operator auto-converts ServiceMonitor -> VMServiceScrape and vmagent discovers every scrape
+cluster-wide (selectAllByDefault), so this needs no extra labels to reach VictoriaMetrics. CRDs exist from
+wave 0. See docs/09_monitoring.md.
+*/ -}}
+apiVersion: monitoring.coreos.com/v1
+kind: ServiceMonitor
+metadata:
+  name: {{ .Values.name }}-redis
+  namespace: {{ .Release.Namespace }}
+  labels:
+    app.kubernetes.io/name: {{ .Values.name }}
+    app.kubernetes.io/component: cache
+spec:
+  selector:
+    matchLabels:
+      app: {{ .Values.name }}
+      redis_setup_type: standalone
+      role: standalone
+  endpoints:
+    - port: redis-exporter
+      interval: 30s
+      scrapeTimeout: 10s
+  namespaceSelector:
+    matchNames:
+      - {{ .Release.Namespace }}

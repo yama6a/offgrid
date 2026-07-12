@@ -1,0 +1,24 @@
+{{- /*
+The two Longhorn StorageClasses the redis-instance chart selects between via its `persistence` flag. Both use the
+driver.longhorn.io provisioner (hence wave 3, after Longhorn) and mirror Longhorn's default-class parameters,
+differing only in reclaimPolicy: Retain (persistent — volume survives a PVC delete/prune) vs Delete (ephemeral —
+volume cleaned up on PVC delete). Both are 2-replica (flaky nodes; even a cache should survive a node loss).
+Immediate binding is fine because Longhorn's CSI is network-reachable. allowVolumeExpansion so a live instance can
+grow its PVC out-of-band (see 12_redis.md "Resizing an instance"). See 08_storage.md for Longhorn itself.
+*/ -}}
+{{- range $sc := (list .Values.persistent .Values.ephemeral) }}
+---
+apiVersion: storage.k8s.io/v1
+kind: StorageClass
+metadata:
+  name: {{ $sc.name }}
+provisioner: driver.longhorn.io
+allowVolumeExpansion: true
+reclaimPolicy: {{ $sc.reclaimPolicy }}
+volumeBindingMode: Immediate
+parameters:
+  numberOfReplicas: {{ $sc.numberOfReplicas | quote }}
+  staleReplicaTimeout: "30"
+  fsType: "ext4"
+  dataLocality: "disabled"
+{{- end }}

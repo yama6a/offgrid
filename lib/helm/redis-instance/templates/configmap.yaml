@@ -1,0 +1,25 @@
+{{- /*
+Extra redis.conf for DURABILITY (AOF) — rendered ONLY in persistent mode (persistence: true). The OpsTree operator
+mounts this ConfigMap — referenced by the CR's spec.redisConfig.additionalRedisConfig — and includes
+`redis-additional.conf` on top of its generated base config. The key name (`redis-additional.conf`) is fixed by
+the operator.
+
+`appendonly yes` turns on the append-only log so the instance replays every write since the last rewrite on
+restart — at most ~1s of writes lost on a hard crash (`appendfsync everysec`), instead of the whole window back to
+the last RDB snapshot. AOF (and RDB) land on the PVC (the operator sets `dir=/data`). An ephemeral instance
+(persistence: false) doesn't render this and runs RDB-only. See docs/12_redis.md.
+*/ -}}
+{{- if .Values.persistence }}
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: {{ .Values.name }}-ext-config
+  namespace: {{ .Release.Namespace }}
+  labels:
+    app.kubernetes.io/name: {{ .Values.name }}
+    app.kubernetes.io/component: redis
+data:
+  redis-additional.conf: |
+    appendonly yes
+    appendfsync everysec
+{{- end }}

@@ -1,0 +1,71 @@
+{{- /*
+Redis lockdown — and, by design, the ONLY access control on this instance (there is no password by default;
+see values.yaml `auth`). Default-deny both directions (a CiliumNetworkPolicy that lists ingress AND egress makes
+the selected endpoints deny-by-default in each), then allow only what the instance needs. Same shape as the
+pg-cluster / rabbitmq-cluster lockdowns; the fixed platform selectors (redis-operator, vmagent, CoreDNS) are
+cluster constants, hardcoded — the only per-consumer knob is allowedClients.
+
+The redis pods are selected by the operator's per-instance `app: <name>` label (name = the consumer's explicit
+name, unique even when a workload aliases this chart more than once).
+
+ROLLOUT is audit-first (like every netpol here — see 10_sample_workload.md and the pg-cluster/rabbitmq lockdowns):
+put the redis endpoints in Cilium PolicyAuditMode, `hubble observe --verdict DROPPED,AUDIT` while the pod starts,
+the operator reconciles, a client connects, and vmagent scrapes, and only enforce once the log is clean. This is
+also the safety net for the endpointSelector: if the operator ever changes its pod labels, audit mode surfaces it
+before enforcement leaves the instance unprotected. Ports: 6379 Redis, 9121 exporter metrics, 53 DNS.
+*/ -}}
+{{- $name := .Values.name }}
+apiVersion: cilium.io/v2
+kind: CiliumNetworkPolicy
+metadata:
+  name: {{ $name }}
+  namespace: {{ .Release.Namespace }}
+spec:
+  endpointSelector:
+    matchLabels:
+      app: {{ $name }}
+  ingress:
+    # (a) Redis clients — the app(s) allowed to open connections on 6379.
+    {{- range .Values.allowedClients }}
+    - fromEndpoints:
+        - matchLabels:
+            k8s:io.kubernetes.pod.namespace: {{ .namespace }}
+            {{- range $k, $v := .matchLabels }}
+            {{ $k }}: {{ $v | quote }}
+            {{- end }}
+      toPorts:
+        - ports:
+            - { port: "6379", protocol: TCP }
+    {{- end }}
+    # (b) The OpsTree operator reconciles/health-checks the instance over 6379.
+    - fromEndpoints:
+        - matchLabels:
+            k8s:io.kubernetes.pod.namespace: redis-operator
+      toPorts:
+        - ports:
+            - { port: "6379", protocol: TCP }
+    # (c) Kubelet TCP probes hit redis on 6379 from the node.
+    - fromEntities: [host, remote-node]
+      toPorts:
+        - ports:
+            - { port: "6379", protocol: TCP }
+    # (d) Metrics scrape (vmagent -> the redis-exporter sidecar).
+    - fromEndpoints:
+        - matchLabels:
+            k8s:io.kubernetes.pod.namespace: monitoring
+            app.kubernetes.io/name: vmagent
+      toPorts:
+        - ports:
+            - { port: "9121", protocol: TCP }
+  egress:
+    # (e) DNS to CoreDNS.
+    - toEndpoints:
+        - matchLabels:
+            k8s:io.kubernetes.pod.namespace: kube-system
+            k8s-app: kube-dns
+      toPorts:
+        - ports:
+            - { port: "53", protocol: UDP }
+            - { port: "53", protocol: TCP }
+    # (f) The API server (precautionary — the operator-managed pod may watch/report via the API).
+    - toEntities: [kube-apiserver]

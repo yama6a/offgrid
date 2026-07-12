@@ -1,0 +1,49 @@
+# lib/helm/redis-instance — renders ONE standalone OpsTree `Redis` CR (+ ServiceMonitor + CiliumNetworkPolicy)
+# for a workload. First-party chart (no upstream dependency): the Redis CRD comes from the platform's
+# 03_redis_operator. A workload declares this as an ALIASED file:// dependency, once per instance (the alias is
+# the values key, exactly like pg-cluster's maindb/analyticsdb). See README.md and docs/12_redis.md.
+#
+# A workload sets the four REQUIRED knobs below, plus an optional create-time disk size. Everything else — images +
+# tags, the redis-exporter, maxmemory, the non-root security context, and no-auth — is hardcoded in the templates
+# (single source of truth, updated for every instance at once); see templates/redis.yaml. The `persistence` flag
+# (REQUIRED, no default) selects the storage class + whether AOF is on. The REQUIRED knobs are seeded with invalid
+# sentinels so templates/validate.yaml hard-fails until a consumer overrides them.
+#
+# Single standalone instance by design (no HA / replication / sentinel / cluster) and no off-cluster backups.
+
+# REQUIRED: the explicit instance name — also the ClusterIP Service DNS clients dial
+# (<name>.<namespace>.svc.cluster.local:6379). Unique per workload; aliasing this chart twice yields two
+# distinctly-named instances.
+name: ""
+
+# REQUIRED: per-pod requests/limits. No sane default for a Pi — force a choice. Set a memory LIMIT: Redis'
+# maxmemory is derived from it (80% of the limit, hardcoded in the template).
+resources: {}
+
+# REQUIRED: who may open a Redis connection on :6379. The CiliumNetworkPolicy is ALWAYS enforced and is the only
+# access control (there is no password), so an empty list would wall the instance off from everyone.
+# Shape: [{ namespace: <ns>, matchLabels: { <k>: <v> } }, ...]
+allowedClients: []
+
+# REQUIRED: persistence mode — NO default; each instance must choose explicitly (durability is a deliberate call).
+#   true  = DURABLE: storage class `longhorn-redis-persistent` (reclaimPolicy Retain — the volume survives a PVC
+#           delete/prune) + AOF (appendfsync everysec, crash-durable to ~1s).
+#   false = EPHEMERAL cache: storage class `longhorn-redis-ephemeral` (reclaimPolicy Delete — the volume is
+#           cleaned up when the PVC is deleted) + NO AOF (RDB only, less write overhead).
+# Both classes are 2-replica (this cluster's nodes are flaky, so even a cache should survive a node loss); they
+# differ only in reclaimPolicy. The classes are shipped by the platform's 03_redis_operator app. See docs/12_redis.md.
+persistence: null   # invalid sentinel — validate.yaml fails until set to an explicit true or false
+
+# ---- optional; defaulted ----
+
+# INITIAL PVC size, set ONCE at creation. CHANGING THIS ON A LIVE INSTANCE HAS NO EFFECT — the size lives in the
+# StatefulSet's (immutable) volumeClaimTemplate and the OpsTree operator does not reconcile PVC expansion, so an
+# existing volume keeps its original size. To actually grow a running instance you expand its PVC out-of-band;
+# shrinking is impossible in place. See docs/12_redis.md ("Resizing an instance").
+#
+# The storage CLASS is chosen by `persistence` (longhorn-redis-persistent/ephemeral, both 2-replica); size is the
+# only storage knob.
+# Size it against the MEMORY LIMIT, not just the dataset: with noeviction + AOF/RDB the whole in-RAM dataset (up to
+# maxmemory = 80% of the mem limit) is persisted and the append-log adds overhead, so budget disk >= ~2x the memory
+# limit. The 1Gi default covers the small instances typical here (e.g. a 96Mi mem limit).
+initialFixedDiskSize: 1Gi

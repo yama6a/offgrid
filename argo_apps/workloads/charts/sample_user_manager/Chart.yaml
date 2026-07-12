@@ -24,6 +24,18 @@ dependencies:
     alias: analyticsdb
     version: "*"
     repository: "file://../../../../lib/helm/pg-cluster"
+  # Two standalone Redis instances, each an ALIASED instance of the shared redis-instance wrapper (same
+  # aliasing rule as pg-cluster above: N instances == N aliases, each a values key with its own name).
+  # `redis-cache` holds the audit-log demo (the manager dials it); `redis-sessions` is provisioned + monitored
+  # but unused, proving "more than one Redis per workload". See 12_redis.md.
+  - name: redis-instance
+    alias: redis-cache
+    version: "*"
+    repository: "file://../../../../lib/helm/redis-instance"
+  - name: redis-instance
+    alias: redis-sessions
+    version: "*"
+    repository: "file://../../../../lib/helm/redis-instance"
   - name: ingress-edge
     version: "*"              # shared edge library; renders this workload's ingress from values below
     repository: "file://../../../../lib/helm/ingress-edge"

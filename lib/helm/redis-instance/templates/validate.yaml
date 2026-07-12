@@ -1,0 +1,17 @@
+{{- /*
+Validation only — renders to empty (all branches either fail or produce nothing). Enforces the REQUIRED fields,
+which values.yaml seeds with invalid sentinels (empty string / empty map / empty list) so a naive `required`
+wouldn't catch them. Runs in this chart's scope, so it sees the consumer's overrides merged over values.yaml.
+*/ -}}
+{{- if not .Values.name }}
+{{- fail "redis-instance: name is required (the explicit Redis instance name; also the Service DNS clients dial; must be unique across a workload's Redis instances)" }}
+{{- end }}
+{{- if not .Values.resources }}
+{{- fail "redis-instance: resources is required (per-pod requests/limits; set a memory limit so maxMemoryPercentOfLimit has a base)" }}
+{{- end }}
+{{- if not .Values.allowedClients }}
+{{- fail "redis-instance: allowedClients is required (who may reach Redis on 6379); the policy is always enforced and is the only access control, so an empty list would wall off the instance" }}
+{{- end }}
+{{- if not (kindIs "bool" .Values.persistence) }}
+{{- fail "redis-instance: persistence is required and must be explicitly true (durable — Retain + AOF) or false (ephemeral cache — Delete + RDB-only); there is no default" }}
+{{- end }}

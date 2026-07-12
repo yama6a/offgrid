@@ -49,6 +49,17 @@ spec:
         - ports:
             - { port: "5432", protocol: TCP }
     {{- end }}
+    # Its Redis instances — the primary (app.redis) + any extraRedis it may reach. The OpsTree operator stamps
+    # each redis pod with a per-instance `app: <name>` label (== that instance's fullnameOverride). 6379, no
+    # auth; the return path is allowed by each instance's own redis-instance ingress policy. See 12_redis.md.
+    {{- range prepend .Values.app.extraRedis .Values.app.redis }}
+    - toEndpoints:
+        - matchLabels:
+            app: {{ . }}
+      toPorts:
+        - ports:
+            - { port: "6379", protocol: TCP }
+    {{- end }}
     # The shared RabbitMQ broker (ns rabbitmq) on AMQP 5672 — this workload publishes/consumes messages. The
     # broker side allows this via its `messaging-client: "true"` ingress rule (the pod carries that label). See
     # 11_messaging.md.
