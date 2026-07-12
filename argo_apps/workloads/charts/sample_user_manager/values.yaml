@@ -44,7 +44,7 @@ ingress-edge:
 # ONE user (operator-generated creds -> Secret sample-user-manager-user-credentials) + the topology it OWNS,
 # all against the single shared broker on the `apps` vhost. This is the hub — it owns all three exchanges,
 # one of each type, to showcase the three patterns:
-#   - consumeCommands: it OWNS + is the sole consumer of `create-user-command` (direct; N publishers : 1
+#   - consumeCommands: it OWNS + is the sole consumer of `create-user-command` (always direct; N publishers : 1
 #     consumer). sample-user-signup publishes to it via `sendCommands: [create-user-command]`.
 #   - publishEvents `user-events` (topic): the manager publishes `users.created` AND `users.deleted` here.
 #     sample-user-signup subscribes to `users.created` only; `users.deleted` is emitted but INTENTIONALLY has
@@ -57,7 +57,7 @@ ingress-edge:
 rabbitmq-topology:
   user: sample-user-manager        # == app.name; the pod reads <user>-user-credentials (see templates/app.yaml)
   consumeCommands:
-    - { name: create-user-command, type: direct }
+    - { name: create-user-command }   # always a direct exchange (command topic = point-to-point)
   publishEvents:
     - { name: user-events, type: topic }        # carries users.created (consumed) + users.deleted (no consumer)
     - { name: user-audit-logger, type: fanout }  # broadcast to signup + audit-logger

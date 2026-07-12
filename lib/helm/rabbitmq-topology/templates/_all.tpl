@@ -28,8 +28,9 @@ Regex metachars (`.` in the auto queue names) are escaped so a name matches only
 {{- end }}
 {{- range $c := ($cfg.consumeCommands | default list) }}
 {{- if not $c.name }}{{ fail "rabbitmq-topology: every consumeCommands entry needs a name (the command exchange+queue this workload owns)" }}{{ end }}
+{{- if hasKey $c "type" }}{{ fail "rabbitmq-topology: consumeCommands entries are always a direct exchange (command topics are point-to-point, N publishers : 1 consumer); remove `type`" }}{{ end }}
 ---
-{{ include "rabbitmq-topology.exchange" (dict "ctx" $ctx "name" $c.name "type" ($c.type | default "direct")) }}
+{{ include "rabbitmq-topology.exchange" (dict "ctx" $ctx "name" $c.name "type" "direct") }}
 ---
 {{ include "rabbitmq-topology.queue" (dict "ctx" $ctx "name" $c.name) }}
 ---

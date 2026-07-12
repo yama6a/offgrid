@@ -274,5 +274,5 @@ Pi 5 Talos image builds on [talos-rpi5/talos-builder](https://github.com/talos-r
 - rmq 2 longhorn replicas enough? what about persistence and recovery? reclaim PV or rebuild new replicas? Do we even need longhorn or should we reply on rmq cluster replication?
 - cnpg backups
 - longhorn backups
-- ingress-edge chart should be only called "igress"?
-- ingress-edge chart, whould ingressEdge:... even be configurable of hard coded in the tempaltes?
+- ingress-edge chart should be only called "ingress"?
+- ingress-edge chart, should ingressEdge:... even be configurable if hard coded in the tempaltes?

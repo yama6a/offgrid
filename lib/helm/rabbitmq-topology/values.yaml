@@ -35,9 +35,10 @@ subscribeEvents: []
 
 # ---- COMMAND topics this workload OWNS + consumes (N publishers : 1 consumer = me) ----
 # Each entry declares the Exchange + its single Queue + the Binding (all owned by this consumer) and grants
-# this workload read on the queue. Other workloads send to it via `sendCommands`.
+# this workload read on the queue. Other workloads send to it via `sendCommands`. The exchange is ALWAYS a
+# `direct` exchange — a command topic is point-to-point by definition, so the type isn't configurable (setting
+# `type` is rejected). Only `name` (+ optional `routingKey`) are knobs.
 #   - name: sample-commands    # the command exchange + queue name (this workload is the sole consumer)
-#     type: direct             # direct | topic | fanout | headers (default direct)
 #     routingKey: ""           # binding key (default: the name itself, i.e. direct routing)
 consumeCommands: []
 

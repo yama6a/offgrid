@@ -69,7 +69,7 @@ hub) owns every exchange; one of each type:
 rabbitmq-topology:
   user: sample-user-manager             # defaults to the release name; -> Secret <user>-user-credentials
   consumeCommands:
-    - { name: create-user-command, type: direct }  # OWNS + sole consumer (direct: N publishers → 1 consumer)
+    - { name: create-user-command }                 # OWNS + sole consumer (always direct: N publishers → 1 consumer)
   publishEvents:
     - { name: user-events, type: topic }            # OWNS; publishes users.created AND users.deleted
     - { name: user-audit-logger, type: fanout }     # OWNS; broadcast to every subscriber
