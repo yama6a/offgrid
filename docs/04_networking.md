@@ -86,7 +86,7 @@ Hubble (flow visibility) is on in the chart values: `hubble.enabled`, `relay`, a
   `hubble.metrics.dashboards.enabled: true` makes the Cilium chart emit its official Hubble dashboards as
   `grafana_dashboard`-labelled ConfigMaps into `kube-system`; the Grafana sidecar (`searchNamespace: ALL`)
   imports them with no extra wiring.
-- **UI.** The `hubble-ui` Service is exposed as `hubble.<domain>` by the platform-ingress app (wave 8) and
+- **UI.** The `hubble-ui` Service is exposed as `hubble.<domain>` by the platform-ingress app (wave 6) and
   gated by Google SSO — a plain cross-namespace edge into `kube-system`, added to the same `hosts` list and
   `04_google_sso` allowlist as the other platform UIs (see [07_ingress.md](07_ingress.md)). Before it was
   published this was `kubectl -n kube-system port-forward svc/hubble-ui 12000:80` only.

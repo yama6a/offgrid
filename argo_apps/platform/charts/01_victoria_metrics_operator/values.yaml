@@ -27,7 +27,7 @@ victoria-metrics-operator:
 
   # Validation webhook for VM*/VL* CR syntax is DISABLED, deliberately. Two reasons:
   #   1. Wave ordering: this operator is wave 1, BEFORE cert-manager (wave 2), so the cert-manager-issued
-  #      webhook-cert path isn't available yet (it would deadlock, the webhook would reject the wave-7 CRs
+  #      webhook-cert path isn't available yet (it would deadlock, the webhook would reject the wave-5 CRs
   #      before cert-manager exists to issue its serving cert).
   #   2. The chart's non-cert-manager fallback generates the webhook cert with Helm's genCA at TEMPLATE
   #      time; ArgoCD re-renders on every sync, so the served cert and the injected caBundle drift apart

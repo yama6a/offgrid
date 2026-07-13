@@ -19,7 +19,7 @@
 # Runs our custom `conservative` strategy (lib/krr/conservative.py): memory request = max(avg, 16Mi), limit =
 # max(peak*1.2, 32Mi). It reads container_cpu_usage_seconds_total + container_memory_working_set_bytes (and,
 # for the OOMKill floor, the KSM limit/last-terminated series) — all kept by vmagent's metricRelabelConfigs
-# drop list (see 07_victoria_metrics_k8s_stack values). See docs/09_monitoring.md.
+# drop list (see 05_victoria_metrics_k8s_stack values). See docs/09_monitoring.md.
 
 set -euo pipefail
 

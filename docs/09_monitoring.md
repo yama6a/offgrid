@@ -45,7 +45,7 @@ the operator `VLSingle` CR (one operator for everything), not the standalone log
 the log collector are DaemonSets with `tolerations: [{operator: Exists}]` — this is an all-control-plane
 cluster, so a `node-role.kubernetes.io/control-plane: DoesNotExist` selector would match ZERO nodes.
 
-Each UI (vmui, vlogs) is exposed by the consolidated platform-ingress app (wave 8) behind Google SSO,
+Each UI (vmui, vlogs) is exposed by the consolidated platform-ingress app (wave 6) behind Google SSO,
 not by its own chart; see [07_ingress.md](07_ingress.md). The Hubble UI (`hubble.<domain>`) rides the same
 platform-ingress app. Cilium/Hubble also ships Grafana dashboards: `hubble.metrics.dashboards.enabled` in
 `00_cilium` emits `grafana_dashboard` ConfigMaps that this stack's Grafana sidecar picks up cluster-wide (see
@@ -65,7 +65,7 @@ The CRDs chart's appVersion must match the operator version (both `v0.72.0`); bu
 
 ## Grafana
 
-Standalone `grafana/grafana` chart (release `grafana`, ns `monitoring`, chart `07_grafana`, no persistence):
+Standalone `grafana/grafana` chart (release `grafana`, ns `monitoring`, chart `05_grafana`, no persistence):
 the dashboards/Explore UI over the two datasources and the owner of alerting. Run on its own rather than as
 the k8s-stack subchart so it versions/syncs/rolls back independently, no feature loss.
 
@@ -99,7 +99,7 @@ Host/user/from are non-secret in the values. This is the only imperative script 
 and metrics-server are pure GitOps.
 
 Grafana's `grafana.ops.example.com` edge (Gateway + Certificate + SSO HTTPRoute) is served by the consolidated
-platform-ingress app (wave 8), not the `07_grafana` chart; see [07_ingress.md](07_ingress.md).
+platform-ingress app (wave 6), not the `05_grafana` chart; see [07_ingress.md](07_ingress.md).
 
 ### Verify
 ```bash
@@ -164,7 +164,7 @@ At 3-node homelab scale — a handful of workloads, one operator — a weekly in
 read the table, hand-edit the relevant chart `values.yaml`. It matches the repo's existing tooling
 conventions — KRR runs **dockerized** (like `talosctl()`), reaching the metrics store over the same
 documented break-glass port-forward (`kubectl -n monitoring port-forward svc/vmsingle-... 8428:8428`) that
-`07_victoria_metrics_k8s_stack` already advertises, and the kube API via the 03d kubeconfig. Reuses
+`05_victoria_metrics_k8s_stack` already advertises, and the kube API via the 03d kubeconfig. Reuses
 `MONITORING_NS`; adds no cluster workload, no ArgoCD app, no SSO host.
 
 ### The `conservative` strategy (custom, RAM-frugal)

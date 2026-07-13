@@ -40,7 +40,7 @@ argo-cd:
     # argocd-secret, ArgoCD self-heal would fight the merged-in webhook key. See 05_gitops.md (Webhook sync).
     secret:
       createSecret: false
-    # Webhook-driven sync: git pushes hit /api/webhook (the ungated bypass route in 08_platform_ingress),
+    # Webhook-driven sync: git pushes hit /api/webhook (the ungated bypass route in 06_platform_ingress),
     # so the git poll is just a slow SAFETY NET (3600s) — the webhook does the fast sync. Toggle via
     # POLL_SYNC_ENABLED in .env + re-run 08_argocd_webhook.sh: false=3600s (default) / true=60s. NB do NOT
     # hand-edit timeout.reconciliation here — that script owns it (single source of truth = .env). A missed
@@ -50,9 +50,9 @@ argo-cd:
       timeout.reconciliation.jitter: 2s
       # No ArgoCD login screen: the anonymous user is auto-authenticated and (via rbac below) is admin, so
       # whoever clears the Google SSO edge lands straight in. SAFE ONLY because the Google SSO SecurityPolicy
-      # on the platform-ingress app (08_platform_ingress, wave 8) is the SOLE path to the UI/API — that edge
+      # on the platform-ingress app (06_platform_ingress, wave 6) is the SOLE path to the UI/API — that edge
       # is the ONLY auth boundary. NB `kubectl -n argocd port-forward svc/argocd-server` bypasses the Gateway
-      # + SSO and lands in as admin with no login. See 05_gitops.md (Exposure) / 08_platform_ingress.yaml.
+      # + SSO and lands in as admin with no login. See 05_gitops.md (Exposure) / 06_platform_ingress.yaml.
       users.anonymous.enabled: "true"
       # Disable the built-in local admin account: no argocd-initial-admin-secret, no username/password
       # login. Redundant now that anonymous is admin, and removes a credential that could leak/brute-force.

@@ -2,7 +2,7 @@
 # any local `helm template`) consume this. Chart version pinned in Chart.yaml. See 15_monitoring.md.
 #
 # Everything under `victoria-metrics-operator-crds:` is passed to the upstream subchart (key == dependency
-# name). We want ALL CRDs, the operator and the wave-7 stack use the full VM* + VL* set. The upstream
+# name). We want ALL CRDs, the operator and the wave-5 stack use the full VM* + VL* set. The upstream
 # defaults already enable every CRD, so this block stays empty on purpose; it's the documented place to
 # disable an individual CRD later.
 victoria-metrics-operator-crds: {}

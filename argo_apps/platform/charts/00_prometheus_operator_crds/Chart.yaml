@@ -7,7 +7,7 @@ description: >-
   the per-component ServiceMonitors enabled across waves 0-2 (cilium, argocd, cert-manager, longhorn,
   sealed-secrets). That's why this sits at WAVE 0 alongside cilium, the CRDs must exist before any
   consumer, exactly like 01_envoy_gateway owns the Gateway API CRDs early. The operator itself comes
-  much later (wave 7); CRDs with no controller are inert, and ServiceMonitors created before the
+  much later (wave 5); CRDs with no controller are inert, and ServiceMonitors created before the
   operator simply wait for it. Single source of truth for the CRD version (this file). The CRDs are
   huge, so the Application syncs them ServerSideApply=true. See 15_monitoring.md.
 type: application

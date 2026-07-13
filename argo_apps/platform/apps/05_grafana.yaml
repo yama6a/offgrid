@@ -1,15 +1,15 @@
-# ArgoCD Application for standalone Grafana (argo_apps/charts/07_grafana/), the dashboards UI for the
+# ArgoCD Application for standalone Grafana (argo_apps/charts/05_grafana/), the dashboards UI for the
 # monitoring core. The grafana/grafana chart (no CRDs); its sidecar ingests kube-prometheus-stack's
 # emitted datasource + dashboard ConfigMaps (search-all-namespaces). Grafana's own auth is off
 # (anonymous Admin); the only gate is Google SSO, applied by the consolidated platform-ingress app (wave
-# 8) which fronts grafana.ops.example.com. No persistence. See 09_monitoring.md.
+# 6) which fronts grafana.ops.example.com. No persistence. See 09_monitoring.md.
 #
 # AUTOMATED (prune + selfHeal): a leaf workload in the `monitoring` namespace, it can't cut the cluster
 # off its network, and it owns no CRDs.
 #
-# sync-wave "7": same wave as the stack it reads ConfigMaps from (07_victoria_metrics_k8s_stack). The
+# sync-wave "5": same wave as the stack it reads ConfigMaps from (05_victoria_metrics_k8s_stack). The
 # sidecar is a continuous watcher, so no hard "after the stack" ordering is needed. The grafana edge now
-# lives in the platform-ingress app at a LATER wave (8), so the grafana Service already exists when its
+# lives in the platform-ingress app at a LATER wave (6), so the grafana Service already exists when its
 # route is created (its backendRef resolves immediately). The namespace is labelled privileged exactly like
 # the stack (idempotent if the stack created `monitoring` first); ServerSideApply for parity with the other
 # monitoring apps; ServerSideDiff so server-defaulted CR fields don't show perpetual OutOfSync.
@@ -19,14 +19,14 @@ metadata:
   name: grafana
   namespace: argocd
   annotations:
-    argocd.argoproj.io/sync-wave: "7"
+    argocd.argoproj.io/sync-wave: "5"
     argocd.argoproj.io/compare-options: ServerSideDiff=true
 spec:
   project: default
   source:
     repoURL: https://github.com/yama6a/offgrid
     targetRevision: HEAD
-    path: argo_apps/platform/charts/07_grafana
+    path: argo_apps/platform/charts/05_grafana
   destination:
     server: https://kubernetes.default.svc
     # Grafana lands in `monitoring` (single-namespace now that the edge moved to platform-ingress).

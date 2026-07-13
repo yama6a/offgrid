@@ -11,7 +11,7 @@
 # sync-wave "4": after the gateway (wave 3, the shared :80 Gateway + ClusterIssuers the callback certs
 # solve through), sealed-secrets (wave 2, unseals the client secret) and Envoy Gateway (wave 1, owns the
 # SecurityPolicy CRD). The policy targetRefs app routes that don't exist until their charts sync
-# (platform-ingress wave 8, workloads later); EG attaches it when they appear. Until 07_google_sso.sh seals
+# (platform-ingress wave 6, workloads later); EG attaches it when they appear. Until 07_google_sso.sh seals
 # the client secret and you commit it, the policy references a missing Secret and login fails. Per CLAUDE.md
 # the NN prefix IS the wave.
 apiVersion: argoproj.io/v1alpha1

@@ -7,8 +7,8 @@ description: >-
   chart (a `file://` dependency) and supplies the platform `ingresses:` list in values.yaml. This
   replaces the four hand-copied edge quartets that used to live inside 06_argocd_ingress + the three
   07_* monitoring charts, and it carries the SecurityPolicy that used to be the domain-central one in
-  04_google_sso. Delivered by ArgoCD via argo_apps/platform/apps/08_platform_ingress.yaml, wave 8 (after
-  the monitoring backends at wave 7, so every backendRef resolves on creation, and after 04_google_sso at
+  04_google_sso. Delivered by ArgoCD via argo_apps/platform/apps/06_platform_ingress.yaml, wave 6 (after
+  the monitoring backends at wave 5, so every backendRef resolves on creation, and after 04_google_sso at
   wave 4 for the callback host + sealed OAuth secret). See 07_ingress.md.
 type: application
 version: 0.1.0

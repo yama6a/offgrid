@@ -7,10 +7,10 @@ description: >-
   kube-state-metrics, and the curated default dashboards (emitted as `grafana_dashboard` ConfigMaps for
   the standalone Grafana sidecar). This is "shape B": the bundled VM operator, vmalert, Alertmanager and
   Grafana are all OFF, the operator runs standalone (01_victoria_metrics_operator) and alerting is owned
-  by the standalone Grafana (07_grafana). CRDs come from wave 0 (00_victoria_metrics_operator_crds).
+  by the standalone Grafana (05_grafana). CRDs come from wave 0 (00_victoria_metrics_operator_crds).
   Single source of truth for the chart version (this file) and all config (values.yaml, under the
   `victoria-metrics-k8s-stack:` key). Replaces the retired kube-prometheus-stack. Delivered by ArgoCD via
-  argo_apps/apps/07_victoria_metrics_k8s_stack.yaml, wave 7 (after the operator wave 1 + Longhorn wave 2).
+  argo_apps/apps/05_victoria_metrics_k8s_stack.yaml, wave 5 (after the operator wave 1 + Longhorn wave 2).
   See 15_monitoring.md.
 type: application
 version: 0.1.0                 # this wrapper chart's own version

@@ -203,8 +203,8 @@ admin with no login. The **one** deliberate exception is `POST /api/webhook` (th
 served by a separate ungated route (see below) — it carries no session and is authenticated instead by the
 GitHub HMAC signature ArgoCD checks against `webhook.github.secret`, so it can't reach the UI/API.
 
-Delivered purely by ArgoCD as one host of the consolidated platform-ingress app (sync-wave 8, app
-`argo_apps/platform/apps/08_platform_ingress.yaml`, chart `argo_apps/platform/charts/08_platform_ingress/`):
+Delivered purely by ArgoCD as one host of the consolidated platform-ingress app (sync-wave 6, app
+`argo_apps/platform/apps/06_platform_ingress.yaml`, chart `argo_apps/platform/charts/06_platform_ingress/`):
 its own `:443` `Gateway` (named `argocd-ops-example-com`, from the hostname) + a cross-namespace `HTTPRoute` to
 `argocd-server` + a `ReferenceGrant`, plus a SAN entry on the platform ingress's shared `platform-tls` cert,
 all rendered by the shared `ingress` library. ArgoCD is untouched — it keeps `server.insecure: true` and
@@ -224,7 +224,7 @@ Decisions worth keeping:
   the browser OIDC flow. Keep using `kubectl -n argocd port-forward svc/argocd-server 8080:80` for the CLI
   — it also bypasses the Gateway and the SSO gate entirely, so a broken route/policy never locks you out.
 - **`/api/webhook` bypasses SSO by design.** A second `HTTPRoute` (`argocd-ops-example-com-webhook`, in
-  `08_platform_ingress/templates/argocd-webhook-route.yaml`) matches only the Exact path `/api/webhook` on the
+  `06_platform_ingress/templates/argocd-webhook-route.yaml`) matches only the Exact path `/api/webhook` on the
   same host/Gateway and — because the `04_google_sso` `SecurityPolicy` targets routes by exact *name* — is never
   gated. Safe because ArgoCD verifies the GitHub HMAC on that path; the Exact match means nothing else escapes SSO
   (critical, since anonymous is admin). Details in [07_ingress.md](07_ingress.md#bypassing-sso-for-a-path-the-argocd-webhook).

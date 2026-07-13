@@ -38,7 +38,7 @@ spec:
     - fromEndpoints:
         - matchLabels:
             app.kubernetes.io/name: {{ .Values.name }}
-    # (c) Management API 15672: the Envoy data-plane (the SSO-gated UI, 08_platform_ingress) AND the operators
+    # (c) Management API 15672: the Envoy data-plane (the SSO-gated UI, 06_platform_ingress) AND the operators
     # in this namespace (the topology operator declares topology over the HTTP management API).
     - fromEndpoints:
         - matchLabels:

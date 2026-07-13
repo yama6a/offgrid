@@ -28,7 +28,7 @@ domains:
   - domain: example.com
     issuer: letsencrypt-staging   # callback cert issuer (letsencrypt-staging | letsencrypt-prod)
     hosts:
-      # Platform UIs (08_platform_ingress) live under the *.ops.<domain> tier; the workload
+      # Platform UIs (06_platform_ingress) live under the *.ops.<domain> tier; the workload
       # (sample_user_manager) under *.app.<domain>. All still share this one example.com domain entry:
       # cookieDomain + callback google-sso.example.com are a parent of both, so the OAuth flow completes
       # across both tiers with no Google Console change. Each host MUST equal the FQDN its ingress renders
@@ -54,6 +54,6 @@ domains:
       - host: sample-user-manager-sso.app.example.com
         allowlist:
           - you@example.com
-      - host: rabbitmq.ops.example.com   # RabbitMQ management UI (08_platform_ingress); edge SSO + RabbitMQ's own login
+      - host: rabbitmq.ops.example.com   # RabbitMQ management UI (06_platform_ingress); edge SSO + RabbitMQ's own login
         allowlist:
           - you@example.com

@@ -10,7 +10,7 @@
 #      for you to paste into GitHub's webhook config, and it's sealed into a committable SealedSecret that
 #      MERGES webhook.github.secret into argocd-secret (patch-mode; server.secretkey is preserved). ArgoCD
 #      verifies this secret's HMAC on POST /api/webhook, which is why that path can safely bypass Google SSO
-#      (the ungated bypass route lives in 08_platform_ingress; the SecurityPolicy never targets it).
+#      (the ungated bypass route lives in 06_platform_ingress; the SecurityPolicy never targets it).
 #      Idempotent: a re-run REUSES the stored plaintext, so the secret you configured in GitHub stays valid.
 #
 #   2. PATCH the poll cadence from .env POLL_SYNC_ENABLED into the argocd chart values:
@@ -22,7 +22,7 @@
 #   - seal name/namespace          : hardcoded argocd-secret/argocd (fixed by ArgoCD; webhook.github.secret
 #                                     is only ever read from argocd-secret)
 #   - the poll cadence knob         <- .env POLL_SYNC_ENABLED
-#   - the argocd host (webhook URL) <- 08_platform_ingress/values.yaml (the ingress that owns the edge)
+#   - the argocd host (webhook URL) <- 06_platform_ingress/values.yaml (the ingress that owns the edge)
 # Written by this script:
 #   - argo_apps/platform/charts/01_argocd/templates/argocd-secret-sealedsecret.yaml  (the sealed secret)
 #   - argo_apps/platform/charts/01_argocd/values.yaml  (.argo-cd.configs.cm.timeout.reconciliation)
@@ -46,7 +46,7 @@ source "${SCRIPT_DIR}/common.sh"
 ARGOCD_CHART="${REPO_ROOT}/argo_apps/platform/charts/01_argocd"                  # the argocd wrapper chart
 ARGOCD_VALUES="${ARGOCD_CHART}/values.yaml"                                      # poll cadence patched here
 SEALED_OUT="${ARGOCD_CHART}/templates/argocd-secret-sealedsecret.yaml"           # sealed webhook secret (committed)
-INGRESS_VALUES="${REPO_ROOT}/argo_apps/platform/charts/08_platform_ingress/values.yaml"  # source of the argocd host
+INGRESS_VALUES="${REPO_ROOT}/argo_apps/platform/charts/06_platform_ingress/values.yaml"  # source of the argocd host
 SEAL_NAME="argocd-secret"           # ArgoCD reads webhook.github.secret ONLY from the Secret named argocd-secret
 SEAL_NAMESPACE="argocd"
 WEBHOOK_KEY="webhook.github.secret"  # the argocd-secret data key ArgoCD's GitHub webhook handler reads
@@ -58,7 +58,7 @@ say "prerequisites"
 require kubeseal kubectl yq openssl
 use_kubeconfig
 [ -f "$ARGOCD_VALUES" ]  || die "missing ${ARGOCD_VALUES} (the 01_argocd chart should ship it)"
-[ -f "$INGRESS_VALUES" ] || die "missing ${INGRESS_VALUES} (the 08_platform_ingress chart should ship it)"
+[ -f "$INGRESS_VALUES" ] || die "missing ${INGRESS_VALUES} (the 06_platform_ingress chart should ship it)"
 assert_api
 kubectl get pods -n "$SS_CONTROLLER_NS" -l "$SS_POD_SELECTOR" >/dev/null 2>&1 \
   || die "sealed-secrets controller not reachable in ns/${SS_CONTROLLER_NS}, is it synced? (kubectl -n ${SS_CONTROLLER_NS} get pods)"

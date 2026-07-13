@@ -1,15 +1,15 @@
-# ArgoCD Application for the logs stack, VictoriaLogs (argo_apps/charts/07_victoria_logs/). A VLSingle
+# ArgoCD Application for the logs stack, VictoriaLogs (argo_apps/charts/05_victoria_logs/). A VLSingle
 # store (operator-reconciled, Longhorn-backed, 60d retention) + the victoria-logs-collector DaemonSet that
 # tails container logs on every node and remote-writes to it. The vlogs UI is exposed by the consolidated
-# platform-ingress app (wave 8), not here; the VictoriaLogs UI has no login of its own, so that ingress's
+# platform-ingress app (wave 6), not here; the VictoriaLogs UI has no login of its own, so that ingress's
 # Google-SSO gate is its only barrier. See 09_monitoring.md.
 #
 # AUTOMATED (prune + selfHeal): a safe leaf, owns no CRDs (wave-0 app), can't cut the cluster off its
 # network. Break-glass: `kubectl -n monitoring port-forward svc/vlsingle-victoria-logs 9428:9428`.
 #
-# sync-wave "7": same wave as the metrics stack and Grafana, after the operator (wave 1, which reconciles
+# sync-wave "5": same wave as the metrics stack and Grafana, after the operator (wave 1, which reconciles
 # the VLSingle CR and the collector's VMPodScrape) + Longhorn (wave 2, for the VLSingle PVC). The
-# platform-ingress app is a LATER wave (8), so the VLSingle Service already exists when its route is
+# platform-ingress app is a LATER wave (6), so the VLSingle Service already exists when its route is
 # created. SSA for the CR; ServerSideDiff so operator-/server-defaulted CR fields don't show OutOfSync.
 apiVersion: argoproj.io/v1alpha1
 kind: Application
@@ -17,14 +17,14 @@ metadata:
   name: victoria-logs
   namespace: argocd
   annotations:
-    argocd.argoproj.io/sync-wave: "7"
+    argocd.argoproj.io/sync-wave: "5"
     argocd.argoproj.io/compare-options: ServerSideDiff=true
 spec:
   project: default
   source:
     repoURL: https://github.com/yama6a/offgrid
     targetRevision: HEAD
-    path: argo_apps/platform/charts/07_victoria_logs
+    path: argo_apps/platform/charts/05_victoria_logs
   destination:
     server: https://kubernetes.default.svc
     # VictoriaLogs lands in `monitoring` (single-namespace now that the edge moved to platform-ingress).

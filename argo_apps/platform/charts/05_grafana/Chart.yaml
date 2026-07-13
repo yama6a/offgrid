@@ -5,14 +5,14 @@ description: >-
   AND the alerting owner for the monitoring core (no Alertmanager, no vmalert). Single source of truth
   for the Grafana chart version (this file) and its values (values.yaml, under the `grafana:` key).
   Grafana's OWN auth is off (anonymous Admin, no login form), the only gate is Google SSO applied by the
-  consolidated platform-ingress app (08_platform_ingress), which fronts grafana.ops.example.com alongside the
+  consolidated platform-ingress app (06_platform_ingress), which fronts grafana.ops.example.com alongside the
   other platform UIs; this chart no longer ships its own edge. No persistence (ephemeral pod); the VictoriaMetrics + VictoriaLogs datasources
   (pinned UIDs), the contact point / notification policy / alert rules, and the SMTP config are all
   PROVISIONED as code here (the Gmail app-password comes from the sealed grafana-smtp Secret). Curated
   dashboards still arrive as `grafana_dashboard` ConfigMaps via the sidecar (search-all-namespaces) from
-  07_victoria_metrics_k8s_stack. The VictoriaLogs datasource is the signed victoriametrics-logs-datasource
-  plugin (GF_INSTALL_PLUGINS). Delivered by ArgoCD via argo_apps/apps/07_grafana.yaml, wave 7, same as
-  the stacks it reads from (07_victoria_metrics_k8s_stack, 07_victoria_logs). See 16_grafana.md.
+  05_victoria_metrics_k8s_stack. The VictoriaLogs datasource is the signed victoriametrics-logs-datasource
+  plugin (GF_INSTALL_PLUGINS). Delivered by ArgoCD via argo_apps/apps/05_grafana.yaml, wave 5, same as
+  the stacks it reads from (05_victoria_metrics_k8s_stack, 05_victoria_logs). See 16_grafana.md.
 type: application
 version: 0.1.0                 # this wrapper chart's own version
 appVersion: "12.3.1"          # Grafana version the pinned chart ships (mirrors the dependency)

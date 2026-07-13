@@ -3,7 +3,7 @@
 # 09_grafana_smtp.sh  (macOS)
 #
 # Seals the Gmail app-password Grafana uses to send unified-alerting email, so the project stays reusable
-# with no personal credentials in git. Grafana's SMTP host/user/from live (non-secret) in the 07_grafana
+# with no personal credentials in git. Grafana's SMTP host/user/from live (non-secret) in the 05_grafana
 # values.yaml [smtp] block; the PASSWORD is injected as GF_SMTP_PASSWORD from the sealed `grafana-smtp`
 # Secret (envValueFrom, optional). Reads the app-password from .env (SMTP_GOOGLE_APP_PASSWORD_SECRET); if set,
 # seals it into a committable SealedSecret; if blank, offers to DELETE it (disables outgoing email, the
@@ -13,7 +13,7 @@
 # gitignored .env, never echoed, never committed in plaintext.
 #
 # Written by this script (committable, no secrets in the values file):
-#   - argo_apps/platform/charts/07_grafana/templates/grafana-smtp-sealedsecret.yaml   (the sealed app-password)
+#   - argo_apps/platform/charts/05_grafana/templates/grafana-smtp-sealedsecret.yaml   (the sealed app-password)
 #
 # Native kubeseal + kubectl (hard-fails if missing), apply-to-cluster work is native, like 04/05/12/15.
 # Talks to the cluster via the step-03 kubeconfig (kubeseal fetches the controller's cert).
@@ -24,7 +24,7 @@ SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 source "${SCRIPT_DIR}/common.sh"
 
 # ---- knobs ------------------------------------------------------------------
-GRAFANA_CHART="${REPO_ROOT}/argo_apps/platform/charts/07_grafana"                    # the wrapper chart
+GRAFANA_CHART="${REPO_ROOT}/argo_apps/platform/charts/05_grafana"                    # the wrapper chart
 SEALED_OUT="${GRAFANA_CHART}/templates/grafana-smtp-sealedsecret.yaml"               # sealed app-password (committed)
 SMTP_SECRET_NAME="grafana-smtp"                                                      # Secret Grafana reads GF_SMTP_PASSWORD from
 # -----------------------------------------------------------------------------
@@ -32,7 +32,7 @@ SMTP_SECRET_NAME="grafana-smtp"                                                 
 # === 0. prereqs ==============================================================
 say "prerequisites"
 require kubeseal kubectl
-[ -d "$GRAFANA_CHART" ] || die "missing ${GRAFANA_CHART}, the 07_grafana chart should ship it"
+[ -d "$GRAFANA_CHART" ] || die "missing ${GRAFANA_CHART}, the 05_grafana chart should ship it"
 ok "kubeseal/kubectl present, grafana chart found"
 
 # === 1. read the app-password from .env ======================================
@@ -79,7 +79,7 @@ if [ "$FAIL" -eq 0 ]; then
 Grafana SMTP password sealed at ${SEALED_OUT}.
 
 Next:
-  - git add -A && git commit && git push   # ArgoCD (wave 7) applies it; the controller unseals the
+  - git add -A && git commit && git push   # ArgoCD (wave 5) applies it; the controller unseals the
                                             # app-password into Secret ${SMTP_SECRET_NAME} (ns ${MONITORING_NS})
   - restart Grafana so it picks up GF_SMTP_PASSWORD:  kubectl -n ${MONITORING_NS} rollout restart deploy/grafana
   - test: Grafana UI -> Alerting -> Contact points -> email -> "Test". See 09_monitoring.md.

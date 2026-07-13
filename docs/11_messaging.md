@@ -221,7 +221,7 @@ DROPPED,AUDIT` while the cluster forms + a client connects + the UI loads, then 
 
 ### Management UI
 Exposed exactly like the other platform UIs (argocd/grafana/vmui): a `rabbitmq` host on the platform ingress
-(`08_platform_ingress`, wave 8) → the broker's `15672` service, gated centrally by `04_google_sso` (wave 4).
+(`06_platform_ingress`, wave 6) → the broker's `15672` service, gated centrally by `04_google_sso` (wave 4).
 Edge SSO gates the network path; RabbitMQ then shows its own login — sign in with the operator-generated admin
 credentials from the `rabbitmq-default-user` Secret. It's the last wave, so the broker (wave 3) long exists.
 

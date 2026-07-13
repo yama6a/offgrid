@@ -4,7 +4,7 @@ description: >-
   Wrapper chart for the VictoriaMetrics operator CRDs (VMSingle, VMAgent, VMServiceScrape, VMPodScrape,
   VMRule, VMProbe, VLSingle, VLAgent, ...). Installed on its OWN, ahead of everything that references them:
   the VM operator (01_victoria_metrics_operator) AND every VM/VL custom resource the monitoring stack
-  ships at wave 7 (07_victoria_metrics_k8s_stack, 07_victoria_logs). Shipped SEPARATELY from the operator
+  ships at wave 5 (05_victoria_metrics_k8s_stack, 05_victoria_logs). Shipped SEPARATELY from the operator
   chart so the (large) CRDs sync ServerSideApply=true and never hit the operator app's annotation-size
   limit, the same split we use for the Prometheus operator (00_prometheus_operator_crds). That's why
   this sits at WAVE 0 alongside cilium, the CRDs must exist before any consumer; CRDs with no controller

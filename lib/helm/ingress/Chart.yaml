@@ -5,7 +5,7 @@ description: >-
   list of ingresses: per host a :443 Gateway listener + an HTTPRoute + a ReferenceGrant, and ONE multi-SAN
   cert-manager Certificate per ingress (covering all its hosts, into one shared Secret every listener
   references). Consumed via a `file://` dependency by the platform ingress
-  (argo_apps/platform/charts/08_platform_ingress), each workload chart, and the google-sso chart (for its
+  (argo_apps/platform/charts/06_platform_ingress), each workload chart, and the google-sso chart (for its
   callback hosts), so the edge lives in one place. It renders NO SSO — Google-SSO is applied centrally per
   domain by 04_google_sso (one SecurityPolicy per domain with per-host email allowlists). See 07_ingress.md.
 # A library chart pins NO upstream dependency and renders no templates of its own, so there is no

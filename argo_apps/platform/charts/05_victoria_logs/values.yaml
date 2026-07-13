@@ -1,4 +1,4 @@
-# Values for the 07_victoria_logs wrapper chart. SINGLE SOURCE OF TRUTH, ArgoCD (and any local
+# Values for the 05_victoria_logs wrapper chart. SINGLE SOURCE OF TRUTH, ArgoCD (and any local
 # `helm template`) consume this. Chart version pinned in Chart.yaml. See 15_monitoring.md.
 #
 # Two pieces:

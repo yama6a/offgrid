@@ -1,4 +1,4 @@
-# Values for the 07_victoria_metrics_k8s_stack wrapper chart. SINGLE SOURCE OF TRUTH, ArgoCD (and any
+# Values for the 05_victoria_metrics_k8s_stack wrapper chart. SINGLE SOURCE OF TRUTH, ArgoCD (and any
 # local `helm template`) consume this. Chart version pinned in Chart.yaml. See 15_monitoring.md.
 #
 # Everything under `victoria-metrics-k8s-stack:` is passed to the upstream subchart (key == dependency
@@ -119,11 +119,11 @@ victoria-metrics-k8s-stack:
 
   # ---- shape B: everything alerting/visualisation is OFF -------------------------------------------
   vmalert:
-    enabled: false               # no rule evaluator, Grafana owns alerting (07_grafana).
+    enabled: false               # no rule evaluator, Grafana owns alerting (05_grafana).
   alertmanager:
-    enabled: false               # no Alertmanager, Grafana owns notifications (07_grafana).
+    enabled: false               # no Alertmanager, Grafana owns notifications (05_grafana).
   grafana:
-    enabled: false               # standalone Grafana is its own app (07_grafana).
+    enabled: false               # standalone Grafana is its own app (05_grafana).
 
   # Default ALERTING/RECORDING rules are VMRules that only vmalert evaluates; with vmalert off they would
   # be inert. Grafana alerts query raw metrics instead (recording-rule expressions inlined where needed).
@@ -132,7 +132,7 @@ victoria-metrics-k8s-stack:
 
   # Curated default dashboards, emitted as ConfigMaps labelled `grafana_dashboard` (the sync-job reads
   # grafana.sidecar.dashboards.label, default `grafana_dashboard`) so the standalone Grafana sidecar
-  # (07_grafana, searchNamespace ALL) picks them up with zero rework. See 15_monitoring.md.
+  # (05_grafana, searchNamespace ALL) picks them up with zero rework. See 15_monitoring.md.
   defaultDashboards:
     enabled: true
     # Per-dashboard pruning. Keys are the dashboard SOURCE names (the `...-dashboard-<key>` ConfigMap

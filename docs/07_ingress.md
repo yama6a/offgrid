@@ -3,7 +3,7 @@
 The GitOps L7 ingress layer, delivered entirely by ArgoCD. Components stack in wave order: Envoy
 Gateway (the Gateway API data plane), cert-manager (issues the X.509 certs), the shared Gateway +
 Let's Encrypt ClusterIssuers (the ACME ingress platform), the central **Google-SSO** (one policy per
-domain, wave 4), and the **platform ingress** edges (wave 8). Together they terminate TLS and
+domain, wave 4), and the **platform ingress** edges (wave 6). Together they terminate TLS and
 route/authenticate every ingress host on one pinned LoadBalancer IP. Cilium
 ([04_networking.md](04_networking.md)) stays the CNI and LB-IPAM provider; only the gateway lives here.
 
@@ -180,7 +180,7 @@ Consumers are thin: a `file://` dependency on the library, a one-line template
 (`{{ include "ingress.render" . }}`), and an `ingress:` values block. See [CLAUDE.md](../CLAUDE.md) for the
 library-chart + `file://` + committed-`Chart.lock` convention.
 
-Consumers: `08_platform_ingress` (the platform UIs' edges), each workload chart, and `04_google_sso` (its
+Consumers: `06_platform_ingress` (the platform UIs' edges), each workload chart, and `04_google_sso` (its
 callback hosts' edges). ReferenceGrants are emitted only for cross-namespace backends.
 
 Each ingress declares exactly one registrable `domain`; every host gives a `subdomain` under it
@@ -189,7 +189,7 @@ reports it, nothing applies) if an ingress has **no `domain`**, a host has **no 
 `subdomain` **looks like a full hostname** (already ends with the domain — the classic copy-paste slip).
 Per-host resource names derive from the full host (`argocd.ops.example.com` -> `argocd-ops-example-com`).
 
-Two tiers under the one base domain: **platform UIs** (`08_platform_ingress`) sit under `*.ops.<base>`,
+Two tiers under the one base domain: **platform UIs** (`06_platform_ingress`) sit under `*.ops.<base>`,
 **workloads** under `*.app.<base>` (e.g. `grafana.ops.example.com`, `sample-user-manager.app.example.com`).
 Each is still one registrable `domain` from the library's point of view (`ops.example.com` / `app.example.com`),
 so they get separate per-ingress multi-SAN certs; SSO keeps them under a single `example.com` entry (below).
@@ -249,7 +249,7 @@ domain entry gates hosts across *both* the `ops.` and `app.` tiers — `cookieDo
 
 Because the policy attaches **by route name**, the same trick that leaves a whole host open also leaves a single
 *path* open: give it its own `HTTPRoute` with a name the policy doesn't target. That's how the ArgoCD GitHub
-webhook works. `08_platform_ingress/templates/argocd-webhook-route.yaml` renders a second route on the argocd
+webhook works. `06_platform_ingress/templates/argocd-webhook-route.yaml` renders a second route on the argocd
 host — same Gateway/listener, but named `argocd-<domain>-webhook` (not `argocd-<domain>`) and matching only the
 Exact path `/api/webhook`:
 
@@ -265,7 +265,7 @@ the rest of the admin API (which matters here: ArgoCD's anonymous user is admin)
 the library's existing `gateway-routes-to-argocd-<domain>` grant already allows any route in `gateway` →
 `argocd-server`. Setup + the secret live in [05_gitops.md](05_gitops.md#webhook-driven-sync-and-the-poll-fallback).
 
-> The whole platform ingress (`08_platform_ingress`) is on `letsencrypt-prod`, not staging, precisely so GitHub's
+> The whole platform ingress (`06_platform_ingress`) is on `letsencrypt-prod`, not staging, precisely so GitHub's
 > webhook SSL verification trusts `argocd.<domain>`. (The `google-sso.<domain>` callback edge below is separate
 > and still follows its own `issuer`.)
 
@@ -303,7 +303,7 @@ the placeholder `clientID` denies everyone — a half-configured policy never le
 2. Register each printed redirect URI on the one OAuth client; add each apex under "Authorized domains".
    Publish the consent screen (in "Testing" only listed test users log in, regardless of the allowlist).
 3. Commit + push; ArgoCD applies `04_google_sso` (wave 4). The app routes it targetRefs may not exist until
-   their own charts sync (platform-ingress wave 8, workloads later); EG attaches the policy when they appear.
+   their own charts sync (platform-ingress wave 6, workloads later); EG attaches the policy when they appear.
 
 Checks:
 - `kubectl -n gateway get securitypolicy` -> one `sso-<domainslug>` per domain (`sso-example-com`),
