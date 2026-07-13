@@ -78,13 +78,40 @@ if [ "$LOCK_BEFORE" -eq 0 ] && [ -f "${CHART_DIR}/Chart.lock" ]; then
   echo "   git add ${CHART_DIR#${REPO_ROOT}/}/Chart.lock"
 fi
 
+# === 1b. seed argocd-secret so argocd-server can start =======================
+# argocd-server READS argocd-secret at startup (account init + settings) and fatals "secret argocd-secret
+# not found" if it's absent — it only *populates* server.secretkey/TLS into a secret that already exists.
+# The chart is createSecret:false (values.yaml, so ArgoCD self-heal can't fight the webhook key we merge in),
+# and on a COLD cluster nothing else creates argocd-secret before argocd-server boots: the sealed webhook
+# secret is patch-mode (merge-only, never creates) and its controller is a later wave. So argocd-server
+# crashloops and `helm --wait` times out. Seed an EMPTY argocd-secret here, up front: argocd-server fills in
+# server.secretkey on boot, and the wave-3 sealed secret MERGES webhook.github.secret in later. Needs the ns
+# first (helm's --create-namespace only fires during the install, too late for this). create-if-absent: a
+# re-run must NEVER overwrite the server.secretkey argocd-server generated. Label so ArgoCD's secret informer
+# watches it; annotate patch-managed so the sealed webhook secret is allowed to merge (the controller checks
+# the annotation on the LIVE secret, not the SealedSecret template). See 05_gitops.md (Webhook-driven sync).
+say "seeding argocd-secret (argocd-server needs it at startup; chart is createSecret:false)"
+kubectl create namespace "$NS" --dry-run=client -o yaml | kubectl apply -f - >/dev/null 2>&1 \
+  && ok "namespace ${NS} present" || bad "could not ensure namespace ${NS}"
+if kubectl -n "$NS" get secret argocd-secret >/dev/null 2>&1; then
+  ok "argocd-secret already exists (left as-is; server.secretkey preserved)"
+else
+  kubectl -n "$NS" create secret generic argocd-secret >/dev/null 2>&1 \
+    && ok "argocd-secret seeded (empty; argocd-server fills server.secretkey on boot)" \
+    || bad "could not seed argocd-secret (argocd-server will crashloop without it)"
+fi
+kubectl -n "$NS" label secret argocd-secret app.kubernetes.io/part-of=argocd --overwrite >/dev/null 2>&1 || true
+kubectl -n "$NS" annotate secret argocd-secret sealedsecrets.bitnami.com/patch=true --overwrite >/dev/null 2>&1 \
+  && ok "argocd-secret labelled part-of=argocd + annotated patch-managed" \
+  || warn "could not annotate/label argocd-secret; annotate it by hand or the webhook merge is refused"
+
 # === 2. install / upgrade ArgoCD =============================================
 # Release name + namespace MUST match argo_apps/platform/apps/01_argocd.yaml so the self-managed
 # Application adopts THIS release (no churn). --reset-values recomputes from the chart's
 # values.yaml each run (same reasoning as 04_cilium.sh).
 say "helm upgrade --install ${RELEASE} (namespace ${NS})"
 # die (not bad): this install is a hard prerequisite for everything below. If it fails, the namespace was
-# never created and steps 3/3b/4 would each cascade into confusing FAILs that bury the real cause. Abort
+# never created and steps 3/4 would each cascade into confusing FAILs that bury the real cause. Abort
 # here so the helm error is the last thing on screen. Re-run is safe/idempotent. (A SealedSecret in this
 # chart used to fail the render on a cold cluster before the wave-2 CRD existed; that secret now lives in
 # its own wave-3 app, argo_apps/platform/charts/03_argocd_webhook_secret/. See 05_gitops.md.)
@@ -103,24 +130,6 @@ kubectl -n "$NS" rollout status deploy/argocd-repo-server --timeout=180s >/dev/n
   && ok "repo-server ready" || bad "repo-server not ready"
 kubectl -n "$NS" rollout status deploy/argocd-server --timeout=180s >/dev/null 2>&1 \
   && ok "server ready" || bad "server ready"
-
-# === 3b. let the sealed GitHub-webhook secret merge into argocd-secret =========
-# The chart is configured createSecret:false (01_argocd/values.yaml), so argocd-server auto-creates
-# argocd-secret (with its own server.secretkey) here — BEFORE the wave-2 sealed-secrets controller exists.
-# 08_argocd_webhook.sh ships a sealed argocd-secret that MERGES webhook.github.secret in (patch-mode), but
-# the controller refuses to touch a Secret it didn't create unless that LIVE Secret is annotated
-# patch-managed (it checks the annotation on the existing Secret, not on the SealedSecret template). So mark
-# it here. Idempotent, and runs in BOTH bootstrap and rebuild (rebuild doesn't run 08). Patch-mode = merge,
-# so server.secretkey is preserved. See 05_gitops.md (Webhook-driven sync).
-say "marking argocd-secret patch-managed (so the sealed webhook secret can merge in)"
-for _ in $(seq 1 30); do kubectl -n "$NS" get secret argocd-secret >/dev/null 2>&1 && break; sleep 2; done
-if kubectl -n "$NS" get secret argocd-secret >/dev/null 2>&1; then
-  kubectl -n "$NS" annotate secret argocd-secret sealedsecrets.bitnami.com/patch=true --overwrite >/dev/null 2>&1 \
-    && ok "argocd-secret annotated sealedsecrets.bitnami.com/patch=true" \
-    || bad "could not annotate argocd-secret (annotate it by hand so the webhook secret merges)"
-else
-  warn "argocd-secret not present yet; annotate it later (kubectl -n ${NS} annotate secret argocd-secret sealedsecrets.bitnami.com/patch=true) so the sealed webhook secret merges"
-fi
 
 # === 4. hand off to GitOps ===================================================
 # ArgoCD reads from GIT, not local disk. The root app (and the argocd self-app) point at paths

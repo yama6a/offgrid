@@ -197,15 +197,17 @@ webhook-driven, with the poll demoted to a slow safety net.
   writes the plaintext to `secrets/argocd-github-webhook-secret.txt` (the gitignored off-repo store — paste it
   into GitHub) and seals it into `argocd-secret`'s `webhook.github.secret` key. Re-running reuses the stored value
   (idempotent), so the secret you configured in GitHub keeps working; delete the file to rotate.
-- **`createSecret: false` + a *merged* sealed `argocd-secret`.** ArgoCD reads `webhook.github.secret` only from
-  the Secret named `argocd-secret`. We set `configs.secret.createSecret: false` so the chart doesn't own that
-  Secret (otherwise ArgoCD self-heal would fight the key we merge in). But `argocd-server` auto-creates
-  `argocd-secret` (with its own `server.secretkey`) during the wave-1 bootstrap, *before* the wave-2
-  sealed-secrets controller exists — and the controller refuses to overwrite a Secret it didn't create. So we seal
-  in **patch mode** (`sealedsecrets.bitnami.com/patch: "true"`): it *merges* `webhook.github.secret` in and leaves
-  `server.secretkey` intact. Patch mode only works if the **live** Secret already carries that annotation (the
-  controller checks the existing object, not the SealedSecret template), so `05_argocd.sh` annotates the live
-  `argocd-secret` right after ArgoCD rolls out — in both bootstrap and rebuild.
+- **`createSecret: false` + a *seeded*, then *merged*, `argocd-secret`.** ArgoCD reads `webhook.github.secret`
+  only from the Secret named `argocd-secret`. We set `configs.secret.createSecret: false` so the chart doesn't
+  own that Secret (otherwise ArgoCD self-heal would fight the key we merge in). The catch: `argocd-server` reads
+  `argocd-secret` at startup and **fatals if it's absent** (it only *populates* `server.secretkey`/TLS into a
+  secret that already exists — it does not reliably create it on a cold cluster). With `createSecret: false`
+  nothing else creates it before boot, so `05_argocd.sh` **seeds an empty `argocd-secret` before the Helm
+  install**; `argocd-server` then writes its own `server.secretkey` into it. The webhook key arrives separately:
+  the wave-3 `argocd-webhook-secret` app seals in **patch mode** (`sealedsecrets.bitnami.com/patch: "true"`),
+  which *merges* `webhook.github.secret` in and leaves `server.secretkey` intact. Patch mode only works if the
+  **live** Secret already carries that annotation (the controller checks the existing object, not the
+  SealedSecret template), so `05_argocd.sh` sets it on the seeded secret up front — in both bootstrap and rebuild.
 - **The sealed secret lives in a *separate* wave-3 app, not the wave-1 argocd chart.** The `SealedSecret`
   (`bitnami.com/v1alpha1`) is delivered by `argo_apps/platform/charts/03_argocd_webhook_secret/` (app
   `03_argocd_webhook_secret`, wave 3), **not** the `01_argocd` chart. If it lived in the argocd chart,
