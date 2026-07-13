@@ -270,3 +270,4 @@ Pi 5 Talos image builds on [talos-rpi5/talos-builder](https://github.com/talos-r
 - longhorn backups?
 - ensure anti-affinity rules spread replica-pods for everything onto different nodes.
 - compare .env and .env.example to make sure they are in sync / nothing is missing from either of them.
+- compare to full argo app manifests for missing needed options.
