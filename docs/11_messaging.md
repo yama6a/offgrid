@@ -5,16 +5,16 @@ lets a workload declare its own messaging topology (exchanges/queues/users) with
 workloads. Like [07_ingress.md](07_ingress.md), this one doc covers several ArgoCD apps at different waves plus
 a shared `lib/helm/` chart.
 
-Three pieces (the operators and the broker are platform; the topology is per-workload):
+Two pieces (the operators + broker are one platform app; the topology is per-workload):
 
-- **operators** — `argo_apps/platform/{apps,charts}/02_rabbitmq_operator` (wave 2). Wraps the CloudPirates
-  `rabbitmq-cluster-operator` chart, which installs BOTH the **RabbitMQ Cluster Operator** (reconciles the
-  `RabbitmqCluster` CR into the broker StatefulSet) and the **Messaging Topology Operator** (reconciles
-  `Queue`/`Exchange`/`Binding`/`User`/`Permission`/`Vhost` CRs) + their CRDs. Operators + CRDs only.
-- **the broker** — `argo_apps/platform/{apps,charts}/03_rabbitmq_cluster` (wave 3). The single `RabbitmqCluster`
-  (3 replicas on the node-local `local-path-ephemeral` class) + the one shared `Vhost` (`apps`) + the broker's
-  `CiliumNetworkPolicy`. There is
-  exactly ONE broker for the whole cluster (unlike Postgres, which is per-workload), so it lives in platform.
+- **operators + broker** — `argo_apps/platform/{apps,charts}/03_rabbitmq` (wave 3), ONE app. It wraps the
+  CloudPirates `rabbitmq-cluster-operator` chart — which installs BOTH the **RabbitMQ Cluster Operator**
+  (reconciles the `RabbitmqCluster` CR into the broker StatefulSet) and the **Messaging Topology Operator**
+  (reconciles `Queue`/`Exchange`/`Binding`/`User`/`Permission`/`Vhost` CRs) + their CRDs — AND renders the
+  broker itself: the single `RabbitmqCluster` (3 replicas on the node-local `local-path-ephemeral` class) + the
+  one shared `Vhost` (`apps`) + the broker's `CiliumNetworkPolicy`. There is exactly ONE broker for the whole
+  cluster (unlike Postgres, which is per-workload), so it lives in platform. (See "One app: operator + broker"
+  below for why operators and their CRs safely share one wave.)
 - **the reusable chart** — `lib/helm/rabbitmq-topology/` (`type: library`, like `ingress-edge`). A workload
   consumes it via a `file://` dependency + a one-line `{{ include "rabbitmq-topology.render" . }}` template and
   declares its topology in values. Demonstrated by the sample-user-* workloads (see [10_sample_workload.md](10_sample_workload.md)).
@@ -189,16 +189,27 @@ rejoining with a wiped volume under the same node name usually re-adds itself au
 occasionally needs a manual `rabbitmq-queues grow` — never data loss. `5Gi` per replica is nominal (local-path
 enforces no quota).
 
-### Two apps, operator then broker
-The `RabbitmqCluster` CR can't reconcile until its CRD exists and a controller is running, so the operators
-(wave 2) and the broker CR (wave 3) are separate apps — the same operator-then-CR split the repo uses for
-`02_cert_manager` → `03_gateway`. The topology operator self-signs its admission-webhook cert
-(`useCertManager: false`), so wave 2 has no cross-wave dependency on cert-manager. Workloads carry no wave: the
-root-of-roots creates the workloads tree only after the whole platform is Healthy, so the operators + broker +
-`apps` vhost already exist when a workload's topology CRs land.
+### One app: operator + broker
+The operators and the broker live in ONE app (`03_rabbitmq`, wave 3), not two. The `RabbitmqCluster` CR can't
+reconcile until its CRD exists and a controller is running — the classic operator-then-CR ordering the repo also
+solves for `02_cert_manager` → `03_gateway` — but here that ordering is handled *within* the single app rather
+than across waves:
+
+- ArgoCD applies CRDs before ordinary resources (kind order), so the subchart's `RabbitmqCluster`/`Vhost` CRDs
+  are created before the CRs in the same sync.
+- The two CRs carry `argocd.argoproj.io/sync-options: SkipDryRunOnMissingResource=true`, so on a cold boot — when
+  the CRD isn't registered yet at dry-run time — the sync doesn't fail on the unknown type.
+- `selfHeal` + ArgoCD's sync retry then converge: the CR settles as soon as the operator pod is up and its CRD is
+  established. (No resource-level sync-waves are used, keeping the repo's convention.)
+
+The topology operator self-signs its admission-webhook cert (`useCertManager: false`), so the app has no
+dependency on cert-manager. Wave 3 (rather than the wave-2 slot an operator alone would take) simply sorts it
+alongside the other data apps; it shares wave 3 with `03_gateway` / `03_redis_operator` (all independent).
+Workloads carry no wave: the root-of-roots creates the workloads tree only after the whole platform is Healthy,
+so the operators + broker + `apps` vhost already exist when a workload's topology CRs land.
 
 ### Network policy: label-based clients, ingress-tight
-The broker's `CiliumNetworkPolicy` (`03_rabbitmq_cluster/templates/networkpolicy.yaml`) is default-deny both
+The broker's `CiliumNetworkPolicy` (`03_rabbitmq/templates/networkpolicy.yaml`) is default-deny both
 ways, then allows: AMQP `5672` from any pod labelled `messaging-client: "true"` (label-based, so this platform
 app never needs editing when a new messaging workload appears — the workload opts in by labelling its pod +
 adding a matching egress rule, as the sample-user-* workloads do); management `15672` from Envoy (the SSO-gated UI) and
@@ -216,7 +227,7 @@ credentials from the `rabbitmq-default-user` Secret. It's the last wave, so the 
 
 ## Apply / verify
 
-1. `helm dependency build argo_apps/platform/charts/02_rabbitmq_operator` and
+1. `helm dependency build argo_apps/platform/charts/03_rabbitmq` and
    `helm dependency build` each of `argo_apps/workloads/charts/sample_user_{manager,signup}` +
    `sample_audit_logger`, commit the refreshed `Chart.lock`s (ArgoCD's repo-server runs `helm dependency
    build`; a missing/stale lock breaks sync).

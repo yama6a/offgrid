@@ -1,13 +1,19 @@
 {{- /*
-The single shared broker. The operators (02_rabbitmq_operator) reconcile this into a 3-node StatefulSet + its
-Services (client `rabbitmq` on 5672 amqp / 15672 management / 15692 prometheus, headless `rabbitmq-nodes` for
-clustering) and the operator-generated `rabbitmq-default-user` (admin creds) + `rabbitmq-erlang-cookie`
-Secrets — none of which are committed to git (operator-generated, like CNPG's `<db>-app`; see 06_secrets.md).
+The single shared broker. The operators (installed by this same chart's rabbitmq-cluster-operator subchart)
+reconcile this into a 3-node StatefulSet + its Services (client `rabbitmq` on 5672 amqp / 15672 management /
+15692 prometheus, headless `rabbitmq-nodes` for clustering) and the operator-generated `rabbitmq-default-user`
+(admin creds) + `rabbitmq-erlang-cookie` Secrets — none of which are committed to git (operator-generated, like
+CNPG's `<db>-app`; see 06_secrets.md).
 
 `topology-allowed-namespaces: "*"` lets workloads in ANY namespace point their Queue/Exchange/User/... CRs at
 this broker via `spec.rabbitmqClusterReference.namespace: rabbitmq`, so the generated `<user>-user-credentials`
 Secret lands in the workload's OWN namespace where its pod can mount it. Without this annotation only same-ns
 topology is allowed.
+
+`SkipDryRunOnMissingResource=true`: the RabbitmqCluster CRD is installed by THIS app's operator subchart, so on
+a cold-boot sync the CRD may not be registered yet when ArgoCD dry-runs this CR. Skipping the server dry-run for
+the missing type lets the sync proceed; ArgoCD applies the CRD before the CR (kind order) and selfHeal converges
+once the operator is up. See 11_messaging.md ("One app: operator + broker").
 */ -}}
 apiVersion: rabbitmq.com/v1beta1
 kind: RabbitmqCluster
@@ -16,6 +22,7 @@ metadata:
   namespace: {{ .Release.Namespace }}
   annotations:
     rabbitmq.com/topology-allowed-namespaces: "*"
+    argocd.argoproj.io/sync-options: SkipDryRunOnMissingResource=true
 spec:
   replicas: {{ .Values.replicas }}
   image: {{ .Values.image | quote }}

@@ -1,0 +1,30 @@
+apiVersion: v2
+name: rabbitmq
+description: >-
+  RabbitMQ for the Talos/Raspberry Pi 5 cluster, operators AND broker in ONE chart. Installs the RabbitMQ
+  Cluster Operator (reconciles the RabbitmqCluster CR + broker StatefulSet) and the Messaging Topology Operator
+  (reconciles Queue/Exchange/Binding/User/Permission/Vhost CRs) + their CRDs via the CloudPirates
+  rabbitmq-cluster-operator subchart, AND renders the single shared broker itself: one RabbitmqCluster (3
+  replicas, one per Pi node, on the node-local local-path-ephemeral class), the one shared Vhost every workload
+  uses, and the broker's CiliumNetworkPolicy lockdown. There is exactly ONE broker for all workloads (unlike
+  Postgres, which is per-workload), so the broker is platform infrastructure here; workloads add only their own
+  topology (exchanges/queues/users) via the shared lib/helm/rabbitmq-topology chart. Single source of truth for
+  the operator chart version (this file) and its values (values.yaml: the operator under the
+  `rabbitmq-cluster-operator:` key, the broker at top level). Delivered purely by ArgoCD via
+  argo_apps/platform/apps/03_rabbitmq.yaml at wave 3 (same operator-then-CR concern the repo solves for
+  02_cert_manager -> 03_gateway, here collapsed into one app — see 11_messaging.md). Same-app CRD-then-CR
+  ordering is handled by ArgoCD applying CRDs before CRs + SkipDryRunOnMissingResource on the CRs + selfHeal.
+
+  Why CloudPirates and not Bitnami: since 2025-08-28 Bitnami gated its free-tier images to `latest`-only, which
+  breaks version pinning. The RabbitMQ project ships no Helm chart of its own. CloudPirates is a thin community
+  chart that pins the OFFICIAL upstream images (ghcr.io/rabbitmq/cluster-operator,
+  ghcr.io/rabbitmq/messaging-topology-operator, ghcr.io/rabbitmq/default-user-credential-updater,
+  docker.io/library/rabbitmq) — all multi-arch incl. arm64. See 11_messaging.md.
+type: application
+version: 0.1.0                 # this wrapper chart's own version
+appVersion: "4.2.8"           # RabbitMQ server version (values.yaml spec.image); operator 2.21.0 / topology 1.19.2
+
+dependencies:
+  - name: rabbitmq-cluster-operator
+    version: "0.3.3"          # CloudPirates chart, THE single source for the pin (OCI, so also lands in Chart.lock)
+    repository: "oci://ghcr.io/cloudpirates-io/helm-charts"

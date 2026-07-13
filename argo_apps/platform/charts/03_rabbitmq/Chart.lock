@@ -3,4 +3,4 @@ dependencies:
   repository: oci://ghcr.io/cloudpirates-io/helm-charts
   version: 0.3.3
 digest: sha256:8fcea3cd46437f9f30b6489df1a118a923a49559236031b126d2f0f13154fc6d
-generated: "2026-07-09T22:32:52.281825+02:00"
+generated: "2026-07-12T15:35:03.796434+02:00"

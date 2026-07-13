@@ -1,0 +1,95 @@
+# Values for the 03_rabbitmq chart (the operators AND the single shared broker). SINGLE SOURCE OF TRUTH; ArgoCD
+# (and any local `helm template`) consume this. Chart version pinned in Chart.yaml. See 11_messaging.md for the why.
+#
+# Both operators and the broker run in the same `rabbitmq` namespace (CreateNamespace=true in the Application).
+# They run non-root, so the namespace stays restricted-compatible (like cert-manager / cnpg-operator).
+#
+# Two halves:
+#   - Everything under `rabbitmq-cluster-operator:` is passed to the upstream CloudPirates subchart (key ==
+#     dependency name). The subchart bundles + installs the RabbitMQ CRDs (RabbitmqCluster + the topology CRDs).
+#   - The top-level keys (name/replicas/image/resources/storage/vhost) configure this chart's OWN templates (the
+#     RabbitmqCluster / Vhost / CiliumNetworkPolicy in templates/), which render the broker itself.
+# The broker CRs carry SkipDryRunOnMissingResource (see the templates) so a cold-boot sync doesn't fail before
+# the subchart's CRDs are registered; ArgoCD applies CRDs before CRs and selfHeal converges once the operator boots.
+
+rabbitmq-cluster-operator:
+  # Self-sign the Messaging Topology Operator's admission-webhook cert instead of using cert-manager. Keeps this
+  # app free of a cross-wave dependency on cert-manager (which also lands at wave 2); the operator manages its
+  # own webhook CA. Flip to true only if you want cert-manager to own the cert.
+  useCertManager: false
+
+  # The RabbitMQ Cluster Operator: watches all namespaces so it can reconcile the RabbitmqCluster in `rabbitmq`
+  # and (via topology-allowed-namespaces on the CR) topology objects in every workload namespace.
+  clusterOperator:
+    replicaCount: 1
+    # Modest footprint for a controller pod on the Pi 5s — it only reconciles; the broker work lives in the
+    # RabbitmqCluster pods. Tunable later via the repo's krr workflow.
+    resources:
+      requests:
+        cpu: 10m
+        memory: 64Mi
+      limits:
+        memory: 128Mi
+    # Emit a PodMonitor so vmagent scrapes the operator's plaintext /metrics; the VM operator auto-converts
+    # PodMonitor -> VMPodScrape (CRDs exist from wave 0). See 09_monitoring.md.
+    metrics:
+      podMonitor:
+        enabled: true
+
+  # The Messaging Topology Operator: reconciles the Queue/Exchange/Binding/User/Permission/Vhost CRs.
+  msgTopologyOperator:
+    enabled: true
+    replicaCount: 1
+    resources:
+      requests:
+        cpu: 10m
+        memory: 64Mi
+      limits:
+        memory: 128Mi
+    # metrics left off: as of topology-operator v1.19.0 the metrics endpoint requires TLS, which the plaintext
+    # vmagent scrape can't consume without extra config — not worth it for the homelab.
+
+# ---- The single shared broker (rendered by templates/, this chart's OWN resources, NOT the operator subchart) ----
+
+# The RabbitmqCluster name. Also the name of the client Service (rabbitmq.rabbitmq.svc) workloads dial on 5672
+# and the management UI is exposed on (15672). Workloads reference this via the rabbitmq-topology chart's
+# `cluster.name` default, so changing it means changing that default too.
+name: rabbitmq
+
+# 3 replicas — one per Pi node. Quorum queues use Raft and need a MAJORITY, so 3 tolerates losing 1 node
+# (majority 2 of 3); the operator recommends odd counts. (2 would pay the cost of a cluster with no quorum
+# benefit; 1 has no HA.) Paired with the quorum default queue type below.
+replicas: 3
+
+# Pinned RabbitMQ server image. `-management` bundles the management plugin (the 15672 UI); `-alpine` is the
+# small variant (kind to the Pis). Multi-arch incl. arm64. 4.2.x matches the line the operator subchart
+# (CloudPirates 0.3.3) is built/tested against; bump deliberately.
+image: rabbitmq:4.2.8-management-alpine
+
+# Per-instance requests/limits. RabbitMQ sizes its memory high-watermark off the memory LIMIT, so the limit
+# is the real knob — 1Gi gives ~400Mi of working set before back-pressure, ample for homelab messaging on the
+# 8GB Pi 5s that already run a lot. Tunable later via the repo's krr workflow.
+resources:
+  requests:
+    cpu: 200m
+    memory: 512Mi
+  limits:
+    cpu: "1"
+    memory: 1Gi
+
+# Per-broker storage on the node-local `local-path-ephemeral` class (NOT Longhorn). Quorum queues already
+# replicate every message across the 3 brokers via Raft and fsync locally, so HA + durability live in the app;
+# replicating the volume underneath too would just be write amplification — the same reason CNPG runs Postgres
+# on local-path. So each broker gets a plain node-local volume, and it's disposable: lose a node and its
+# replacement broker starts empty and rebuilds from the 2 healthy peers, which is why the class is reclaimPolicy
+# Delete, not Retain (nothing to preserve; the dir is auto-cleaned). Trade-offs, all accepted: while a node is
+# down there's no spare fault tolerance (a 2nd loss drops quorum below majority), and this shares Postgres's
+# fixed 50GiB /var/mnt/cnpg slice (fine — quorum-log volumes are tiny). `size` is nominal: local-path enforces
+# no quota (same as CNPG's value).
+storage:
+  className: local-path-ephemeral
+  size: 5Gi
+
+# The one shared vhost every workload's users/exchanges/queues live in (kept separate from the default `/`,
+# which stays admin-only). The rabbitmq-topology chart defaults `vhost` to this name — keep them in sync.
+vhost: apps
