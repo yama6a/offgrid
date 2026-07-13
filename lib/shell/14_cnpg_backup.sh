@@ -75,16 +75,21 @@ ok "got writer access key id + secret from terraform"
 
 # === 2. inject the scalars into the shared pg-cluster values =================
 say "enabling backups + injecting bucket/region/RPO into ${PG_VALUES}"
-BUCKET="$S3_BACKUP_BUCKET" REGION="$AWS_REGION" RPO="$CNPG_BACKUP_RPO" yq -i '
+# Barman's ObjectStore retentionPolicy must be a non-empty duration (the CRD rejects null/empty); align it to the
+# S3 lifecycle expiry so the two agree. Format: "<days>d" (e.g. 180d).
+RETENTION="${S3_BACKUP_RETENTION_DAYS}d"
+BUCKET="$S3_BACKUP_BUCKET" REGION="$AWS_REGION" RPO="$CNPG_BACKUP_RPO" RETENTION="$RETENTION" yq -i '
   .cluster.backups.enabled = true
   | .cluster.backups.s3.bucket = strenv(BUCKET)
   | .cluster.backups.s3.region = strenv(REGION)
+  | .cluster.backups.retentionPolicy = strenv(RETENTION)
   | .cluster.cluster.postgresql.parameters.archive_timeout = strenv(RPO)
 ' "$PG_VALUES"
 # verify the writes round-tripped
 [ "$(yq -r '.cluster.backups.enabled' "$PG_VALUES")" = "true" ]         && ok "backups.enabled=true"          || bad "enabled not set"
 [ "$(yq -r '.cluster.backups.s3.bucket' "$PG_VALUES")" = "$S3_BACKUP_BUCKET" ] && ok "s3.bucket=${S3_BACKUP_BUCKET}" || bad "bucket not set"
 [ "$(yq -r '.cluster.backups.s3.region' "$PG_VALUES")" = "$AWS_REGION" ]       && ok "s3.region=${AWS_REGION}"       || bad "region not set"
+[ "$(yq -r '.cluster.backups.retentionPolicy' "$PG_VALUES")" = "$RETENTION" ]  && ok "retentionPolicy=${RETENTION}"  || bad "retentionPolicy not set"
 [ "$(yq -r '.cluster.cluster.postgresql.parameters.archive_timeout' "$PG_VALUES")" = "$CNPG_BACKUP_RPO" ] && ok "archive_timeout=${CNPG_BACKUP_RPO}" || bad "archive_timeout not set"
 
 # === 3. seal the creds into each CNPG namespace ==============================

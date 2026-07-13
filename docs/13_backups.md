@@ -54,11 +54,13 @@ That's why the WAL-archive alert below is `critical`.
   are `.env`-configurable (`S3_BACKUP_TRANSITION_DAYS` / `S3_BACKUP_RETENTION_DAYS`). Note the interplay with
   Glacier's 90-day minimum-storage-duration: 30d→180d means objects spend 150d in Glacier IR, well past the
   minimum, so no early-delete penalty.
-- **Retention is owned by the S3 lifecycle, NOT Barman.** The chart's `retentionPolicy` is left empty. Two
-  retention engines on the same objects is a footgun, and Barman pruning Glacier-tiered objects risks
-  early-delete churn. Age-based S3 expiry is safe for PITR: with daily base backups, a base backup and the WAL
-  needed to make it consistent are the same age and expire together, so the recovery window is simply "the last
-  ~180 days" — a newer base never depends on WAL older than itself.
+- **Retention: Barman's window aligned to the S3 lifecycle.** The `ObjectStore` CRD requires a non-empty
+  duration (`^[1-9][0-9]*[dwm]$`) and the chart always emits the field, so leaving it unset isn't possible —
+  an empty value renders as `null` and the API rejects it. Instead we set `retentionPolicy` **equal** to the S3
+  expiry (`S3_BACKUP_RETENTION_DAYS`d, default `180d`): Barman prunes its own catalog coherently at that age
+  (whole backup sets + their WAL), and the S3 lifecycle expiry at the same age is the backstop. Keeping the two
+  equal avoids the failure mode where one deletes objects the other still references. (Glacier's 90-day minimum
+  is still satisfied — objects transition at 30d and live to 180d.)
 - **Encryption:** bucket SSE with AWS-managed keys (SSE-S3 / AES256); Barman also requests AES256 on upload, so
   the two agree. No SSE-KMS to manage.
 - **Credentials: Terraform makes a scoped IAM user; `.env` holds only the deployer creds.** Terraform provisions

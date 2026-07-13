@@ -88,10 +88,11 @@ cluster:
       compression: gzip
       encryption: AES256
       jobs: 2
-    # Retention is owned by the S3 bucket LIFECYCLE (Terraform: ->Glacier IR @30d, expire @180d), NOT by Barman.
-    # Two retention engines on the same objects is a footgun, and Barman deleting Glacier-tiered objects risks
-    # early-delete churn. Empty string => the ObjectStore's retentionPolicy is left unset. See docs/13_backups.md.
-    retentionPolicy: ""
+    # Barman's recovery window. The ObjectStore CRD REQUIRES a string matching ^[1-9][0-9]*[dwm]$ (empty/null is
+    # rejected) and this chart always emits the field, so we can't leave it unset — instead we ALIGN it to the S3
+    # lifecycle expiry (S3_BACKUP_RETENTION_DAYS, default 180d): Barman prunes its own catalog coherently at that
+    # age and the S3 expiry (same age) is the backstop. 14_cnpg_backup.sh injects "<retention>d" from .env.
+    retentionPolicy: "180d"
     scheduledBackups:
       # Daily base backup at 02:00 (6-field cron, seconds first — CNPG uses the Go cron spec). No `target` field is
       # exposed by the chart's ScheduledBackup; CNPG's default backup target is already prefer-standby (base backup
