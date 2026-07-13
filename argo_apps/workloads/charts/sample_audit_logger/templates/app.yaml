@@ -21,6 +21,18 @@ spec:
         app: {{ .Values.app.name }}
         messaging-client: "true"   # opts this pod into the broker's CiliumNetworkPolicy ingress on 5672. See 11_messaging.md.
     spec:
+      # Single replica today, but if app.replicas is raised keep replicas off the same Pi node. PREFERRED
+      # (not required): bare Pi nodes have no zone label so spread by hostname, and soft means replicas beyond
+      # the 3 nodes — or scheduling while a node is down — co-locate instead of going permanently Pending.
+      affinity:
+        podAntiAffinity:
+          preferredDuringSchedulingIgnoredDuringExecution:
+            - weight: 100
+              podAffinityTerm:
+                labelSelector:
+                  matchLabels:
+                    app: {{ .Values.app.name }}
+                topologyKey: kubernetes.io/hostname
       containers:
         - name: auditor
           image: {{ .Values.app.image | quote }}

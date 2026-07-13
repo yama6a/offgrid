@@ -116,6 +116,19 @@ victoria-metrics-k8s-stack:
       resources:
         requests: {cpu: 50m, memory: 128Mi}
         limits: {memory: 256Mi}
+      # If replicaCount is raised for HA scraping (full replication — every replica scrapes all targets, the
+      # duplicate samples collapsed by vmsingle's dedup.minScrapeInterval above), keep replicas off the same
+      # Pi node. PREFERRED + hostname: bare Pi nodes have no zone label, and soft so a scale-up never wedges
+      # as Pending on the 3-node cluster. No-op at the single replica above.
+      affinity:
+        podAntiAffinity:
+          preferredDuringSchedulingIgnoredDuringExecution:
+            - weight: 100
+              podAffinityTerm:
+                labelSelector:
+                  matchLabels:
+                    app.kubernetes.io/name: vmagent
+                topologyKey: kubernetes.io/hostname
 
   # ---- shape B: everything alerting/visualisation is OFF -------------------------------------------
   vmalert:
@@ -187,6 +200,18 @@ victoria-metrics-k8s-stack:
     resources:
       requests: {cpu: 10m, memory: 32Mi}
       limits: {memory: 64Mi}
+    # If replicas is raised, keep them off the same Pi node. PREFERRED + hostname: bare Pi nodes have no zone
+    # label, and soft so a scale-up never wedges as Pending on the 3-node cluster. No-op at the default single
+    # replica. NOTE real scale-out also needs `autosharding.enabled: true` (else replicas emit duplicate series).
+    affinity:
+      podAntiAffinity:
+        preferredDuringSchedulingIgnoredDuringExecution:
+          - weight: 100
+            podAffinityTerm:
+              labelSelector:
+                matchLabels:
+                  app.kubernetes.io/name: kube-state-metrics
+              topologyKey: kubernetes.io/hostname
 
   # ---- Talos control-plane scrape targets ----------------------------------------------------------
   # Talos binds kube-controller-manager / kube-scheduler / etcd metrics to localhost by DEFAULT; we expose

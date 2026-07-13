@@ -30,6 +30,19 @@ metrics-server:
     limits:
       memory: 200Mi
 
+  # Stateless aggregated-API provider — the natural HA target (runs active/active). If `replicas` is raised,
+  # keep them off the same Pi node. PREFERRED + hostname: bare Pi nodes have no zone label, and soft so a
+  # scale-up never wedges as Pending on the 3-node cluster. No-op at the single replica above.
+  affinity:
+    podAntiAffinity:
+      preferredDuringSchedulingIgnoredDuringExecution:
+        - weight: 100
+          podAffinityTerm:
+            labelSelector:
+              matchLabels:
+                app.kubernetes.io/name: metrics-server
+            topologyKey: kubernetes.io/hostname
+
   # Expose metrics-server's own /metrics and ship a ServiceMonitor. The VM operator's prometheus
   # converter turns it into a VMServiceScrape and vmagent (selectAllByDefault) scrapes it, same pattern
   # as cnpg / longhorn / sealed-secrets. The ServiceMonitor CRD exists from wave 0 (prometheus-operator-crds).

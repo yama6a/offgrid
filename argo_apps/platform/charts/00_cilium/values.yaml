@@ -42,8 +42,42 @@ cilium:
         enabled: true
   hubble:
     enabled: true
-    relay: {enabled: true}
-    ui: {enabled: true}
+    relay:
+      enabled: true
+      # Setting this key REPLACES the chart's default relay affinity, so its default REQUIRED podAffinity
+      # (relay must co-locate with a cilium agent — every node runs one as a DaemonSet, so always satisfiable)
+      # is repeated verbatim, PLUS a soft podAntiAffinity so a raised `relay.replicas` spreads relay across Pi
+      # nodes. PREFERRED + hostname: bare Pi nodes have no zone label, and soft so a scale-up never wedges as
+      # Pending. No-op at the default single replica.
+      affinity:
+        podAffinity:
+          requiredDuringSchedulingIgnoredDuringExecution:
+            - topologyKey: kubernetes.io/hostname
+              labelSelector:
+                matchLabels:
+                  k8s-app: cilium
+        podAntiAffinity:
+          preferredDuringSchedulingIgnoredDuringExecution:
+            - weight: 100
+              podAffinityTerm:
+                labelSelector:
+                  matchLabels:
+                    k8s-app: hubble-relay
+                topologyKey: kubernetes.io/hostname
+    ui:
+      enabled: true
+      # Spread hubble-ui across Pi nodes if `ui.replicas` is raised. PREFERRED + hostname (no zone label on
+      # bare Pi nodes; soft so a scale-up never wedges as Pending). No-op at the default single replica.
+      # (The chart's default ui.affinity is empty, so there's nothing to preserve here.)
+      affinity:
+        podAntiAffinity:
+          preferredDuringSchedulingIgnoredDuringExecution:
+            - weight: 100
+              podAffinityTerm:
+                labelSelector:
+                  matchLabels:
+                    k8s-app: hubble-ui
+                topologyKey: kubernetes.io/hostname
     tls:
       auto:
         # GITOPS-CRITICAL: generate the Hubble mTLS certs (and the SHARED `cilium-ca` secret, which the

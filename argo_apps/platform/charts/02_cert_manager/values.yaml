@@ -29,14 +29,51 @@ cert-manager:
   resources:
     requests: { cpu: 10m, memory: 48Mi }
     limits:   { memory: 64Mi }
+  # Controller is leader-elected (one active), but if replicaCount is ever raised for faster failover, keep the
+  # standby off the active's node. PREFERRED + hostname: bare Pi nodes have no zone label, and soft means a
+  # scale-up never wedges as Pending on the 3-node cluster. No-op at the default single replica.
+  affinity:
+    podAntiAffinity:
+      preferredDuringSchedulingIgnoredDuringExecution:
+        - weight: 100
+          podAffinityTerm:
+            labelSelector:
+              matchLabels:
+                app.kubernetes.io/name: cert-manager
+                app.kubernetes.io/component: controller
+            topologyKey: kubernetes.io/hostname
   webhook:
     resources:
       requests: { cpu: 10m, memory: 32Mi }
       limits:   { memory: 48Mi }
+    # Stateless admission webhook — the natural HA target. Spread replicas across Pi nodes if replicaCount is
+    # raised. PREFERRED + hostname (no zone label; soft so a scale-up never wedges). No-op at one replica.
+    affinity:
+      podAntiAffinity:
+        preferredDuringSchedulingIgnoredDuringExecution:
+          - weight: 100
+            podAffinityTerm:
+              labelSelector:
+                matchLabels:
+                  app.kubernetes.io/name: webhook
+                  app.kubernetes.io/component: webhook
+              topologyKey: kubernetes.io/hostname
   cainjector:
     resources:
       requests: { cpu: 10m, memory: 96Mi }
       limits:   { memory: 128Mi }
+    # Leader-elected (one active + standby). Spread across Pi nodes if replicaCount is raised.
+    # PREFERRED + hostname (no zone label; soft so a scale-up never wedges). No-op at one replica.
+    affinity:
+      podAntiAffinity:
+        preferredDuringSchedulingIgnoredDuringExecution:
+          - weight: 100
+            podAffinityTerm:
+              labelSelector:
+                matchLabels:
+                  app.kubernetes.io/name: cainjector
+                  app.kubernetes.io/component: cainjector
+              topologyKey: kubernetes.io/hostname
 
   # HTTP-01 solving through the Cilium Gateway API. NOTE: since cert-manager 1.15 this is NOT a
   # feature gate any more, the old `ExperimentalGatewayAPISupport` gate is gone. It's enabled via

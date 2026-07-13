@@ -393,3 +393,18 @@ grafana:
     limits:
       memory: 320Mi
 
+  # Spread across Pi nodes if `replicas` is ever raised. PREFERRED + hostname: bare Pi nodes have no zone
+  # label, and soft so a scale-up never wedges as Pending on the 3-node cluster. No-op at the default single
+  # replica. NOTE: this only pre-stages placement — actually running replicas>1 first needs unified-alerting
+  # HA (grafana.ini `unified_alerting.ha_*`), else each replica evaluates rules independently and double-sends
+  # email; and with persistence off, UI-created annotations/silences aren't shared. See 16_grafana.md.
+  affinity:
+    podAntiAffinity:
+      preferredDuringSchedulingIgnoredDuringExecution:
+        - weight: 100
+          podAffinityTerm:
+            labelSelector:
+              matchLabels:
+                app.kubernetes.io/name: grafana
+            topologyKey: kubernetes.io/hostname
+

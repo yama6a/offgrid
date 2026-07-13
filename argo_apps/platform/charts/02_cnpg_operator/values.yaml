@@ -28,3 +28,16 @@ cloudnative-pg:
       memory: 48Mi
     limits:
       memory: 64Mi
+
+  # The operator is leader-elected (one active); if replicaCount is ever raised for faster failover, keep the
+  # standby off the active's node. PREFERRED + hostname: bare Pi nodes have no zone label, and soft so a
+  # scale-up never wedges as Pending on the 3-node cluster. No-op at the default single replica.
+  affinity:
+    podAntiAffinity:
+      preferredDuringSchedulingIgnoredDuringExecution:
+        - weight: 100
+          podAffinityTerm:
+            labelSelector:
+              matchLabels:
+                app.kubernetes.io/name: cloudnative-pg
+            topologyKey: kubernetes.io/hostname

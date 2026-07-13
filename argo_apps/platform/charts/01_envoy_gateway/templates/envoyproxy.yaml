@@ -27,6 +27,12 @@ spec:
         container:
           resources:
             {{- toYaml .Values.envoyProxy.resources | nindent 12 }}
+        {{- with .Values.envoyProxy.affinity }}
+        # Data-plane proxy pod scheduling: spread the merged Envoy replicas across Pi nodes (see values.yaml).
+        pod:
+          affinity:
+            {{- toYaml . | nindent 12 }}
+        {{- end }}
       envoyService:
         type: LoadBalancer
         # Cluster, not EG's default Local: the Cilium L2 announcer node isn't necessarily the node

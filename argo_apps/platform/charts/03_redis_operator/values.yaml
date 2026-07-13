@@ -30,6 +30,19 @@ redis-operator:
       cpu: 250m
       memory: 256Mi
 
+  # Leader-elected (one active + standby). If `replicas` is ever raised, keep the standby off the active's
+  # node. PREFERRED + hostname: bare Pi nodes have no zone label, and soft so a scale-up never wedges as
+  # Pending on the 3-node cluster. No-op at the chart's default single replica.
+  affinity:
+    podAntiAffinity:
+      preferredDuringSchedulingIgnoredDuringExecution:
+        - weight: 100
+          podAffinityTerm:
+            labelSelector:
+              matchLabels:
+                app.kubernetes.io/name: redis-operator
+            topologyKey: kubernetes.io/hostname
+
 # ---- The two Redis Longhorn StorageClasses (rendered by templates/storageclasses.yaml — this app's OWN
 # resources, NOT the operator subchart). The redis-instance chart picks between them via its `persistence` flag.
 # Both are 2-replica (flaky nodes — even a cache should survive a node loss, see 08_storage.md); they differ ONLY

@@ -25,6 +25,25 @@ envoyProxy:
     requests: { cpu: 10m, memory: 48Mi }
     limits:   { memory: 128Mi }
 
+  # This is the cluster's SINGLE merged ingress proxy (mergeGateways). If the merged Envoy Deployment's
+  # replicas is ever raised for ingress HA, keep the replicas off the same Pi node. PREFERRED + hostname:
+  # bare Pi nodes have no zone label, and soft so a scale-up never wedges as Pending on the 3-node cluster.
+  # No-op at the default single replica. Wired into the EnvoyProxy CR's envoyDeployment.pod.affinity
+  # (templates/envoyproxy.yaml). The selector is the three stable labels Envoy Gateway stamps on every managed
+  # proxy pod (its EnvoyAppLabelSelector); if you scale, verify against a live pod
+  # (`kubectl -n envoy-gateway-system get pods --show-labels`).
+  affinity:
+    podAntiAffinity:
+      preferredDuringSchedulingIgnoredDuringExecution:
+        - weight: 100
+          podAffinityTerm:
+            labelSelector:
+              matchLabels:
+                app.kubernetes.io/name: envoy
+                app.kubernetes.io/component: proxy
+                app.kubernetes.io/managed-by: envoy-gateway
+            topologyKey: kubernetes.io/hostname
+
 # Everything under `gateway-helm:` is passed to the upstream gateway-helm subchart (key == dep name).
 gateway-helm:
   # Quiet the envoy-gateway CONTROLLER's xDS reconcile INFO logs (this is the control plane, not the
@@ -42,3 +61,17 @@ gateway-helm:
         requests: { cpu: 10m, memory: 48Mi }
         limits:   { memory: 96Mi }
     replicas: 1
+    # The CONTROLLER (control plane) is leader-elected (one active + standby); if replicas is raised for
+    # faster failover, keep the standby off the active's node. PREFERRED + hostname: bare Pi nodes have no
+    # zone label, and soft so a scale-up never wedges as Pending on the 3-node cluster. No-op at one replica.
+    # (This is the controller only — the data-plane Envoy proxy spreads via the EnvoyProxy CR, templates/envoyproxy.yaml.)
+    pod:
+      affinity:
+        podAntiAffinity:
+          preferredDuringSchedulingIgnoredDuringExecution:
+            - weight: 100
+              podAffinityTerm:
+                labelSelector:
+                  matchLabels:
+                    control-plane: envoy-gateway
+                topologyKey: kubernetes.io/hostname
