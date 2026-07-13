@@ -83,11 +83,16 @@ fi
 # Application adopts THIS release (no churn). --reset-values recomputes from the chart's
 # values.yaml each run (same reasoning as 04_cilium.sh).
 say "helm upgrade --install ${RELEASE} (namespace ${NS})"
+# die (not bad): this install is a hard prerequisite for everything below. If it fails, the namespace was
+# never created and steps 3/3b/4 would each cascade into confusing FAILs that bury the real cause. Abort
+# here so the helm error is the last thing on screen. Re-run is safe/idempotent. (A SealedSecret in this
+# chart used to fail the render on a cold cluster before the wave-2 CRD existed; that secret now lives in
+# its own wave-3 app, argo_apps/platform/charts/03_argocd_webhook_secret/. See 05_gitops.md.)
 if helm upgrade --install "$RELEASE" "$CHART_DIR" --namespace "$NS" \
      --create-namespace --reset-values --wait --timeout "$HELM_TIMEOUT"; then
   ok "argocd release applied"
 else
-  bad "helm install failed (see output above; re-run is safe/idempotent)"
+  die "helm install failed (see output above; re-run is safe/idempotent)"
 fi
 
 # === 3. wait for the ArgoCD workloads ========================================

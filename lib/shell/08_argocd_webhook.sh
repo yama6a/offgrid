@@ -24,7 +24,9 @@
 #   - the poll cadence knob         <- .env POLL_SYNC_ENABLED
 #   - the argocd host (webhook URL) <- 06_platform_ingress/values.yaml (the ingress that owns the edge)
 # Written by this script:
-#   - argo_apps/platform/charts/01_argocd/templates/argocd-secret-sealedsecret.yaml  (the sealed secret)
+#   - argo_apps/platform/charts/03_argocd_webhook_secret/templates/argocd-secret-sealedsecret.yaml  (the sealed
+#     secret; a wave-3 app of its OWN, NOT the wave-1 argocd chart — a SealedSecret there would abort the
+#     cold-boot argocd install before the sealed-secrets CRD exists at wave 2. See that chart's Chart.yaml.)
 #   - argo_apps/platform/charts/01_argocd/values.yaml  (.argo-cd.configs.cm.timeout.reconciliation)
 #   - secrets/argocd-github-webhook-secret.txt  (plaintext, gitignored; paste into GitHub)
 #
@@ -45,7 +47,9 @@ source "${SCRIPT_DIR}/common.sh"
 # ---- knobs ------------------------------------------------------------------
 ARGOCD_CHART="${REPO_ROOT}/argo_apps/platform/charts/01_argocd"                  # the argocd wrapper chart
 ARGOCD_VALUES="${ARGOCD_CHART}/values.yaml"                                      # poll cadence patched here
-SEALED_OUT="${ARGOCD_CHART}/templates/argocd-secret-sealedsecret.yaml"           # sealed webhook secret (committed)
+# sealed webhook secret (committed): a wave-3 app of its own, NOT the wave-1 argocd chart above — a SealedSecret
+# in that chart aborts the cold-boot argocd install before the sealed-secrets CRD exists (wave 2). See its Chart.yaml.
+SEALED_OUT="${REPO_ROOT}/argo_apps/platform/charts/03_argocd_webhook_secret/templates/argocd-secret-sealedsecret.yaml"
 INGRESS_VALUES="${REPO_ROOT}/argo_apps/platform/charts/06_platform_ingress/values.yaml"  # source of the argocd host
 SEAL_NAME="argocd-secret"           # ArgoCD reads webhook.github.secret ONLY from the Secret named argocd-secret
 SEAL_NAMESPACE="argocd"

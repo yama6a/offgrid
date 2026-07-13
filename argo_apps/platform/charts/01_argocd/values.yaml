@@ -35,9 +35,12 @@ argo-cd:
     params:
       server.insecure: true
     # Don't let the chart create argocd-secret: we ship the GitHub webhook.github.secret into it out of
-    # band as a sealed Secret that MERGES in (08_argocd_webhook.sh, patch-mode; 05_argocd.sh marks the
-    # argocd-server-created argocd-secret patch-managed so the merge is allowed). If the chart also owned
-    # argocd-secret, ArgoCD self-heal would fight the merged-in webhook key. See 05_gitops.md (Webhook sync).
+    # band as a sealed Secret that MERGES in (patch-mode; 05_argocd.sh marks the argocd-server-created
+    # argocd-secret patch-managed so the merge is allowed). If the chart also owned argocd-secret, ArgoCD
+    # self-heal would fight the merged-in webhook key. NB that SealedSecret does NOT live in this chart: it's
+    # a separate wave-3 app (argo_apps/platform/charts/03_argocd_webhook_secret/), because a SealedSecret here
+    # would abort 05_argocd.sh's cold-boot helm install before the sealed-secrets CRD exists (wave 2). See
+    # 05_gitops.md (Webhook sync).
     secret:
       createSecret: false
     # Webhook-driven sync: git pushes hit /api/webhook (the ungated bypass route in 06_platform_ingress),

@@ -206,6 +206,15 @@ webhook-driven, with the poll demoted to a slow safety net.
   `server.secretkey` intact. Patch mode only works if the **live** Secret already carries that annotation (the
   controller checks the existing object, not the SealedSecret template), so `05_argocd.sh` annotates the live
   `argocd-secret` right after ArgoCD rolls out — in both bootstrap and rebuild.
+- **The sealed secret lives in a *separate* wave-3 app, not the wave-1 argocd chart.** The `SealedSecret`
+  (`bitnami.com/v1alpha1`) is delivered by `argo_apps/platform/charts/03_argocd_webhook_secret/` (app
+  `03_argocd_webhook_secret`, wave 3), **not** the `01_argocd` chart. If it lived in the argocd chart,
+  `05_argocd.sh`'s imperative `helm upgrade --install` — and the wave-1 self-heal — would try to render it on a
+  **cold** cluster *before* the sealed-secrets controller installs its CRD at wave 2, so helm aborts with
+  `no matches for kind "SealedSecret"` and the whole bootstrap wedges (this bit a from-scratch rebuild once).
+  Wave 3 is the first slot strictly after sealed-secrets (wave 2); `argocd-secret` already exists by then
+  (argocd-server, wave 1) and has been annotated patch-managed, so the merge just works. `08_argocd_webhook.sh`
+  writes the sealed manifest into that wave-3 chart.
 - **Bootstrap nudge.** With the poll demoted to 3600s and no GitHub webhook yet (it needs public DNS + the prod
   cert), `DANGEROUS_bootstrap_cluster.sh` hard-refreshes every Application after its final push so the re-sealed
   secrets apply immediately instead of after the fallback. On a live cluster, refresh the `argocd` app (or wait
