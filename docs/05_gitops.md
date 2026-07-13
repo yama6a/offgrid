@@ -188,7 +188,7 @@ pushes it a `POST /api/webhook` on every push (refreshes in seconds instead of w
 webhook-driven, with the poll demoted to a slow safety net.
 
 - **Poll = slow fallback, toggled from `.env`.** `POLL_SYNC_ENABLED` in `.env` drives
-  `timeout.reconciliation`: `false` (default) → `3600s` (a 1 h net for a dropped webhook), `true` → `60s` (fast
+  `timeout.reconciliation`: `false` (default) → `300s` (a 5-minute net for a dropped webhook), `true` → `60s` (fast
   poll). `08_argocd_webhook.sh` writes it into `01_argocd/values.yaml` — that file is the single source ArgoCD
   reads, so don't hand-edit `timeout.reconciliation`, flip the `.env` knob and re-run the script. We deliberately
   don't use `0s` (fully off): a lost webhook would then never recover, and `0s` also needs
@@ -217,7 +217,7 @@ webhook-driven, with the poll demoted to a slow safety net.
   Wave 3 is the first slot strictly after sealed-secrets (wave 2); `argocd-secret` already exists by then
   (argocd-server, wave 1) and has been annotated patch-managed, so the merge just works. `08_argocd_webhook.sh`
   writes the sealed manifest into that wave-3 chart.
-- **Bootstrap nudge.** With the poll demoted to 3600s and no GitHub webhook yet (it needs public DNS + the prod
+- **Bootstrap nudge.** With the poll relaxed to 300s and no GitHub webhook yet (it needs public DNS + the prod
   cert), `DANGEROUS_bootstrap_cluster.sh` hard-refreshes every Application after its final push so the re-sealed
   secrets apply immediately instead of after the fallback. On a live cluster, refresh the `argocd` app (or wait
   out the fallback) after pushing.

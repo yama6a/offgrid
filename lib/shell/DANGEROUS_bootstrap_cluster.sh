@@ -235,8 +235,8 @@ fi
 git push || warn "push failed; push by hand so ArgoCD picks up the re-sealed secrets"
 
 # === STEP 17. nudge ArgoCD to pull the just-pushed commit (best-effort) =======
-# The git poll is now a slow fallback (timeout.reconciliation defaults to 3600s; the GitHub webhook isn't
-# configured yet), so ArgoCD won't pick up STEP 16's push on its own for up to an hour. Hard-refresh every
+# The git poll is now a fallback (timeout.reconciliation defaults to 300s; the GitHub webhook isn't
+# configured yet), so ArgoCD won't pick up STEP 16's push on its own for up to ~5 minutes. Hard-refresh every
 # Application so the re-sealed secrets (google-oauth/grafana-smtp/argocd-secret) apply now instead of after
 # the fallback. Best-effort: warns, never fails the bootstrap.
 step "hard-refresh ArgoCD apps so the pushed re-sealed secrets apply now (poll is a slow fallback)"

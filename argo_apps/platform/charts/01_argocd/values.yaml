@@ -46,12 +46,12 @@ argo-cd:
     secret:
       createSecret: false
     # Webhook-driven sync: git pushes hit /api/webhook (the ungated bypass route in 06_platform_ingress),
-    # so the git poll is just a slow SAFETY NET (3600s) — the webhook does the fast sync. Toggle via
-    # POLL_SYNC_ENABLED in .env + re-run 08_argocd_webhook.sh: false=3600s (default) / true=60s. NB do NOT
+    # so the git poll is just a fallback SAFETY NET (300s) — the webhook does the fast sync. Toggle via
+    # POLL_SYNC_ENABLED in .env + re-run 08_argocd_webhook.sh: false=300s (default) / true=60s. NB do NOT
     # hand-edit timeout.reconciliation here — that script owns it (single source of truth = .env). A missed
-    # webhook still reconciles within the hour; we deliberately don't set 0s (no net). See 05_gitops.md.
+    # webhook still reconciles within ~5 min; we deliberately don't set 0s (no net). See 05_gitops.md.
     cm:
-      timeout.reconciliation: 3600s
+      timeout.reconciliation: 300s
       timeout.reconciliation.jitter: 2s
       # No ArgoCD login screen: the anonymous user is auto-authenticated and (via rbac below) is admin, so
       # whoever clears the Google SSO edge lands straight in. SAFE ONLY because the Google SSO SecurityPolicy
@@ -66,8 +66,8 @@ argo-cd:
       # Reconcile churn: activate the chart's shipped ignoreResourceUpdates rules (the `.all` rule ignores
       # /status, so status-only updates on watched resources don't trigger a reconcile). v3.x defaults this
       # ON, but we pin it so a chart bump can't silently flip it. NB this is a MINOR lever on THIS cluster:
-      # measured ~95% of application-controller reconciles used to come from the fast git poll (now a slow
-      # 3600s fallback, see timeout.reconciliation above), not from watch-event churn (Longhorn/Node/VM-scrapes
+      # measured ~95% of application-controller reconciles used to come from the fast git poll (now a
+      # 300s fallback, see timeout.reconciliation above), not from watch-event churn (Longhorn/Node/VM-scrapes
       # were <5%). With the poll relaxed + webhook-driven sync, watch-event churn is what's left, so this rule still earns its keep.
       resource.ignoreResourceUpdatesEnabled: "true"
     # RBAC: give every request (i.e. the anonymous user above) full admin. No per-user roles — there are no

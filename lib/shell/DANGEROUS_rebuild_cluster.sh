@@ -39,7 +39,7 @@ source "${SCRIPT_DIR}/common.sh"   # say/die/warn/ok + CLUSTER_DIR + CLUSTER_NOD
 cd "$REPO_ROOT"                     # run from the repo root (git ops)
 
 # ---- knobs ------------------------------------------------------------------
-STEP=0; STEP_TOTAL=9                            # shared step counter (common.sh step/run_step); bump TOTAL if you add/remove a step
+STEP=0; STEP_TOTAL=10                           # shared step counter (common.sh step/run_step); bump TOTAL if you add/remove a step
 STEP_DIR="$SCRIPT_DIR"                          # every step script (+ the reset script) is a sibling of this orchestrator in lib/shell/
 RESET="${STEP_DIR}/DANGEROUS_reset_talos_cluster.sh"
 RESTORE="${STEP_DIR}/06_restore_sealed_secrets_key.sh"
@@ -49,6 +49,9 @@ INGRESS_GW_NS="gateway"                        # namespace of the shared Gateway
 COMMIT_MSG="rebuild: sync working tree before cluster rebuild"
 INGRESS_WAIT=900                               # max secs to wait for the ingress to actually serve (HTTP-01 issuance is slow)
 INGRESS_HOSTS=""                               # space-separated hosts to check; empty = derive from the Gateway's HTTPS listeners
+REFRESH_SETTLE=120                             # secs to let ArgoCD create its apps + roll the early waves before the first hard-refresh
+REFRESH_ROUNDS=3                               # hard-refresh passes (catches apps as later waves appear); the 300s poll backstops the rest
+REFRESH_INTERVAL=60                            # secs between hard-refresh passes
 # -----------------------------------------------------------------------------
 
 # === prereqs =================================================================
@@ -121,7 +124,31 @@ else
   step "wipe S3 backups (skipped: .env AWS creds empty)"
 fi
 
-# === STEP 9. verify the ingress data path actually serves (best-effort) =======
+# === STEP 9. nudge ArgoCD to converge (hard-refresh all apps) ================
+# On a fresh rebuild the GitHub webhook isn't set up yet (it needs public DNS + the prod cert), so the only
+# sync trigger is the timeout.reconciliation poll (300s). Cold-boot ordering means apps briefly sit
+# OutOfSync/Progressing until the resources they depend on (CRDs, namespaces) exist; a hard refresh makes
+# ArgoCD re-examine them NOW instead of waiting out the poll. Give the platform a sensible while to create its
+# apps + roll through the early waves first (a refresh before an app exists is a no-op), then refresh a few
+# rounds to catch apps as later waves appear. Best-effort: never fails the rebuild; the 300s poll is the
+# backstop for anything still transient. See docs/05_gitops.md (Webhook-driven sync).
+export KUBECONFIG="$KUBECONFIG_FILE"           # 03d regenerated it above; needed for the inline kubectl below
+step "let ArgoCD settle ${REFRESH_SETTLE}s, then hard-refresh all apps (${REFRESH_ROUNDS} rounds; poll is a 300s fallback)"
+sleep "$REFRESH_SETTLE"
+for r in $(seq 1 "$REFRESH_ROUNDS"); do
+  apps="$(kubectl -n argocd get applications -o name 2>/dev/null)"
+  if [ -n "$apps" ]; then
+    echo "$apps" | while read -r app; do
+      kubectl -n argocd annotate "$app" argocd.argoproj.io/refresh=hard --overwrite >/dev/null 2>&1 || true
+    done
+    ok "hard-refresh round ${r}/${REFRESH_ROUNDS} ($(echo "$apps" | grep -c .) apps)"
+  else
+    warn "round ${r}/${REFRESH_ROUNDS}: no ArgoCD apps found yet (root still creating them?)"
+  fi
+  [ "$r" -lt "$REFRESH_ROUNDS" ] && sleep "$REFRESH_INTERVAL"
+done
+
+# === STEP 10. verify the ingress data path actually serves (best-effort) ======
 # ArgoCD brings up the ingress stack (envoy-gateway -> gateway -> cert-manager -> apps) ASYNC after the
 # ArgoCD bootstrap, and HTTP-01 issuance takes minutes, so "05 done" does NOT mean the sites work yet.
 # verify_ingress (lib/shell/common.sh) polls each HTTPS host until it serves a REAL, LE-backed response over

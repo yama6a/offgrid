@@ -38,6 +38,12 @@ spec:
     automated:
       prune: true
       selfHeal: true
+    retry:
+      limit: 10
+      backoff:
+        duration: 5s
+        factor: 2
+        maxDuration: 10m
     syncOptions:
       - CreateNamespace=true
       - ServerSideApply=true   # the RabbitMQ CRDs + the RabbitmqCluster's server-defaulted fields are large; SSA avoids the last-applied-annotation limit + drift

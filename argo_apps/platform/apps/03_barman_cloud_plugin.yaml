@@ -34,5 +34,11 @@ spec:
     automated:
       prune: true
       selfHeal: true
+    retry:
+      limit: 10
+      backoff:
+        duration: 5s
+        factor: 2
+        maxDuration: 10m
     syncOptions:
       - ServerSideApply=true   # the ObjectStore CRD is large; SSA avoids the client-side last-applied limit

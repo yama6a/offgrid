@@ -14,7 +14,7 @@
 #      Idempotent: a re-run REUSES the stored plaintext, so the secret you configured in GitHub stays valid.
 #
 #   2. PATCH the poll cadence from .env POLL_SYNC_ENABLED into the argocd chart values:
-#         false -> timeout.reconciliation: 3600s  (webhook-driven; poll is just a 1h safety net)
+#         false -> timeout.reconciliation: 300s   (webhook-driven; poll is just a 5-min safety net)
 #         true  -> timeout.reconciliation: 60s     (fast poll)
 #      The webhook is the fast sync path either way; the poll is the fallback for a dropped webhook.
 #
@@ -72,7 +72,7 @@ ok "kubeseal/kubectl/yq/openssl present, API + sealed-secrets controller reachab
 say "poll cadence from .env POLL_SYNC_ENABLED=${POLL_SYNC_ENABLED}"
 case "$POLL_SYNC_ENABLED" in
   true)  RECON="60s"   ;;   # fast poll
-  false) RECON="3600s" ;;   # webhook-driven; poll is a 1h safety net
+  false) RECON="300s" ;;   # webhook-driven; poll is a 5-min safety net
   *)     die "POLL_SYNC_ENABLED must be true or false in .env (got '${POLL_SYNC_ENABLED}')" ;;
 esac
 ok "timeout.reconciliation -> ${RECON}"
