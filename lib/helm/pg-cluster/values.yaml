@@ -37,7 +37,7 @@ cluster:
 
     # ---- everything below is hardcoded — do not override (soft: settable, but shouldn't be) ----
     storage:
-      # Node-local /var/mnt/cnpg partition (02_local_path_provisioner), isolated from Longhorn; Postgres
+      # Node-local /var/mnt/localpath partition (02_local_path_provisioner), isolated from Longhorn; Postgres
       # replication is the only data-path redundancy. See 08_storage.md.
       storageClass: local-path
       # REQUIRED by the CR but a NO-OP under local-path (just makes a dir; Postgres statfs's the whole

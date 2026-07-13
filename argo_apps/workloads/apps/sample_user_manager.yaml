@@ -10,7 +10,7 @@
 #
 # AUTOMATED (prune + selfHeal): drift auto-corrects. A prune is data-safe, the Postgres PVCs use the
 # `local-path` class with reclaimPolicy: Retain, so removing the Cluster CR never destroys the node-local
-# volumes (the dirs under /var/mnt/cnpg persist). The app + echo routes are safe leaves.
+# volumes (the dirs under /var/mnt/localpath persist). The app + echo routes are safe leaves.
 #
 # MULTI-NAMESPACE: the app + Cluster (+ generated password Secret) land in the destination namespace
 # `sample-user-manager`; the per-host Gateways/Certs/HTTPRoutes set metadata.namespace: gateway explicitly

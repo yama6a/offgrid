@@ -26,10 +26,10 @@ helperImage:
   repository: docker.io/library/busybox
   tag: "1.37"
 
-# Where PVs are physically created on each node. This is the dedicated, fixed-size XFS 'cnpg' user
-# volume from 03d (mounted at /var/mnt/cnpg, exposed to the kubelet by 03d's extraMount). Node-local:
+# Where PVs are physically created on each node. This is the dedicated, fixed-size XFS 'localpath' user
+# volume from 03d (mounted at /var/mnt/localpath, exposed to the kubelet by 03d's extraMount). Node-local:
 # every node uses this same path for its OWN disk (NOT a shared filesystem).
-dataPath: /var/mnt/cnpg
+dataPath: /var/mnt/localpath
 
 # StorageClasses served by the one provisioner above (both provision under `dataPath` on the pod's own node).
 # Neither is the cluster default — Longhorn stays default; a consumer opts in by name. Both use
@@ -40,7 +40,7 @@ dataPath: /var/mnt/cnpg
 storageClasses:
     # local-path (Retain): for CNPG. Postgres data is the source of truth, so deleting a PVC/Cluster must never
     # silently destroy it. NOTE: local-path only runs its teardown (rm -rf $VOL_DIR) on Delete, so with Retain
-    # the host dir under /var/mnt/cnpg is left behind — clean up manually to reclaim space.
+    # the host dir under /var/mnt/localpath is left behind — clean up manually to reclaim space.
   - name: local-path
     defaultClass: false
     volumeBindingMode: WaitForFirstConsumer
@@ -49,7 +49,7 @@ storageClasses:
     # not the volume (RabbitMQ quorum queues replicate across brokers via Raft). The per-broker volume is
     # disposable — a replacement broker rebuilds it from healthy peers — so a deleted PVC SHOULD reclaim: Delete
     # runs the teardown and frees the dir automatically (no manual cleanup, which matters on the shared
-    # /var/mnt/cnpg slice). Follows the repo's -ephemeral(=Delete) / -persistent(=Retain) class-naming
+    # /var/mnt/localpath slice). Follows the repo's -ephemeral(=Delete) / -persistent(=Retain) class-naming
     # convention (see the longhorn-redis-* classes).
   - name: local-path-ephemeral
     defaultClass: false

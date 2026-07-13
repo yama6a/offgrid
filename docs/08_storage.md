@@ -11,7 +11,7 @@ imperative script); each needs one Talos host prerequisite that lives in [`03_op
 [Longhorn](https://longhorn.io) is cloud-native distributed block storage that replicates each volume across
 nodes. It's the cluster's default `StorageClass` (nothing stateful could claim a PVC before it), wired to the
 dedicated XFS `longhorn` user volume that [`03d`](03_operating_system.md) carves out of each NVMe (the remainder
-after the 64 GiB EPHEMERAL cap and the fixed 50 GiB `cnpg` slice), mounted at `/var/mnt/longhorn`.
+after the 64 GiB EPHEMERAL cap and the fixed 50 GiB `localpath` slice), mounted at `/var/mnt/longhorn`.
 
 Wrapper chart: `argo_apps/platform/charts/02_longhorn/` (`Chart.yaml` pins `1.12.0`, all config under the
 `longhorn:` key in `values.yaml`).
@@ -108,8 +108,8 @@ network-reachable CSI like Longhorn, but wrong here — it'd bind a PV to an arb
 scheduled.)
 
 **Talos prerequisite.** Two things from [`03d`](03_operating_system.md): the dedicated fixed-size XFS volume at
-`/var/mnt/cnpg` (50 GiB, `min == max` so it can't grow into Longhorn's space; the layout per node is EPHEMERAL
-64 GiB → `cnpg` 50 GiB → `longhorn` remainder), and a kubelet bind-mount of `/var/mnt/cnpg` in `cp-patch.yaml`.
+`/var/mnt/localpath` (50 GiB, `min == max` so it can't grow into Longhorn's space; the layout per node is EPHEMERAL
+64 GiB → `localpath` 50 GiB → `longhorn` remainder), and a kubelet bind-mount of `/var/mnt/localpath` in `cp-patch.yaml`.
 Same reason as Longhorn (host mounts under `/var/mnt` aren't auto-propagated into the kubelet container), but
 plain `[bind, rw]` suffices — no per-replica sub-mount propagation, so no `rshared`.
 
@@ -122,7 +122,7 @@ re-diff `templates/` against the upstream `deploy/local-path-storage.yaml` at th
 
 Config worth calling out (`values.yaml`):
 
-- `dataPath: /var/mnt/cnpg`: the dedicated partition; node-local (the `DEFAULT_PATH_FOR_NON_LISTED_NODES`
+- `dataPath: /var/mnt/localpath`: the dedicated partition; node-local (the `DEFAULT_PATH_FOR_NON_LISTED_NODES`
   catch-all means every node uses this path on its own disk). Shared by both classes below — RabbitMQ's
   quorum-log volumes co-tenant this 50 GiB slice with Postgres (tiny, accepted; see
   [11_messaging.md](11_messaging.md)).
@@ -144,14 +144,14 @@ provisioning fails. No CRDs, so no SSA needed.
 ```bash
 helm template argo_apps/platform/charts/02_local_path_provisioner   # Deployment + 2 SCs (local-path + -ephemeral) + RBAC + ConfigMap
 export KUBECONFIG=secrets/kubeconfig
-talosctl -n 192.168.10.201 get volumestatus | grep -E 'cnpg|longhorn'  # u-cnpg (50GiB) + u-longhorn present
-talosctl -n 192.168.10.201 read /proc/mounts | grep /var/mnt/cnpg      # mounted + visible to the kubelet
+talosctl -n 192.168.10.201 get volumestatus | grep -E 'localpath|longhorn'  # u-localpath (50GiB) + u-longhorn present
+talosctl -n 192.168.10.201 read /proc/mounts | grep /var/mnt/localpath      # mounted + visible to the kubelet
 kubectl -n local-path-storage get pods                                 # provisioner Running
 kubectl get sc local-path -o jsonpath='{.volumeBindingMode}'; echo     # == WaitForFirstConsumer
 ```
 
 **Caveat.** `reclaimPolicy: Retain` leaves host dirs behind: local-path only runs its teardown (`rm -rf
-$VOL_DIR`) on `Delete`, so per-volume dirs under `/var/mnt/cnpg` persist after the PVC is gone — clean them up
+$VOL_DIR`) on `Delete`, so per-volume dirs under `/var/mnt/localpath` persist after the PVC is gone — clean them up
 manually to reclaim space.
 
 ## CloudNativePG
@@ -178,7 +178,7 @@ which pins cluster dep `cnpg/cluster` `0.7.0`. Images (`ghcr.io/cloudnative-pg/*
 > pre-baked in the wrapper; a workload only sets `type` + `instances` + `resources`.
 
 **Storage: node-local, off Longhorn.** CNPG runs on the node-local `local-path` class on the dedicated 50 GiB
-`/var/mnt/cnpg` partition — no Longhorn engine/CSI in the Postgres data path, isolated so the two can't starve
+`/var/mnt/localpath` partition — no Longhorn engine/CSI in the Postgres data path, isolated so the two can't starve
 each other. Postgres streaming replication is the only replication layer: a node loss survives (CNPG promotes
 the surviving instance and re-provisions the lost one from scratch via streaming replication). Full reasoning
 in [local-path-provisioner](#local-path-provisioner) above.
@@ -209,7 +209,7 @@ workload only overrides the ⭐ **set-per-workload** ones (in `sample_workload/v
   name is the instance's REQUIRED `cluster.fullnameOverride`) — no sealed-secret needed.
 
 **Reclaim & durability.** PVCs are `reclaimPolicy: Retain`, so a `prune` is data-safe (and deleting the app
-leaks the `/var/mnt/cnpg` dirs by design — clean up manually). **No PITR / no continuous backup**:
+leaks the `/var/mnt/localpath` dirs by design — clean up manually). **No PITR / no continuous backup**:
 `backups.enabled: false` — object-storage (Barman) backups need an S3 endpoint + creds, out of scope here.
 Until then durability rests entirely on Postgres replication across the 2 instances plus `Retain`; a node loss
 rebuilds that instance from scratch by re-streaming a full base backup from its peer (expect IO while it

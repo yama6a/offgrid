@@ -2,13 +2,13 @@ apiVersion: v2
 name: local-path-provisioner
 description: >-
   Wrapper chart for Rancher's local-path-provisioner on the Talos/Raspberry Pi 5
-  cluster, node-local dynamic PVs on the dedicated XFS 'cnpg' user volume (mounted
-  at /var/mnt/cnpg by 03d), used to back CloudNativePG off Longhorn so Postgres
-  streaming replication is the only replication layer. Single source of truth for
+  cluster, node-local dynamic PVs on the dedicated XFS 'localpath' user volume (mounted
+  at /var/mnt/localpath by 03d), used to back stateful apps off Longhorn (CNPG Postgres,
+  RabbitMQ) so the app layer owns replication, not the volume. Single source of truth for
   the version (this file, appVersion) and config (values.yaml). Delivered purely by
   ArgoCD via argo_apps/platform/apps/02_local_path_provisioner.yaml, wave 2, with
   the other storage leaves (longhorn / cnpg-operator). The one-time host prerequisite
-  (kubelet extraMount for /var/mnt/cnpg) lives in 03d. See 18_local_path_provisioner.md.
+  (kubelet extraMount for /var/mnt/localpath) lives in 03d. See 18_local_path_provisioner.md.
 
   NOTE: there is no public, maintained upstream Helm repo for this chart (Rancher's
   is auth-gated; the community mirror is stale), so the ~6 manifests are VENDORED into

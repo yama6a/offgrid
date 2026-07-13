@@ -253,8 +253,8 @@ so I picked `192.168.100.1` for the VIP (inside the subnet, outside the DHCP ran
    `NODE_INSTANCE_TYPE` in `.env`), and the Cilium prep: `cluster.network.cni.name: none`,
    `cluster.proxy.disabled: true` (Cilium does kube-proxy replacement), and `machine.features.kubePrism.enabled: true`
    (Cilium's API endpoint at `localhost:7445`; default-on in 1.13, set explicitly here to document the dependency).
-4. Appends the partition layout: `EPHEMERAL` capped (default 64 GiB) + a fixed-size `cnpg` user volume
-   (default 50 GiB, `min == max`, at `/var/mnt/cnpg`, node-local storage for CloudNativePG via
+4. Appends the partition layout: `EPHEMERAL` capped (default 64 GiB) + a fixed-size `localpath` user volume
+   (default 50 GiB, `min == max`, at `/var/mnt/localpath`, node-local storage for CNPG + RabbitMQ via
    [local-path-provisioner](08_storage.md)) + a `longhorn` user volume taking the rest of the NVMe
    (`/var/mnt/longhorn`). Both `/var/mnt` paths also get a `kubelet.extraMounts` bind so the containerized kubelet
    can see them. Sit empty until their apps sync (step 04+).

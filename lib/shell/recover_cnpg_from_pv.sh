@@ -6,7 +6,7 @@
 # (accidentally) deleted. This is the homelab's actual disaster-recovery path: backups are OFF
 # (pg-cluster values.yaml `backups.enabled: false`) and durability rests on Postgres replication +
 # `local-path` reclaimPolicy: Retain, so when the Cluster is gone the data survives ONLY as an orphaned
-# PersistentVolume (the dir under /var/mnt/cnpg). There is no Barman/snapshot restore to fall back on.
+# PersistentVolume (the dir under /var/mnt/localpath). There is no Barman/snapshot restore to fall back on.
 #
 # Why a script and not just `kubectl apply`: two repo-specific facts make the naive "re-add the manifest"
 # flow destroy data instead of recovering it —
@@ -98,7 +98,7 @@ NEW_PVC="${CLUSTER}-1"         # recover as serial 1 (single-instance recovery; 
 [[ "$RECLAIM" == "Retain" ]] || warn "PV reclaimPolicy is '${RECLAIM}', not 'Retain' — proceeding, but this disk was at risk."
 
 # Refuse to clobber a live cluster/PVC: those are the EMPTY re-bootstrapped ones. They must be removed first
-# (data-safe: Retain means their deletion only orphans more PVs, it never wipes /var/mnt/cnpg).
+# (data-safe: Retain means their deletion only orphans more PVs, it never wipes /var/mnt/localpath).
 if kubectl -n "$NS" get cluster.postgresql.cnpg.io "$CLUSTER" >/dev/null 2>&1; then
   die "Cluster ${NS}/${CLUSTER} still LIVE (likely re-bootstrapped empty). Delete it first, then re-run:
        kubectl -n ${NS} delete cluster.postgresql.cnpg.io ${CLUSTER}
@@ -187,7 +187,7 @@ $(say "PVC ready. Re-add the cluster so the operator adopts it:")
   5. Clean up the orphaned volumes you did NOT recover (empty re-bootstrap PVs + the stale host dirs):
 
          kubectl get pv | grep ${CLUSTER}                 # delete the leftover Released ones you don't want
-         # then on the owning node, remove its dir under /var/mnt/cnpg to reclaim disk (see 02_local_path_provisioner)
+         # then on the owning node, remove its dir under /var/mnt/localpath to reclaim disk (see 02_local_path_provisioner)
 
 Reminder: durability here is replication + local-path Retain only (backups are off). Record the PV names of
 your live databases somewhere safe NOW — recovery is far easier when you know which PV holds the primary.

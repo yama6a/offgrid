@@ -1,6 +1,6 @@
-# ArgoCD Application for local-path-provisioner (argo_apps/platform/charts/02_local_path_provisioner/),# node-local dynamic PVs on the dedicated XFS 'cnpg' user volume (mounted at /var/mnt/cnpg by 03d,
-# exposed to the kubelet by 03d's extraMount). It backs CloudNativePG OFF Longhorn so that Postgres
-# streaming replication is the only replication layer, on a partition isolated from Longhorn's.
+# ArgoCD Application for local-path-provisioner (argo_apps/platform/charts/02_local_path_provisioner/),# node-local dynamic PVs on the dedicated XFS 'localpath' user volume (mounted at /var/mnt/localpath by 03d,
+# exposed to the kubelet by 03d's extraMount). It backs stateful apps OFF Longhorn (CNPG Postgres + RabbitMQ)
+# so the app layer owns replication, on a partition isolated from Longhorn's.
 # See 18_local_path_provisioner.md.
 #
 # AUTOMATED (prune + selfHeal): a safe leaf like longhorn / cnpg-operator / sealed-secrets, it owns

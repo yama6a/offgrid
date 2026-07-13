@@ -84,7 +84,7 @@ resources:
 # replacement broker starts empty and rebuilds from the 2 healthy peers, which is why the class is reclaimPolicy
 # Delete, not Retain (nothing to preserve; the dir is auto-cleaned). Trade-offs, all accepted: while a node is
 # down there's no spare fault tolerance (a 2nd loss drops quorum below majority), and this shares Postgres's
-# fixed 50GiB /var/mnt/cnpg slice (fine — quorum-log volumes are tiny). `size` is nominal: local-path enforces
+# fixed 50GiB /var/mnt/localpath slice (fine — quorum-log volumes are tiny). `size` is nominal: local-path enforces
 # no quota (same as CNPG's value).
 storage:
   className: local-path-ephemeral

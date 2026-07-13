@@ -184,7 +184,7 @@ it's **disposable**: lose a node and the replacement broker starts empty and sel
 peers. That's why the class is `reclaimPolicy: Delete` (nothing to preserve; the host dir is auto-cleaned)
 rather than the `Retain` CNPG relies on. Trade-offs, all accepted: while a node is down there's no spare fault
 tolerance (a 2nd node loss drops quorum queues below majority → read-unavailable until a majority returns); the
-volumes share Postgres's fixed 50 GiB `/var/mnt/cnpg` slice (quorum-log volumes are tiny); and a broker
+volumes share Postgres's fixed 50 GiB `/var/mnt/localpath` slice (quorum-log volumes are tiny); and a broker
 rejoining with a wiped volume under the same node name usually re-adds itself automatically in RabbitMQ 4.x but
 occasionally needs a manual `rabbitmq-queues grow` — never data loss. `5Gi` per replica is nominal (local-path
 enforces no quota).

@@ -36,7 +36,7 @@ TALOS_SCRATCH="$(mktemp -d)"
 echo "Scratch:  ${TALOS_SCRATCH}   (throwaway render files; OS-reaped)"
 
 # Working vars from shared config (IFACE is used directly).
-CLUSTER="$CLUSTER_NAME"; DISK="$INSTALL_DISK"; EPHEMERAL="$EPHEMERAL_SIZE"; VIP="$CLUSTER_VIP"; CNPG_SIZE="$CNPG_VOLUME_SIZE"; KVER="$KUBERNETES_VERSION"
+CLUSTER="$CLUSTER_NAME"; DISK="$INSTALL_DISK"; EPHEMERAL="$EPHEMERAL_SIZE"; VIP="$CLUSTER_VIP"; LOCALPATH_SIZE="$LOCALPATH_VOLUME_SIZE"; KVER="$KUBERNETES_VERSION"
 HOSTNAMES=(); IPS=()
 for e in "${CLUSTER_NODES[@]}"; do HOSTNAMES+=("${e%%:*}"); IPS+=("${e##*:}"); done
 
@@ -114,8 +114,8 @@ ${REGISTRIES_BLOCK}
     # mounted at /var/mnt/longhorn on the host. Talos runs the kubelet in a container and does NOT
     # auto-propagate /var/mnt mounts into it, so Longhorn's pods can't see the disk without this
     # explicit bind. rshared lets Longhorn's per-replica sub-mounts propagate back to the host.
-    # The 'cnpg' mount is the same idea for the local-path-provisioner that backs CNPG (off Longhorn):
-    # its helper pods + the hostPath PVs both resolve /var/mnt/cnpg against the kubelet's view, so the
+    # The 'localpath' mount is the same idea for the local-path-provisioner (off Longhorn; backs CNPG + RabbitMQ):
+    # its helper pods + the hostPath PVs both resolve /var/mnt/localpath against the kubelet's view, so the
     # bind is required too; plain rw suffices (no sub-mount propagation like Longhorn).
     # See 08_storage.md and 08_storage.md.
     extraMounts:
@@ -123,9 +123,9 @@ ${REGISTRIES_BLOCK}
         type: bind
         source: /var/mnt/longhorn
         options: [bind, rshared, rw]
-      - destination: /var/mnt/cnpg
+      - destination: /var/mnt/localpath
         type: bind
-        source: /var/mnt/cnpg
+        source: /var/mnt/localpath
         options: [bind, rw]
   features:
     kubePrism:
@@ -149,8 +149,8 @@ cluster:
 ${CERTSANS}
 EOF
 
-# 3. Partition layout (extra config documents): cap EPHEMERAL, carve a fixed-size 'cnpg' volume,
-#    then 'longhorn' takes the remainder. The 'cnpg' volume is min==max (a fixed slice) so CNPG's
+# 3. Partition layout (extra config documents): cap EPHEMERAL, carve a fixed-size 'localpath' volume,
+#    then 'longhorn' takes the remainder. The 'localpath' volume is min==max (a fixed slice) so the
 #    local-path storage can't grow into Longhorn's space; 'longhorn' has no maxSize so it grows once
 #    at provision time to claim whatever is left. See 08_storage.md / 08_storage.md.
 cat > "${TALOS_SCRATCH}/volumes.yaml" <<EOF
@@ -165,12 +165,12 @@ provisioning:
 ---
 apiVersion: v1alpha1
 kind: UserVolumeConfig
-name: cnpg
+name: localpath
 provisioning:
   diskSelector:
     match: disk.transport == "nvme"
-  minSize: ${CNPG_SIZE}
-  maxSize: ${CNPG_SIZE}
+  minSize: ${LOCALPATH_SIZE}
+  maxSize: ${LOCALPATH_SIZE}
 filesystem:
   type: xfs
 ---
