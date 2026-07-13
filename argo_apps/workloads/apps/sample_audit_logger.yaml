@@ -14,6 +14,9 @@ kind: Application
 metadata:
   name: sample-audit-logger
   namespace: argocd
+  # Cascade-delete this app's own resources on Application deletion instead of orphaning them; see 05_gitops.md.
+  finalizers:
+    - resources-finalizer.argocd.argoproj.io
   annotations:
     # SSA dry-run diff so server-defaulted fields on the topology CRs don't show as perpetual OutOfSync.
     # Pairs with ServerSideApply below. Needs ArgoCD >= 2.10.

@@ -51,6 +51,47 @@ argo_apps/
   `argo_apps/workloads/apps/name.yaml`, no number, no `sync-wave`. Workloads all reconcile in parallel once platform
   is Healthy. (If a workload depends on another workload, it belongs in platform instead.)
 
+### Removing or renaming an app: the `resources-finalizer`
+
+Every Application manifest in this repo — the root-of-roots, both roots, and every `platform/apps/**` +
+`workloads/apps/**` leaf — carries:
+
+```yaml
+metadata:
+  finalizers:
+    - resources-finalizer.argocd.argoproj.io
+```
+
+This exists because of a subtle two-level trap in the app-of-apps model. Deleting or renaming an app touches
+*two* different mechanisms, and only one of them cleans up:
+
+- **`syncPolicy.automated.prune`** prunes resources *within a live app* when they leave that app's rendered
+  manifests. It says nothing about what happens to an app's resources when the *Application object itself* is
+  deleted — and a deleted Application has no sync loop left to prune anything.
+- Whether deleting an Application also deletes everything it deployed is governed **only** by the
+  `resources-finalizer.argocd.argoproj.io` finalizer. With it, deletion is *cascading*: ArgoCD deletes the app's
+  managed resources first, then removes the finalizer, then the object goes. **Without it, deletion is
+  non-cascading** — ArgoCD just removes the Application and leaves its resources running, unmanaged.
+
+When you rename a wrapper chart or drop an app from a tree, the parent (root or a root) prunes the *child
+Application object* — that part works. But without the finalizer on that child, its Kubernetes resources are
+orphaned, not deleted. This bit us when merging the two RabbitMQ apps into one: renaming the operator's Helm
+release (`rabbitmq-operator` → `rabbitmq`) changed every operator-subchart resource name, so the old app's
+Deployments + `ValidatingWebhookConfiguration` weren't re-adopted by the new app — they were left running by a
+now-deleted Application, and the duplicate `failurePolicy: Fail` webhook blocked all topology-CR admissions
+cluster-wide. (Resources whose name *doesn't* change — the `RabbitmqCluster` CR, a workload's `Cluster` — get
+re-adopted by the renamed app and survive fine; it's the release-named resources that orphan.)
+
+The finalizer on every app makes removal/rename self-cleaning, and it propagates through the tree: deleting the
+root-of-roots cascades to the two roots, which cascade to every leaf. Two things to know:
+
+- **Teardown needs the controller alive.** The finalizer is processed by the argocd application-controller, so
+  deleting an app while the controller is gone (mid-teardown, or the `argocd` app itself) leaves it stuck
+  `Terminating`. Clear it with `kubectl -n argocd patch app <name> --type=merge -p
+  '{"metadata":{"finalizers":[]}}'`. A full cluster wipe (`DANGEROUS_reset_talos_cluster.sh`) removes the OS
+  underneath anyway, so this only matters for a targeted app delete on a live cluster.
+- It changes nothing during normal sync — the finalizer is inert until the Application is actually deleted.
+
 ### sync-wave convention (within the platform tree)
 
 Ordering across platform apps is `argocd.argoproj.io/sync-wave` (lower = earlier; the platform root waits for a wave to be

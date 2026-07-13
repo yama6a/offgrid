@@ -15,6 +15,9 @@ kind: Application
 metadata:
   name: victoria-metrics-operator-crds
   namespace: argocd
+  # Cascade-delete this app's own resources on Application deletion instead of orphaning them; see 05_gitops.md.
+  finalizers:
+    - resources-finalizer.argocd.argoproj.io
   annotations:
     argocd.argoproj.io/sync-wave: "0"
 spec:
