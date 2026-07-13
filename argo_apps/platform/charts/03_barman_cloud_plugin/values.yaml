@@ -1,0 +1,3 @@
+# Nothing to configure. This chart vendors the upstream plugin release manifest verbatim (see Chart.yaml /
+# README.md); there are no knobs. Per-cluster backup configuration (bucket, creds, schedule) lives in
+# lib/helm/pg-cluster + lib/shell/14_cnpg_backup.sh, not here. File kept for convention (every chart has one).

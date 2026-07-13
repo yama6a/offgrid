@@ -101,3 +101,14 @@ spec:
       toPorts:
         - ports:
             - { port: "8000", protocol: TCP }
+    {{- if .Values.cluster.backups.enabled }}
+    # (i) S3 egress for the Barman Cloud plugin sidecar: WAL archiving + base-backup upload/restore go to the
+    # AWS S3 endpoint over HTTPS. Only rendered when backups are ON. Scoped to `world` on 443 — deliberately
+    # broad (S3 is reached over the public internet and its address set is large/volatile); tighten to a
+    # toFQDNs `*.amazonaws.com` rule if the DNS proxy is ever enabled. Without this, default-deny egress would
+    # silently fail every archive/backup. See docs/13_backups.md.
+    - toEntities: [world]
+      toPorts:
+        - ports:
+            - { port: "443", protocol: TCP }
+    {{- end }}

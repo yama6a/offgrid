@@ -21,3 +21,16 @@ Runs in this wrapper's scope, so it sees the consumer's overrides merged over va
 {{- if not .Values.networkPolicy.allowedClients }}
 {{- fail "pg-cluster: networkPolicy.allowedClients is required (who may reach Postgres on 5432); the DB policy is always enforced, so an empty list would wall off the database" }}
 {{- end }}
+{{- /* When backups are on, the chart's `required` would fail deep in the ObjectStore render; catch it here
+      with a message that names the .env-driven knob 14_cnpg_backup.sh injects. */ -}}
+{{- if .Values.cluster.backups.enabled }}
+{{- if not .Values.cluster.backups.s3.bucket }}
+{{- fail "pg-cluster: cluster.backups.s3.bucket is required when backups are enabled (set S3_BACKUP_BUCKET in .env and run 14_cnpg_backup.sh)" }}
+{{- end }}
+{{- if not .Values.cluster.backups.s3.region }}
+{{- fail "pg-cluster: cluster.backups.s3.region is required when backups are enabled (set AWS_REGION in .env and run 14_cnpg_backup.sh)" }}
+{{- end }}
+{{- if not .Values.cluster.backups.secret.name }}
+{{- fail "pg-cluster: cluster.backups.secret.name is required when backups are enabled (the sealed S3 creds secret; default cnpg-backup-s3)" }}
+{{- end }}
+{{- end }}

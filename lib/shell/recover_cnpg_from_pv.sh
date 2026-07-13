@@ -3,10 +3,13 @@
 # recover_cnpg_from_pv.sh  (macOS)
 #
 # Reattach a CloudNativePG database to its RETAINED node-local volume after the Cluster CR was
-# (accidentally) deleted. This is the homelab's actual disaster-recovery path: backups are OFF
-# (pg-cluster values.yaml `backups.enabled: false`) and durability rests on Postgres replication +
-# `local-path` reclaimPolicy: Retain, so when the Cluster is gone the data survives ONLY as an orphaned
-# PersistentVolume (the dir under /var/mnt/localpath). There is no Barman/snapshot restore to fall back on.
+# (accidentally) deleted. This is the FAST LOCAL recovery path, one of two DR tiers (see docs/13_backups.md):
+#   - THIS (PV-reattach): the bytes still exist on-node (only the Cluster CR was lost) — reattach in seconds,
+#     no S3 round-trip, no data transfer. Use it whenever the local PV survived.
+#   - recover_cnpg_from_s3.sh: the data is genuinely gone (node/disk loss, corruption, PITR, full rebuild) —
+#     restore from the off-cluster S3 backups (continuous WAL + daily base) into a fresh cluster.
+# Durability rests on Postgres replication + `local-path` reclaimPolicy: Retain (a lost Cluster CR leaves the
+# data as an orphaned PersistentVolume under /var/mnt/localpath), WITH S3 as the backstop when even that's gone.
 #
 # Why a script and not just `kubectl apply`: two repo-specific facts make the naive "re-add the manifest"
 # flow destroy data instead of recovering it —
@@ -44,7 +47,7 @@ use_kubeconfig
 assert_api
 
 say "CNPG volume recovery — reattach a deleted Cluster to its retained local-path PV"
-warn "This is the ONLY recovery path: backups are disabled; the data lives solely on the retained PV."
+warn "Fast local path (the PV still holds the data). If the data is truly gone, use recover_cnpg_from_s3.sh instead."
 
 # ---- 1. pause ArgoCD auto-sync (else selfHeal recreates an EMPTY cluster over the top) ----------------
 if ! kubectl -n "$ARGOCD_NS" get application "$ARGOCD_APP" >/dev/null 2>&1; then
@@ -189,8 +192,9 @@ $(say "PVC ready. Re-add the cluster so the operator adopts it:")
          kubectl get pv | grep ${CLUSTER}                 # delete the leftover Released ones you don't want
          # then on the owning node, remove its dir under /var/mnt/localpath to reclaim disk (see 02_local_path_provisioner)
 
-Reminder: durability here is replication + local-path Retain only (backups are off). Record the PV names of
-your live databases somewhere safe NOW — recovery is far easier when you know which PV holds the primary.
+Reminder: this path relies on the local PV surviving. If it didn't (disk/node loss, corruption), recover from
+S3 instead:  make restore-cnpg  (see recover_cnpg_from_s3.sh / docs/13_backups.md). Recording the PV names of
+your live databases somewhere safe NOW still makes THIS path far easier when the volume did survive.
 INSTRUCTIONS
 
 ok "reattach complete"

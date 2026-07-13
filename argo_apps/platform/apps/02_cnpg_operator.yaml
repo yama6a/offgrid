@@ -1,6 +1,6 @@
 # ArgoCD Application for the CloudNativePG operator (argo_apps/platform/charts/02_cnpg_operator/), the
 # Kubernetes-native PostgreSQL controller + its CRDs. This installs the OPERATOR ONLY; the actual
-# database (a Cluster CR on a node-local local-path StorageClass) is the sample-workload workload. See 17_cnpg.md.
+# database (a Cluster CR on a node-local local-path StorageClass) is the sample-workload workload. See 08_storage.md.
 #
 # AUTOMATED (prune + selfHeal): a safe leaf, like cert-manager / longhorn / sealed-secrets, it can't
 # cut the cluster off its own network, so drift should auto-correct. A prune won't cascade-delete the

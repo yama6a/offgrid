@@ -209,12 +209,13 @@ workload only overrides the ⭐ **set-per-workload** ones (in `sample_workload/v
   name is the instance's REQUIRED `cluster.fullnameOverride`) — no sealed-secret needed.
 
 **Reclaim & durability.** PVCs are `reclaimPolicy: Retain`, so a `prune` is data-safe (and deleting the app
-leaks the `/var/mnt/localpath` dirs by design — clean up manually). **No PITR / no continuous backup**:
-`backups.enabled: false` — object-storage (Barman) backups need an S3 endpoint + creds, out of scope here.
-Until then durability rests entirely on Postgres replication across the 2 instances plus `Retain`; a node loss
-rebuilds that instance from scratch by re-streaming a full base backup from its peer (expect IO while it
-catches up). Add later via the `cnpg/plugin-barman-cloud` plugin + a sealed-secret ([06_secrets.md](06_secrets.md))
-for real PITR.
+leaks the `/var/mnt/localpath` dirs by design — clean up manually). Durability has two tiers: in-cluster,
+Postgres replication across the 2 instances plus `Retain` (a node loss re-streams a full base backup from the
+peer; a deleted Cluster CR is reattached to its retained PV by `recover_cnpg_from_pv.sh`); and off-cluster,
+optional **S3 backups** (continuous WAL archiving + daily base backups via the `cnpg/plugin-barman-cloud`
+plugin) for real PITR and total-loss recovery. Backups are OFF by default (`backups.enabled: false`) and turned
+on from `.env` by `14_cnpg_backup.sh`. See **[13_backups.md](13_backups.md)** for the full design and the two
+recovery paths.
 
 Neither namespace needs privileged PSA — controller and Postgres pods run non-root (uid 26), so
 `cnpg-system`/`sample-workload` stay restricted-compatible. Both apps use SSA (the CRDs and `Cluster` CR blow

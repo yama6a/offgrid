@@ -1,0 +1,19 @@
+apiVersion: v2
+name: barman-cloud-plugin
+description: >-
+  The CloudNativePG Barman Cloud CNPG-I plugin — the component that actually performs WAL archiving and
+  base backups to object storage on behalf of the operator (the per-instance work runs in a sidecar image,
+  ghcr.io/cloudnative-pg/plugin-barman-cloud-sidecar, injected into the Postgres pods). Installs the
+  `ObjectStore` CRD + the plugin Deployment/Service/RBAC + its cert-manager mTLS Issuer & Certificates, all
+  into cnpg-system (it MUST live in the operator's namespace). Per-cluster backups are configured downstream
+  by lib/helm/pg-cluster (backups.method: plugin); see docs/13_backups.md.
+
+  DELIBERATE DEVIATION from the repo's usual wrapper-chart pattern: the plugin ships NO upstream Helm chart
+  (only a release manifest / Kustomize — https://github.com/cloudnative-pg/plugin-barman-cloud/issues/351),
+  so there is no dependency to pin, no Chart.lock, and no vendored `charts/*.tgz`. Instead the PINNED release
+  manifest is vendored verbatim as templates/plugin-barman-cloud.yaml (contains 0 Go-template braces, so Helm
+  passes it straight through). To bump: re-run the curl in this chart's README.md and re-commit. The version
+  pin lives in `appVersion` below + the image tag inside the vendored manifest.
+type: application
+version: 0.1.0                 # this wrapper chart's own version
+appVersion: "v0.13.0"          # pinned plugin-barman-cloud release (== the image tag in the vendored manifest)

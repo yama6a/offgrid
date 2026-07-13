@@ -51,8 +51,15 @@ source "$ENV_FILE"
 : "${SMTP_GOOGLE_APP_PASSWORD_SECRET:=}"  # 09 seals it for Grafana email
 : "${GOOGLE_SSO_CLIENT_ID:=}"      # 07 writes into the google-sso values
 : "${GOOGLE_SSO_CLIENT_SECRET:=}"  # 07 seals it for Envoy Gateway OIDC
+: "${AWS_DEPLOY_ACCESS_KEY_ID:=}"          # 13 runs Terraform with these; empty = skip S3 backups (13/14 no-op)
+: "${AWS_DEPLOY_SECRET_ACCESS_KEY_SECRET:=}"  # 13 Terraform deployer secret (never sealed into the cluster)
 # Not a secret, but defaulted here for the same reason (an older .env missing the key must not trip set -u).
 : "${POLL_SYNC_ENABLED:=false}"    # 08 patches timeout.reconciliation from this (false=3600s fallback / true=60s)
+: "${AWS_REGION:=}"                    # 13 Terraform region + 14 CNPG S3 endpoint region
+: "${S3_BACKUP_BUCKET:=}"              # 13 Terraform bucket name + 14 injects it into pg-cluster values
+: "${S3_BACKUP_TRANSITION_DAYS:=30}"   # 13 lifecycle: Glacier-IR transition age
+: "${S3_BACKUP_RETENTION_DAYS:=180}"   # 13 lifecycle: expiry age (recovery window)
+: "${CNPG_BACKUP_RPO:=15min}"          # 14 sets archive_timeout in pg-cluster values
 
 # ---- derived config (computed from the .env scalars; not user-editable) ---------------------------
 # These can't live in a flat .env (arrays, interpolation, a shasum-keyed path), so they're computed here.

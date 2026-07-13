@@ -9,7 +9,7 @@ description: >-
   (values.yaml, under the `cloudnative-pg:` key). Delivered purely by ArgoCD (no imperative
   bootstrap) via argo_apps/platform/apps/02_cnpg_operator.yaml, wave 2, same as cert-manager / longhorn /
   sealed-secrets (independent leaves, only need the CNI). The operator/Postgres images
-  (ghcr.io/cloudnative-pg/*) are multi-arch incl. arm64. See 17_cnpg.md.
+  (ghcr.io/cloudnative-pg/*) are multi-arch incl. arm64. See 08_storage.md.
 type: application
 version: 0.1.0                 # this wrapper chart's own version
 appVersion: "1.29.1"          # CNPG version the pinned chart ships (mirrors the dependency)
