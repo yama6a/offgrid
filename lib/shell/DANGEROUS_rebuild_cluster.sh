@@ -5,7 +5,7 @@
 # One-shot orchestrator: wipe the cluster and rebuild it end-to-end so you don't run the steps by hand.
 # Sequence (one confirmation, up front):
 #   0. git add/commit/push             : ArgoCD deploys the REMOTE repo, not your laptop, so sync it first
-#   1. DANGEROUS_reset_talos_cluster.sh, wipe STATE+EPHEMERAL+u-longhorn+u-cnpg, reboot to maintenance
+#   1. DANGEROUS_reset_talos_cluster.sh, wipe STATE+EPHEMERAL+u-longhorn+u-localpath, reboot to maintenance
 #   2. 03d_talos_cluster_config.sh     : WAITS for maintenance, applies config, bootstraps etcd
 #   3. 03e_nic_hardening.sh            : NIC hardening (EEE/watchdog)
 #   4. 04_cilium.sh                    : CNI + prometheus-operator CRDs + LB-IPAM/L2 + Hubble
@@ -62,7 +62,7 @@ cat <<EOF
 
 This will DESTROY and REBUILD the entire Talos cluster:
   nodes : ${IPS[*]}
-  wipe  : STATE + EPHEMERAL + u-longhorn + u-cnpg  (ALL k8s state AND all Longhorn + local-path data, gone for good)
+  wipe  : STATE + EPHEMERAL + u-longhorn + u-localpath  (ALL k8s state AND all Longhorn + local-path data, gone for good)
   flow  : commit+push -> reset -> 03d -> 03e -> 04 -> 05 -> restore sealed-secrets key -> WIPE S3 backups
           (ArgoCD then redeploys cilium/cert-manager/longhorn/gateway/SSO/monitoring from git)
   note  : FULL fresh start — wipes local CNPG data AND the S3 backups. The DBs come back EMPTY. If you want

@@ -3,7 +3,7 @@
 # DANGEROUS, wipes the whole cluster back to maintenance, INCLUDING all persistent data.
 #
 # Wipes STATE + EPHEMERAL (Talos persistent state + k8s/etcd) AND both data user volumes: `u-longhorn`
-# (the dedicated Longhorn volume) and `u-cnpg` (the local-path-provisioner volume backing CNPG + RabbitMQ),
+# (the dedicated Longhorn volume) and `u-localpath` (the local-path-provisioner volume backing CNPG + RabbitMQ),
 # both provisioned by 03d on /dev/nvme0n1. Keeps BOOT/EFI/META, so nodes reboot straight to maintenance,
 # NO reflash needed. Wiping the data volumes too means NO orphaned replica/DB data ever survives a reset:
 # a rebuilt cluster always starts from a clean disk (the old volume CRs die with etcd anyway).
@@ -23,7 +23,7 @@ source "${SCRIPT_DIR}/common.sh"   # dockerized talosctl() (mounts CLUSTER_DIR) 
 # in the confirmation so the operator knows exactly what's about to go.
 S3_CLAUSE=""
 [ "${REBUILD_IN_PROGRESS:-0}" != 1 ] && S3_CLAUSE=" AND DESTROY the S3 backup bucket + all its backups + IAM"
-read -r -p ">> Destroy ENTIRE Talos cluster AND wipe ALL Longhorn/PVC data (u-longhorn, u-cnpg)${S3_CLAUSE}? type YES: " confirm
+read -r -p ">> Destroy ENTIRE Talos cluster AND wipe ALL Longhorn/PVC data (u-longhorn, u-localpath)${S3_CLAUSE}? type YES: " confirm
 [ "${confirm}" = "YES" ] || { echo "skipped destruction (phew!)."; exit 0; }
 
 # Node IPs from .env (CLUSTER_NODES "host:ip" -> IPs).
@@ -34,19 +34,16 @@ NODES=(); for e in "${CLUSTER_NODES[@]}"; do NODES+=("${e##*:}"); done
 # so the interleaved streams stay readable. PIPESTATUS[0] propagates talosctl's status past the sed.
 #
 # --system-labels-to-wipe takes partition labels resolved against each node's VolumeStatus (NOT a fixed
-# STATE/EPHEMERAL/META set): u-longhorn is the Longhorn user volume and u-cnpg the local-path-provisioner
-# volume (03d UserVolumeConfig names `longhorn`/`cnpg` -> partition labels `u-longhorn`/`u-cnpg`). Wiping
+# STATE/EPHEMERAL/META set): u-longhorn is the Longhorn user volume and u-localpath the local-path-provisioner
+# volume (03d UserVolumeConfig names `longhorn`/`localpath` -> partition labels `u-longhorn`/`u-localpath`). Wiping
 # them here is what guarantees no orphaned replica/DB data survives. 03d re-creates the EPHEMERAL +
-# u-longhorn + u-cnpg partitions on the next config apply.
-# NOTE: 03d renamed the `cnpg` volume to `localpath`, so on the NEXT rebuild the label becomes `u-localpath`.
-# The live cluster still has `u-cnpg`, so wipe THAT now; after you've reset + rebuilt once, change `u-cnpg`
-# below (and in the header/prompt/say above) to `u-localpath` to match the new layout.
-say "resetting ${#NODES[@]} nodes in parallel (STATE,EPHEMERAL,u-longhorn,u-cnpg) -> maintenance"
+# u-longhorn + u-localpath partitions on the next config apply.
+say "resetting ${#NODES[@]} nodes in parallel (STATE,EPHEMERAL,u-longhorn,u-localpath) -> maintenance"
 pids=()
 for ip in "${NODES[@]}"; do
   (
     talosctl reset -e "$ip" -n "$ip" \
-      --system-labels-to-wipe STATE,EPHEMERAL,u-longhorn,u-cnpg \
+      --system-labels-to-wipe STATE,EPHEMERAL,u-longhorn,u-localpath \
       --reboot --graceful=false 2>&1 | sed "s/^/[$ip] /"
     exit "${PIPESTATUS[0]}"
   ) &
