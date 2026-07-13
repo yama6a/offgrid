@@ -3,7 +3,7 @@
 # this whoami only ever answers non-callback paths, and only to someone who cleared the callback host's
 # own gate. ONE shared Deployment+Service for every domain's callback host. The per-domain callback host
 # itself (Gateway + :443 listener + Certificate + HTTPRoute + SecurityPolicy) is rendered by the
-# ingress-edge library from the `ingress-edge:` block in values.yaml (templates/ingress.yaml). See 07_ingress.md.
+# ingress library, one per `domains[]` entry (templates/ingress.yaml). See 07_ingress.md.
 apiVersion: apps/v1
 kind: Deployment
 metadata:

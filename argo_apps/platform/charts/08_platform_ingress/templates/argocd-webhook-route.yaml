@@ -1,6 +1,6 @@
 {{/*
 argocd-webhook-route.yaml — the ONE deliberately hand-written route in this chart (the sibling
-templates/ingress.yaml is a single `include` and renders every OTHER edge via the ingress-edge library).
+templates/ingress.yaml is a single `include` and renders every OTHER edge via the ingress library).
 
 Option A SSO bypass for the ArgoCD GitHub webhook. The central Google-SSO SecurityPolicy (04_google_sso)
 attaches to routes BY EXACT NAME (its targetRefs list the argocd host route `argocd-<domain>`). This route
@@ -10,28 +10,27 @@ signature (webhook.github.secret in argocd-secret, sealed by 08_argocd_webhook.s
 The path match is type: Exact so ONLY the webhook endpoint bypasses SSO, never the rest of the admin API
 (anonymous=admin makes that distinction load-bearing). No ReferenceGrant needed: the library's existing
 `gateway-routes-to-argocd-<domain>` grant authorizes ANY HTTPRoute in ns gateway -> argocd-server. The
-ingress-edge library can't emit a path-matched route, which is why this one is hand-written.
+ingress library can't emit a path-matched route, which is why this one is hand-written.
 See 07_ingress.md (Bypassing SSO for a path) / 05_gitops.md (Webhook-driven sync).
 */}}
-{{- $cfg := (index .Values "ingress-edge").ingressEdge -}}
-{{- range $ing := (index .Values "ingress-edge").ingresses }}
+{{- range $ing := .Values.ingress.ingresses }}
 {{- range $h := $ing.hosts }}
 {{- if eq $h.subdomain "argocd" }}
-{{- $ctx := dict "cfg" $cfg "ingress" $ing "host" $h "release" $.Release }}
-{{- $name := include "ingress-edge.hostName" $ctx }}
+{{- $ctx := dict "ingress" $ing "host" $h "release" $.Release }}
+{{- $name := include "ingress.hostName" $ctx }}
 ---
 apiVersion: gateway.networking.k8s.io/v1
 kind: HTTPRoute
 metadata:
   name: {{ $name }}-webhook                 # distinct from the SSO-gated `{{ $name }}` -> the SecurityPolicy never targets it
-  namespace: {{ $cfg.gatewayNamespace }}
+  namespace: {{ include "ingress.gatewayNamespace" $ctx }}
 spec:
   parentRefs:
     - name: {{ $name }}                      # attach to the argocd host's own Gateway + listener (same as the gated route)
-      namespace: {{ $cfg.gatewayNamespace }}
+      namespace: {{ include "ingress.gatewayNamespace" $ctx }}
       sectionName: {{ $name }}
   hostnames:
-    - {{ include "ingress-edge.host" $ctx | quote }}
+    - {{ include "ingress.host" $ctx | quote }}
   rules:
     - matches:
         - path:
@@ -39,7 +38,7 @@ spec:
             value: /api/webhook
       backendRefs:
         - name: {{ $h.targetService }}
-          namespace: {{ include "ingress-edge.backendNs" $ctx }}
+          namespace: {{ include "ingress.backendNs" $ctx }}
           port: {{ $h.targetPort }}
 {{- end }}
 {{- end }}

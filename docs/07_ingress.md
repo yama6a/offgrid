@@ -8,7 +8,7 @@ route/authenticate every ingress host on one pinned LoadBalancer IP. Cilium
 ([04_networking.md](04_networking.md)) stays the CNI and LB-IPAM provider; only the gateway lives here.
 
 The repeated **edge** shape — per host a Gateway + HTTPRoute + ReferenceGrant, one multi-SAN `Certificate`
-per ingress — is rendered once by the shared `ingress-edge` library chart (`lib/helm/ingress-edge/`,
+per ingress — is rendered once by the shared `ingress` library chart (`lib/helm/ingress/`,
 see [the wrapper-chart conventions](../CLAUDE.md)); Envoy Gateway's `mergeGateways` folds every host's Gateway
 onto one Envoy + one LoadBalancer Service. So the cluster keeps a single ingress point on the pinned IP while
 each ingress is just a values list of hosts. **SSO is not part of the edge** — it's applied centrally per
@@ -167,16 +167,18 @@ monolithic cert must keep renewing).
   EXTERNAL-IP `192.168.100.10`.
 - `kubectl get clusterissuer` -> both `letsencrypt-staging` / `letsencrypt-prod` `READY=True`.
 
-## The ingress-edge library
+## The ingress library
 
 The per-host edge used to be four hand-copied templates in every app chart. It now lives in ONE
-`type: library` chart, `lib/helm/ingress-edge/`, which renders — for a list of `ingresses[]`, each a
+`type: library` chart, `lib/helm/ingress/`, which renders — for a list of `ingresses[]`, each a
 group of subdomains under one `domain` — a Gateway + HTTPRoute + ReferenceGrant per host and ONE multi-SAN
 `Certificate` per ingress (covering all its hosts, into one shared Secret every listener references). It
-renders **no SSO** — Google-SSO is applied centrally per domain by `04_google_sso` (below). Consumers are
-thin: a `file://` dependency on the library, a one-line template (`{{ include "ingress-edge.render" . }}`),
-and an `ingress-edge:` values block. See [CLAUDE.md](../CLAUDE.md) for the library-chart + `file://` +
-committed-`Chart.lock` convention.
+renders **no SSO** — Google-SSO is applied centrally per domain by `04_google_sso` (below). The cluster
+wiring (gateway namespace `gateway`, gateway class `eg`, fallback issuer) is hardcoded in the library, NOT a
+per-consumer value — those are platform invariants, so a consumer's only cert knob is `ingresses[].issuer`.
+Consumers are thin: a `file://` dependency on the library, a one-line template
+(`{{ include "ingress.render" . }}`), and an `ingress:` values block. See [CLAUDE.md](../CLAUDE.md) for the
+library-chart + `file://` + committed-`Chart.lock` convention.
 
 Consumers: `08_platform_ingress` (the platform UIs' edges), each workload chart, and `04_google_sso` (its
 callback hosts' edges). ReferenceGrants are emitted only for cross-namespace backends.

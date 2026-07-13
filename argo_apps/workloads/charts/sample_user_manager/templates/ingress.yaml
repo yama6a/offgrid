@@ -1,6 +1,6 @@
 {{/*
-This workload's whole ingress edge is rendered by the shared ingress-edge library from the `ingress-edge:`
+This workload's whole ingress edge is rendered by the shared ingress library from the `ingress:`
 block in values.yaml (open + SSO hosts, this workload's own allowlist). One line by design: no edge YAML
 is hand-written here. See 10_sample_workload.md / 07_ingress.md.
 */}}
-{{ include "ingress-edge.render" . }}
+{{ include "ingress.render" . }}

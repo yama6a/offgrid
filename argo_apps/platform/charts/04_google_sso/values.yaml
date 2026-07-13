@@ -3,7 +3,7 @@
 # (matched by the request `:authority`). Workloads/packages configure NOTHING SSO — a host is protected by
 # adding it to `domains[].hosts` below. See 07_ingress.md.
 
-namespace: gateway                       # must equal ingressEdge.gatewayNamespace (where the routes live).
+namespace: gateway                       # must equal the ingress library's hardcoded gateway namespace (where the routes live).
 callbackImage: "traefik/whoami:v1.10.3"  # Envoy intercepts /oauth2/callback before it reaches this.
 
 # Shared Google-OIDC config (one client for everything). clientID written by 07_google_sso.sh; the client

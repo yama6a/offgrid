@@ -78,7 +78,7 @@ and in `.env`. Those files are the source of truth. The roles are:
 
 Two shared charts under `lib/helm/` are consumed as dependencies:
 
-- `ingress-edge`: a simple wrapper around Gateway/HTTPRoute/Certificate (allows ingress-ing)
+- `ingress`: a simple wrapper around Gateway/HTTPRoute/Certificate (allows ingress-ing)
 - `pg-cluster`: a CNPG Postgres wrapper (makes CNPG easier to consume in a GitOps repo)
 
 ## Hardware
@@ -132,7 +132,7 @@ flowchart LR
 ├── docs/               # the numbered runbook + decision records (01–10)
 ├── lib/
 │   ├── shell/          # bootstrap shell scripts & helpers
-│   └── helm/           # shared charts: ingress-edge (library) & pg-cluster (CNPG wrapper)
+│   └── helm/           # shared charts: ingress (library) & pg-cluster (CNPG wrapper)
 ├── argo_apps/          # everything Argo CD delivers (two-tree GitOps)
 │   ├── root.yaml       #   root-of-roots (applied once by the 05 script)
 │   ├── roots/          #   0_platform → 1_workloads
@@ -269,6 +269,4 @@ Pi 5 Talos image builds on [talos-rpi5/talos-builder](https://github.com/talos-r
 - fix numbering gap in waves (4->7)
 - cnpg backups
 - longhorn backups?
-- ingress-edge chart should be only called "ingress"?
-- ingress-edge chart, should ingressEdge:... even be configurable if hard coded in the tempaltes?
 - ensure anti-affinity rules spread replica-pods for everything onto different nodes.

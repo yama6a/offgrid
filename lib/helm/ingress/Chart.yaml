@@ -1,5 +1,5 @@
 apiVersion: v2
-name: ingress-edge
+name: ingress
 description: >-
   Shared LIBRARY chart (type: library, renders nothing on its own) that emits the ingress "edge" for a
   list of ingresses: per host a :443 Gateway listener + an HTTPRoute + a ReferenceGrant, and ONE multi-SAN

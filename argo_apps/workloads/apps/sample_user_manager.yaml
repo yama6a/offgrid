@@ -5,7 +5,7 @@
 # Ships the app (PG_PASSWORD injected from the CNPG secret), its CloudNativePG Clusters, and two ingress
 # hosts: sample-user-manager.app.example.com (OPEN) + sample-user-manager-sso.app.example.com (gated CENTRALLY by
 # 04_google_sso, which lists it in domains[].hosts — this chart configures no SSO). Both are plain edges
-# rendered by the shared ingress-edge library from the chart's `ingress-edge:` values. See
+# rendered by the shared ingress library from the chart's `ingress:` values. See
 # 10_sample_workload.md / 17_cnpg.md.
 #
 # AUTOMATED (prune + selfHeal): drift auto-corrects. A prune is data-safe, the Postgres PVCs use the

@@ -26,7 +26,7 @@ app:
 
 # Ingress edges for the app: two hosts on the same Service. Neither configures SSO — sample-user-manager-sso
 # is gated centrally by the google-sso chart (its domains[].hosts); sample-user-manager is left open there.
-ingress-edge:
+ingress:
   ingresses:
     - name: sample-user-manager
       domain: app.example.com          # workloads live under the *.app.<base> tier (platform UIs use *.ops.<base>). See 07_ingress.md.

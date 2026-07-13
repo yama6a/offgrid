@@ -2,7 +2,7 @@
 # rendering the EDGES for every platform UI (argocd, grafana, vmui, vlogs) — a per-host Gateway (merged onto
 # the one Envoy) + HTTPRoute + ReferenceGrant + one shared multi-SAN Certificate. NO SSO here: these hosts
 # are gated centrally by 04_google_sso (its domains[].hosts), which targetRefs these routes by name. The
-# whole edge is rendered by the shared ingress-edge library (a file:// dependency); no edge YAML is
+# whole edge is rendered by the shared ingress library (a file:// dependency); no edge YAML is
 # hand-written. See 07_ingress.md.
 #
 # AUTOMATED (prune + selfHeal): a safe leaf, Gateways + Certificate + HTTPRoutes + ReferenceGrants, no CRDs,

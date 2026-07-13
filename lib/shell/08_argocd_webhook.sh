@@ -126,7 +126,7 @@ else
 fi
 
 # === 6. summary + how to finish in GitHub ====================================
-ARGOCD_DOMAIN="$(yq -r '.["ingress-edge"].ingresses[] | select(.hosts[].subdomain == "argocd") | .domain' "$INGRESS_VALUES" 2>/dev/null | head -1)"
+ARGOCD_DOMAIN="$(yq -r '.ingress.ingresses[] | select(.hosts[].subdomain == "argocd") | .domain' "$INGRESS_VALUES" 2>/dev/null | head -1)"
 WEBHOOK_URL="https://argocd.${ARGOCD_DOMAIN:-<domain>}/api/webhook"
 
 summary

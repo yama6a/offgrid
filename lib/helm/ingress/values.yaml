@@ -1,0 +1,16 @@
+# Per-ingress data (domain, hosts) — each consumer sets its own `ingresses:`; schema in 07_ingress.md.
+# This library renders only the edge (Gateway/Certificate/HTTPRoute/ReferenceGrant); SSO is applied
+# centrally per domain by the google-sso chart. The cluster wiring (gateway namespace `gateway` + default
+# issuer in templates/_helpers.tpl, gateway class `eg` inline in templates/_gateway.tpl) is NOT configurable —
+# those are platform invariants owned by 01_envoy_gateway / 03_gateway, not per-consumer choices. See 07_ingress.md.
+
+# ingresses[] schema — each consumer sets its own; full docs in 07_ingress.md:
+#   - name: platform              # unique; the SAN cert name + the <name>-tls Secret
+#     domain: example.com         # required; exactly one registrable domain
+#     issuer: letsencrypt-staging # optional; defaults to letsencrypt-staging (must be letsencrypt-staging|letsencrypt-prod)
+#     hosts:
+#       - subdomain: argocd            # host = argocd.example.com  ("@" = apex)
+#         targetService: argocd-server # the k8s Service to route to
+#         targetNamespace: argocd      # optional; defaults to the consumer's release namespace
+#         targetPort: 80               # the Service port
+ingresses: []

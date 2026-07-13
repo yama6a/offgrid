@@ -36,9 +36,9 @@ dependencies:
     alias: redis-sessions
     version: "*"
     repository: "file://../../../../lib/helm/redis-instance"
-  - name: ingress-edge
+  - name: ingress
     version: "*"              # shared edge library; renders this workload's ingress from values below
-    repository: "file://../../../../lib/helm/ingress-edge"
+    repository: "file://../../../../lib/helm/ingress"
   - name: rabbitmq-topology
     version: "*"              # shared messaging library; renders this workload's User/Exchange/Queue/... below
     repository: "file://../../../../lib/helm/rabbitmq-topology"

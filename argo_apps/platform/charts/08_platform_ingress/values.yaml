@@ -1,5 +1,5 @@
 # Ingress (edges) for all platform UIs.
-ingress-edge:
+ingress:
   ingresses:
     - name: platform
       domain: ops.example.com # platform UIs live under the *.ops.<base> tier (workloads use *.app.<base>). See 07_ingress.md.

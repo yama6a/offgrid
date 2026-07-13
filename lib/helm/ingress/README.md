@@ -1,10 +1,16 @@
-# ingress-edge
+# ingress
 
 A Helm **library chart** (`type: library`) that renders a workload's ingress "edge" from a declarative
-`ingress-edge:` values block: per host a `:443` Gateway listener + an `HTTPRoute` (+ a cross-namespace
+`ingress:` values block: per host a `:443` Gateway listener + an `HTTPRoute` (+ a cross-namespace
 `ReferenceGrant`), and **one** multi-SAN cert-manager `Certificate` per ingress. It renders **no SSO** —
 Google-SSO is applied centrally per domain by `04_google_sso`. See
 [`docs/07_ingress.md`](../../../docs/07_ingress.md) for the full model and values schema.
+
+The cluster wiring — gateway namespace `gateway` (`03_gateway`) and the fallback issuer as named-template
+constants in `templates/_helpers.tpl`, plus the gateway class `eg` (`01_envoy_gateway`) inline in
+`templates/_gateway.tpl` (used once) — is **hardcoded**, NOT exposed as values. Those are platform invariants,
+not per-consumer choices, so a consumer can't (and shouldn't) override them; the only per-ingress cert knob is
+`ingresses[].issuer`.
 
 ## Use it
 
@@ -13,16 +19,16 @@ Add the dependency and a one-line template in the consumer chart (an `applicatio
 ```yaml
 # Chart.yaml
 dependencies:
-  - name: ingress-edge
+  - name: ingress
     version: "*"
-    repository: "file://../../../../lib/helm/ingress-edge"
+    repository: "file://../../../../lib/helm/ingress"
 ```
 ```yaml
 # templates/ingress.yaml — the whole file
-{{ include "ingress-edge.render" . }}
+{{ include "ingress.render" . }}
 ```
 
-Then declare intent in `values.yaml` under `ingress-edge:` (`ingresses[]`, each with a `domain` and `hosts[]`).
+Then declare intent in `values.yaml` under `ingress:` (`ingresses[]`, each with a `domain` and `hosts[]`).
 
 ## Why it looks the way it does
 
@@ -40,7 +46,7 @@ The `_*.tpl` partials + single `include` entry point are not stylistic — two H
 ## Why `_all.tpl` is a composition root (not independent files)
 
 The edge is data-driven and cross-cutting: a consumer lists `ingresses[]`, each with `hosts[]`. `_all.tpl`
-(`ingress-edge.render`) is the one place that sees all of it, and it has to, for two reasons:
+(`ingress.render`) is the one place that sees all of it, and it has to, for two reasons:
 
 - **Aggregation.** Each ingress gets **one** multi-SAN `Certificate` covering *all* its hosts (into one shared
   Secret every listener references). That single cert can only be built by scanning the whole `hosts[]` list —
@@ -50,7 +56,7 @@ The edge is data-driven and cross-cutting: a consumer lists `ingresses[]`, each 
   (issuer must be a shipped ClusterIssuer; `domain` required; `hosts[].subdomain` must be a bare subdomain, not
   a full hostname) with clear `fail` messages.
 
-Named templates don't inherit the top-level `.` scope, so `_all.tpl` bundles `cfg`/`ingress`/`host`/`release`
+Named templates don't inherit the top-level `.` scope, so `_all.tpl` bundles `ingress`/`host`/`release`
 into a `$ctx` dict and threads it into each partial — that's the plumbing you see.
 
 ## Related

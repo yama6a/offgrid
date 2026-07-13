@@ -1,6 +1,6 @@
 dependencies:
-- name: ingress-edge
-  repository: file://../../../../lib/helm/ingress-edge
+- name: ingress
+  repository: file://../../../../lib/helm/ingress
   version: 0.1.0
-digest: sha256:43fbe927c1642bfd42436aa217e16fd53d625ed954f7dd8c56986d3923cf4f1a
-generated: "2026-07-05T14:17:55.273179+02:00"
+digest: sha256:131f94e6e67b459ccb8b460f1ae4c85166242927d31067319d7db8a04aef5c50
+generated: "2026-07-13T14:23:48.069963+02:00"

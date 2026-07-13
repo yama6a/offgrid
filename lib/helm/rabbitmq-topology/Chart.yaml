@@ -8,7 +8,7 @@ description: >-
   . }}` template + a values block under the `rabbitmq-topology` key. It encodes the two patterns as intent:
   publishEvents / subscribeEvents (event topic, 1 publisher : N consumers) and consumeCommands / sendCommands
   (command topic, N publishers : 1 consumer), with ownership on the correct side and per-consumer queue
-  isolation. Structurally mirrors lib/helm/ingress-edge (a library, so NO Chart.lock and NO vendored charts/).
+  isolation. Structurally mirrors lib/helm/ingress (a library, so NO Chart.lock and NO vendored charts/).
   See 11_messaging.md.
 # A library chart pins NO upstream dependency and renders no templates of its own, so there is no Chart.lock
 # here (the CONSUMERS that depend on this one carry the lock).

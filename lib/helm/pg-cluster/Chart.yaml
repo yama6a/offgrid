@@ -10,7 +10,7 @@ description: >-
   drops from ~40 lines of nested cnpg/cluster config to ~6 lines of real decisions.
 
   Lives in lib/helm/ (the repo's home for charts consumed as a dependency by other charts) but is the FIRST
-  `type: application` chart there: unlike the ingress-edge library it must pin a real upstream dependency
+  `type: application` chart there: unlike the ingress library it must pin a real upstream dependency
   (cnpg/cluster), so it can't be `type: library`. See CLAUDE.md's shared-charts paragraph.
 
   CAVEATS (inherent to wrapping a subchart, Helm can't transform/lock a child's values):

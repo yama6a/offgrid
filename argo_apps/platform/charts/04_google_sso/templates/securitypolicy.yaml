@@ -17,7 +17,7 @@ metadata:
   namespace: {{ $ns }}
 spec:
   # The callback route + every gated host route on this domain. Route names are the full host with dots ->
-  # dashes (the ingress-edge library's naming), so they resolve whichever chart created the route.
+  # dashes (the ingress library's naming), so they resolve whichever chart created the route.
   targetRefs:
     - group: gateway.networking.k8s.io
       kind: HTTPRoute

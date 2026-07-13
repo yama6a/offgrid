@@ -54,7 +54,7 @@ The CRDs ship in the chart's `crds/` dir; ArgoCD renders Helm with `--include-cr
 
 A **first-party `type: application` chart** — it templates the `Redis` CR itself (no upstream dependency, so no
 `Chart.lock`, no vendored `charts/*.tgz`); the CRD comes from the operator. This is a third `lib/helm/` variant
-distinct from both `ingress-edge` (`type: library`) and `pg-cluster` (`type: application` **with** a wrapped upstream
+distinct from both `ingress` (`type: library`) and `pg-cluster` (`type: application` **with** a wrapped upstream
 chart). It renders three things per instance: the `Redis` CR, a `ServiceMonitor`, and a `CiliumNetworkPolicy`, plus a
 `validate.yaml` that hard-fails on missing required knobs (the `pg-cluster` pattern).
 

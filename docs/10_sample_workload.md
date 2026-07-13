@@ -22,7 +22,7 @@ database, both ingress modes (open + SSO), **and** a live RabbitMQ message loop.
 - database: a CloudNativePG `Cluster` via the shared `pg-cluster` wrapper (which pins `cnpg/cluster` and
   pre-bakes the boilerplate; this workload sets only `type`/`instances`/`resources`), 2-instance HA on the
   node-local `local-path` class.
-- ingress: one ingress, two hosts (plain edges rendered by the shared `ingress-edge` library, see
+- ingress: one ingress, two hosts (plain edges rendered by the shared `ingress` library, see
   [07_ingress.md](07_ingress.md)), each host's Gateway folded onto the one shared Envoy via `mergeGateways`.
   This chart configures **no SSO** — gating is central in [`04_google_sso`](07_ingress.md):
   - `sample-user-manager.app.example.com`: OPEN — not listed in `04_google_sso`, the unprotected control.
@@ -37,9 +37,9 @@ Delivered purely by ArgoCD:
 - `argo_apps/workloads/apps/sample_workload.yaml`: the Application. A workload (in the workloads
   tree), so no `NN_` number and no `sync-wave`, see "Ordering" below.
 - `argo_apps/workloads/charts/sample_workload/`: wraps two `file://` dependencies — the shared `pg-cluster`
-  wrapper (which itself pins `cnpg/cluster`) and the shared `ingress-edge` library (both `Chart.lock`-committed,
+  wrapper (which itself pins `cnpg/cluster`) and the shared `ingress` library (both `Chart.lock`-committed,
   vendored `charts/*.tgz` gitignored) — and adds a first-party template for the app plus a one-line
-  `{{ include "ingress-edge.render" . }}` for the ingress. The Postgres needs no template: `pg-cluster` renders
+  `{{ include "ingress.render" . }}` for the ingress. The Postgres needs no template: `pg-cluster` renders
   the `Cluster` from the `pg-cluster:` values block. See the shared-charts section in [CLAUDE.md](../CLAUDE.md).
 
 ## Namespaces: two, on purpose
@@ -47,7 +47,7 @@ Delivered purely by ArgoCD:
 | Resource | Namespace | Why |
 |----------|-----------|-----|
 | app Deployment + Service, CNPG `Cluster`, generated `...-app` Secret, `ReferenceGrant` | `sample-workload` (the Application's `destination.namespace`, `CreateNamespace=true`) | the app must read `PG_PASSWORD` from a Secret in its own namespace, so app + DB + Secret co-locate. |
-| per-host `Gateway` + `:443` listener + `HTTPRoute`, one `Certificate` per ingress | `gateway` (the library's `ingressEdge.gatewayNamespace`) | the merged-Envoy model + the central `04_google_sso` SecurityPolicy (which targetRefs these routes) require the routes in `gateway`. |
+| per-host `Gateway` + `:443` listener + `HTTPRoute`, one `Certificate` per ingress | `gateway` (the library's hardcoded gateway namespace) | the merged-Envoy model + the central `04_google_sso` SecurityPolicy (which targetRefs these routes) require the routes in `gateway`. |
 
 So this is a deliberately multi-namespace Application. The HTTPRoutes (in `gateway`) reach the app
 Service (in `sample-workload`) via a `ReferenceGrant` in `sample-workload`, the same cross-namespace
@@ -85,7 +85,7 @@ namespace.
 
 ### One-place edit: the whole ingress is a values list
 Per-host HTTP-01 (no wildcard without DNS-01) still means every HTTPS host needs its own `:443` listener,
-but that listener lives on the host's own Gateway (rendered by the `ingress-edge` library), folded onto
+but that listener lives on the host's own Gateway (rendered by the `ingress` library), folded onto
 the shared Envoy via `mergeGateways`, not on a shared Gateway in `03_gateway`. Each ingress declares one
 `domain`; adding a host is a single `{ subdomain, targetService, targetPort }` under its `hosts:` (host = `<subdomain>.<domain>`,
 or `subdomain: "@"` for the apex). A different-domain group is a new `ingresses[]` entry with its own

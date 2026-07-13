@@ -50,6 +50,6 @@ a `$ctx` dict and threads it into each partial — that's the plumbing you see a
 
 ## Related
 
-- [`ingress-edge`](../ingress-edge) — the same library-chart idiom (`include "ingress-edge.render"`).
+- [`ingress`](../ingress) — the same library-chart idiom (`include "ingress.render"`).
 - [`pg-cluster`](../pg-cluster) — `type: application` instead, because it *wraps* an upstream chart (real
   rendered templates + committed `Chart.lock`), rather than composing first-party CRs.

@@ -15,7 +15,7 @@ Two pieces (the operators + broker are one platform app; the topology is per-wor
   one shared `Vhost` (`apps`) + the broker's `CiliumNetworkPolicy`. There is exactly ONE broker for the whole
   cluster (unlike Postgres, which is per-workload), so it lives in platform. (See "One app: operator + broker"
   below for why operators and their CRs safely share one wave.)
-- **the reusable chart** — `lib/helm/rabbitmq-topology/` (`type: library`, like `ingress-edge`). A workload
+- **the reusable chart** — `lib/helm/rabbitmq-topology/` (`type: library`, like `ingress`). A workload
   consumes it via a `file://` dependency + a one-line `{{ include "rabbitmq-topology.render" . }}` template and
   declares its topology in values. Demonstrated by the sample-user-* workloads (see [10_sample_workload.md](10_sample_workload.md)).
 
@@ -47,8 +47,8 @@ name matches only itself.
 ## The reusable chart (`lib/helm/rabbitmq-topology`)
 
 A `type: library` chart — no upstream dependency, no `Chart.lock`, no vendored `charts/` (the exact shape of
-`ingress-edge`; the `pg-cluster` `type: application` apparatus isn't needed because there's no upstream chart to
-wrap, only CRs to render). A consumer wires it exactly like `ingress-edge`:
+`ingress`; the `pg-cluster` `type: application` apparatus isn't needed because there's no upstream chart to
+wrap, only CRs to render). A consumer wires it exactly like `ingress`:
 
 ```yaml
 # Chart.yaml
