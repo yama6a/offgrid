@@ -29,21 +29,46 @@ secret](https://github.com/yama6a/offgrid/settings/secrets/actions/new) `RENOVAT
 `GITHUB_TOKEN` can't open PRs that re-trigger workflows and lacks scope, so the dedicated PAT is required. First run:
 trigger the workflow manually — it populates the dependency-dashboard issue and opens the initial PRs.
 
-## Merge posture (and its risk)
+## PR grouping and merge posture
 
-Merging a PR reaches the live cluster: ArgoCD syncs it, and most apps run `selfHeal`. So the posture is
-deliberate:
+- **One combined, auto-merged PR for every non-major update** — all `minor` / `patch` / `digest` / `pin` /
+  lockfile bumps land in a single "all non-major dependencies" PR that Renovate **merges itself**.
+- **Each major update is its own PR**, left for manual review — a breaking bump is never bundled or automerged.
+  The one exception: the **VictoriaMetrics** charts keep their majors together (the CRDs must match the operator).
 
-- **Automerge** only `patch` / `digest` / `pin` updates. Minor and major are always PR-only.
-- **PR-only (never automerged)**, even for a patch:
-    - **Cluster-critical apps** — cilium, argocd, cert-manager, longhorn, envoy gateway. Cilium especially: it is
-      the one app that can cut the cluster (and Argo) off its own network. See [04_networking.md] / [05_gitops.md].
-    - **The Talos/kernel build recipe** (`.env.example`) — a real bump needs a full manual image rebuild with
-      source rebases ([03a]); merging the PR changes only `.env.example` and applies nothing. The PRs are purely a
-      "a newer version exists" signal. Grouped as one PR. `KUBERNETES_VERSION` lives here too — its ceiling is the
-      Talos release's k8s default, so it must move WITH Talos.
-    - **`local-path-provisioner`** — its manifests are vendored verbatim (a tag bump must be re-diffed against the
-      upstream release); flagged `needs-revendor`.
+### How the automerge works (no CI, no GitHub auto-merge)
+
+GitHub's native auto-merge needs a branch-protection gate (a required check or review) to queue against, and
+this repo has none. So we set `platformAutomerge: false` and let **Renovate merge the PR through the API
+itself** — no CI, no branch protection needed. Renovate merges only when a PR is mergeable, which (with no
+checks) is ~2h after creation and on a **subsequent run**, one merge per run. That two-pass timing is why the
+workflow cron runs **every 3 hours** rather than weekly — a weekly cron would leave an auto-mergeable PR sitting
+for a week. A manual `workflow_dispatch` also completes a pending merge on demand.
+
+### The risk (and how to dial it back)
+
+Merging reaches the live cluster: ArgoCD syncs it, and most apps run `selfHeal`. Auto-merging the combined PR
+therefore applies everything in it **unattended**, including:
+
+- **Cilium** — the one app that can cut the cluster (and Argo) off its own network. See [04_networking.md] /
+  [05_gitops.md].
+- **`local-path-provisioner`** (labeled `needs-revendor`) — its manifests are vendored verbatim; a tag bump
+  really needs a manual re-diff against the upstream release. If it appears in the PR, split it out and
+  re-vendor rather than letting it merge.
+- **The Talos/kernel build recipe** (`.env.example`) — merging these lines does NOT self-apply; a real bump
+  needs a manual image rebuild ([03a]). Treat them as a "newer version exists" signal. `KUBERNETES_VERSION` is
+  coupled to Talos (its ceiling is the Talos release's k8s default), so move it WITH Talos.
+
+This is an accepted hands-off trade-off. To de-risk without splitting the PR: add `minimumReleaseAge` (e.g.
+`"3 days"`) so bumps bake before they're eligible, or remove `automerge` from specific deps you want to gate.
+
+Two things ride in the combined PR that need care before merging:
+
+- **The Talos/kernel build recipe** (`.env.example`) — a bump here does NOT self-apply: it needs a manual image
+  rebuild with source rebases ([03a]). Treat those lines as a "newer version exists" signal. `KUBERNETES_VERSION`
+  is coupled to Talos (its ceiling is the Talos release's k8s default), so move it WITH Talos.
+- **`local-path-provisioner`** — its manifests are vendored verbatim (a tag bump must be re-diffed against the
+  upstream release); flagged `needs-revendor`. If it changed, split it out and re-vendor before merging.
 
 ## Gotchas baked into the config
 

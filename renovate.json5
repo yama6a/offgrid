@@ -6,7 +6,8 @@
   //  - the renovate workflow's own action pins                              -> github-actions
   //  - images in chart templates + shell scripts, and the .env.example      -> customManagers (regex)
   //    Talos/kernel build recipe
-  // Cadence is the GHA cron (weekly) — no internal `schedule`, so a manual workflow_dispatch opens PRs too.
+  // Cadence is the GHA cron (every 3h — frequent so Renovate can self-merge the combined PR; see below). No
+  // internal `schedule`, so a manual workflow_dispatch works too.
   // Run self-hosted by .github/workflows/renovate.yaml. Docs: docs/14_renovate.md.
   $schema: "https://docs.renovatebot.com/renovate-schema.json",
   extends: [
@@ -15,8 +16,13 @@
     "helpers:pinGitHubActionDigestsToSemver", // action pins carry a readable version alongside the digest
   ],
   prConcurrentLimit: 12,
-  prHourlyLimit: 0, // no hourly throttle; the weekly cron already bounds how often Renovate runs
+  prHourlyLimit: 0, // no hourly throttle
   dependencyDashboardTitle: "Renovate dependency dashboard",
+
+  // Automerge via Renovate ITSELF, not GitHub's native auto-merge (which needs a branch-protection gate we
+  // don't have). Renovate merges the PR through the API once it's mergeable; with no CI checks that is ~2h
+  // after creation, on a SUBSEQUENT run — which is why the GHA cron runs every 3h, not weekly.
+  platformAutomerge: false,
 
   // helmv3 auto-discovers every Chart.yaml. Refresh the committed vendored subchart tarballs + Chart.lock
   // on a bump (the repo commits charts/*.tgz, e.g. lib/helm/pg-cluster). file:// deps have no datasource so
@@ -72,38 +78,26 @@
 
   packageRules: [
     {
-      // Automerge only genuinely safe update types. Minor/major always stay PR-only (they're never listed
-      // here). Merging reaches the live cluster via ArgoCD self-heal — accepted for these low-risk bumps.
-      description: "automerge safe updates",
-      matchUpdateTypes: ["patch", "digest", "pin"],
+      // ONE combined, AUTO-MERGED PR for every NON-major update (minor + patch + digest + pin + lockfile).
+      // Renovate self-merges it once mergeable (~2h after creation, no CI gate). WARNING: this reaches the live
+      // cluster unattended via ArgoCD self-heal — including Cilium (which can cut the cluster off its own
+      // network) and any local-path tag bump (which really needs a manual re-vendor, see below); it also bumps
+      // the Talos/kernel .env recipe, which a merge does NOT apply (that needs a manual rebuild — 03a). Accepted
+      // trade-off for a hands-off homelab. To de-risk later: add `minimumReleaseAge` so bumps bake first, or
+      // drop `automerge` from the deps you want to gate. See docs/14_renovate.md.
+      description: "combine all non-major updates into one auto-merged PR",
+      matchUpdateTypes: ["minor", "patch", "digest", "pin", "lockFileMaintenance"],
+      groupName: "all non-major dependencies",
       automerge: true,
     },
+    // MAJOR updates get their own PR each (Renovate default) — a breaking bump is reviewed in isolation, never
+    // bundled. The VictoriaMetrics charts are the one exception: their CRDs must match the operator, so their
+    // majors are kept together in a single PR.
     {
-      // Never automerge the apps that can break the cluster's own control/data path or that ArgoCD delivers
-      // as core plumbing — a bad patch would self-heal in place. Review these by hand. Cilium especially:
-      // it is the one app that can cut the cluster (and Argo) off its own network. See 04_networking.md.
-      description: "PR-only: cluster-critical platform apps",
-      matchPackageNames: ["cilium", "argo-cd", "cert-manager", "longhorn", "gateway-helm"],
-      automerge: false,
-    },
-    {
-      // The Talos/kernel image-build recipe. A real bump needs a full manual image rebuild with source
-      // rebases (03a) — merging the PR changes only .env.example, it applies NOTHING. So: informational PRs
-      // only, grouped, never automerged. KUBERNETES_VERSION lives here too: its ceiling is the Talos release
-      // default, so it must move WITH Talos, not on its own.
-      description: "PR-only, grouped: Talos/kernel build recipe",
-      matchPackageNames: [
-        "siderolabs/talos",
-        "siderolabs/pkgs",
-        "talos-rpi5/talos-builder",
-        "talos-rpi5/sbc-raspberrypi5",
-        "raspberrypi/linux",
-        "kubernetes/kubernetes",
-        "ghcr.io/siderolabs/iscsi-tools",
-        "ghcr.io/siderolabs/util-linux-tools",
-      ],
-      groupName: "talos build recipe",
-      automerge: false,
+      description: "keep VictoriaMetrics majors together (CRDs must match the operator)",
+      matchPackageNames: ["victoria-metrics-operator", "victoria-metrics-operator-crds", "victoria-metrics-k8s-stack", "victoria-logs-collector"],
+      matchUpdateTypes: ["major"],
+      groupName: "victoriametrics stack (major)",
     },
     {
       // k8s release tags are v-prefixed; the .env value is not. Strip the v when comparing.
@@ -119,28 +113,20 @@
       versioning: "regex:^stable_(?<major>\\d{4})(?<minor>\\d{2})(?<patch>\\d{2})$",
     },
     {
-      // local-path-provisioner ships as VENDORED upstream manifests (templates/ + a provenance header) keyed
-      // to values.image.tag. A tag bump must be re-vendored + re-diffed by hand, so flag it and never
-      // automerge. busybox is its helper image, same chart, same treatment.
+      // local-path-provisioner ships as VENDORED upstream manifests keyed to values.image.tag — a bump must be
+      // re-diffed against the upstream release by hand. Label it so, if it changed, you split it out of the
+      // combined PR and re-vendor before merging. busybox is its helper image, same chart, same treatment.
       description: "needs-revendor: local-path-provisioner",
       matchManagers: ["helm-values"],
       matchFileNames: ["argo_apps/platform/charts/02_local_path_provisioner/values.yaml"],
       addLabels: ["needs-revendor"],
-      automerge: false,
     },
     {
       // Pin the workflow's action refs to commit digests (supply-chain hardening); the semver-comment helper
-      // above keeps a readable version beside each digest. Renovate's first run opens the pinning PR.
+      // above keeps a readable version beside each digest.
       description: "pin github action refs to digests",
       matchManagers: ["github-actions"],
       pinDigests: true,
-    },
-    {
-      // The CRD-only charts must match their operator's version; Renovate bumps them independently, so keep
-      // each grouped with its operator and review the pair together (the appVersion match is a human check).
-      description: "group VictoriaMetrics stack",
-      matchPackageNames: ["victoria-metrics-operator", "victoria-metrics-operator-crds", "victoria-metrics-k8s-stack", "victoria-logs-collector"],
-      groupName: "victoriametrics stack",
     },
   ],
 }

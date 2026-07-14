@@ -4,7 +4,9 @@ name: Renovate
 
 on:
   schedule:
-    - cron: "0 3 * * 1" # weekly, Mon 03:00 UTC. renovate.json5's own `schedule` constrains when PRs open.
+    # Every 3h. Automerge needs frequent runs: Renovate opens the combined PR on one run and self-merges it on
+    # a LATER run (~2h grace, no CI gate) — a weekly cron would leave an auto-mergeable PR sitting for a week.
+    - cron: "17 */3 * * *"
   workflow_dispatch: # manual run (first run / on demand)
     inputs:
       logLevel:

@@ -273,3 +273,4 @@ Pi 5 Talos image builds on [talos-rpi5/talos-builder](https://github.com/talos-r
 - apply comment rules from claude.md to all yaml and other code files.
 - read and shorten all md files.
 - check cnpg backup accumulation, ensure it doesn't build up too much. consider extending WAL backup time.
+- add something to test in CI so that PRs have at least SOME confidence in not being garbage.
