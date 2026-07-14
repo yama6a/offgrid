@@ -202,11 +202,20 @@ fi
 kubectl apply -f "$ROOT_APP" >/dev/null 2>&1 && ok "root applied" || bad "kubectl apply root failed"
 
 # === 5. wait for self-management to settle ===================================
-# Sync-wave order: cilium (wave 0) auto-adopts -> Healthy, then the root creates argocd (wave 1),
-# which adopts itself. Both auto-sync, so no manual click is needed.
-say "waiting for root + argocd to reconcile"
-wait_app root   300
+# Confirm the GitOps handoff took: argocd adopts itself (leaf app — Healthy == its own pods, fast) and the
+# root-of-roots has created the platform tree. We deliberately do NOT wait for `root` Synced+Healthy here:
+# the Application health customization (01_argocd/values.yaml) makes root/platform health aggregate their
+# whole subtree, so root only goes Healthy once the ENTIRE platform+workloads tree is up (many minutes on a
+# cold boot). That full convergence is async — the rebuild orchestrator's converge step waits for it; on a
+# standalone `make install-argocd`, watch it with `kubectl -n argocd get applications -w`.
+say "waiting for ArgoCD self-management + GitOps handoff"
 wait_app argocd 300
+for _ in $(seq 1 60); do kubectl -n "$NS" get application platform >/dev/null 2>&1 && break; sleep 2; done
+if kubectl -n "$NS" get application platform >/dev/null 2>&1; then
+  ok "GitOps handoff confirmed: root created the platform tree (platform -> workloads converges async)"
+else
+  bad "root did not create the platform app in ~120s (check: kubectl -n ${NS} get applications)"
+fi
 csync=$(kubectl -n "$NS" get application cilium -o jsonpath='{.status.sync.status}' 2>/dev/null)
 echo "   app/cilium sync status: ${csync:-<not created yet>}  (expected Synced, auto-adopted, no pod churn)"
 
