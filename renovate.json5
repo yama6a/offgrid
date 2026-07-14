@@ -1,22 +1,21 @@
 {
   // Renovate config. Opens dependency-update PRs for EVERY pin in the repo:
   //  - helm chart deps (Chart.yaml + Chart.lock + vendored charts/*.tgz)   -> helmv3
-  //  - local-path-provisioner image (repository/tag map)                    -> helm-values (scoped)
+  //  - container images in values.yaml (single-string + repository/tag)     -> helm-values
   //  - the aws terraform provider (versions.tf + .terraform.lock.hcl)       -> terraform
   //  - the renovate workflow's own action pins                              -> github-actions
-  //  - every other container image (values.yaml single-string, chart        -> customManagers (regex)
-  //    templates, shell scripts) + the .env.example Talos/kernel recipe
+  //  - images in chart templates + shell scripts, and the .env.example      -> customManagers (regex)
+  //    Talos/kernel build recipe
+  // Cadence is the GHA cron (weekly) — no internal `schedule`, so a manual workflow_dispatch opens PRs too.
   // Run self-hosted by .github/workflows/renovate.yaml. Docs: docs/14_renovate.md.
   $schema: "https://docs.renovatebot.com/renovate-schema.json",
   extends: [
     "config:recommended",
-    ":dependencyDashboard", // one issue listing every pending/failed update
+    ":dependencyDashboard", // one issue listing every pending/failed update (needs repo Issues enabled)
     "helpers:pinGitHubActionDigestsToSemver", // action pins carry a readable version alongside the digest
   ],
-  timezone: "Europe/Stockholm",
-  schedule: ["before 6am on monday"], // batch PRs to a weekly window; the GHA cron just triggers the run
   prConcurrentLimit: 12,
-  prHourlyLimit: 0, // no throttle inside the weekly window
+  prHourlyLimit: 0, // no hourly throttle; the weekly cron already bounds how often Renovate runs
   dependencyDashboardTitle: "Renovate dependency dashboard",
 
   // helmv3 auto-discovers every Chart.yaml. Refresh the committed vendored subchart tarballs + Chart.lock
@@ -25,27 +24,21 @@
   // under paths containing /charts/, so that would disable the whole repo.
   postUpdateOptions: ["helmUpdateSubChartArchives"],
 
-  // Confine helm-values to local-path-provisioner (the one chart using a repository/tag map). Every other
-  // image is a single-string ref handled by the docker customManager below — scoping avoids double-managing.
-  "helm-values": {
-    managerFilePatterns: ["/^argo_apps/platform/charts/02_local_path_provisioner/values\\.yaml$/"],
-  },
-
   // Bumping this file re-vendors an upstream release manifest verbatim (per its README curl recipe), not a
   // line edit — never let a bot patch the image tag inside it.
   ignorePaths: ["argo_apps/platform/charts/03_barman_cloud_plugin/templates/**"],
 
   customManagers: [
     {
-      // Container images annotated `# renovate: datasource=docker`: values.yaml single-string image:,
-      // chart templates (redis-instance), shell-script literals, and the .env.example system extensions.
+      // Container images annotated `# renovate: datasource=docker` in files helm-values can't read: chart
+      // templates (redis-instance), shell-script literals, and the .env.example system extensions. (Images
+      // in values.yaml are handled by helm-values — NOT here — to avoid double-managing.)
       // Captures repo:tag(+@sha256 digest) from the ref itself, so the tag AND digest stay fresh.
       customType: "regex",
-      description: "docker image refs (annotated) in values.yaml, chart templates, shell scripts, .env.example",
+      description: "docker image refs (annotated) in chart templates, shell scripts, .env.example",
       managerFilePatterns: [
         "/^\\.env\\.example$/",
         "/^lib/shell/.*\\.sh$/",
-        "/values\\.yaml$/",
         "/^lib/helm/redis-instance/templates/redis\\.yaml$/",
       ],
       matchStrings: [

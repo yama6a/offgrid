@@ -5,7 +5,6 @@
 
 app:
   name: sample-user-signup
-  # renovate: datasource=docker
   image: "ghcr.io/yama6a/pi5-k8s-sample-app:3"   # three-binary image (/manager, /signup, /auditor)
   command: ["/signup"]
   replicas: 1

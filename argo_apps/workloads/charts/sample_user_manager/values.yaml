@@ -4,7 +4,6 @@
 
 app:
   name: sample-user-manager
-  # renovate: datasource=docker
   image: "ghcr.io/yama6a/pi5-k8s-sample-app:4"   # three-binary image (/manager, /signup, /auditor); :4 adds the Redis audit store + GET /audit
   command: ["/manager"]
   port: 8080

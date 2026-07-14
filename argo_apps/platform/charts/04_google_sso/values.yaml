@@ -4,7 +4,6 @@
 # adding it to `domains[].hosts` below. See 07_ingress.md.
 
 namespace: gateway                       # must equal the ingress library's hardcoded gateway namespace (where the routes live).
-# renovate: datasource=docker
 callbackImage: "traefik/whoami:v1.10.3"  # Envoy intercepts /oauth2/callback before it reaches this.
 
 # Shared Google-OIDC config (one client for everything). clientID written by 07_google_sso.sh; the client

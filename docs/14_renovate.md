@@ -49,8 +49,10 @@ deliberate:
 
 - **No `**/charts/**` disable rule.** The wrapper charts themselves live under paths containing `/charts/`, so the
   usual Helm guard would disable the whole repo.
-- **`helm-values` is scoped to `local-path-provisioner`** (the one chart using a `repository`/`tag` map). Every
-  other image is a single-string ref handled by the docker regex manager — scoping avoids double-managing.
+- **`helm-values` owns all `values.yaml` images; the docker regex manager does NOT scan `values.yaml`** — it
+  covers only chart templates, shell scripts, and `.env.example`. They must not overlap: a built-in manager's
+  `managerFilePatterns` is additive (can't narrow it), so the split is enforced by keeping `values.yaml` out of
+  the regex manager, not by scoping `helm-values`.
 - **The barman-cloud vendored manifest is in `ignorePaths`** — bumping it re-vendors an upstream release verbatim
   (per that chart's README), not a line edit.
 - **VictoriaMetrics charts are grouped**; the CRD chart's app version must match its operator, a human check on

@@ -67,7 +67,6 @@ replicas: 3
 # Pinned RabbitMQ server image. `-management` bundles the management plugin (the 15672 UI); `-alpine` is the
 # small variant (kind to the Pis). Multi-arch incl. arm64. 4.2.x matches the line the operator subchart
 # (CloudPirates 0.3.3) is built/tested against; bump deliberately.
-# renovate: datasource=docker
 image: rabbitmq:4.2.8-management-alpine
 
 # Per-instance requests/limits. RabbitMQ sizes its memory high-watermark off the memory LIMIT, so the limit
