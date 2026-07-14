@@ -1,8 +1,14 @@
 # NOTE: unlike every other chart in this repo, we intentionally COMMIT the vendored upstream tarball
-# (charts/cluster-0.7.0.tgz) — so there is deliberately NO `charts/*.tgz` ignore rule here.
+# (charts/cluster-0.8.0.tgz) — so there is deliberately NO `charts/*.tgz` ignore rule here.
 #
 # Why: this chart is a file:// dependency of workloads, and it in turn pins a REMOTE dependency
 # (cnpg/cluster). ArgoCD's repo-server runs `helm dependency build` only at the top level, so it won't
 # fetch this transitive remote dependency over the network at render time. Vendoring it in git is the
 # reliable path (the file:// package carries it along). Refresh it with `helm dependency update` here and
-# re-commit both Chart.lock and charts/cluster-0.7.0.tgz when bumping the pin in Chart.yaml.
+# re-commit both Chart.lock and charts/cluster-0.8.0.tgz when bumping the pin in Chart.yaml.
+#
+# PATCHED tgz (not pristine upstream): the ObjectStore templates (backup-/recovery-objectstore.yaml) had
+# `helm.sh/hook: pre-install,pre-upgrade,pre-rollback` stripped -> `argocd.argoproj.io/sync-wave: "-1"`.
+# Under ArgoCD a helm hook = ephemeral PreSync resource, so the ObjectStore got deleted and WAL archiving
+# broke. Re-apply this after any `helm dependency update` (repack WITHOUT AppleDouble: COPYFILE_DISABLE=1).
+# See docs/13_backups.md.

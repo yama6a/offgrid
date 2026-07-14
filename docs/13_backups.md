@@ -250,9 +250,16 @@ that destroy so the bucket survives the rebuild.)
 6. **Alerts:** confirm the metric name/label against `/metrics`; break archiving (e.g. revoke the IAM key
    briefly) → `CNPGWALArchiveFailing` fires; restore → it clears.
 
-## One ArgoCD wrinkle to watch
+## ArgoCD + the ObjectStore Helm hook (PATCHED — do not un-patch)
 
-The `cnpg/cluster` chart annotates the `ObjectStore` as a Helm `pre-install,pre-upgrade` hook, which ArgoCD
-treats as a **PreSync** hook (default delete-policy `BeforeHookCreation`) — so on each sync ArgoCD may
-delete+recreate the ObjectStore. Syncs are occasional (git change / drift), and recreation is immediate, so the
-window is tiny; watch for archive blips around syncs and, if it ever matters, render a plain ObjectStore instead.
+The `cnpg/cluster` chart annotates the `ObjectStore` as a Helm `pre-install,pre-upgrade,pre-rollback` hook.
+Under ArgoCD that makes it an **ephemeral PreSync hook**, not a tracked resource — ArgoCD created it once, it
+was removed, and it **never came back**: WAL archiving stopped, the CNPG cluster stuck `Ready=False`
+(`ContinuousArchivingFailing: ObjectStore … not found`), and the whole workload's sync wedged behind the
+unready cluster (verified on a rebuild: 3 stale S3 objects, then nothing for ~1 h). Not a "tiny blip" — a hard
+break.
+
+Fix (applied): the vendored `charts/cluster-0.8.0.tgz` is **patched** — the ObjectStore templates' `helm.sh/hook`
+is stripped and replaced with `argocd.argoproj.io/sync-wave: "-1"`, so the ObjectStore is a normal persistent
+resource applied just before the Cluster. Re-apply after any `helm dependency update` (repack with
+`COPYFILE_DISABLE=1` so macOS AppleDouble files don't break `helm dependency build`). See `lib/helm/pg-cluster/.gitignore`.
