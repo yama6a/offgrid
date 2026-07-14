@@ -170,7 +170,7 @@ Notes:
     09_grafana_smtp and commit+push.
   - FULL FRESH START: the wipe cleared local-path AND the S3 backups (STEP 8). The DBs come back EMPTY and
     begin a clean backup history. If you wanted the old data, you had to restore BEFORE rebuilding
-    (make restore-cnpg) — a rebuild discards it. The bucket + IAM stay; only `make reset-cluster` destroys them.
+    (make restore-cnpg) — a rebuild discards it. The bucket + IAM stay; only \`make reset-cluster\` destroys them.
     See docs/13_backups.md.
   - TLS certs re-issue via HTTP-01; first issuance takes a few minutes. If you've rebuilt repeatedly,
     validate hosts on letsencrypt-staging before flipping to prod (tight rate limits).

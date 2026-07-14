@@ -34,7 +34,7 @@ spec:
     namespace: monitoring
   syncPolicy:
     automated:
-      prune: false
+      prune: false   # CRD-only app: pruning a CRD cascade-deletes every CR of that kind cluster-wide
       selfHeal: true
     retry:
       limit: 10
