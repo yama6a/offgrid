@@ -43,6 +43,14 @@ argo_apps/
   finds. Their sync-waves gate the bootstrap: it creates `platform` (wave 0), waits for it to be Healthy (which
   aggregates the health of every platform app), then creates `workloads` (wave 1). So workloads never reconcile
   against missing CRDs/namespaces on a cold boot.
+  - **Load-bearing: the Application health customization.** ArgoCD *removed* the built-in health assessment for
+    `argoproj.io/Application` in v1.8, so by default a parent app-of-apps sees its child Applications as
+    health-less — the wave gate then has nothing to wait on and clears instantly (verified: `workloads` was
+    created ~28 s *before* the platform's gateway/rabbitmq apps existed, so workloads raced ahead and failed on
+    "gateway ns not found" / webhook-not-ready). `01_argocd/values.yaml` restores it via
+    `resource.customizations.health.argoproj.io_Application` (the health of a child app = its own
+    `status.health.status`), which is what actually makes the wave-0 → wave-1 gate wait. Don't remove it or the
+    ordering silently reverts to a race (which self-heals via retry, but noisily).
 - Each child Application points at a wrapper chart under its own tree's `charts/`.
 - Add a platform app = drop a wrapper chart under `argo_apps/platform/charts/NN_name/` + an Application manifest under
   `argo_apps/platform/apps/NN_name.yaml`, then commit & push. (The `NN` prefix is the app's `sync-wave` number, keep
