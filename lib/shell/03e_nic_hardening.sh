@@ -33,6 +33,7 @@ OUTDIR="${CLUSTER_DIR}"                    # talosconfig + kubeconfig live here 
 # host paths use ${TALOS_SCRATCH}, the talosctl patch args use /scratch. Survives here for inspection on failure.
 TALOS_SCRATCH="$(mktemp -d)"
 KUBECTL_IMAGE="registry.k8s.io/kubectl:v${KUBERNETES_VERSION}"   # dockerized kubectl pinned to the cluster's k8s version (.env), no host/cluster skew; tag needs the 'v'
+# renovate: datasource=docker
 DEBUG_IMAGE="alpine:3.21"                  # probe pod; apk-installs ethtool
 WATCHDOG_TIMEOUT="15s"                     # floored to 10s (Talos min); Pi hw max ~15s
 APPLY_MODE="no-reboot"                     # never silently reboot control-plane nodes

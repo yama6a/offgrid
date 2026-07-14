@@ -14,7 +14,7 @@ it in-sync rather than fighting it). Nothing (no version, no CRD list, no values
 
 | Path                       | Holds                                                                                      |
 |----------------------------|--------------------------------------------------------------------------------------------|
-| `Chart.yaml`               | the cilium chart version (`1.19.5`), declared as a dependency on `helm.cilium.io`.         |
+| `Chart.yaml`               | the cilium chart version, declared as a dependency on `helm.cilium.io`.         |
 | `values.yaml`              | the Talos-flavoured cilium values (under the `cilium:` key) + the `loadBalancer` gate.     |
 | `crds/`                    | (empty). Cilium doesn't vendor the Gateway API CRDs; Envoy Gateway owns them now. See [07_ingress.md](07_ingress.md). |
 | `templates/cilium-lb.yaml` | the LB-IPAM pool + L2 policy (gated by `.Values.loadBalancer.enabled`).                    |

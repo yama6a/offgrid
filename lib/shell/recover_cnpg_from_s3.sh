@@ -16,6 +16,9 @@
 # Target: `latest` (most recent backup + all WAL) or a point-in-time timestamp for PITR (RFC3339, e.g.
 # "2026-07-13 14:30:00+00"). Prints the manifest for review, then applies on confirm.
 #
+# Limitation: the recovery Cluster uses the default `postgresql` operand image. A postgis/timescaledb source
+# would need a matching image (spec.imageName) — every cluster in this repo is postgresql, so no knob is wired.
+#
 # Usage (flags optional — prompts for anything missing):
 #   bash recover_cnpg_from_s3.sh [--namespace NS] [--source CLUSTER] [--name RECOVERY_NAME]
 #                                [--target latest|"YYYY-MM-DD HH:MM:SS+ZZ"] [--apply]
@@ -67,6 +70,26 @@ OBJECTSTORE="${SOURCE}-backups"     # the chart names it <fullname>-backups
 
 kubectl -n "$NS" get objectstore.barmancloud.cnpg.io "$OBJECTSTORE" >/dev/null 2>&1 \
   || die "ObjectStore ${NS}/${OBJECTSTORE} not found — check the namespace/source name (see the list above)"
+
+# Preflight: the S3-creds Secret the ObjectStore references must exist, else the recovery cluster can't read
+# WAL/base and fails opaquely. Read the real name from the store rather than assuming `cnpg-backup-s3`.
+SEC="$(kubectl -n "$NS" get objectstore.barmancloud.cnpg.io "$OBJECTSTORE" -o jsonpath='{.spec.configuration.s3Credentials.accessKeyId.name}' 2>/dev/null)"
+[ -n "$SEC" ] || die "could not read the S3 creds secret name from ObjectStore ${NS}/${OBJECTSTORE}"
+kubectl -n "$NS" get secret "$SEC" >/dev/null 2>&1 \
+  || die "S3 creds secret ${NS}/${SEC} (referenced by the ObjectStore) is missing — seal it into this namespace first (14_cnpg_backup.sh / commit the SealedSecret), then retry"
+ok "S3 creds secret ${SEC} present"
+
+# Preflight: a restore needs a COMPLETED base backup — WAL alone has no recovery point and the restore hangs.
+# If the source Cluster CR still exists we can read its recoverability point; if it's gone (the real DR case)
+# we can't inspect it, so we note that and trust the object store.
+if kubectl -n "$NS" get cluster.postgresql.cnpg.io "$SOURCE" >/dev/null 2>&1; then
+  FRP="$(kubectl -n "$NS" get cluster.postgresql.cnpg.io "$SOURCE" -o jsonpath='{.status.firstRecoverabilityPoint}' 2>/dev/null)"
+  [ -n "$FRP" ] && ok "source has a recoverability point: ${FRP}" \
+    || warn "source cluster ${SOURCE} has NO firstRecoverabilityPoint yet — no completed base backup, so a restore will have no recovery point and may hang. Trigger a base backup first (Backup CR, method: plugin)."
+else
+  warn "source cluster ${SOURCE} not present in ${NS} (expected in a real DR) — can't pre-check for a base backup; trusting the object store has one."
+fi
+
 if kubectl -n "$NS" get cluster.postgresql.cnpg.io "$RECOVERY_NAME" >/dev/null 2>&1; then
   die "Cluster ${NS}/${RECOVERY_NAME} already exists — pick a different --name (this tool never overwrites a live cluster)"
 fi

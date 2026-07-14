@@ -24,7 +24,7 @@ the volume, a brief availability gap.
 ## The operator + storage classes (`03_redis_operator`, wave 3)
 
 One app ships both the operator and the two StorageClasses. The wrapper chart pins `ot-helm/redis-operator`
-`0.25.0` (app `0.25.0`; operator config under the `redis-operator:` key in `values.yaml`) and renders the two
+(operator config under the `redis-operator:` key in `values.yaml`) and renders the two
 Longhorn classes from its own `templates/storageclasses.yaml` (top-level `persistent:`/`ephemeral:` values).
 Automated `prune`+`selfHeal`, `CreateNamespace=true`, `ServerSideApply=true` (the CRDs are large). The operator
 runs in its own `redis-operator` namespace and watches all namespaces (cluster RBAC scope, the chart default), so

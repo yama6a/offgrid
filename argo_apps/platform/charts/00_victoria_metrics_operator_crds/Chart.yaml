@@ -12,10 +12,9 @@ description: >-
   the CRD version (this file). See 15_monitoring.md.
 type: application
 version: 0.1.0                 # this wrapper chart's own version
-appVersion: "v0.72.0"         # victoria-metrics-operator version these CRDs match (== the operator)
 
 dependencies:
   - name: victoria-metrics-operator-crds
-    version: "0.12.0"         # VictoriaMetrics/victoria-metrics-operator-crds, appVersion v0.72.0,
-                              # matches the operator pinned in 01_victoria_metrics_operator (0.65.1)
+    version: "0.12.0"         # VictoriaMetrics/victoria-metrics-operator-crds. Its app version MUST match the
+                              # operator (01_victoria_metrics_operator) — renovate groups them; bump together
     repository: https://victoriametrics.github.io/helm-charts/

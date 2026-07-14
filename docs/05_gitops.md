@@ -13,7 +13,7 @@ is defined in the script. The chart:
 
 | Path                 | Holds                                                                                          |
 |----------------------|------------------------------------------------------------------------------------------------|
-| `Chart.yaml`         | the argo-cd chart version (`9.6.0`, ArgoCD `v3.4.4`), declared as a dependency on argo-helm.    |
+| `Chart.yaml`         | the argo-cd chart version, declared as a dependency on argo-helm.    |
 | `values.yaml`        | the HA-lite values (under the `argo-cd:` key), see below.                                       |
 | `Chart.lock`         | pins the resolved dependency; must be committed (ArgoCD's repo-server needs it, see below).     |
 

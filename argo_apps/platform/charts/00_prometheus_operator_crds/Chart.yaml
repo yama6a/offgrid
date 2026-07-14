@@ -12,10 +12,9 @@ description: >-
   huge, so the Application syncs them ServerSideApply=true. See 15_monitoring.md.
 type: application
 version: 0.1.0                 # this wrapper chart's own version
-appVersion: "v0.92.0"         # prometheus-operator version these CRDs match (== the stack's operator)
 
 dependencies:
   - name: prometheus-operator-crds
-    version: "30.0.0"         # prometheus-community/prometheus-operator-crds, appVersion v0.92.0,
-                              # matches the operator bundled by kube-prometheus-stack 87.2.1
+    version: "30.0.0"         # prometheus-community/prometheus-operator-crds. Its app version MUST match the
+                              # prometheus-operator the monitoring stack expects — bump the two together
     repository: https://prometheus-community.github.io/helm-charts

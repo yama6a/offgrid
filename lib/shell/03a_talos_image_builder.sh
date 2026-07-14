@@ -38,10 +38,14 @@ REGISTRY_PORT="5010"                       # 5001 is often taken by kind
 REGISTRY_HOST="localhost:${REGISTRY_PORT}" # local build registry
 REGISTRY_USER="talos-rpi5"                 # path component in the local registry
 REGISTRY_NAME="talos-registry"             # registry container name
+# renovate: datasource=docker
+REGISTRY_IMAGE="registry:2"                # local build-registry image
 BUILDER_NAME="talos-bx"                    # docker-container buildx builder (mergeop-capable)
 SRCSERVER_NAME="talos-srcserver"           # local HTTP server for the (non-byte-stable) kernel tarball
 SRCSERVER_PORT="8099"
 IMAGE_NAME="metal-arm64-rpi5.raw.xz"       # staged image filename (rpi5/grub imager emits .raw.xz; matches 03b's RAW_XZ default)
+# renovate: datasource=docker
+ALPINE_IMAGE="alpine:3.20"                 # throwaway container for the raw-image + UKI validation steps
 # -----------------------------------------------------------------------------
 
 # === 0. prereqs ==============================================================
@@ -59,7 +63,7 @@ mkdir -p "$BUILD_DIR" "$OUT_DIR"
 # (Rancher's default) refuses. A standalone docker-container builder supports it.
 say "local registry on ${REGISTRY_HOST}"
 docker ps --format '{{.Names}}' | grep -qx "$REGISTRY_NAME" || \
-  docker run -d --restart=unless-stopped -p "127.0.0.1:${REGISTRY_PORT}:5000" --name "$REGISTRY_NAME" registry:2 >/dev/null
+  docker run -d --restart=unless-stopped -p "127.0.0.1:${REGISTRY_PORT}:5000" --name "$REGISTRY_NAME" "$REGISTRY_IMAGE" >/dev/null
 
 say "mergeop-capable buildx builder ${BUILDER_NAME}"
 if ! docker buildx inspect "$BUILDER_NAME" >/dev/null 2>&1; then
@@ -239,7 +243,7 @@ cid=$(docker create "$INSTALLER_IMG" sh); docker cp "$cid:/usr/install/arm64/vml
 chmod 644 "$UKI_DIR/vmlinuz.efi"
 
 # 9a. raw image: integrity + partition layout + Pi 5 boot bits  (privileged Linux container)
-docker run --rm --privileged -e IMAGE_NAME="$IMAGE_NAME" -v "$OUT_DIR:/work" -v /dev:/dev alpine:3.20 sh -c '
+docker run --rm --privileged -e IMAGE_NAME="$IMAGE_NAME" -v "$OUT_DIR:/work" -v /dev:/dev "$ALPINE_IMAGE" sh -c '
   set -e; apk add -q util-linux xz >/dev/null 2>&1; cd /work; F="$IMAGE_NAME"; RAW="${IMAGE_NAME%.xz}"
   fail=0
   xz -t "$F" && echo "PASS  integrity (xz -t)" || { echo "FAIL  integrity"; fail=1; }
@@ -257,7 +261,7 @@ docker run --rm --privileged -e IMAGE_NAME="$IMAGE_NAME" -v "$OUT_DIR:/work" -v 
 ' || die "raw image validation failed"
 
 # 9b. kernel version + baked extensions, from the installer UKI
-docker run --rm -v "$UKI_DIR:/w" alpine:3.20 sh -c '
+docker run --rm -v "$UKI_DIR:/w" "$ALPINE_IMAGE" sh -c '
   apk add -q python3 xz zstd >/dev/null 2>&1
   python3 - <<PY
 import struct

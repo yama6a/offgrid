@@ -10,7 +10,6 @@ description: >-
   (independent leaves). NO ClusterIssuer here yet, see 08_cert_manager.md.
 type: application
 version: 0.1.0                 # this wrapper chart's own version
-appVersion: "v1.20.2"         # cert-manager version the pinned chart ships (mirrors the dependency)
 
 dependencies:
   - name: cert-manager

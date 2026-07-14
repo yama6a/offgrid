@@ -14,7 +14,6 @@ description: >-
   See 11_envoy_gateway.md.
 type: application
 version: 0.1.0                 # this wrapper chart's own version
-appVersion: "1.8.1"           # envoy-gateway version the pinned chart ships (mirrors the dependency)
 
 dependencies:
   - name: gateway-helm

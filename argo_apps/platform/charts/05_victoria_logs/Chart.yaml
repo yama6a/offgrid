@@ -13,7 +13,6 @@ description: >-
   the operator wave 1 + Longhorn wave 2; same wave as the metrics stack and Grafana). See 15_monitoring.md.
 type: application
 version: 0.1.0                 # this wrapper chart's own version
-appVersion: "v1.51.0"         # VictoriaLogs version (store image + collector appVersion)
 
 dependencies:
   - name: victoria-logs-collector

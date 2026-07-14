@@ -13,7 +13,6 @@ description: >-
   multi-arch incl. arm64 (but the exporter needs a pinned recent tag — see the redis-instance chart). See 12_redis.md.
 type: application
 version: 0.1.0                 # this wrapper chart's own version
-appVersion: "0.25.0"          # OpsTree redis-operator version the pinned chart ships (mirrors the dependency)
 
 dependencies:
   - name: redis-operator

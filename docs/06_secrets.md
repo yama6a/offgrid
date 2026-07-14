@@ -22,7 +22,7 @@ Single source of truth is the wrapper chart at `argo_apps/platform/charts/02_sea
 
 | Path          | Holds                                                                                    |
 |---------------|------------------------------------------------------------------------------------------|
-| `Chart.yaml`  | the sealed-secrets chart version (`2.19.0`, controller `v0.38.1`), a dependency on the `bitnami.github.io/sealed-secrets` chart repo. |
+| `Chart.yaml`  | the sealed-secrets chart version, a dependency on the `bitnami.github.io/sealed-secrets` chart repo. |
 | `values.yaml` | all config under the `sealed-secrets:` key: `fullnameOverride`, logging, resources.      |
 | `Chart.lock`  | pins the resolved dependency; must be committed (ArgoCD's repo-server runs `helm dependency build`). |
 

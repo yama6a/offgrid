@@ -1,0 +1,153 @@
+{
+  // Renovate config. Opens dependency-update PRs for EVERY pin in the repo:
+  //  - helm chart deps (Chart.yaml + Chart.lock + vendored charts/*.tgz)   -> helmv3
+  //  - local-path-provisioner image (repository/tag map)                    -> helm-values (scoped)
+  //  - the aws terraform provider (versions.tf + .terraform.lock.hcl)       -> terraform
+  //  - the renovate workflow's own action pins                              -> github-actions
+  //  - every other container image (values.yaml single-string, chart        -> customManagers (regex)
+  //    templates, shell scripts) + the .env.example Talos/kernel recipe
+  // Run self-hosted by .github/workflows/renovate.yaml. Docs: docs/14_renovate.md.
+  $schema: "https://docs.renovatebot.com/renovate-schema.json",
+  extends: [
+    "config:recommended",
+    ":dependencyDashboard", // one issue listing every pending/failed update
+    "helpers:pinGitHubActionDigestsToSemver", // action pins carry a readable version alongside the digest
+  ],
+  timezone: "Europe/Stockholm",
+  schedule: ["before 6am on monday"], // batch PRs to a weekly window; the GHA cron just triggers the run
+  prConcurrentLimit: 12,
+  prHourlyLimit: 0, // no throttle inside the weekly window
+  dependencyDashboardTitle: "Renovate dependency dashboard",
+
+  // helmv3 auto-discovers every Chart.yaml. Refresh the committed vendored subchart tarballs + Chart.lock
+  // on a bump (the repo commits charts/*.tgz, e.g. lib/helm/pg-cluster). file:// deps have no datasource so
+  // Renovate skips them. NOTE: do NOT add a "**/charts/**" disable rule — the wrapper charts themselves live
+  // under paths containing /charts/, so that would disable the whole repo.
+  postUpdateOptions: ["helmUpdateSubChartArchives"],
+
+  // Confine helm-values to local-path-provisioner (the one chart using a repository/tag map). Every other
+  // image is a single-string ref handled by the docker customManager below — scoping avoids double-managing.
+  "helm-values": {
+    managerFilePatterns: ["/^argo_apps/platform/charts/02_local_path_provisioner/values\\.yaml$/"],
+  },
+
+  // Bumping this file re-vendors an upstream release manifest verbatim (per its README curl recipe), not a
+  // line edit — never let a bot patch the image tag inside it.
+  ignorePaths: ["argo_apps/platform/charts/03_barman_cloud_plugin/templates/**"],
+
+  customManagers: [
+    {
+      // Container images annotated `# renovate: datasource=docker`: values.yaml single-string image:,
+      // chart templates (redis-instance), shell-script literals, and the .env.example system extensions.
+      // Captures repo:tag(+@sha256 digest) from the ref itself, so the tag AND digest stay fresh.
+      customType: "regex",
+      description: "docker image refs (annotated) in values.yaml, chart templates, shell scripts, .env.example",
+      managerFilePatterns: [
+        "/^\\.env\\.example$/",
+        "/^lib/shell/.*\\.sh$/",
+        "/values\\.yaml$/",
+        "/^lib/helm/redis-instance/templates/redis\\.yaml$/",
+      ],
+      matchStrings: [
+        "# renovate: datasource=docker(?: versioning=(?<versioning>\\S+))?\\s+[^\\n]*?(?<depName>[a-z0-9][a-z0-9._/-]+):(?<currentValue>[\\w][\\w.-]*)(?:@(?<currentDigest>sha256:[a-f0-9]{64}))?",
+      ],
+      datasourceTemplate: "docker",
+    },
+    {
+      // Scalar version vars in .env.example carrying a full `# renovate: datasource=... depName=...` comment
+      // (Talos / pkgs / talos-builder / kernel / kubernetes). SBCOVERLAY is handled separately below.
+      customType: "regex",
+      description: "annotated version scalars in .env.example",
+      managerFilePatterns: ["/^\\.env\\.example$/"],
+      matchStrings: [
+        "# renovate: datasource=(?<datasource>[a-z-]+) depName=(?<depName>\\S+)(?: versioning=(?<versioning>\\S+))?\\s+\\w+=\"(?<currentValue>[^\"]+)\"",
+      ],
+    },
+    {
+      // The sbc-raspberrypi5 overlay is pinned to a bare commit SHA (the repo has no tags); 03a clones `main`
+      // then checks out this SHA. Track main's HEAD and keep the SHA fresh via git-refs.
+      customType: "regex",
+      description: "sbc-raspberrypi5 overlay commit pin",
+      managerFilePatterns: ["/^\\.env\\.example$/"],
+      matchStrings: ["SBCOVERLAY_VERSION=\"(?<currentDigest>[a-f0-9]{40})\""],
+      currentValueTemplate: "main",
+      depNameTemplate: "talos-rpi5/sbc-raspberrypi5",
+      packageNameTemplate: "https://github.com/talos-rpi5/sbc-raspberrypi5",
+      datasourceTemplate: "git-refs",
+    },
+  ],
+
+  packageRules: [
+    {
+      // Automerge only genuinely safe update types. Minor/major always stay PR-only (they're never listed
+      // here). Merging reaches the live cluster via ArgoCD self-heal — accepted for these low-risk bumps.
+      description: "automerge safe updates",
+      matchUpdateTypes: ["patch", "digest", "pin"],
+      automerge: true,
+    },
+    {
+      // Never automerge the apps that can break the cluster's own control/data path or that ArgoCD delivers
+      // as core plumbing — a bad patch would self-heal in place. Review these by hand. Cilium especially:
+      // it is the one app that can cut the cluster (and Argo) off its own network. See 04_networking.md.
+      description: "PR-only: cluster-critical platform apps",
+      matchPackageNames: ["cilium", "argo-cd", "cert-manager", "longhorn", "gateway-helm"],
+      automerge: false,
+    },
+    {
+      // The Talos/kernel image-build recipe. A real bump needs a full manual image rebuild with source
+      // rebases (03a) — merging the PR changes only .env.example, it applies NOTHING. So: informational PRs
+      // only, grouped, never automerged. KUBERNETES_VERSION lives here too: its ceiling is the Talos release
+      // default, so it must move WITH Talos, not on its own.
+      description: "PR-only, grouped: Talos/kernel build recipe",
+      matchPackageNames: [
+        "siderolabs/talos",
+        "siderolabs/pkgs",
+        "talos-rpi5/talos-builder",
+        "talos-rpi5/sbc-raspberrypi5",
+        "raspberrypi/linux",
+        "kubernetes/kubernetes",
+        "ghcr.io/siderolabs/iscsi-tools",
+        "ghcr.io/siderolabs/util-linux-tools",
+      ],
+      groupName: "talos build recipe",
+      automerge: false,
+    },
+    {
+      // k8s release tags are v-prefixed; the .env value is not. Strip the v when comparing.
+      description: "kubernetes tags are v-prefixed",
+      matchPackageNames: ["kubernetes/kubernetes"],
+      extractVersion: "^v(?<version>.+)$",
+    },
+    {
+      // raspberrypi/linux tags this line as stable_YYYYMMDD (not semver); order them by date and ignore the
+      // repo's other tag shapes. Best-effort — verify the picked tag really is on the rpi-6.18.y line.
+      description: "kernel stable_ tag versioning",
+      matchPackageNames: ["raspberrypi/linux"],
+      versioning: "regex:^stable_(?<major>\\d{4})(?<minor>\\d{2})(?<patch>\\d{2})$",
+    },
+    {
+      // local-path-provisioner ships as VENDORED upstream manifests (templates/ + a provenance header) keyed
+      // to values.image.tag. A tag bump must be re-vendored + re-diffed by hand, so flag it and never
+      // automerge. busybox is its helper image, same chart, same treatment.
+      description: "needs-revendor: local-path-provisioner",
+      matchManagers: ["helm-values"],
+      matchFileNames: ["argo_apps/platform/charts/02_local_path_provisioner/values.yaml"],
+      addLabels: ["needs-revendor"],
+      automerge: false,
+    },
+    {
+      // Pin the workflow's action refs to commit digests (supply-chain hardening); the semver-comment helper
+      // above keeps a readable version beside each digest. Renovate's first run opens the pinning PR.
+      description: "pin github action refs to digests",
+      matchManagers: ["github-actions"],
+      pinDigests: true,
+    },
+    {
+      // The CRD-only charts must match their operator's version; Renovate bumps them independently, so keep
+      // each grouped with its operator and review the pair together (the appVersion match is a human check).
+      description: "group VictoriaMetrics stack",
+      matchPackageNames: ["victoria-metrics-operator", "victoria-metrics-operator-crds", "victoria-metrics-k8s-stack", "victoria-logs-collector"],
+      groupName: "victoriametrics stack",
+    },
+  ],
+}

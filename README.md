@@ -3,8 +3,8 @@
 **A 3× Raspberry Pi 5 Kubernetes cluster on [Talos Linux](https://www.talos.dev/), networked by
 [Cilium](https://cilium.io/), delivered by [Argo CD](https://argo-cd.readthedocs.io/).**
 
-![Talos](https://img.shields.io/badge/Talos-v1.13.5-ff7300)
-![Kubernetes](https://img.shields.io/badge/Kubernetes-1.36.2-326ce5?logo=kubernetes&logoColor=white)
+![Talos](https://img.shields.io/badge/Talos-Linux-ff7300)
+![Kubernetes](https://img.shields.io/badge/Kubernetes-326ce5?logo=kubernetes&logoColor=white)
 ![CNI: Cilium](https://img.shields.io/badge/CNI-Cilium-f8c517?logo=cilium&logoColor=white)
 ![GitOps: Argo CD](https://img.shields.io/badge/GitOps-Argo%20CD-ef7b4d?logo=argo&logoColor=white)
 ![License: MIT](https://img.shields.io/badge/License-MIT-green.svg)
@@ -36,8 +36,8 @@
 ## Overview
 
 Three Raspberry Pi 5s, **every node a control-plane node** (HA etcd, workloads co-located), booting Talos Linux off
-NVMe. Talos has no official Raspberry Pi 5 image, so this repo **builds its own**. A custom installer with the
-`rpi-6.18` kernel (4K pages, for Longhorn/XFS) and the extensions the cluster needs.
+NVMe. Talos has no official Raspberry Pi 5 image, so this repo **builds its own**. A custom installer with a
+Raspberry Pi kernel (4K pages, for Longhorn/XFS) and the extensions the cluster needs.
 
 The bring-up has a imperative shell steps do only what must exist **before GitOps**:
 
@@ -261,7 +261,7 @@ Pi 5 Talos image builds on [talos-rpi5/talos-builder](https://github.com/talos-r
 
 ## Todos
 
-- desaster recovery exercise
+- disaster recovery exercise
 - add a worker node (4th bay in the rack)
 - check all logs/hubble for network policies in audit more that are dropping traffic that should be allowed
 - dependabot/renovate 

@@ -15,7 +15,6 @@ description: >-
   the stacks it reads from (05_victoria_metrics_k8s_stack, 05_victoria_logs). See 16_grafana.md.
 type: application
 version: 0.1.0                 # this wrapper chart's own version
-appVersion: "12.3.1"          # Grafana version the pinned chart ships (mirrors the dependency)
 
 dependencies:
   - name: grafana

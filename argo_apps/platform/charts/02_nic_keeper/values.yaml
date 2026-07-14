@@ -6,6 +6,7 @@
 # container brings its own tools. netshoot is the off-the-shelf option; pinned to the v0.13
 # multi-arch manifest digest (resolves to arm64 on the Pi 5). Swap for a slim purpose-built
 # image later if the footprint matters.
+# renovate: datasource=docker
 image: "nicolaka/netshoot:v0.13@sha256:a20c2531bf35436ed3766cd6cfe89d352b050ccc4d7005ce6400adf97503da1b"
 
 iface: end0                   # the ONLY NIC the agent ever touches (Pi 5 wired NIC, macb)

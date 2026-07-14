@@ -53,15 +53,12 @@ platform-ingress app. Cilium/Hubble also ships Grafana dashboards: `hubble.metri
 
 ### Pinned versions
 
-| Chart | Version | appVersion |
-|-------|---------|------------|
-| `victoria-metrics-operator-crds` | 0.12.0 | v0.72.0 |
-| `victoria-metrics-operator`      | 0.65.1 | v0.72.0 |
-| `victoria-metrics-k8s-stack`     | 0.85.5 | v1.146.0 |
-| `victoria-logs-collector`        | 0.3.6  | v1.51.0 |
+Chart versions live in each app's `Chart.yaml` (Renovate groups the VictoriaMetrics charts —
+operator-crds, operator, k8s-stack, logs-collector — and bumps them together). Two constraints:
 
-The CRDs chart's appVersion must match the operator version (both `v0.72.0`); bump together. `00_prometheus_operator_crds`
-(v0.92.0) is kept as the converter's source — do not remove it.
+- `victoria-metrics-operator-crds` and `victoria-metrics-operator` must ship the SAME operator app
+  version; bump them together.
+- `00_prometheus_operator_crds` is kept as the converter's source — do not remove it.
 
 ## Grafana
 
@@ -114,7 +111,7 @@ The observability stack collects rich custom metrics but does **not** serve `met
 in-tree resource-metrics contract that HPA, `kubectl top`, and the scheduler expect from an aggregated
 APIService. [metrics-server](https://github.com/kubernetes-sigs/metrics-server) fills exactly that gap: it
 scrapes each kubelet's Summary API over HTTPS (`:10250`) and registers `v1beta1.metrics.k8s.io`. Thin
-wrapper chart at `argo_apps/platform/charts/02_metrics_server/` (`3.13.1` → metrics-server `v0.8.1`),
+wrapper chart at `argo_apps/platform/charts/02_metrics_server/` (chart pinned in `Chart.yaml`),
 single replica, 50m/100Mi, runs in `kube-system`. It emits a ServiceMonitor for its own `/metrics`, which
 the VM operator's converter picks up like every other leaf.
 

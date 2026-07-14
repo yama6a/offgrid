@@ -162,10 +162,10 @@ the CRs in the workload namespace (rather than in `rabbitmq`) is deliberate: it 
 ### Why CloudPirates, not Bitnami or raw manifests
 Since 2025-08-28 Bitnami gated its free-tier images to `latest`-only, which breaks this repo's version pinning.
 The RabbitMQ project ships no Helm chart of its own (only kustomize/manifests). The CloudPirates
-`rabbitmq-cluster-operator` chart (`0.3.3`, OCI at `oci://ghcr.io/cloudpirates-io/helm-charts`) is a thin
-community wrapper that pins the **official** upstream images — `ghcr.io/rabbitmq/cluster-operator:2.21.0`,
-`ghcr.io/rabbitmq/messaging-topology-operator:1.19.2`, `ghcr.io/rabbitmq/default-user-credential-updater`, and
-the server `docker.io/library/rabbitmq:4.2.8-management-alpine` — all multi-arch incl. arm64. It's the first
+`rabbitmq-cluster-operator` chart (OCI at `oci://ghcr.io/cloudpirates-io/helm-charts`) is a thin
+community wrapper that pins the **official** upstream images — `ghcr.io/rabbitmq/cluster-operator`,
+`ghcr.io/rabbitmq/messaging-topology-operator`, `ghcr.io/rabbitmq/default-user-credential-updater`, and
+the server `docker.io/library/rabbitmq` (`-management-alpine`) — all multi-arch incl. arm64. It's the first
 OCI Helm dependency in the repo; ArgoCD's repo-server and `helm dependency build` both handle OCI fine.
 
 ### 3 replicas, quorum queues

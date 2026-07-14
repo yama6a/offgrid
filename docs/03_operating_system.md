@@ -34,14 +34,14 @@ Talos has no official Pi 5 image, so we build our own against the latest Talos o
 
 ## Why build our own instead of using the community release
 
-The [talos-rpi5](https://github.com/talos-rpi5/talos-builder) project publishes a prebuilt Pi 5 image, but it's stuck
-at Talos v1.11.5 (kernel ~6.12). We want latest Talos + a recent Pi kernel + control over the upgrade path, and
-that combination doesn't exist as a published image anywhere:
+The [talos-rpi5](https://github.com/talos-rpi5/talos-builder) project publishes a prebuilt Pi 5 image, but it lags
+well behind latest Talos (and ships an older kernel). We want latest Talos + a recent Pi kernel + control over the
+upgrade path, and that combination doesn't exist as a published image anywhere:
 
 - Raspberry Pi OS ships a Pi 5 kernel, but it's not a Talos kernel. Talos welds a hardened, clang/ThinLTO kernel into
   its initramfs/installer, so you can't just drop a foreign kernel in.
-- The official Talos `metal-arm64` image won't boot a Pi 5 headlessly. Even though Talos 1.13 ships kernel 6.18, it's
-  missing the fork-only RP1 bring-up (`MFD_RP1`) and has no Pi 5 boot chain (u-boot + BCM2712 device tree).
+- The official Talos `metal-arm64` image won't boot a Pi 5 headlessly. Even though recent Talos ships a 6.18 kernel,
+  it's missing the fork-only RP1 bring-up (`MFD_RP1`) and has no Pi 5 boot chain (u-boot + BCM2712 device tree).
 - The only prebuilt Talos Pi 5 image is the community one, which is old.
 
 So we drive the `talos-rpi5` pipeline but rebase it onto latest Talos. The 6.18 kernel is the whole point: it carries
@@ -49,14 +49,19 @@ the upstream RP1 patches that allow step 04 to disable EEE on the NIC.
 
 ## Versions
 
-| Component  | Pin                                             | Notes                                                                                                                                                                                |
-|------------|-------------------------------------------------|--------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------|
-| Talos      | `v1.13.5`                                       | `siderolabs/talos`                                                                                                                                                                   |
-| Kubernetes | `1.36.2`                                        | `KUBERNETES_VERSION` in `.env`; the pin `03d` passes to `gen config` + `03g` upgrades to. Ceiling = the Talos release default (v1.13.5 -> 1.36.2); raise it only after bumping Talos |
-| pkgs       | `v1.13.0`                                       | `siderolabs/pkgs`. Ships a stock 6.18 arm64 kernel config (already 4K pages)                                                                                                         |
-| Kernel     | `raspberrypi/linux` `stable_20260609`           | = Linux 6.18.34 on `rpi-6.18.y`; in-image string `6.18.34-talos`                                                                                                                     |
-| Overlay    | `talos-rpi5/sbc-raspberrypi5` `main`            | u-boot `v2025.04-rpi5-3`, rpi firmware `1.20250430`; ported to machinery v1.13.5                                                                                                     |
-| Extensions | `iscsi-tools:v0.2.0`, `util-linux-tools:2.41.4` | digest-pinned from the Image Factory                                                                                                                                                 |
+Every pin lives in `.env` (template `.env.example`); Renovate opens PRs to bump them, grouped as the "talos
+build recipe" and PR-only — merging changes only `.env`, a real bump needs a manual image rebuild (below). What
+each is, and the constraints that matter:
+
+- **Talos** (`TALOS_VERSION`, `siderolabs/talos`) — the release we rebase onto.
+- **Kubernetes** (`KUBERNETES_VERSION`) — the pin `03d` passes to `gen config` and `03g` upgrades to. Ceiling =
+  the Talos release's own k8s default; raise it only after bumping Talos.
+- **pkgs** (`PKG_VERSION`, `siderolabs/pkgs`) — ships a stock 6.18 arm64 kernel config (already 4K pages).
+- **Kernel** (`KERNEL_REF`, `raspberrypi/linux` on the `rpi-6.18.y` line) — the 6.18 line is the whole point: it
+  carries the RP1 patches step 04 needs to disable EEE on the NIC.
+- **Overlay** (`SBCOVERLAY_VERSION`, `talos-rpi5/sbc-raspberrypi5`@`main`) — u-boot + rpi firmware + the Pi 5 boot
+  chain; ported to the pinned Talos machinery at build time.
+- **Extensions** (`ISCSI_EXT`, `UTIL_EXT`) — digest-pinned system extensions from the Image Factory.
 
 ## The build
 
@@ -177,7 +182,7 @@ What it checks per node:
 ```bash
 ping <node-ip>                                       # on the network
 nc -vz <node-ip> 50000                               # Talos API reachable
-talosctl -n <node-ip> version --insecure             # responds; server = our v1.13.5(-dirty) build
+talosctl -n <node-ip> version --insecure             # responds; server = our (-dirty) custom build
 talosctl -n <node-ip> get links --insecure           # end0 (the wired NIC) present/up
 talosctl -n <node-ip> get disks --insecure           # /dev/nvme0n1 present
 talosctl -n <node-ip> get kernelcmdlines --insecure  # cmdline has console=ttyAMA0,115200 (rpi5 overlay)
@@ -192,7 +197,7 @@ If `nc` succeeds but `talosctl ... --insecure` comes back with `no route to host
 the container:
 
 ```bash
-talosctl() { docker run --rm --network host -v "$HOME/.talos:/root/.talos" ghcr.io/siderolabs/talosctl:v1.13.5 "$@"; }
+talosctl() { docker run --rm --network host -v "$HOME/.talos:/root/.talos" ghcr.io/siderolabs/talosctl:<TALOS_VERSION> "$@"; }  # match TALOS_VERSION in .env
 ```
 
 Drop that in `~/.zshrc` or `~/.bash_profile`, reload, and `talosctl` works normally from there.

@@ -31,6 +31,7 @@ metadata:
     app.kubernetes.io/component: cache
 spec:
   kubernetesConfig:
+    # renovate: datasource=docker
     image: "quay.io/opstree/redis:v7.0.15"
     imagePullPolicy: IfNotPresent
     resources:
@@ -40,6 +41,7 @@ spec:
     # (sealed) Secret; deliberately not a per-workload knob. See docs/12_redis.md.
   redisExporter:
     enabled: true
+    # renovate: datasource=docker
     image: "quay.io/opstree/redis-exporter:v1.84.0"
     imagePullPolicy: IfNotPresent
   redisConfig:

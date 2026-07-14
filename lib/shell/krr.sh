@@ -26,6 +26,8 @@ set -euo pipefail
 # Reused in several places, so kept as locals; every other value is a one-shot constant inlined where used.
 SVC="vmsingle-victoria-metrics-k8s-stack"   # the VMSingle PromQL API service in $MONITORING_NS
 PORT=8428                                    # vmsingle's port; same on both sides of the forward
+# renovate: datasource=docker
+KRR_IMAGE="us-central1-docker.pkg.dev/genuine-flight-317411/devel/krr:v1.28.0"  # hoisted here so renovate tracks the pin
 
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 source "${SCRIPT_DIR}/common.sh"             # common.sh is a sibling in lib/shell/
@@ -77,7 +79,7 @@ docker run --rm ${TTY} \
   -v "${REPO_ROOT}/lib/krr/conservative.py:/app/robusta_krr/strategies/conservative.py:ro" \
   -v "${REPO_ROOT}/lib/krr/strategies_init.py:/app/robusta_krr/strategies/__init__.py:ro" \
   --entrypoint python \
-  "us-central1-docker.pkg.dev/genuine-flight-317411/devel/krr:v1.28.0" krr.py conservative \
+  "$KRR_IMAGE" krr.py conservative \
   -p "http://host.docker.internal:${PORT}" \
   --memory_request_min 16 --memory_limit_min 32 \
   --mem-min 0 --use-oomkill-data "$@"

@@ -16,4 +16,3 @@ description: >-
   See README.md and docs/12_redis.md.
 type: application
 version: 0.1.0                 # this chart's own version
-appVersion: "7.0.15"          # Redis server version pinned in templates/redis.yaml (spec.kubernetesConfig.image)

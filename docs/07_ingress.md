@@ -81,7 +81,7 @@ Pure GitOps, a plain wave-2 leaf, no imperative script:
 
 - `argo_apps/platform/apps/02_cert_manager.yaml`: the Application, sync-wave 2.
 - `argo_apps/platform/charts/02_cert_manager/`: the wrapper chart (`Chart.yaml` pins cert-manager
-  `v1.20.2` from `charts.jetstack.io`; all config under the `cert-manager:` key in `values.yaml`).
+  from `charts.jetstack.io`; all config under the `cert-manager:` key in `values.yaml`).
 
 ### CRDs installed by the chart, kept on prune
 `values.yaml` sets `crds.enabled: true` (the chart owns/installs the CRDs) and `crds.keep: true`.

@@ -9,7 +9,6 @@ description: >-
   ../../../05_gitops/backup_sealed_secrets_key.sh. See 07_sealed_secrets.md.
 type: application
 version: 0.1.0                 # this wrapper chart's own version
-appVersion: "0.38.1"          # sealed-secrets controller version the pinned chart ships (mirrors the dependency)
 
 dependencies:
   - name: sealed-secrets

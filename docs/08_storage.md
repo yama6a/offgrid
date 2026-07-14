@@ -13,7 +13,7 @@ nodes. It's the cluster's default `StorageClass` (nothing stateful could claim a
 dedicated XFS `longhorn` user volume that [`03d`](03_operating_system.md) carves out of each NVMe (the remainder
 after the 64 GiB EPHEMERAL cap and the fixed 50 GiB `localpath` slice), mounted at `/var/mnt/longhorn`.
 
-Wrapper chart: `argo_apps/platform/charts/02_longhorn/` (`Chart.yaml` pins `1.12.0`, all config under the
+Wrapper chart: `argo_apps/platform/charts/02_longhorn/` (`Chart.yaml` pins the Longhorn chart, all config under the
 `longhorn:` key in `values.yaml`).
 
 **V1 data engine (not V2/SPDK).** Longhorn's V2 (SPDK) engine has a known stuck-I/O bug on ARM64 + NVMe with
@@ -116,7 +116,7 @@ plain `[bind, rw]` suffices — no per-replica sub-mount propagation, so no `rsh
 **Wrapper chart: vendored, not a dependency pin.** There is no usable public Helm repo for
 local-path-provisioner (Rancher's registry is auth-gated, bad for ArgoCD's repo-server; the community mirror is
 stale), so `argo_apps/platform/charts/02_local_path_provisioner/` vendors the ~6 upstream manifests under
-`templates/`, parameterized from `values.yaml` and pinned to `appVersion` `v0.0.36` in `Chart.yaml`. No
+`templates/`, parameterized from `values.yaml` and pinned to the `appVersion` in `Chart.yaml`. No
 `Chart.lock` (no dependencies to resolve). Bump = edit `image.tag`/`helperImage.tag` + `appVersion`, then
 re-diff `templates/` against the upstream `deploy/local-path-storage.yaml` at the new tag.
 
@@ -131,7 +131,7 @@ Config worth calling out (`values.yaml`):
   policy — `local-path` (`Retain`, for CNPG: Postgres data is the source of truth) and `local-path-ephemeral`
   (`Delete`, for RabbitMQ: quorum queues replicate at the app layer, so the volume is disposable and a deleted
   PVC auto-cleans its dir).
-- `helperImage` pinned (`busybox:1.37`) for reproducibility.
+- `helperImage` pinned (see `values.yaml`) for reproducibility.
 
 **Privileged PSA required** (like Longhorn): the provisioner runs unprivileged, but the short-lived helper pods
 it stamps out to mkdir/rm per-volume dirs mount the node data path as a `hostPath`, forbidden under Talos'
@@ -168,9 +168,10 @@ metrics). It ships as two apps split across the two trees so operator and databa
 
 The root-of-roots creates the workloads tree only after the whole platform is Healthy, so by the time the
 `Cluster` CR is applied both its real dependencies — the operator's `Cluster` CRD and the `local-path` class —
-are guaranteed present, no per-app `sync-wave` needed. Chart versions: operator dep `cnpg/cloudnative-pg`
-`0.28.3` (app `1.29.1`); the `Cluster` comes via the shared `pg-cluster` wrapper (`lib/helm/pg-cluster`),
-which pins cluster dep `cnpg/cluster` `0.7.0`. Images (`ghcr.io/cloudnative-pg/*`) are multi-arch incl. arm64.
+are guaranteed present, no per-app `sync-wave` needed. Chart versions live in the charts: the operator dep
+`cnpg/cloudnative-pg` (`argo_apps/platform/charts/02_cnpg_operator/Chart.yaml`); the `Cluster` comes via the
+shared `pg-cluster` wrapper (`lib/helm/pg-cluster`), which pins the `cnpg/cluster` dep. Images
+(`ghcr.io/cloudnative-pg/*`) are multi-arch incl. arm64.
 
 > Values nesting: `sample_workload` depends on the `pg-cluster` wrapper (dependency key `pg-cluster:`), which
 > depends on `cnpg/cluster` (its `cluster:` map) — which itself has a top-level `cluster:` map for the CR spec.

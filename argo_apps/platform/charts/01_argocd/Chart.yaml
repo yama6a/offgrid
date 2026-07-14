@@ -8,7 +8,6 @@ description: >-
   then adopted and self-managed by ArgoCD against this same chart. See 05_gitops.md.
 type: application
 version: 0.1.0                 # this wrapper chart's own version
-appVersion: "v3.4.4"          # ArgoCD version the pinned chart ships (mirrors the dependency)
 
 dependencies:
   - name: argo-cd

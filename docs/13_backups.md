@@ -211,6 +211,13 @@ the source backups and any live cluster untouched, and refuses to overwrite an e
 recovery cluster does **not** re-archive (it's a restore/verify target). When Healthy, its data is served at
 `<name>-rw.<ns>` — repoint your app or dump/reload into the real cluster, then delete the recovery cluster.
 
+**Prerequisites the script preflight-checks:** the `ObjectStore` `<source>-backups` must exist in the target
+namespace, the S3-creds Secret it references must be present (seal it with `14_cnpg_backup.sh` if restoring
+into a namespace that never had backups), and there must be a **completed base backup** — WAL alone has no
+recovery point. It warns if the source cluster shows no `firstRecoverabilityPoint`. **Limitation:** the
+recovery cluster uses the default `postgresql` operand image; a `postgis`/`timescaledb` source would need a
+matching `spec.imageName` (not wired — all clusters here are `postgresql`).
+
 ### Rebuild vs reset (and why rebuild wipes the backups)
 
 A **rebuild** (`DANGEROUS_rebuild_cluster.sh`) is a deliberate FULL fresh start: it wipes local-path **and**
