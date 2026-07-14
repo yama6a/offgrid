@@ -61,6 +61,7 @@ INGRESS_HOSTS=""                               # space-separated hosts to check;
 MAINT_TIMEOUT=30                               # secs/node to confirm maintenance API before giving up
 CONTROLLER_WAIT=900                            # secs to wait for the sealed-secrets controller (ArgoCD wave 2)
 INGRESS_WAIT=900                               # secs to wait for the ingress to actually serve (HTTP-01 is slow)
+CONVERGE_WAIT=900                              # secs for the converge backstop to drive every app to Synced+Healthy
 COMMIT_MSG_SYNC="bootstrap: sync config before ArgoCD bootstrap"
 COMMIT_MSG_SEAL="bootstrap: re-seal SSO/SMTP + argocd webhook secrets + CNPG S3 backup creds/values"
 # -----------------------------------------------------------------------------
@@ -234,20 +235,14 @@ else
 fi
 git push || warn "push failed; push by hand so ArgoCD picks up the re-sealed secrets"
 
-# === STEP 17. nudge ArgoCD to pull the just-pushed commit (best-effort) =======
-# The git poll is now a fallback (timeout.reconciliation defaults to 300s; the GitHub webhook isn't
-# configured yet), so ArgoCD won't pick up STEP 16's push on its own for up to ~5 minutes. Hard-refresh every
-# Application so the re-sealed secrets (google-oauth/grafana-smtp/argocd-secret) apply now instead of after
-# the fallback. Best-effort: warns, never fails the bootstrap.
-step "hard-refresh ArgoCD apps so the pushed re-sealed secrets apply now (poll is a slow fallback)"
-if refreshed="$(kubectl -n argocd get applications -o name 2>/dev/null)" && [ -n "$refreshed" ]; then
-  echo "$refreshed" | while read -r app; do
-    kubectl -n argocd annotate "$app" argocd.argoproj.io/refresh=hard --overwrite >/dev/null 2>&1 || true
-  done
-  ok "requested a hard refresh on all ArgoCD apps"
-else
-  warn "no ArgoCD apps found to refresh yet; they'll reconcile on the fallback poll (or once the webhook is set)"
-fi
+# === STEP 17. converge ArgoCD (pull the pushed commit + self-heal backstop) ===
+# The git poll is a 300s fallback and the GitHub webhook isn't configured yet, so ArgoCD won't pick up STEP
+# 16's push (re-sealed google-oauth/grafana-smtp/argocd secrets) on its own for up to ~5 min. converge_argocd_apps
+# hard-refreshes EVERY app first (so they re-compare against the pushed commit and apply the re-sealed secrets
+# now), then drives any straggler to Synced+Healthy — force-syncing apps that burned their retry budget on a
+# cold-boot transient, which ArgoCD's auto-sync won't re-drive on its own. Best-effort: never fails the bootstrap.
+step "converge ArgoCD (pull re-sealed secrets + self-heal backstop, up to ${CONVERGE_WAIT}s)"
+converge_argocd_apps "$CONVERGE_WAIT" || true
 
 # === STEP 18. back up the NEW master key (best-effort) ========================
 # So a future DANGEROUS_rebuild_cluster.sh can RESTORE it instead of orphaning these SealedSecrets again.

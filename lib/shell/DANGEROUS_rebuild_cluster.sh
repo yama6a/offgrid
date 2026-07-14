@@ -49,9 +49,8 @@ INGRESS_GW_NS="gateway"                        # namespace of the shared Gateway
 COMMIT_MSG="rebuild: sync working tree before cluster rebuild"
 INGRESS_WAIT=900                               # max secs to wait for the ingress to actually serve (HTTP-01 issuance is slow)
 INGRESS_HOSTS=""                               # space-separated hosts to check; empty = derive from the Gateway's HTTPS listeners
-REFRESH_SETTLE=120                             # secs to let ArgoCD create its apps + roll the early waves before the first hard-refresh
-REFRESH_ROUNDS=3                               # hard-refresh passes (catches apps as later waves appear); the 300s poll backstops the rest
-REFRESH_INTERVAL=60                            # secs between hard-refresh passes
+CONVERGE_SETTLE=120                            # secs to let ArgoCD create its apps + roll the early waves before the backstop kicks in
+CONVERGE_WAIT=900                              # max secs for the converge backstop to drive every app to Synced+Healthy
 # -----------------------------------------------------------------------------
 
 # === prereqs =================================================================
@@ -124,29 +123,18 @@ else
   step "wipe S3 backups (skipped: .env AWS creds empty)"
 fi
 
-# === STEP 9. nudge ArgoCD to converge (hard-refresh all apps) ================
-# On a fresh rebuild the GitHub webhook isn't set up yet (it needs public DNS + the prod cert), so the only
-# sync trigger is the timeout.reconciliation poll (300s). Cold-boot ordering means apps briefly sit
-# OutOfSync/Progressing until the resources they depend on (CRDs, namespaces) exist; a hard refresh makes
-# ArgoCD re-examine them NOW instead of waiting out the poll. Give the platform a sensible while to create its
-# apps + roll through the early waves first (a refresh before an app exists is a no-op), then refresh a few
-# rounds to catch apps as later waves appear. Best-effort: never fails the rebuild; the 300s poll is the
-# backstop for anything still transient. See docs/05_gitops.md (Webhook-driven sync).
-export KUBECONFIG="$KUBECONFIG_FILE"           # 03d regenerated it above; needed for the inline kubectl below
-step "let ArgoCD settle ${REFRESH_SETTLE}s, then hard-refresh all apps (${REFRESH_ROUNDS} rounds; poll is a 300s fallback)"
-sleep "$REFRESH_SETTLE"
-for r in $(seq 1 "$REFRESH_ROUNDS"); do
-  apps="$(kubectl -n argocd get applications -o name 2>/dev/null)"
-  if [ -n "$apps" ]; then
-    echo "$apps" | while read -r app; do
-      kubectl -n argocd annotate "$app" argocd.argoproj.io/refresh=hard --overwrite >/dev/null 2>&1 || true
-    done
-    ok "hard-refresh round ${r}/${REFRESH_ROUNDS} ($(echo "$apps" | grep -c .) apps)"
-  else
-    warn "round ${r}/${REFRESH_ROUNDS}: no ArgoCD apps found yet (root still creating them?)"
-  fi
-  [ "$r" -lt "$REFRESH_ROUNDS" ] && sleep "$REFRESH_INTERVAL"
-done
+# === STEP 9. converge ArgoCD (self-heal backstop) ============================
+# Real self-healing does the work: each app's syncPolicy.retry re-drives a failed sync, selfHeal + the 300s
+# poll re-examine, and the CNPG ObjectStore is now a persistent resource (not a helm hook) so nothing wedges
+# permanently. This is the LAST-RESORT backstop for stragglers: ArgoCD's auto-sync deliberately WON'T retry a
+# revision whose last sync failed (see 05_gitops.md), so an app that burned its retry budget on a cold-boot
+# transient (e.g. a workload that raced ahead of the platform — the app-of-apps wave gate is best-effort) would
+# sit OutOfSync until explicitly re-synced. converge_argocd_apps force-syncs exactly those. Settle first so the
+# platform has created its apps + rolled the early waves. Best-effort; never fails the rebuild. See 05_gitops.md.
+export KUBECONFIG="$KUBECONFIG_FILE"           # 03d regenerated it above; needed by converge_argocd_apps
+step "let ArgoCD settle ${CONVERGE_SETTLE}s, then converge all apps to Synced+Healthy (backstop, up to ${CONVERGE_WAIT}s)"
+sleep "$CONVERGE_SETTLE"
+converge_argocd_apps "$CONVERGE_WAIT" || true
 
 # === STEP 10. verify the ingress data path actually serves (best-effort) ======
 # ArgoCD brings up the ingress stack (envoy-gateway -> gateway -> cert-manager -> apps) ASYNC after the

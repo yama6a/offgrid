@@ -245,3 +245,39 @@ verify_ingress() {
     printf '.'; sleep 10
   done
 }
+
+# converge_argocd_apps <max-secs> — LAST-RESORT self-heal backstop for the DANGEROUS_* orchestrators.
+# Real self-healing (per-app syncPolicy.retry + selfHeal + the 300s poll) should get every app to
+# Synced+Healthy on its own; this only nudges stragglers so a rebuild/bootstrap never needs a manual click.
+# Each pass, for every app NOT Synced+Healthy: hard-refresh it, and if it has NO sync op in flight, force a
+# sync. ArgoCD's auto-sync deliberately WON'T retry a revision whose last sync failed (see 05_gitops.md), so an
+# app that burned through its retry budget on a cold-boot transient sits OutOfSync until explicitly re-synced —
+# this is that explicit push. Never touches a Running op (leaves genuine progress alone). Best-effort: warns +
+# returns 1 on timeout (non-fatal).
+converge_argocd_apps() {
+  local deadline pending name sync health opphase a
+  deadline=$(( $(date +%s) + ${1:-720} ))
+  use_kubeconfig
+  # one hard-refresh of EVERY app first, so ArgoCD re-compares against the latest pushed commit even on apps
+  # still reporting Synced against an older revision (e.g. after a bootstrap pushes re-sealed secrets).
+  kubectl -n argocd get applications -o name 2>/dev/null | while read -r a; do
+    kubectl -n argocd annotate "$a" argocd.argoproj.io/refresh=hard --overwrite >/dev/null 2>&1 || true
+  done
+  while :; do
+    pending=""
+    while read -r name sync health opphase; do
+      [ -z "$name" ] && continue
+      { [ "$sync" = "Synced" ] && [ "$health" = "Healthy" ]; } && continue
+      pending="${pending} ${name}"
+      kubectl -n argocd annotate app "$name" argocd.argoproj.io/refresh=hard --overwrite >/dev/null 2>&1 || true
+      if [ "$opphase" != "Running" ]; then          # don't interrupt an in-flight sync; only push idle stragglers
+        kubectl -n argocd patch app "$name" --type merge \
+          -p '{"operation":{"initiatedBy":{"username":"converge-backstop"},"sync":{}}}' >/dev/null 2>&1 || true
+      fi
+    done < <(kubectl -n argocd get applications \
+      -o jsonpath='{range .items[*]}{.metadata.name}{" "}{.status.sync.status}{" "}{.status.health.status}{" "}{.status.operationState.phase}{"\n"}{end}' 2>/dev/null)
+    [ -z "${pending// }" ] && { echo; ok "all ArgoCD apps Synced + Healthy"; return 0; }
+    [ "$(date +%s)" -ge "$deadline" ] && { echo; warn "apps not Synced+Healthy within ${1:-720}s:${pending}"; warn "inspect: kubectl -n argocd get applications"; return 1; }
+    printf '.'; sleep 20
+  done
+}
