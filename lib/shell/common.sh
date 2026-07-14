@@ -193,19 +193,21 @@ run_step() {
 }
 
 # ---- ingress data-path verification (DANGEROUS_* bootstrap/rebuild) ----------
-# _ingress_serves_ok <host> <lbip>: 0 only for a REAL, Let's-Encrypt-backed, clean-HTTP/2 response. Hits the
-# LB IP directly with the right SNI (--resolve), so a home-router/DDNS/hairpin quirk can't wedge it — this
-# proves the CLUSTER serves. CA trust is ignored (-k): LE *staging* is untrusted-but-fine; every OTHER
-# tls/h2 failure (self-signed temp cert, wrong-SNI cert, HTTP/2 error, 000/5xx) keeps the caller waiting.
+# _ingress_serves_ok <host> <lbip>: 0 only for a REAL, Let's-Encrypt-backed HTTPS response. Hits the LB IP
+# directly with the right SNI (--resolve), so a home-router/DDNS/hairpin quirk can't wedge it — this proves
+# the CLUSTER serves. CA trust is ignored (-k): LE *staging* is untrusted-but-fine; every OTHER failure
+# (self-signed temp cert, wrong-SNI cert, TLS/connection failure -> code 000, or 5xx) keeps the caller
+# waiting. NB we do NOT require HTTP/2: Envoy Gateway negotiates HTTP/1.1 by default (ALPN http/1.1), which
+# serves fine — asserting h2 made every host hang here forever. --http2 is kept so h2 is still used if the
+# gateway enables it later, but the negotiated version is not checked (only the cert + response code).
 _ingress_serves_ok() {
-  local host="$1" ip="$2" issuer code ver
+  local host="$1" ip="$2" issuer code
   issuer="$(printf '' | openssl s_client -connect "${ip}:443" -servername "$host" 2>/dev/null \
             | openssl x509 -noout -issuer 2>/dev/null)"
   printf '%s' "$issuer" | grep -qiE "Let.?s Encrypt" || return 1   # temp/self-signed/wrong cert -> wait
-  read -r code ver < <(curl -k --http2 -sS -o /dev/null -w '%{http_code} %{http_version}' \
-    --resolve "${host}:443:${ip}" --max-time 10 "https://${host}/" 2>/dev/null)
-  [ "${ver:-}" = "2" ] || return 1                                 # ERR_HTTP2_PROTOCOL_ERROR/conn fail -> wait
-  case "${code:-000}" in [234][0-9][0-9]) return 0;; *) return 1;; esac   # 000 / 5xx -> wait
+  code="$(curl -k --http2 -sS -o /dev/null -w '%{http_code}' \
+    --resolve "${host}:443:${ip}" --max-time 10 "https://${host}/" 2>/dev/null)"
+  case "${code:-000}" in [234][0-9][0-9]) return 0;; *) return 1;; esac   # 000 (conn/TLS fail) / 5xx -> wait
 }
 
 # verify_ingress <gateway-ns> <wait-secs> [host...]

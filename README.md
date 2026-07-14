@@ -266,8 +266,10 @@ Pi 5 Talos image builds on [talos-rpi5/talos-builder](https://github.com/talos-r
 - check all logs/hubble for network policies in audit more that are dropping traffic that should be allowed
 - dependabot/renovate 
 - rewrite git history to remove secrets and email addresses and domains from past commits
-- cnpg backups
 - longhorn backups?
 - ensure anti-affinity rules spread replica-pods for everything onto different nodes.
 - compare .env and .env.example to make sure they are in sync / nothing is missing from either of them.
 - compare to full argo app manifests for missing needed options.
+- apply comment rules from claude.md to all yaml and other code files.
+- read and shorten all md files.
+- check cnpg backup accumulation, ensure it doesn't build up too much. consider extending WAL backup time.

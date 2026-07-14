@@ -46,6 +46,9 @@ rabbitmq-cluster-operator:
         memory: 64Mi
       limits:
         memory: 128Mi
+    extraEnvVars:
+      - name: SYNC_PERIOD # re-reconcile all topology CRs so a declare that failed on out-of-order deps self-heals
+        value: "1m"
     # metrics left off: as of topology-operator v1.19.0 the metrics endpoint requires TLS, which the plaintext
     # vmagent scrape can't consume without extra config — not worth it for the homelab.
 
