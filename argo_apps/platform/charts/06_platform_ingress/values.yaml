@@ -3,7 +3,8 @@ ingress:
   ingresses:
     - name: platform
       domain: ops.example.com # platform UIs live under the *.ops.<base> tier (workloads use *.app.<base>). See 07_ingress.md.
-      issuer: letsencrypt-prod # prod (publicly-trusted) cert: GitHub's webhook SSL verification must trust argocd.<domain>. See 07_ingress.md.
+      issuer: letsencrypt-staging # staging (untrusted) to dodge LE prod's 5-per-exact-SAN-set/week limit during rebuild-heavy dev.
+      # Flip back to letsencrypt-prod for prod: GitHub webhook SSL verification to argocd.<domain> needs a publicly-trusted cert. See 07_ingress.md.
       hosts:
         - subdomain: argocd
           targetNamespace: argocd
