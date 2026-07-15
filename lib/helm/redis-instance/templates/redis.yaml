@@ -6,10 +6,6 @@ Field shape mirrors the upstream ot-helm/redis chart's standalone template (veri
 
 A workload sets name / resources / allowedClients (+ optional persistence + initialFixedDiskSize). EVERYTHING
 ELSE IS PINNED HERE, once, for every instance at once:
-  redis image      quay.io/opstree/redis:v7.0.15           (multi-arch incl. arm64)
-  exporter image   quay.io/opstree/redis-exporter:v1.84.0  (the chart default v1.44.0 is amd64-ONLY — would
-                                                             crash-loop on the Pi 5; verify arm64 via the quay
-                                                             v2 manifest-list API before bumping)
   storage class    persistence=true -> longhorn-redis-persistent (Retain); false -> longhorn-redis-ephemeral
                    (Delete); both 2-replica, from the platform 03_redis_operator app. initialFixedDiskSize is the
                    only storage knob, create-time only — default 1Gi (see docs/12_redis.md "Resizing an instance")
@@ -32,7 +28,7 @@ metadata:
 spec:
   kubernetesConfig:
     # renovate: datasource=docker
-    image: "quay.io/opstree/redis:v7.0.15"
+    image: "quay.io/opstree/redis:v8.6.2"
     imagePullPolicy: IfNotPresent
     resources:
       {{- toYaml .Values.resources | nindent 6 }}
