@@ -15,9 +15,9 @@
 # First sync auto-adopts the running release with no pod churn (values.yaml already has
 # loadBalancer.enabled: true).
 #
-# sync-wave "0": the CNI comes before ArgoCD (wave 1) and all later apps. This only works because
-# Cilium auto-syncs to Healthy on its own; a MANUAL app here would start OutOfSync, stall the wave,
-# and block the parent from ever creating argocd. See 05_gitops.md "sync-wave convention".
+# sync-wave "0": the CNI's Application object is CREATED before ArgoCD (wave 1) and all later apps (waves
+# order creation ~2s apart, not health — there is no health gate). Cilium itself is installed imperatively by
+# 04_cilium.sh before ArgoCD exists; this app just adopts the running release. See 05_gitops.md "sync-wave convention".
 apiVersion: argoproj.io/v1alpha1
 kind: Application
 metadata:
@@ -42,10 +42,11 @@ spec:
       selfHeal: true
       prune: true
     retry:
-      limit: 10
+      limit: -1  # unbounded; only retry re-drives a failed sync (see 05_gitops.md)
+      refresh: true  # retry the latest revision so a fix commit lands mid-loop
       backoff:
         duration: 5s
         factor: 2
-        maxDuration: 10m
+        maxDuration: 1m
     syncOptions:
       - ServerSideApply=true

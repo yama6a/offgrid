@@ -1,12 +1,12 @@
 # The PLATFORM root. A child of the root-of-roots (argo_apps/root.yaml), which creates it FIRST
-# (sync-wave "0") and waits for it to be Healthy before creating the workloads root. It watches
-# argo_apps/platform/apps/ and manages every platform Application it finds there (directory.recurse),# CNI, operators, CRDs, storage, gateway, monitoring, SSO. Those children keep their own internal
-# sync-waves (00...07); this root drives them in that order. See 05_gitops.md.
+# (sync-wave "0", ~2s before the workloads root). It watches argo_apps/platform/apps/ and manages every
+# platform Application it finds there (directory.recurse): CNI, operators, CRDs, storage, gateway,
+# monitoring, SSO. Those children keep their own internal sync-waves (00...07), which now order CREATION
+# only — there is no health gate, so a wave no longer waits for the prior wave's apps to be Healthy. See 05_gitops.md.
 #
 # AUTOMATED: keeps the set of platform Application OBJECTS matching git; each child's own syncPolicy
-# governs its workloads (so the manual Cilium app is never force-synced just because this root owns its
-# Application object). This root must reach Healthy for the workloads tree to start, so every platform
-# app stays auto-syncing (a perpetually-OutOfSync platform app would stall workloads forever).
+# governs its resources. Every platform app stays auto-syncing so it self-converges via unbounded retry;
+# with no health gate an OutOfSync app no longer stalls later waves, but auto-sync is still how it recovers.
 apiVersion: argoproj.io/v1alpha1
 kind: Application
 metadata:
@@ -33,11 +33,12 @@ spec:
       prune: true
       selfHeal: true
     retry:
-      limit: 10
+      limit: -1  # unbounded; only retry re-drives a failed sync (see 05_gitops.md)
+      refresh: true  # retry the latest revision so a fix commit lands mid-loop
       backoff:
         duration: 5s
         factor: 2
-        maxDuration: 10m
+        maxDuration: 1m
     syncOptions:
       - CreateNamespace=true
       - ServerSideApply=true

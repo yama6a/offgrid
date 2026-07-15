@@ -34,11 +34,12 @@ spec:
       prune: false   # CRD-only app: pruning a CRD cascade-deletes every CR of that kind cluster-wide
       selfHeal: true
     retry:
-      limit: 10
+      limit: -1  # unbounded; only retry re-drives a failed sync (see 05_gitops.md)
+      refresh: true  # retry the latest revision so a fix commit lands mid-loop
       backoff:
         duration: 5s
         factor: 2
-        maxDuration: 10m
+        maxDuration: 1m
     syncOptions:
       - CreateNamespace=true
       - ServerSideApply=true   # VM operator CRDs are large, SSA avoids the last-applied-annotation limit

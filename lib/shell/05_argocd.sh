@@ -203,15 +203,14 @@ kubectl apply -f "$ROOT_APP" >/dev/null 2>&1 && ok "root applied" || bad "kubect
 
 # === 5. confirm the GitOps handoff ===========================================
 # argocd itself is already up (the rollout-status checks above). Here we ONLY confirm the handoff took: the
-# root-of-roots created the platform tree. We must NOT wait for any app's Synced+Healthy here:
-#   - the Application health customization (01_argocd/values.yaml) makes the platform come up SERIALLY, wave
-#     by wave, each gated on the prior wave's health — so even the argocd app (platform wave 1) can take well
-#     over 5 min to appear+Healthy;
-#   - worse, the sealed-secret-backed apps (argocd-webhook-secret, google-sso, grafana, CNPG backup creds) stay
+# root-of-roots created the platform tree. We do NOT wait for any app's Synced+Healthy here:
+#   - there is no argoproj.io/Application health gate, so the platform now comes up fast (waves are advisory),
+#     but full convergence (incl. the workloads that race the platform then retry) is still async;
+#   - the sealed-secret-backed apps (argocd-webhook-secret, google-sso, grafana, CNPG backup creds) stay
 #     Degraded until the sealed-secrets master key is restored, which happens in the NEXT rebuild step (07),
 #     AFTER this one. Blocking on health here would deadlock the bootstrap.
-# So full convergence is necessarily async: the rebuild orchestrator's converge step drives it after the key
-# restore; on a standalone `make install-argocd`, watch `kubectl -n argocd get applications -w`.
+# So full convergence is async: the rebuild orchestrator's converge step drives it after the key restore; on a
+# standalone `make install-argocd`, watch `kubectl -n argocd get applications -w`.
 say "confirming GitOps handoff (root created the platform tree)"
 for _ in $(seq 1 60); do kubectl -n "$NS" get application platform >/dev/null 2>&1 && break; sleep 2; done
 if kubectl -n "$NS" get application platform >/dev/null 2>&1; then

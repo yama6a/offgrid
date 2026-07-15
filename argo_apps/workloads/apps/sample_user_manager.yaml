@@ -16,11 +16,12 @@
 # `sample-user-manager`; the per-host Gateways/Certs/HTTPRoutes set metadata.namespace: gateway explicitly
 # (where the central SSO policy + merged Envoy live), reaching the app via the chart's ReferenceGrant.
 #
-# A WORKLOAD, not platform: lives in the workloads tree, which the root-of-roots only creates AFTER the
-# whole platform tree is Healthy, so the CNPG operator's Cluster CRD, the local-path class, the Gateway and
-# 04_google_sso (whose policy already lists sample-user-manager-sso.app.example.com, and attaches to this route
-# once it appears) all exist before this app reconciles; the Cluster CR never hits a missing CRD. No per-app
-# sync-wave needed. See 05_gitops.md.
+# A WORKLOAD, not platform: lives in the workloads tree. With no health gate the root-of-roots creates it while
+# the platform may still be coming up, so its CRs (CNPG Cluster, Redis, rabbitmq-topology, Certificate,
+# Gateway/HTTPRoute, SealedSecret) may briefly race the platform CRDs — the sync then fails and retries
+# (limit: -1) until each CRD lands, converging on its own. 04_google_sso's policy already lists
+# sample-user-manager-sso.app.example.com and attaches to this route once it appears. No per-app sync-wave
+# needed. See 05_gitops.md.
 apiVersion: argoproj.io/v1alpha1
 kind: Application
 metadata:
@@ -48,11 +49,12 @@ spec:
       prune: true
       selfHeal: true
     retry:
-      limit: 10
+      limit: -1  # unbounded; only retry re-drives a failed sync (see 05_gitops.md)
+      refresh: true  # retry the latest revision so a fix commit lands mid-loop
       backoff:
         duration: 5s
         factor: 2
-        maxDuration: 10m
+        maxDuration: 1m
     syncOptions:
       - CreateNamespace=true
       - ServerSideApply=true   # the CNPG Cluster CR is large, SSA avoids the last-applied-annotation limit

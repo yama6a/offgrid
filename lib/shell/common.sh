@@ -246,14 +246,14 @@ verify_ingress() {
   done
 }
 
-# converge_argocd_apps <max-secs> — LAST-RESORT self-heal backstop for the DANGEROUS_* orchestrators.
-# Real self-healing (per-app syncPolicy.retry + selfHeal + the 300s poll) should get every app to
-# Synced+Healthy on its own; this only nudges stragglers so a rebuild/bootstrap never needs a manual click.
-# Each pass, for every app NOT Synced+Healthy: hard-refresh it, and if it has NO sync op in flight, force a
-# sync. ArgoCD's auto-sync deliberately WON'T retry a revision whose last sync failed (see 05_gitops.md), so an
-# app that burned through its retry budget on a cold-boot transient sits OutOfSync until explicitly re-synced —
-# this is that explicit push. Never touches a Running op (leaves genuine progress alone). Best-effort: warns +
-# returns 1 on timeout (non-fatal).
+# converge_argocd_apps <max-secs> — bootstrap/rebuild backstop for the DANGEROUS_* orchestrators.
+# Real self-healing (per-app syncPolicy.retry limit:-1 + refresh + selfHeal) converges every app on its own;
+# with an unbounded retry budget an app never permanently gives up, so this is NOT here to rescue exhausted
+# retries. Its job on a bootstrap/rebuild: hard-refresh EVERY app so it re-compares against the just-pushed
+# commit (the webhook isn't configured yet and the poll is 300s) and force a prompt health recompute (e.g.
+# after the STEP-7 key restore, where a Synced app's health otherwise lags the poll). Each pass, for every app
+# NOT Synced+Healthy: hard-refresh it, and if it has NO sync op in flight, force a sync. Never touches a
+# Running op (leaves genuine progress alone). Best-effort: warns + returns 1 on timeout (non-fatal).
 converge_argocd_apps() {
   local deadline pending name sync health opphase a
   deadline=$(( $(date +%s) + ${1:-720} ))

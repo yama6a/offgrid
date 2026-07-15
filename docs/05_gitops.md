@@ -40,24 +40,27 @@ argo_apps/
 ```
 
 - `root.yaml` is the root-of-roots: it recurses `argo_apps/roots/` and manages the two child root Applications it
-  finds. Their sync-waves gate the bootstrap: it creates `platform` (wave 0), waits for it to be Healthy (which
-  aggregates the health of every platform app), then creates `workloads` (wave 1). So workloads never reconcile
-  against missing CRDs/namespaces on a cold boot.
-  - **Load-bearing: the Application health customization.** ArgoCD *removed* the built-in health assessment for
-    `argoproj.io/Application` in v1.8, so by default a parent app-of-apps sees its child Applications as
-    health-less — the wave gate then has nothing to wait on and clears instantly (verified: `workloads` was
-    created ~28 s *before* the platform's gateway/rabbitmq apps existed, so workloads raced ahead and failed on
-    "gateway ns not found" / webhook-not-ready). `01_argocd/values.yaml` restores it via
-    `resource.customizations.health.argoproj.io_Application` (the health of a child app = its own
-    `status.health.status`), which is what actually makes the wave-0 → wave-1 gate wait. Don't remove it or the
-    ordering silently reverts to a race (which self-heals via retry, but noisily).
+  finds. Their sync-waves order CREATION only (a ~2s `ARGOCD_SYNC_WAVE_DELAY`): it creates `platform` (wave 0),
+  then `workloads` (wave 1). It does NOT wait for platform health — see below.
+  - **No Application health gate (deliberate).** ArgoCD *removed* the built-in health assessment for
+    `argoproj.io/Application` in v1.8, so a parent app-of-apps sees its child Applications as health-less and a
+    wave never waits on child health. We used to restore it via
+    `resource.customizations.health.argoproj.io_Application` to make the wave-0 → wave-1 gate wait — but that gate
+    proved fragile: a child that transiently reports Degraded/Progressing **latches a stale health status** (a
+    quiescent Synced app only recomputes health on the `timeout.reconciliation` poll — there is no separate
+    health-refresh), which froze the whole tree ~9 min per wave and stretched a cold boot to ~51 min. So the gate
+    is gone. Ordering is now eventual: `workloads` is created while the platform may still be coming up, and a
+    workload whose platform CRD isn't registered yet fails its sync and self-converges via **unbounded**
+    `syncPolicy.retry` (`limit: -1`, `refresh: true`), typically within ~1-2 min. Only within-operation retry
+    re-drives a failed sync (selfHeal and the poll do NOT — verified against ArgoCD v3.4.4), which is why every
+    app's `retry.limit` is `-1`.
 - Each child Application points at a wrapper chart under its own tree's `charts/`.
 - Add a platform app = drop a wrapper chart under `argo_apps/platform/charts/NN_name/` + an Application manifest under
   `argo_apps/platform/apps/NN_name.yaml`, then commit & push. (The `NN` prefix is the app's `sync-wave` number, keep
   the filename, the chart dir, and the annotation in agreement. See the convention below.)
 - Add a workload = drop a wrapper chart under `argo_apps/workloads/charts/name/` + an Application manifest under
-  `argo_apps/workloads/apps/name.yaml`, no number, no `sync-wave`. Workloads all reconcile in parallel once platform
-  is Healthy. (If a workload depends on another workload, it belongs in platform instead.)
+  `argo_apps/workloads/apps/name.yaml`, no number, no `sync-wave`. Workloads all reconcile in parallel (they race
+  the platform and retry-converge; there is no health gate). (If a workload depends on another workload, it belongs in platform instead.)
 
 ### Removing or renaming an app: the `resources-finalizer`
 
@@ -102,21 +105,22 @@ root-of-roots cascades to the two roots, which cascade to every leaf. Two things
 
 ### sync-wave convention (within the platform tree)
 
-Ordering across platform apps is `argocd.argoproj.io/sync-wave` (lower = earlier; the platform root waits for a wave to be
-Synced + Healthy before creating the next). The `NN` prefix on each `platform/apps/NN_*.yaml` file equals its wave
-number, one glance at the dir listing tells you the order. The single platform -> workloads boundary is enforced once, by
-the wave on the two roots, not by per-app waves.
+Ordering across platform apps is `argocd.argoproj.io/sync-wave` (lower = earlier). Since there is no Application
+health gate (see above), a wave no longer WAITS for the prior wave to be Healthy — waves only order the CREATION
+of the child Application objects (~2s apart). That head-start still helps (CRD/operator apps get applied before
+their consumers), but it is advisory: an app that races ahead of a CRD it needs simply fails and retries until the
+CRD lands. The `NN` prefix on each `platform/apps/NN_*.yaml` file equals its wave number, one glance at the dir
+listing tells you the order.
 
-- Cilium = wave `0`. The CNI underpins everything, so it goes first. This is only safe because the Cilium app
-  auto-syncs: it reaches Healthy on its own, the wave clears, and the root proceeds. A manual app at wave 0 would
-  start OutOfSync and stall forever, blocking the root from ever creating the later-wave apps (including
-  `argocd`). That's the trap to avoid: never put a manual-sync app at an earlier wave than apps that depend on it. The
-  same rule scales up to the roots: a perpetually-OutOfSync platform app keeps the `platform` root from going Healthy,
-  which stalls the `workloads` root forever, so keep every platform app auto-syncing.
-- ArgoCD = wave `1`. Adopts the already-running, self-managed ArgoCD once the CNI is in.
-- Later platform apps go at wave `2`+, so they reconcile after the platform (CNI + engine) is in place.
-- Caveat: if you break-glass-fix Cilium out of band and don't commit the fix, its app sits OutOfSync at wave 0 and
-  can block later waves on the next root sync. Always commit the fix back to git.
+- Cilium = wave `0`. The CNI underpins everything, so it's created first.
+- ArgoCD = wave `1`. Adopts the already-running, self-managed ArgoCD.
+- Later platform apps go at wave `2`+, created after the CNI + engine.
+- Keep every app auto-syncing with `retry: -1` + `refresh: true` so it self-converges. Without the health gate an
+  OutOfSync/Degraded app no longer stalls later waves or the roots — but auto-sync + unbounded retry is still the
+  only thing that recovers it, so a manual-sync app would just never converge on its own. (The old "never put a
+  manual app at an earlier wave than its dependents" rule is obsolete: waves don't gate on health anymore.)
+- Caveat: if you break-glass-fix Cilium out of band and don't commit the fix, `selfHeal` reverts it on the next
+  reconcile. Always commit the fix back to git.
 
 ## HA-lite: sized for 3x 8 GB Pis
 
@@ -198,9 +202,11 @@ webhook-driven, with the poll demoted to a slow safety net.
 - **Poll = slow fallback, toggled from `.env`.** `POLL_SYNC_ENABLED` in `.env` drives
   `timeout.reconciliation`: `false` (default) → `300s` (a 5-minute net for a dropped webhook), `true` → `60s` (fast
   poll). `08_argocd_webhook.sh` writes it into `01_argocd/values.yaml` — that file is the single source ArgoCD
-  reads, so don't hand-edit `timeout.reconciliation`, flip the `.env` knob and re-run the script. We deliberately
-  don't use `0s` (fully off): a lost webhook would then never recover, and `0s` also needs
-  `ARGOCD_DEFAULT_CACHE_EXPIRATION` tuned.
+  reads, so don't hand-edit `timeout.reconciliation`, flip the `.env` knob and re-run the script. We keep the
+  `300s` default (not `60s`): the poll re-drives *OutOfSync* apps and recomputes stale health, but it does NOT
+  re-drive a *failed* sync — that's `syncPolicy.retry`'s job (`limit: -1`) — so a faster poll wouldn't speed
+  cold-boot convergence, and it costs controller CPU that scales with object count. We also don't use `0s` (fully
+  off): a lost webhook would then never recover, and `0s` also needs `ARGOCD_DEFAULT_CACHE_EXPIRATION` tuned.
 - **The webhook secret is generated, not configured.** `08_argocd_webhook.sh` mints a random shared secret,
   writes the plaintext to `secrets/argocd-github-webhook-secret.txt` (the gitignored off-repo store — paste it
   into GitHub) and seals it into `argocd-secret`'s `webhook.github.secret` key. Re-running reuses the stored value

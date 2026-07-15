@@ -4,9 +4,10 @@
 #   0_platform.yaml   (sync-wave "0")  -> recurses argo_apps/platform/apps/   (CNI, operators, storage, ...)
 #   1_workloads.yaml  (sync-wave "1")  -> recurses argo_apps/workloads/apps/  (the actual apps)
 #
-# The waves on those two children are what gate the bootstrap: this root creates `platform` first, waits
-# for it to be Synced + Healthy (which aggregates the health of every platform app), THEN creates
-# `workloads`. So workloads never reconcile against missing CRDs/namespaces on a cold boot. See 05_gitops.md.
+# The waves on those two children order CREATION only (~2s ARGOCD_SYNC_WAVE_DELAY): this root creates
+# `platform` first, then `workloads` — it does NOT wait for platform health (there is no
+# argoproj.io/Application health check, on purpose). So workloads may reconcile against not-yet-present
+# platform CRDs on a cold boot; they fail and self-converge via unbounded syncPolicy.retry. See 05_gitops.md.
 #
 # AUTOMATED: keeps the two root Application OBJECTS matching git. Each child root has its own syncPolicy.
 apiVersion: argoproj.io/v1alpha1
@@ -33,11 +34,12 @@ spec:
       prune: true
       selfHeal: true
     retry:
-      limit: 10
+      limit: -1  # unbounded; only retry re-drives a failed sync (see 05_gitops.md)
+      refresh: true  # retry the latest revision so a fix commit lands mid-loop
       backoff:
         duration: 5s
         factor: 2
-        maxDuration: 10m
+        maxDuration: 1m
     syncOptions:
       - CreateNamespace=true
       - ServerSideApply=true

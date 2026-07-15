@@ -11,8 +11,9 @@
 #
 # sync-wave "3": the operator ALONE would be a wave-2 independent leaf (needs only the CNI, like cnpg-operator).
 # But this app ALSO ships the two StorageClasses, which use the driver.longhorn.io provisioner — so the whole app
-# lands at wave 3, after Longhorn (wave 2) is Healthy (the same operator/engine-then-consumer ordering the waves
-# exist for). Bundling the classes with the operator keeps all Redis platform setup in ONE app; the only cost is
+# lands at wave 3, CREATED after Longhorn (wave 2) so the driver is likely present (waves order creation, not
+# health; a StorageClass is inert until a PVC binds anyway). Bundling the classes with the operator keeps all
+# Redis platform setup in ONE app; the only cost is
 # the operator installing one wave later, invisible in practice (redis workloads are post-platform and need
 # Longhorn anyway). The operator's admission webhook is DISABLED (values.yaml: webhook=false — it only guards the
 # master-slave anti-affinity feature we don't use), so this has NO dependency on cert-manager for a serving-cert.
@@ -40,11 +41,12 @@ spec:
       prune: true
       selfHeal: true
     retry:
-      limit: 10
+      limit: -1  # unbounded; only retry re-drives a failed sync (see 05_gitops.md)
+      refresh: true  # retry the latest revision so a fix commit lands mid-loop
       backoff:
         duration: 5s
         factor: 2
-        maxDuration: 10m
+        maxDuration: 1m
     syncOptions:
       - CreateNamespace=true
       - ServerSideApply=true   # the Redis operator CRDs are large, SSA avoids the last-applied-annotation limit

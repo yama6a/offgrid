@@ -71,21 +71,8 @@ argo-cd:
       # 300s fallback, see timeout.reconciliation above), not from watch-event churn (Longhorn/Node/VM-scrapes
       # were <5%). With the poll relaxed + webhook-driven sync, watch-event churn is what's left, so this rule still earns its keep.
       resource.ignoreResourceUpdatesEnabled: "true"
-      # Restore Application health (ArgoCD dropped the built-in in 1.8) so the root-of-roots sync-wave gate actually
-      # waits: without it child apps are health-less, the gate never blocks, and workloads race ahead of the platform.
-      resource.customizations.health.argoproj.io_Application: |
-        hs = {}
-        hs.status = "Progressing"
-        hs.message = ""
-        if obj.status ~= nil then
-          if obj.status.health ~= nil then
-            hs.status = obj.status.health.status
-            if obj.status.health.message ~= nil then
-              hs.message = obj.status.health.message
-            end
-          end
-        end
-        return hs
+      # NB: intentionally NO argoproj.io_Application health check. Waves are advisory creation-ordering only,
+      # not health gates; children converge via unbounded syncPolicy.retry (see any app manifest). See 05_gitops.md.
     # RBAC: give every request (i.e. the anonymous user above) full admin. No per-user roles — there are no
     # ArgoCD users, Google SSO already gated who can reach this at the edge.
     rbac:

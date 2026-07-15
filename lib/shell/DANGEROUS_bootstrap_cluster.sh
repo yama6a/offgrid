@@ -239,8 +239,8 @@ git push || warn "push failed; push by hand so ArgoCD picks up the re-sealed sec
 # The git poll is a 300s fallback and the GitHub webhook isn't configured yet, so ArgoCD won't pick up STEP
 # 16's push (re-sealed google-oauth/grafana-smtp/argocd secrets) on its own for up to ~5 min. converge_argocd_apps
 # hard-refreshes EVERY app first (so they re-compare against the pushed commit and apply the re-sealed secrets
-# now), then drives any straggler to Synced+Healthy — force-syncing apps that burned their retry budget on a
-# cold-boot transient, which ArgoCD's auto-sync won't re-drive on its own. Best-effort: never fails the bootstrap.
+# now), then nudges any straggler to Synced+Healthy (unbounded per-app retry converges the rest on its own).
+# Best-effort: never fails the bootstrap.
 step "converge ArgoCD (pull re-sealed secrets + self-heal backstop, up to ${CONVERGE_WAIT}s)"
 converge_argocd_apps "$CONVERGE_WAIT" || true
 

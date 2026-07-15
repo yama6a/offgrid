@@ -124,13 +124,13 @@ else
 fi
 
 # === STEP 9. converge ArgoCD (self-heal backstop) ============================
-# Real self-healing does the work: each app's syncPolicy.retry re-drives a failed sync, selfHeal + the 300s
-# poll re-examine, and the CNPG ObjectStore is now a persistent resource (not a helm hook) so nothing wedges
-# permanently. This is the LAST-RESORT backstop for stragglers: ArgoCD's auto-sync deliberately WON'T retry a
-# revision whose last sync failed (see 05_gitops.md), so an app that burned its retry budget on a cold-boot
-# transient (e.g. a workload that raced ahead of the platform — the app-of-apps wave gate is best-effort) would
-# sit OutOfSync until explicitly re-synced. converge_argocd_apps force-syncs exactly those. Settle first so the
-# platform has created its apps + rolled the early waves. Best-effort; never fails the rebuild. See 05_gitops.md.
+# Real self-healing does the work: each app's syncPolicy.retry (limit:-1, refresh) re-drives a failed sync
+# until its dependency lands (a workload that raced ahead of the platform just retries until the CRD exists),
+# selfHeal + the poll re-examine, and the CNPG ObjectStore is a persistent resource (not a helm hook) so
+# nothing wedges. The converge step is the bootstrap backstop: it hard-refreshes EVERY app so it re-compares
+# against this rebuild's pushed commit + the STEP-7 key restore right away (the webhook isn't up yet, the poll
+# is 300s), and nudges any straggler to Synced+Healthy. Settle first so the platform has created its apps.
+# Best-effort; never fails the rebuild. See 05_gitops.md.
 export KUBECONFIG="$KUBECONFIG_FILE"           # 03d regenerated it above; needed by converge_argocd_apps
 step "let ArgoCD settle ${CONVERGE_SETTLE}s, then converge all apps to Synced+Healthy (backstop, up to ${CONVERGE_WAIT}s)"
 sleep "$CONVERGE_SETTLE"
