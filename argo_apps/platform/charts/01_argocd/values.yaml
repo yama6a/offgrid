@@ -34,6 +34,7 @@ argo-cd:
   configs:
     params:
       server.insecure: true
+      controller.log.level: debug # TEMP forensics: capture cold-boot wave/sync decisions; REVERT to warn
     # Don't let the chart create argocd-secret: we ship the GitHub webhook.github.secret into it out of
     # band as a sealed Secret that MERGES in (patch-mode). If the chart also owned argocd-secret, ArgoCD
     # self-heal would fight the merged-in webhook key. Trade-off: with createSecret:false nothing creates
