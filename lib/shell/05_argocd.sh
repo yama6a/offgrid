@@ -201,18 +201,21 @@ fi
 
 kubectl apply -f "$ROOT_APP" >/dev/null 2>&1 && ok "root applied" || bad "kubectl apply root failed"
 
-# === 5. wait for self-management to settle ===================================
-# Confirm the GitOps handoff took: argocd adopts itself (leaf app — Healthy == its own pods, fast) and the
-# root-of-roots has created the platform tree. We deliberately do NOT wait for `root` Synced+Healthy here:
-# the Application health customization (01_argocd/values.yaml) makes root/platform health aggregate their
-# whole subtree, so root only goes Healthy once the ENTIRE platform+workloads tree is up (many minutes on a
-# cold boot). That full convergence is async — the rebuild orchestrator's converge step waits for it; on a
-# standalone `make install-argocd`, watch it with `kubectl -n argocd get applications -w`.
-say "waiting for ArgoCD self-management + GitOps handoff"
-wait_app argocd 300
+# === 5. confirm the GitOps handoff ===========================================
+# argocd itself is already up (the rollout-status checks above). Here we ONLY confirm the handoff took: the
+# root-of-roots created the platform tree. We must NOT wait for any app's Synced+Healthy here:
+#   - the Application health customization (01_argocd/values.yaml) makes the platform come up SERIALLY, wave
+#     by wave, each gated on the prior wave's health — so even the argocd app (platform wave 1) can take well
+#     over 5 min to appear+Healthy;
+#   - worse, the sealed-secret-backed apps (argocd-webhook-secret, google-sso, grafana, CNPG backup creds) stay
+#     Degraded until the sealed-secrets master key is restored, which happens in the NEXT rebuild step (07),
+#     AFTER this one. Blocking on health here would deadlock the bootstrap.
+# So full convergence is necessarily async: the rebuild orchestrator's converge step drives it after the key
+# restore; on a standalone `make install-argocd`, watch `kubectl -n argocd get applications -w`.
+say "confirming GitOps handoff (root created the platform tree)"
 for _ in $(seq 1 60); do kubectl -n "$NS" get application platform >/dev/null 2>&1 && break; sleep 2; done
 if kubectl -n "$NS" get application platform >/dev/null 2>&1; then
-  ok "GitOps handoff confirmed: root created the platform tree (platform -> workloads converges async)"
+  ok "handoff confirmed: root created the platform tree (converges async; key restore + converge come next)"
 else
   bad "root did not create the platform app in ~120s (check: kubectl -n ${NS} get applications)"
 fi
