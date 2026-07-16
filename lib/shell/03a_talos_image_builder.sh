@@ -45,7 +45,7 @@ SRCSERVER_NAME="talos-srcserver"           # local HTTP server for the (non-byte
 SRCSERVER_PORT="8099"
 IMAGE_NAME="metal-arm64-rpi5.raw.xz"       # staged image filename (rpi5/grub imager emits .raw.xz; matches 03b's RAW_XZ default)
 # renovate: datasource=docker
-ALPINE_IMAGE="alpine:3.20"                 # throwaway container for the raw-image + UKI validation steps
+ALPINE_IMAGE="alpine:3.24"                 # throwaway container for the raw-image + UKI validation steps
 # -----------------------------------------------------------------------------
 
 # === 0. prereqs ==============================================================

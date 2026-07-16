@@ -12,6 +12,6 @@ version: 0.1.0                 # this wrapper chart's own version
 
 dependencies:
   - name: sealed-secrets
-    version: "2.19.0"         # bitnami/sealed-secrets chart, THE single source for the pin
+    version: "2.19.1"         # bitnami/sealed-secrets chart, THE single source for the pin
     # NB: the chart repo moved org, it's bitnami.github.io now (the old bitnami-labs.github.io 404s).
     repository: https://bitnami.github.io/sealed-secrets

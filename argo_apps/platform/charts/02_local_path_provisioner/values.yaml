@@ -24,7 +24,7 @@ resources:
 # on the target node. Multi-arch (works on arm64). Pinned for reproducibility.
 helperImage:
   repository: docker.io/library/busybox
-  tag: "1.37"
+  tag: "1.38"
 
 # Where PVs are physically created on each node. This is the dedicated, fixed-size XFS 'localpath' user
 # volume from 03d (mounted at /var/mnt/localpath, exposed to the kubelet by 03d's extraMount). Node-local:

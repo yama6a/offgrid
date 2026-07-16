@@ -11,5 +11,5 @@ version: 0.1.0                 # this wrapper chart's own version
 
 dependencies:
   - name: argo-cd
-    version: "10.1.3"         # argoproj/argo-helm argo-cd chart, THE single source for the pin
+    version: "10.1.4"         # argoproj/argo-helm argo-cd chart, THE single source for the pin
     repository: https://argoproj.github.io/argo-helm

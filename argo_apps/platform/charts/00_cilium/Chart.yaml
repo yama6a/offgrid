@@ -12,5 +12,5 @@ version: 0.1.0                 # this wrapper chart's own version
 
 dependencies:
   - name: cilium
-    version: "1.19.5"         # cilium/cilium chart + image, THE single source for the pin
+    version: "1.19.6"         # cilium/cilium chart + image, THE single source for the pin
     repository: https://helm.cilium.io

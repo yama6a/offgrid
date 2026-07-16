@@ -16,5 +16,5 @@ version: 0.1.0                 # this wrapper chart's own version
 
 dependencies:
   - name: victoria-logs-collector
-    version: "0.3.6"          # VictoriaMetrics/victoria-logs-collector, THE single source for the pin
+    version: "0.3.7"          # VictoriaMetrics/victoria-logs-collector, THE single source for the pin
     repository: https://victoriametrics.github.io/helm-charts/

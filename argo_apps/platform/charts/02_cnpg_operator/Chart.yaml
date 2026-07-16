@@ -15,5 +15,5 @@ version: 0.1.0                 # this wrapper chart's own version
 
 dependencies:
   - name: cloudnative-pg
-    version: "0.28.3"         # cnpg/cloudnative-pg chart, THE single source for the pin
+    version: "0.29.0"         # cnpg/cloudnative-pg chart, THE single source for the pin
     repository: https://cloudnative-pg.github.io/charts

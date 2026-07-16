@@ -15,6 +15,6 @@ version: 0.1.0                 # this wrapper chart's own version
 
 dependencies:
   - name: prometheus-operator-crds
-    version: "30.0.0"         # prometheus-community/prometheus-operator-crds. Its app version MUST match the
+    version: "30.0.1"         # prometheus-community/prometheus-operator-crds. Its app version MUST match the
                               # prometheus-operator the monitoring stack expects — bump the two together
     repository: https://prometheus-community.github.io/helm-charts

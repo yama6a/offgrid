@@ -13,5 +13,5 @@ version: 0.1.0                 # this wrapper chart's own version
 
 dependencies:
   - name: cert-manager
-    version: "v1.20.2"        # jetstack/cert-manager chart, THE single source for the pin
+    version: "v1.21.0"        # jetstack/cert-manager chart, THE single source for the pin
     repository: https://charts.jetstack.io
