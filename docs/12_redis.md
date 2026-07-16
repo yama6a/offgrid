@@ -17,7 +17,7 @@ Three pieces (the operator + storage classes are platform; the instances are per
 Why OpsTree (`ot-container-kit/redis-operator`): it's the mature, CNCF-adjacent Redis operator with a plain CRD, and
 its operator + `quay.io/opstree/redis` images are multi-arch incl. **arm64** (the Pi-5 gate — see the exporter
 caveat below). We run **standalone** single-instance Redis (`kind: Redis`): one pod, one PVC — a deliberate choice
-(no HA / replication / sentinel / cluster, no backups). Persistence is a REQUIRED per-instance flag (no default —
+(no HA / replication / sentinel / cluster; durable instances do get off-cluster S3 backups, see below). Persistence is a REQUIRED per-instance flag (no default —
 each instance chooses durable vs ephemeral; see below); on a node loss the pod reschedules and Longhorn reattaches
 the volume, a brief availability gap.
 
@@ -115,9 +115,55 @@ mem limit), and that whole dataset is persisted (RDB ~1× + AOF up to ~2× durin
 safe-but-degraded failure as hitting `maxmemory`. So `initialFixedDiskSize` (default 1Gi) and `resources.limits.memory` are linked:
 bump both together. The 1Gi default comfortably covers the small instances typical here (a 96Mi limit ⇒ ~10× headroom).
 
-**Deliberately out of scope:** HA (a single standalone pod — a node loss is a brief availability gap until the pod
-reschedules and re-attaches its volume) and off-cluster backup. A workload needing them would use a
-`RedisReplication`/`RedisSentinel` variant or a backup CronJob — not added for now.
+**Deliberately out of scope:** HA — a single standalone pod; a node loss is a brief availability gap until the pod
+reschedules and re-attaches its volume. A workload needing it would use a `RedisReplication`/`RedisSentinel`
+variant — not added for now. Off-cluster backup, once out of scope, is now covered below (durable instances only).
+
+## Off-cluster backups — RDB to S3
+
+Durable (`persistence: true`) instances back up to S3 as periodic RDB dumps; ephemeral instances never do (they're
+regenerable by definition). It's **auto-on**: a durable instance renders a `<name>-redis-backup` CronJob as soon as
+the feature is configured — there's no per-instance enable flag, only an optional `backups.schedule` (default daily
+`0 2 * * *`). Shares the S3 bucket + IAM writer with CNPG; see `docs/13_backups.md` for the bucket/Terraform/creds.
+
+How it works (all in `lib/helm/redis-instance`):
+
+- **Dump** — the CronJob's init container runs `redis-cli --rdb` against the instance's Service on `:6379`. That's a
+  replication full-sync → an app-consistent point-in-time RDB, with no PVC or AOF-file access and no auth (the
+  network policy is the gate). The dump image is the same opstree Redis as the server, but `--rdb` only streams
+  bytes so it's version-tolerant regardless.
+- **Upload** — a second container `aws s3 cp`s the dump to `s3://<bucket>/redis/<namespace>/<name>/<UTC>.rdb`.
+  Creds come from the per-namespace sealed `redis-backup-s3` secret (keys `AWS_ACCESS_KEY_ID` /
+  `AWS_SECRET_ACCESS_KEY`); the bucket enforces SSE-S3. Retention/tiering is the bucket's lifecycle (Glacier IR
+  @30d, expire @180d) — not set per instance.
+- **Network** — a dedicated CiliumNetworkPolicy gives the backup pod egress to DNS, the instance on `6379`, and S3
+  on `443` (`toFQDNs *.s3.<region>.amazonaws.com`); the instance's own policy allows the backup pod inbound.
+
+**Turning it on:** `make configure-redis-backup` (step 15) reads the Terraform writer creds, writes
+`backups.bucket`/`region` once into `lib/helm/redis-instance/values.yaml` (chart-wide), and seals `redis-backup-s3`
+into each namespace listed in the script's `REDIS_BACKUP_TARGETS`. Add a line there for every new namespace that
+gains a durable instance, then commit + push (incl. the refreshed consumer `Chart.lock`). Empty
+`AWS_DEPLOY_ACCESS_KEY_ID` in `.env` ⇒ the step no-ops and nothing renders (the repo's "empty = off" contract).
+
+Monitoring is two Grafana alerts (`redis-backup-failed`, `redis-backup-stale`) — see `docs/13_backups.md`.
+
+### Restore from S3
+
+`make restore-redis` (`recover_redis_from_s3.sh <namespace> <instance> [latest|<s3-key>]`) does a live, in-place,
+full-fidelity restore that **never deletes the CR or touches the PVC/AOF files** (the operator is left alone):
+
+1. a temporary **seed pod** boots a plain `redis-server` from the chosen RDB (`appendonly no`) → holds the dataset.
+   Its image is read from `redis.yaml` at runtime, so it always matches the instance's major (an RDB is
+   forward-only — a v7 seed can't load a v8 dump);
+2. a **break-glass** CiliumNetworkPolicy opens target↔seed on `6379` for the duration;
+3. the target is `FLUSHALL`ed (a **clean replace**, prompted) then made a replica of the seed (`REPLICAOF`) → a full
+   resync pulls the whole dataset (all types + TTLs, exact fidelity), then `REPLICAOF NO ONE` promotes it back to a
+   standalone master. Its `appendonly yes` rebuilds the AOF from the restored data automatically;
+4. the seed pod + break-glass policy are torn down (a cleanup trap runs even on failure).
+
+Replication is chosen over an offline PVC swap (which fights the operator + AOF) or `redis-rdb-tools` (unmaintained,
+fragile on new RDB versions). The offline path is possible but not scripted. Caveat: the OpsTree operator may
+reconcile the `Redis` CR during the window — the manual `REPLICAOF` holds long enough to sync; re-run if it races.
 
 ## Resizing an instance
 

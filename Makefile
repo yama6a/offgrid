@@ -89,7 +89,7 @@ configure-sso: ## 07: write the SSO clientID + seal the OAuth client secret (nee
 configure-grafana-smtp: ## 09: seal the Grafana SMTP app password (needs .env secret).
 	bash lib/shell/09_grafana_smtp.sh
 
-##@ Backups  (step 13–14; S3 bucket via Terraform + CNPG WAL/base backups)
+##@ Backups  (step 13–15; S3 bucket via Terraform + CNPG WAL/base + Redis RDB backups)
 .PHONY: s3-backup-bucket
 s3-backup-bucket: ## 13: create/update the shared S3 backup bucket + scoped IAM writer (Terraform; needs .env AWS creds).
 	bash lib/shell/13_s3_backup_bucket.sh
@@ -106,6 +106,10 @@ s3-backup-destroy: ## 13: DANGER empty the bucket AND terraform-destroy it + the
 configure-cnpg-backup: ## 14: enable CNPG S3 backups — seal the writer creds + write bucket/region/RPO into pg-cluster.
 	bash lib/shell/14_cnpg_backup.sh
 
+.PHONY: configure-redis-backup
+configure-redis-backup: ## 15: enable Redis RDB S3 backups — seal the writer creds + write bucket/region into redis-instance.
+	bash lib/shell/15_redis_backup.sh
+
 ##@ Secrets  (sealed-secrets master key)
 .PHONY: backup-secrets-key
 backup-secrets-key: ## 06: back up the sealed-secrets master key (do this BEFORE a rebuild).
@@ -115,7 +119,7 @@ backup-secrets-key: ## 06: back up the sealed-secrets master key (do this BEFORE
 restore-secrets-key: ## 06: restore the sealed-secrets master key so committed SealedSecrets decrypt.
 	bash lib/shell/06_restore_sealed_secrets_key.sh
 
-##@ Data recovery  (CNPG — two tiers: reattach the retained PV, or restore from S3)
+##@ Data recovery  (CNPG — two tiers: reattach the retained PV, or restore from S3; Redis — restore from S3)
 .PHONY: recover-cnpg
 recover-cnpg: ## Reattach a deleted CNPG Cluster to its RETAINED local-path PV (fast; pauses ArgoCD, recreates the adopt PVC).
 	bash lib/shell/recover_cnpg_from_pv.sh
@@ -123,6 +127,10 @@ recover-cnpg: ## Reattach a deleted CNPG Cluster to its RETAINED local-path PV (
 .PHONY: restore-cnpg
 restore-cnpg: ## Restore a CNPG database from S3 — latest or PITR — into a fresh cluster (interactive; needs backups on).
 	bash lib/shell/recover_cnpg_from_s3.sh
+
+.PHONY: restore-redis
+restore-redis: ## Restore a Redis instance from its S3 RDB dump — in-place via a seed pod + replication (interactive, destructive).
+	bash lib/shell/recover_redis_from_s3.sh
 
 ##@ Health & inspection  (read-only; use the dockerized talosctl + the 03d kubeconfig)
 .PHONY: check-health

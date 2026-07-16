@@ -329,6 +329,83 @@ grafana:
                     conditions:
                       - type: query
                         evaluator: {type: gt, params: [0]}
+        # Off-cluster Redis RDB backups (CronJobs from lib/helm/redis-instance, name `*-redis-backup`). vmalert
+        # is off so VMRules are inert — these live here (the only path that fires) and key off the CronJob/Job
+        # NAME via kube-state-metrics (arbitrary labels aren't exported; the name always is). See docs/13_backups.md.
+        - orgId: 1
+          name: backups
+          folder: raspi-cluster
+          interval: 1m
+          rules:
+            - uid: redis-backup-failed
+              title: Redis backup job failed
+              condition: C
+              for: 15m
+              labels: {severity: warning}
+              annotations:
+                summary: 'Redis backup job {{`{{ $labels.namespace }}`}}/{{`{{ $labels.job_name }}`}} failed'
+              noDataState: OK
+              execErrState: Error
+              data:
+                - refId: A
+                  relativeTimeRange: {from: 600, to: 0}
+                  datasourceUid: VictoriaMetrics
+                  model:
+                    refId: A
+                    instant: true
+                    expr: 'max by (namespace, job_name) (kube_job_failed{condition="true", job_name=~".+redis-backup.+"})'
+                - refId: B
+                  relativeTimeRange: {from: 600, to: 0}
+                  datasourceUid: __expr__
+                  model: {refId: B, type: reduce, expression: A, reducer: last, datasource: {type: __expr__, uid: __expr__}}
+                - refId: C
+                  relativeTimeRange: {from: 600, to: 0}
+                  datasourceUid: __expr__
+                  model:
+                    refId: C
+                    type: threshold
+                    expression: B
+                    datasource: {type: __expr__, uid: __expr__}
+                    conditions:
+                      - type: query
+                        evaluator: {type: gt, params: [0]}
+            # Staleness: no successful backup recently. `last_successful_time > 0` keeps only cronjobs that have
+            # succeeded at least once (absent series => NoData => OK, so it won't fire before the first run).
+            # 129600s = 36h (daily + slack, matching CNPG); tuned for the daily default — the failed-job alert
+            # covers sub-daily schedules. VERIFY kube_cronjob_status_last_successful_time exists in the running
+            # kube-state-metrics at apply time. See docs/13_backups.md.
+            - uid: redis-backup-stale
+              title: Redis backup is stale
+              condition: C
+              for: 30m
+              labels: {severity: warning}
+              annotations:
+                summary: 'Redis backup {{`{{ $labels.namespace }}`}}/{{`{{ $labels.cronjob }}`}} has no success in >36h'
+              noDataState: OK
+              execErrState: Error
+              data:
+                - refId: A
+                  relativeTimeRange: {from: 600, to: 0}
+                  datasourceUid: VictoriaMetrics
+                  model:
+                    refId: A
+                    instant: true
+                    expr: 'time() - max by (namespace, cronjob) (kube_cronjob_status_last_successful_time{cronjob=~".+-redis-backup"} > 0)'
+                - refId: B
+                  relativeTimeRange: {from: 600, to: 0}
+                  datasourceUid: __expr__
+                  model: {refId: B, type: reduce, expression: A, reducer: last, datasource: {type: __expr__, uid: __expr__}}
+                - refId: C
+                  relativeTimeRange: {from: 600, to: 0}
+                  datasourceUid: __expr__
+                  model:
+                    refId: C
+                    type: threshold
+                    expression: B
+                    datasource: {type: __expr__, uid: __expr__}
+                    conditions:
+                      - type: query
+                        evaluator: {type: gt, params: [129600]}
     # Log-based alert in its OWN file so a VL-datasource model mismatch can't break the metrics rules
     # above. VERIFY the query model against the live victoriametrics-logs-datasource at apply time (the
     # plugin's alerting model field names can change between versions). See 16_grafana.md.

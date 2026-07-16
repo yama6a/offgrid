@@ -1,0 +1,48 @@
+{{- /*
+Egress lockdown for the backup CronJob pod (backup-cronjob.yaml), rendered under the same gate. Egress-only:
+the pod exposes nothing, so we leave ingress default (nothing reaches it) and deny-by-default egress except
+the three things a dump+upload needs — DNS, the Redis instance on 6379, and S3 on 443. The Redis instance's
+own policy (networkpolicy.yaml) separately allows THIS pod inbound on 6379.
+
+S3 is reached by FQDN (toFQDNs needs the L7 DNS rule below). If the DNS-proxy path is ever fiddly, swap the
+toFQDNs rule for `toEntities: [world]` on 443 (broader, but a short-lived job pod).
+*/ -}}
+{{- if and .Values.persistence .Values.backups.bucket }}
+apiVersion: cilium.io/v2
+kind: CiliumNetworkPolicy
+metadata:
+  name: {{ .Values.name }}-redis-backup
+  namespace: {{ .Release.Namespace }}
+spec:
+  endpointSelector:
+    matchLabels:
+      app.kubernetes.io/name: {{ .Values.name }}
+      app.kubernetes.io/component: redis-backup
+  egress:
+    # DNS to CoreDNS — L7 so Cilium's DNS proxy can back the toFQDNs rule below.
+    - toEndpoints:
+        - matchLabels:
+            k8s:io.kubernetes.pod.namespace: kube-system
+            k8s-app: kube-dns
+      toPorts:
+        - ports:
+            - { port: "53", protocol: UDP }
+            - { port: "53", protocol: TCP }
+          rules:
+            dns:
+              - matchPattern: "*"
+    # The Redis instance — redis-cli --rdb full-sync on 6379.
+    - toEndpoints:
+        - matchLabels:
+            app: {{ .Values.name }}
+      toPorts:
+        - ports:
+            - { port: "6379", protocol: TCP }
+    # S3 upload over HTTPS (virtual-hosted + path-style regional endpoints).
+    - toFQDNs:
+        - matchPattern: "*.s3.{{ .Values.backups.region }}.amazonaws.com"
+        - matchName: "s3.{{ .Values.backups.region }}.amazonaws.com"
+      toPorts:
+        - ports:
+            - { port: "443", protocol: TCP }
+{{- end }}

@@ -37,6 +37,17 @@ spec:
         - ports:
             - { port: "6379", protocol: TCP }
     {{- end }}
+    # (a2) The backup CronJob (redis-cli --rdb) — only for a durable instance with S3 backups on.
+    {{- if and .Values.persistence .Values.backups.bucket }}
+    - fromEndpoints:
+        - matchLabels:
+            k8s:io.kubernetes.pod.namespace: {{ .Release.Namespace }}
+            app.kubernetes.io/name: {{ $name }}
+            app.kubernetes.io/component: redis-backup
+      toPorts:
+        - ports:
+            - { port: "6379", protocol: TCP }
+    {{- end }}
     # (b) The OpsTree operator reconciles/health-checks the instance over 6379.
     - fromEndpoints:
         - matchLabels:

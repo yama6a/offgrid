@@ -16,7 +16,8 @@ the platform's `03_redis_operator` app. Almost everything else is **hardcoded in
 truth, updated for every instance at once): the redis + exporter images/tags, `maxmemory` (80% of the memory limit,
 `noeviction`), the non-root uid/gid 1000 security context, and no-auth. A workload sets four **required** knobs
 (`name`, `resources`, `allowedClients`, `persistence`), plus an optional create-time `initialFixedDiskSize`. It is a
-single standalone instance — no HA/replication and no backups.
+single standalone instance — no HA/replication. **Durable** (`persistence: true`) instances optionally get
+off-cluster RDB backups to S3 (a CronJob, auto-on once configured; see `backups` below and `docs/13_backups.md`).
 
 ## Using it in a workload
 
@@ -67,6 +68,7 @@ No template is needed in the consumer.
 | `allowedClients`       | ✅        | —       | who may reach `:6379` — the only access control                                                                                                                  |
 | `persistence`          | ✅        | —       | `true` = durable (Retain class + AOF); `false` = ephemeral cache (Delete class, RDB-only)                                                                        |
 | `initialFixedDiskSize` |          | `1Gi`   | PVC size **at creation only** — changing it on a live instance has no effect (the storage class is fixed); grow via manual PVC expansion, see `docs/12_redis.md` |
+| `backups.schedule`     |          | `0 2 * * *` | cron for the S3 RDB dump (durable instances only). `backups.bucket`/`region` are set chart-wide by `15_redis_backup.sh`; empty bucket = backups off. See `docs/13_backups.md` |
 
 Everything else (images/tags, the redis-exporter, `maxmemory`, security context, no-auth) is pinned in
 `templates/redis.yaml` / `templates/configmap.yaml` / `templates/networkpolicy.yaml`; the storage class + AOF follow

@@ -15,3 +15,9 @@ wouldn't catch them. Runs in this chart's scope, so it sees the consumer's overr
 {{- if not (kindIs "bool" .Values.persistence) }}
 {{- fail "redis-instance: persistence is required and must be explicitly true (durable — Retain + AOF) or false (ephemeral cache — Delete + RDB-only); there is no default" }}
 {{- end }}
+{{- if and .Values.backups.bucket (not .Values.backups.region) }}
+{{- fail "redis-instance: backups.region is required when backups.bucket is set (both are injected together by 15_redis_backup.sh)" }}
+{{- end }}
+{{- if and .Values.backups.bucket (not .Values.backups.schedule) }}
+{{- fail "redis-instance: backups.schedule must be non-empty when backups are enabled" }}
+{{- end }}

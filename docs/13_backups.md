@@ -1,4 +1,4 @@
-# 13: Off-cluster backups — CNPG Postgres to S3
+# 13: Off-cluster backups — CNPG Postgres (+ Redis) to S3
 
 Until now durability was entirely **in-cluster**: Postgres replication across 2 instances + `local-path`
 `reclaimPolicy: Retain` ([08_storage.md](08_storage.md)). That survives a node loss, but not a bad `DROP`,
@@ -7,7 +7,8 @@ archiving + daily base backups from every CloudNativePG cluster to **S3**, via t
 **Barman Cloud CNPG-I plugin** — giving point-in-time recovery and a ~180-day recovery window.
 
 The S3 bucket is created by **Terraform** (the repo's only Terraform) and is deliberately general-purpose:
-CNPG backups land under `cnpg/` today; `longhorn/` and `redis/` prefixes are reserved for later consumers.
+CNPG backups land under `cnpg/` and Redis RDB dumps under `redis/` (see below); the `longhorn/` prefix is
+reserved for later. Redis reuses the SAME bucket, lifecycle, and IAM writer — see "Redis RDB backups" below.
 
 Pieces (Terraform is out-of-cluster; the plugin is platform; backups are configured per-cluster via the shared chart):
 
@@ -70,6 +71,7 @@ That's why the WAL-archive alert below is `critical`.
 - **One bucket, per-cluster prefix.** `destinationPath: s3://<bucket>/cnpg/`; Barman appends each cluster's
   `serverName` (= its `fullnameOverride`, unique per DB here), so clusters land in their own
   `cnpg/<clusterName>/{wals,base}/` — no collisions, one shared bucket + one sealed creds Secret per namespace.
+  Redis reuses the same bucket + writer under `redis/<namespace>/<instance>/` (its own sealed `redis-backup-s3`).
 
 ## Terraform (`terraform/`)
 
@@ -188,6 +190,30 @@ operator) when backups are on — the upstream CNPG rules cover HA/replication/d
 
 *Verify the exact metric/label (`value` vs `status`) and whether the backup-timestamp metric populates against
 the live cluster — see the verify steps below.*
+
+> ⚠️ **These CNPG PrometheusRule/VMRule alerts do NOT currently fire.** This cluster runs `vmalert` +
+> Alertmanager **disabled** (`05_victoria_metrics_k8s_stack`), so nothing evaluates VMRules — the only working
+> alert path is **Grafana-provisioned rules** (`05_grafana/values.yaml`). The Redis backup alerts below take
+> that path. The CNPG alerts above should be ported to Grafana rules too (tracked as an inconsistency).
+
+### Redis backup alerts (Grafana — the path that fires)
+
+`05_grafana/values.yaml` group `backups` adds two rules keyed on the CronJob **name** via kube-state-metrics
+(arbitrary pod/job labels aren't exported; the name always is):
+
+- **`redis-backup-failed`** (`warning`): `kube_job_failed{condition="true", job_name=~".+redis-backup.+"} > 0`
+  — a backup Job failed. Frequency-independent.
+- **`redis-backup-stale`** (`warning`): `time() - kube_cronjob_status_last_successful_time{cronjob=~".+-redis-backup"} > 36h`,
+  guarded `> 0` so it stays quiet before the first success. Tuned for the daily default; the failed alert covers
+  faster cadences. Verify `kube_cronjob_status_last_successful_time` exists in the running KSM at apply time.
+
+## Redis RDB backups
+
+Durable (`persistence: true`) Redis instances back up to S3 as periodic RDB dumps, reusing this bucket + writer +
+lifecycle under the `redis/` prefix. It's **auto-on** (a CronJob per durable instance, daily by default) — full
+mechanism, the `make configure-redis-backup` (step 15) runbook, and the `make restore-redis` recovery are
+documented in [12_redis.md](12_redis.md) ("Off-cluster backups — RDB to S3"). Unlike CNPG (Barman-managed
+retention), Redis relies entirely on the bucket's S3 lifecycle for expiry.
 
 ## The two recovery tiers
 

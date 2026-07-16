@@ -7,15 +7,15 @@ dependencies:
   version: 0.1.0
 - name: redis-instance
   repository: file://../../../../lib/helm/redis-instance
-  version: 0.1.0
+  version: 0.2.0
 - name: redis-instance
   repository: file://../../../../lib/helm/redis-instance
-  version: 0.1.0
+  version: 0.2.0
 - name: ingress
   repository: file://../../../../lib/helm/ingress
   version: 0.1.0
 - name: rabbitmq-topology
   repository: file://../../../../lib/helm/rabbitmq-topology
   version: 0.1.0
-digest: sha256:72ca7fc8ec7c8953ce9a4eb41f4356fbc3832af4123061480e06f8db47b48f52
-generated: "2026-07-13T14:23:53.038559+02:00"
+digest: sha256:603530c3ea72804c6dc320a7a99e20bf611d0f8f216fc349f0840c68a739d9d6
+generated: "2026-07-16T22:01:17.845331+02:00"
