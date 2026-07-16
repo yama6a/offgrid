@@ -1,0 +1,46 @@
+# ArgoCD Application for the CENTRAL Redis backup job (argo_apps/platform/charts/07_redis_backup/): ONE CronJob
+# in its own `redis-backup` namespace that discovers every DURABLE Redis instance cluster-wide (by the
+# `redis-backup.raspi-cluster/enabled` label the redis-instance chart stamps) and dumps each to S3 as an RDB.
+# Ships a ServiceAccount + a read-only ClusterRole on Redis CRs + the CronJob + one CiliumNetworkPolicy; the
+# single sealed S3 writer creds (redis-backup-s3) are committed by 15_redis_backup.sh. Reuses the shared bucket +
+# IAM writer under the redis/ prefix. See docs/12_redis.md + docs/13_backups.md.
+#
+# AUTOMATED (prune + selfHeal): a safe leaf. The CronJob only READS Redis (redis-cli --rdb) + WRITES to S3; a
+# prune deletes only this app's own objects (the job, RBAC, netpol), never any Redis data.
+#
+# sync-wave "7": after redis-operator (wave 3, so the Redis CRD its ClusterRole references exists) and
+# sealed-secrets (wave 2, to unseal the creds). It discovers instances at RUNTIME, so it needs none to exist when
+# created — the workloads tree (post-platform) fills them in; the first scheduled run after that picks them up.
+apiVersion: argoproj.io/v1alpha1
+kind: Application
+metadata:
+  name: redis-backup
+  namespace: argocd
+  # Cascade-delete this app's own resources on Application deletion instead of orphaning them; see 05_gitops.md.
+  finalizers:
+    - resources-finalizer.argocd.argoproj.io
+  annotations:
+    argocd.argoproj.io/sync-wave: "7"
+spec:
+  project: default
+  source:
+    repoURL: https://github.com/yama6a/offgrid
+    targetRevision: HEAD
+    path: argo_apps/platform/charts/07_redis_backup
+  destination:
+    server: https://kubernetes.default.svc
+    namespace: redis-backup
+  syncPolicy:
+    automated:
+      prune: true
+      selfHeal: true
+    retry:
+      limit: -1  # unbounded; only retry re-drives a failed sync (see 05_gitops.md)
+      refresh: true  # retry the latest revision so a fix commit lands mid-loop
+      backoff:
+        duration: 5s
+        factor: 2
+        maxDuration: 1m
+    syncOptions:
+      - CreateNamespace=true
+      - ServerSideApply=true

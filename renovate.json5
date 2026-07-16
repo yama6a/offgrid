@@ -46,7 +46,7 @@
         "/^\\.env\\.example$/",
         "/^lib/shell/.*\\.sh$/",
         "/^lib/helm/redis-instance/templates/redis\\.yaml$/",
-        "/^lib/helm/redis-instance/templates/backup-cronjob\\.yaml$/", // opstree-redis + aws-cli refs
+        "/^argo_apps/platform/charts/07_redis_backup/templates/cronjob\\.yaml$/", // alpine/k8s + opstree-redis refs
       ],
       matchStrings: [
         "# renovate: datasource=docker(?: versioning=(?<versioning>\\S+))?\\s+[^\\n]*?(?<depName>[a-z0-9][a-z0-9._/-]+):(?<currentValue>[\\w][\\w.-]*)(?:@(?<currentDigest>sha256:[a-f0-9]{64}))?",

@@ -11,10 +11,10 @@ description: >-
   podSecurityContext, and no-auth — gated by the network policy instead); a workload sets four REQUIRED knobs
   (name / resources / allowedClients / persistence) plus an OPTIONAL create-time initialFixedDiskSize (default 1Gi;
   changing it later has no effect — see docs/12_redis.md). A single standalone instance (no HA / replication
-  / sentinel / cluster); DURABLE instances optionally get off-cluster RDB backups to S3 (a CronJob, auto-on
-  once configured — see the backups block in values.yaml + docs/13_backups.md). Declared as an ALIASED
-  file:// dependency, once per instance (alias =>
+  / sentinel / cluster); DURABLE instances are labelled for off-cluster RDB backups to S3, done centrally by
+  the platform's 07_redis_backup app (not per instance — see docs/12_redis.md + docs/13_backups.md). Declared
+  as an ALIASED file:// dependency, once per instance (alias =>
   values key), the same shape as pg-cluster — so "one or more Redis per workload" is just "one or more aliases".
   See README.md and docs/12_redis.md.
 type: application
-version: 0.2.0                 # this chart's own version (0.2.0: optional S3 RDB backups for durable instances)
+version: 0.3.0                 # this chart's own version (0.3.0: durable instances labelled for central S3 backup)

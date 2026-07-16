@@ -1,0 +1,135 @@
+{{- /*
+The central backup CronJob. Rendered only when a bucket is configured (empty = feature off; set by
+15_redis_backup.sh). Three stages sharing an emptyDir /work, so partial success still uploads:
+  init  list   (alpine/k8s) — kubectl get redis -A -l <discoveryLabel> => /work/instances.txt (its SA has
+                              cluster-wide READ on Redis CRs; see rbac.yaml).
+  init  dump   (opstree redis) — per instance, redis-cli --rdb over the Service on 6379; continue on error,
+                              recording failures. --rdb only streams bytes, so this image need not match the
+                              server major.
+  main  upload (alpine/k8s) — aws s3 cp each dump to <prefix><ns>/<name>/<UTC>.rdb; exit non-zero if ANY
+                              instance failed at dump or upload => the Job fails => the Grafana alert fires.
+                              Per-instance detail is on stdout (-> VictoriaLogs).
+Egress is opened by networkpolicy.yaml; each durable instance's own policy allows this pod inbound on 6379.
+*/ -}}
+{{- if .Values.bucket }}
+apiVersion: batch/v1
+kind: CronJob
+metadata:
+  name: redis-backup
+  namespace: {{ .Release.Namespace }}
+  labels:
+    app.kubernetes.io/name: redis-backup
+    app.kubernetes.io/component: redis-backup
+spec:
+  schedule: {{ .Values.schedule | quote }}
+  concurrencyPolicy: Forbid          # never overlap runs
+  startingDeadlineSeconds: 300        # skip (don't stampede) a run the scheduler missed by >5m
+  successfulJobsHistoryLimit: 3
+  failedJobsHistoryLimit: 3
+  jobTemplate:
+    spec:
+      backoffLimit: 1
+      activeDeadlineSeconds: 1800     # a whole-fleet dump+upload that runs >30m is wedged — fail it
+      ttlSecondsAfterFinished: 86400  # GC finished jobs after a day
+      template:
+        metadata:
+          labels:
+            app.kubernetes.io/name: redis-backup
+            app.kubernetes.io/component: redis-backup
+        spec:
+          serviceAccountName: redis-backup
+          restartPolicy: Never
+          securityContext:
+            runAsNonRoot: true
+            runAsUser: 1000
+            runAsGroup: 1000
+            fsGroup: 1000
+            seccompProfile: { type: RuntimeDefault }
+          initContainers:
+            - name: list
+              # renovate: datasource=docker
+              image: "alpine/k8s:1.36.2"
+              command: ["/bin/sh", "-c"]
+              args:
+                - |
+                  set -eu
+                  kubectl get redis -A -l '{{ .Values.discoveryLabel }}=true' \
+                    -o jsonpath='{range .items[*]}{.metadata.namespace}{" "}{.metadata.name}{"\n"}{end}' > /work/instances.txt
+                  echo "discovered $(grep -c . /work/instances.txt || true) durable redis instance(s):"
+                  cat /work/instances.txt
+              securityContext:
+                allowPrivilegeEscalation: false
+                capabilities: { drop: ["ALL"] }
+              resources:
+                requests: { cpu: 25m, memory: 64Mi }
+                limits:   { memory: 256Mi }
+              volumeMounts:
+                - { name: work, mountPath: /work }
+            - name: dump
+              # renovate: datasource=docker
+              image: "quay.io/opstree/redis:v8.6.2"
+              command: ["/bin/sh", "-c"]
+              args:
+                - |
+                  set -u
+                  : > /work/failed.txt
+                  while read -r ns name; do
+                    [ -n "$ns" ] || continue
+                    echo "dumping $ns/$name"
+                    if redis-cli -h "$name.$ns.svc.cluster.local" -p 6379 --rdb "/work/${ns}__${name}.rdb"; then
+                      echo "  ok"
+                    else
+                      echo "  DUMP FAILED $ns/$name"; echo "$ns/$name dump" >> /work/failed.txt
+                    fi
+                  done < /work/instances.txt
+                  exit 0
+              securityContext:
+                allowPrivilegeEscalation: false
+                capabilities: { drop: ["ALL"] }
+              resources:
+                requests: { cpu: 25m, memory: 64Mi }
+                limits:   { memory: 256Mi }
+              volumeMounts:
+                - { name: work, mountPath: /work }
+          containers:
+            - name: upload
+              # renovate: datasource=docker
+              image: "alpine/k8s:1.36.2"
+              command: ["/bin/sh", "-c"]
+              args:
+                - |
+                  set -u
+                  ts="$(date -u +%Y%m%dT%H%M%SZ)"
+                  while read -r ns name; do
+                    [ -n "$ns" ] || continue
+                    f="/work/${ns}__${name}.rdb"
+                    [ -f "$f" ] || { echo "no dump for $ns/$name (already recorded as failed)"; continue; }
+                    key="${PREFIX}${ns}/${name}/${ts}.rdb"
+                    echo "uploading $ns/$name -> s3://${BUCKET}/${key}"
+                    if aws s3 cp "$f" "s3://${BUCKET}/${key}"; then echo "  ok"; else echo "  UPLOAD FAILED $ns/$name"; echo "$ns/$name upload" >> /work/failed.txt; fi
+                  done < /work/instances.txt
+                  if [ -s /work/failed.txt ]; then echo "FAILURES:"; cat /work/failed.txt; exit 1; fi
+                  echo "all backups ok"
+              env:
+                - { name: HOME,   value: /work }
+                - { name: BUCKET, value: {{ .Values.bucket | quote }} }
+                - { name: PREFIX, value: {{ .Values.prefix | quote }} }
+                - { name: AWS_DEFAULT_REGION, value: {{ .Values.region | quote }} }
+                - name: AWS_ACCESS_KEY_ID
+                  valueFrom:
+                    secretKeyRef: { name: {{ .Values.secretName }}, key: AWS_ACCESS_KEY_ID }
+                - name: AWS_SECRET_ACCESS_KEY
+                  valueFrom:
+                    secretKeyRef: { name: {{ .Values.secretName }}, key: AWS_SECRET_ACCESS_KEY }
+              securityContext:
+                allowPrivilegeEscalation: false
+                capabilities: { drop: ["ALL"] }
+              resources:
+                requests: { cpu: 25m, memory: 64Mi }
+                limits:   { memory: 256Mi }
+              volumeMounts:
+                - { name: work, mountPath: /work }
+          volumes:
+            - name: work
+              emptyDir: {}
+{{- end }}

@@ -2,19 +2,20 @@
 #
 # recover_redis_from_s3.sh  (macOS)
 #
-# Restore a standalone OpsTree Redis instance from its off-cluster S3 RDB dumps (written by the per-instance
-# backup CronJob, 15_redis_backup.sh). Second DR tier — use it when the data is genuinely gone (disk/cluster
-# loss, corruption, or a bad write you want to rewind). See docs/12_redis.md and docs/13_backups.md.
+# Restore a standalone OpsTree Redis instance from its off-cluster S3 RDB dumps (written by the central backup
+# CronJob, 07_redis_backup / 15_redis_backup.sh). Second DR tier — use it when the data is genuinely gone
+# (disk/cluster loss, corruption, or a bad write you want to rewind). See docs/12_redis.md and docs/13_backups.md.
 #
 # Live, in-place, full-fidelity restore that NEVER deletes the Redis CR or touches its PVC/AOF files (so the
 # OpsTree operator is left alone):
-#   1. a TEMPORARY seed pod boots a plain redis-server from the chosen RDB (appendonly off) -> holds the dataset
-#   2. a break-glass CiliumNetworkPolicy opens target<->seed on 6379 for the duration
+#   1. a TEMPORARY seed pod (in ns redis-backup, where the sealed S3 creds live) downloads the chosen RDB and
+#      boots a plain redis-server from it (appendonly off) -> holds the dataset. Its image == the instance's
+#      image (grepped from redis.yaml), so it can load the dump (an RDB is forward-only).
+#   2. break-glass CiliumNetworkPolicies open target(ns) <-> seed(redis-backup ns) on 6379 for the duration.
 #   3. the target is made a replica of the seed (REPLICAOF) -> full resync PULLS the whole dataset (all types +
-#      TTLs, exact fidelity, matches the RDB version because the seed image == the instance image), then
-#      REPLICAOF NO ONE promotes it back to a standalone master. Its appendonly=yes rebuilds the AOF from the
-#      restored data automatically.
-#   4. the seed pod + break-glass netpol are torn down.
+#      TTLs, exact fidelity), then REPLICAOF NO ONE promotes it back to a standalone master. Its appendonly=yes
+#      rebuilds the AOF from the restored data automatically.
+#   4. the seed pod + break-glass netpols are torn down (a cleanup trap runs even on failure).
 # `FLUSHALL` on the target first => a CLEAN replace, not a merge. Prompts before the destructive step.
 #
 # Usage (flags optional — prompts for anything missing):
@@ -27,9 +28,10 @@ SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 source "${SCRIPT_DIR}/common.sh"
 
 # ---- knobs ----
-REDIS_VALUES="${REPO_ROOT}/lib/helm/redis-instance/values.yaml"   # single source for bucket/prefix
+RB_VALUES="${REPO_ROOT}/argo_apps/platform/charts/07_redis_backup/values.yaml"  # single source for bucket/prefix
 REDIS_TPL="${REPO_ROOT}/lib/helm/redis-instance/templates/redis.yaml"  # single source for the server image tag
-SECRET_NAME="redis-backup-s3"                                     # the sealed writer creds in the namespace
+SEED_NS="redis-backup"                                            # the seed runs where the sealed creds live
+SECRET_NAME="redis-backup-s3"                                     # the sealed writer creds in SEED_NS
 # renovate: datasource=docker
 AWSCLI_IMAGE="public.ecr.aws/aws-cli/aws-cli:2.36.0"             # the seed's S3-download initContainer
 
@@ -49,15 +51,15 @@ use_kubeconfig
 assert_api
 
 # S3 listing runs on the HOST with the .env DEPLOYER creds (read is within its s3:* on the bucket). The in-cluster
-# download uses the sealed WRITER creds already in the namespace — no host writer creds needed.
+# download uses the sealed WRITER creds already in ns redis-backup — no host writer creds needed.
 [ -n "$AWS_DEPLOY_ACCESS_KEY_ID" ] || die "AWS_DEPLOY_ACCESS_KEY_ID empty in .env — needed to list S3 backups"
 export AWS_ACCESS_KEY_ID="$AWS_DEPLOY_ACCESS_KEY_ID"
 export AWS_SECRET_ACCESS_KEY="$AWS_DEPLOY_SECRET_ACCESS_KEY_SECRET"
 export AWS_DEFAULT_REGION="$AWS_REGION"
 
-BUCKET="$(yq -r '.backups.bucket' "$REDIS_VALUES")"
-PREFIX="$(yq -r '.backups.prefix' "$REDIS_VALUES")"
-[ -n "$BUCKET" ] && [ "$BUCKET" != "null" ] || die "backups.bucket is unset in ${REDIS_VALUES} — run 15_redis_backup.sh first"
+BUCKET="$(yq -r '.bucket' "$RB_VALUES")"
+PREFIX="$(yq -r '.prefix' "$RB_VALUES")"
+[ -n "$BUCKET" ] && [ "$BUCKET" != "null" ] || die "bucket is unset in ${RB_VALUES} — run 15_redis_backup.sh first"
 
 # Seed image == the instance's server image (grepped from the CR template): an RDB is forward-only, so the seed
 # that loads it MUST match the instance major. Tracks renovate's bumps of redis.yaml automatically.
@@ -73,8 +75,8 @@ say "Redis restore from S3 — seed pod + replication resync (in-place, non-dest
 
 kubectl -n "$NS" get redis "$INSTANCE" >/dev/null 2>&1 \
   || die "Redis CR ${NS}/${INSTANCE} not found — check the namespace/name"
-kubectl -n "$NS" get secret "$SECRET_NAME" >/dev/null 2>&1 \
-  || die "sealed creds ${NS}/${SECRET_NAME} missing — seal them first (15_redis_backup.sh / commit the SealedSecret)"
+kubectl -n "$SEED_NS" get secret "$SECRET_NAME" >/dev/null 2>&1 \
+  || die "sealed creds ${SEED_NS}/${SECRET_NAME} missing — enable backups first (make configure-redis-backup)"
 
 DEST="s3://${BUCKET}/${PREFIX}${NS}/${INSTANCE}/"
 if [ "$TARGET" = "latest" ]; then
@@ -96,10 +98,9 @@ BG_NETPOL="redis-restore-breakglass-${INSTANCE}"
 
 echo
 say "Restore plan"
-echo "    Namespace   : ${NS}"
-echo "    Instance    : ${INSTANCE}  (target pod ${TARGET_POD})"
+echo "    Target      : ${NS}/${INSTANCE}  (pod ${TARGET_POD})"
 echo "    From        : ${OBJECT}"
-echo "    Seed pod    : ${SEED_POD}  (image ${SEED_IMAGE})"
+echo "    Seed pod    : ${SEED_NS}/${SEED_POD}  (image ${SEED_IMAGE})"
 echo "    Method      : FLUSHALL the target, then REPLICAOF the seed (CLEAN REPLACE), then promote back."
 echo
 warn "This ERASES the target's current data and replaces it with the dump. This is destructive."
@@ -110,36 +111,21 @@ fi
 
 # ---- cleanup trap -----------------------------------------------------------
 cleanup() {
-  warn "cleaning up seed pod + break-glass netpol"
-  kubectl -n "$NS" delete pod "$SEED_POD" --ignore-not-found --wait=false >/dev/null 2>&1 || true
-  kubectl -n "$NS" delete ciliumnetworkpolicy "${BG_NETPOL}-target" "${BG_NETPOL}-seed" --ignore-not-found >/dev/null 2>&1 || true
+  warn "cleaning up seed pod + break-glass netpols"
+  kubectl -n "$SEED_NS" delete pod "$SEED_POD" --ignore-not-found --wait=false >/dev/null 2>&1 || true
+  kubectl -n "$SEED_NS" delete ciliumnetworkpolicy "${BG_NETPOL}-seed" --ignore-not-found >/dev/null 2>&1 || true
+  kubectl -n "$NS" delete ciliumnetworkpolicy "${BG_NETPOL}-target" --ignore-not-found >/dev/null 2>&1 || true
 }
 trap cleanup EXIT
 
-# ---- 2. break-glass netpol (target<->seed on 6379, seed egress DNS+S3) ------
-say "applying break-glass network policy"
+# ---- 2. break-glass netpols (target<->seed on 6379; seed egress DNS+S3) -----
+say "applying break-glass network policies"
 kubectl apply -f - >/dev/null <<YAML
 apiVersion: cilium.io/v2
 kind: CiliumNetworkPolicy
 metadata:
-  name: ${BG_NETPOL}-target
-  namespace: ${NS}
-spec:
-  endpointSelector:
-    matchLabels: { app: ${INSTANCE} }
-  egress:
-    - toEndpoints:
-        - matchLabels:
-            app.kubernetes.io/component: redis-restore
-            app.kubernetes.io/name: ${INSTANCE}
-      toPorts:
-        - ports: [{ port: "6379", protocol: TCP }]
----
-apiVersion: cilium.io/v2
-kind: CiliumNetworkPolicy
-metadata:
   name: ${BG_NETPOL}-seed
-  namespace: ${NS}
+  namespace: ${SEED_NS}
 spec:
   endpointSelector:
     matchLabels:
@@ -147,7 +133,9 @@ spec:
       app.kubernetes.io/name: ${INSTANCE}
   ingress:
     - fromEndpoints:
-        - matchLabels: { app: ${INSTANCE} }
+        - matchLabels:
+            k8s:io.kubernetes.pod.namespace: ${NS}
+            app: ${INSTANCE}
       toPorts:
         - ports: [{ port: "6379", protocol: TCP }]
   egress:
@@ -164,18 +152,35 @@ spec:
         - matchName: "s3.${AWS_REGION}.amazonaws.com"
       toPorts:
         - ports: [{ port: "443", protocol: TCP }]
+---
+apiVersion: cilium.io/v2
+kind: CiliumNetworkPolicy
+metadata:
+  name: ${BG_NETPOL}-target
+  namespace: ${NS}
+spec:
+  endpointSelector:
+    matchLabels: { app: ${INSTANCE} }
+  egress:
+    - toEndpoints:
+        - matchLabels:
+            k8s:io.kubernetes.pod.namespace: ${SEED_NS}
+            app.kubernetes.io/component: redis-restore
+            app.kubernetes.io/name: ${INSTANCE}
+      toPorts:
+        - ports: [{ port: "6379", protocol: TCP }]
 YAML
-ok "break-glass netpol applied"
+ok "break-glass netpols applied"
 
 # ---- 3. seed pod: download the RDB, boot redis from it ----------------------
 say "creating seed pod (downloads the RDB, serves it as a master)"
-kubectl -n "$NS" delete pod "$SEED_POD" --ignore-not-found >/dev/null 2>&1 || true
+kubectl -n "$SEED_NS" delete pod "$SEED_POD" --ignore-not-found >/dev/null 2>&1 || true
 kubectl apply -f - >/dev/null <<YAML
 apiVersion: v1
 kind: Pod
 metadata:
   name: ${SEED_POD}
-  namespace: ${NS}
+  namespace: ${SEED_NS}
   labels:
     app.kubernetes.io/name: ${INSTANCE}
     app.kubernetes.io/component: redis-restore
@@ -215,11 +220,11 @@ spec:
 YAML
 
 say "waiting for the seed pod to be Ready"
-kubectl -n "$NS" wait --for=condition=Ready "pod/${SEED_POD}" --timeout=180s \
-  || die "seed pod ${SEED_POD} did not become Ready (check: kubectl -n ${NS} logs ${SEED_POD})"
-SEED_IP="$(kubectl -n "$NS" get pod "$SEED_POD" -o jsonpath='{.status.podIP}')"
+kubectl -n "$SEED_NS" wait --for=condition=Ready "pod/${SEED_POD}" --timeout=180s \
+  || die "seed pod ${SEED_NS}/${SEED_POD} did not become Ready (check: kubectl -n ${SEED_NS} logs ${SEED_POD})"
+SEED_IP="$(kubectl -n "$SEED_NS" get pod "$SEED_POD" -o jsonpath='{.status.podIP}')"
 [ -n "$SEED_IP" ] || die "could not read seed pod IP"
-SEED_DBSIZE="$(kubectl -n "$NS" exec "$SEED_POD" -c seed -- redis-cli DBSIZE | tr -dc '0-9')"
+SEED_DBSIZE="$(kubectl -n "$SEED_NS" exec "$SEED_POD" -c seed -- redis-cli DBSIZE | tr -dc '0-9')"
 ok "seed serving on ${SEED_IP}, loaded ${SEED_DBSIZE} keys from the dump"
 
 # ---- 4. resync the target from the seed -------------------------------------
@@ -228,6 +233,7 @@ kubectl -n "$NS" exec "$TARGET_POD" -- redis-cli FLUSHALL >/dev/null
 kubectl -n "$NS" exec "$TARGET_POD" -- redis-cli REPLICAOF "$SEED_IP" 6379 >/dev/null
 
 say "waiting for the full resync to complete"
+LINK=""
 for _ in $(seq 1 60); do
   LINK="$(kubectl -n "$NS" exec "$TARGET_POD" -- redis-cli INFO replication 2>/dev/null | tr -d '\r')"
   echo "$LINK" | grep -q 'master_link_status:up' \
@@ -243,6 +249,6 @@ TGT_DBSIZE="$(kubectl -n "$NS" exec "$TARGET_POD" -- redis-cli DBSIZE | tr -dc '
 [ "$TGT_DBSIZE" = "$SEED_DBSIZE" ] && ok "target now holds ${TGT_DBSIZE} keys (matches the dump)" \
   || bad "target has ${TGT_DBSIZE} keys but the dump had ${SEED_DBSIZE} — investigate"
 
-# ---- 5. done (trap tears down the seed + netpol) ----------------------------
+# ---- 5. done (trap tears down the seed + netpols) ---------------------------
 summary
 [ "$FAIL" -eq 0 ]

@@ -1,0 +1,50 @@
+{{- /*
+Egress lockdown for the central backup pod. Rendered under the same bucket gate as the CronJob. Egress-only
+(the pod exposes nothing): deny-by-default egress except the four things the run needs — the kube-apiserver
+(kubectl discovery), DNS, Redis on 6379 (any instance, any namespace), and S3 on 443. Each durable instance's
+own policy (lib/helm/redis-instance networkpolicy.yaml, rule a2) separately allows THIS pod inbound on 6379.
+
+Redis egress is port-scoped to any endpoint rather than a label — the job only dials the instances it discovered
+via the API, and a broad :6379 allow avoids depending on an operator pod label. S3 is reached by FQDN (needs the
+L7 DNS rule); swap to `toEntities: [world]` on 443 if the DNS-proxy path is ever fiddly.
+*/ -}}
+{{- if .Values.bucket }}
+apiVersion: cilium.io/v2
+kind: CiliumNetworkPolicy
+metadata:
+  name: redis-backup
+  namespace: {{ .Release.Namespace }}
+spec:
+  endpointSelector:
+    matchLabels:
+      app.kubernetes.io/name: redis-backup
+      app.kubernetes.io/component: redis-backup
+  egress:
+    # (a) The API server — kubectl discovers durable Redis CRs cluster-wide.
+    - toEntities: [kube-apiserver]
+    # (b) DNS to CoreDNS — L7 so Cilium's DNS proxy can back the toFQDNs rule below (and resolve Service names).
+    - toEndpoints:
+        - matchLabels:
+            k8s:io.kubernetes.pod.namespace: kube-system
+            k8s-app: kube-dns
+      toPorts:
+        - ports:
+            - { port: "53", protocol: UDP }
+            - { port: "53", protocol: TCP }
+          rules:
+            dns:
+              - matchPattern: "*"
+    # (c) Redis dump — redis-cli --rdb to any instance's Service on 6379 (any namespace).
+    - toEndpoints:
+        - {}
+      toPorts:
+        - ports:
+            - { port: "6379", protocol: TCP }
+    # (d) S3 upload over HTTPS (virtual-hosted + path-style regional endpoints).
+    - toFQDNs:
+        - matchPattern: "*.s3.{{ .Values.region }}.amazonaws.com"
+        - matchName: "s3.{{ .Values.region }}.amazonaws.com"
+      toPorts:
+        - ports:
+            - { port: "443", protocol: TCP }
+{{- end }}

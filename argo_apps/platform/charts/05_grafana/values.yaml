@@ -329,9 +329,10 @@ grafana:
                     conditions:
                       - type: query
                         evaluator: {type: gt, params: [0]}
-        # Off-cluster Redis RDB backups (CronJobs from lib/helm/redis-instance, name `*-redis-backup`). vmalert
-        # is off so VMRules are inert — these live here (the only path that fires) and key off the CronJob/Job
-        # NAME via kube-state-metrics (arbitrary labels aren't exported; the name always is). See docs/13_backups.md.
+        # Off-cluster Redis RDB backups (the single central CronJob `redis-backup` in ns redis-backup, from the
+        # 07_redis_backup app). vmalert is off so VMRules are inert — these live here (the only path that fires)
+        # and key off the CronJob/Job NAME via kube-state-metrics. Job-level, not per-instance: which instance
+        # failed is in the job's stdout (VictoriaLogs). See docs/13_backups.md.
         - orgId: 1
           name: backups
           folder: raspi-cluster
@@ -353,7 +354,7 @@ grafana:
                   model:
                     refId: A
                     instant: true
-                    expr: 'max by (namespace, job_name) (kube_job_failed{condition="true", job_name=~".+redis-backup.+"})'
+                    expr: 'max by (namespace, job_name) (kube_job_failed{condition="true", namespace="redis-backup", job_name=~"redis-backup-.+"})'
                 - refId: B
                   relativeTimeRange: {from: 600, to: 0}
                   datasourceUid: __expr__
@@ -369,11 +370,10 @@ grafana:
                     conditions:
                       - type: query
                         evaluator: {type: gt, params: [0]}
-            # Staleness: no successful backup recently. `last_successful_time > 0` keeps only cronjobs that have
-            # succeeded at least once (absent series => NoData => OK, so it won't fire before the first run).
-            # 129600s = 36h (daily + slack, matching CNPG); tuned for the daily default — the failed-job alert
-            # covers sub-daily schedules. VERIFY kube_cronjob_status_last_successful_time exists in the running
-            # kube-state-metrics at apply time. See docs/13_backups.md.
+            # Staleness: no successful backup recently. `last_successful_time > 0` keeps it quiet before the first
+            # run (absent series => NoData => OK). 129600s = 36h (daily + slack, matching CNPG); raise it if you
+            # set a slower schedule in the 07_redis_backup values. VERIFY kube_cronjob_status_last_successful_time
+            # exists in the running kube-state-metrics at apply time. See docs/13_backups.md.
             - uid: redis-backup-stale
               title: Redis backup is stale
               condition: C
@@ -390,7 +390,7 @@ grafana:
                   model:
                     refId: A
                     instant: true
-                    expr: 'time() - max by (namespace, cronjob) (kube_cronjob_status_last_successful_time{cronjob=~".+-redis-backup"} > 0)'
+                    expr: 'time() - max by (namespace, cronjob) (kube_cronjob_status_last_successful_time{namespace="redis-backup", cronjob="redis-backup"} > 0)'
                 - refId: B
                   relativeTimeRange: {from: 600, to: 0}
                   datasourceUid: __expr__

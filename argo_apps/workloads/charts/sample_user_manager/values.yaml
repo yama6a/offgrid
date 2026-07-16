@@ -132,8 +132,7 @@ redis-cache:
 redis-sessions:
   name: sample-user-manager-redis-sessions
   persistence: true           # durable: Retain class + AOF (crash-durable) — showcases the persistent mode
-  # Durable => auto-backed-up to S3 once 15_redis_backup.sh runs (daily). Uncomment to change the cadence:
-  # backups: { schedule: "0 */6 * * *" }
+  # Durable => labelled for backup + backed up automatically by the central 07_redis_backup job (see 12_redis.md).
   initialFixedDiskSize: 1Gi   # create-time ONLY — changing this does NOT resize a live instance (see 12_redis.md)
   resources:
     requests: { cpu: 25m, memory: 64Mi }

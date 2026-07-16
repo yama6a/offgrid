@@ -121,29 +121,35 @@ variant — not added for now. Off-cluster backup, once out of scope, is now cov
 
 ## Off-cluster backups — RDB to S3
 
-Durable (`persistence: true`) instances back up to S3 as periodic RDB dumps; ephemeral instances never do (they're
-regenerable by definition). It's **auto-on**: a durable instance renders a `<name>-redis-backup` CronJob as soon as
-the feature is configured — there's no per-instance enable flag, only an optional `backups.schedule` (default daily
-`0 2 * * *`). Shares the S3 bucket + IAM writer with CNPG; see `docs/13_backups.md` for the bucket/Terraform/creds.
+Durable (`persistence: true`) instances are backed up to S3 as periodic RDB dumps; ephemeral instances never are
+(regenerable by definition). One **central** platform app does it for the whole cluster — `07_redis_backup`
+(wave 7, ns `redis-backup`) — not a per-instance CronJob. This means **one sealed secret in one namespace, no
+per-namespace list**: the price is a single global schedule and job-level (not per-instance) alerting. Shares the
+S3 bucket + IAM writer with CNPG; see `docs/13_backups.md` for the bucket/Terraform/creds.
 
-How it works (all in `lib/helm/redis-instance`):
+How it works (`argo_apps/platform/charts/07_redis_backup`):
 
-- **Dump** — the CronJob's init container runs `redis-cli --rdb` against the instance's Service on `:6379`. That's a
-  replication full-sync → an app-consistent point-in-time RDB, with no PVC or AOF-file access and no auth (the
-  network policy is the gate). The dump image is the same opstree Redis as the server, but `--rdb` only streams
-  bytes so it's version-tolerant regardless.
-- **Upload** — a second container `aws s3 cp`s the dump to `s3://<bucket>/redis/<namespace>/<name>/<UTC>.rdb`.
-  Creds come from the per-namespace sealed `redis-backup-s3` secret (keys `AWS_ACCESS_KEY_ID` /
-  `AWS_SECRET_ACCESS_KEY`); the bucket enforces SSE-S3. Retention/tiering is the bucket's lifecycle (Glacier IR
-  @30d, expire @180d) — not set per instance.
-- **Network** — a dedicated CiliumNetworkPolicy gives the backup pod egress to DNS, the instance on `6379`, and S3
-  on `443` (`toFQDNs *.s3.<region>.amazonaws.com`); the instance's own policy allows the backup pod inbound.
+- **Discovery, not a list.** The `redis-instance` chart stamps `redis-backup.raspi-cluster/enabled: "true"` on the
+  `Redis` CR of every durable instance. The job's `list` container (`kubectl get redis -A -l ...`, via a
+  read-only cluster-wide ClusterRole) finds them all — add a durable instance anywhere and it's picked up.
+- **Dump.** For each, `redis-cli --rdb` against the instance's Service on `:6379` — a replication full-sync →
+  app-consistent point-in-time RDB, no PVC/AOF-file access, no auth (network policy is the gate). Continues past a
+  single instance's failure so partial success still uploads. The dump image need not match the server major
+  (`--rdb` only streams bytes).
+- **Upload.** `aws s3 cp` each dump to `s3://<bucket>/redis/<namespace>/<name>/<UTC>.rdb`; creds from the single
+  sealed `redis-backup-s3` secret (keys `AWS_ACCESS_KEY_ID`/`AWS_SECRET_ACCESS_KEY`), SSE-S3 by the bucket.
+  Retention/tiering is the bucket's lifecycle (Glacier IR @30d, expire @180d). The job exits non-zero if any
+  instance failed → the Job fails → the alert fires; which instance is in the job's stdout (→ VictoriaLogs).
+- **Network.** The job's CiliumNetworkPolicy allows egress to the kube-apiserver (discovery), DNS, `:6379`
+  cluster-wide, and S3 `:443`. Each durable instance's own policy hardcodes an inbound allow from the
+  `redis-backup` namespace (rule `(a2)`).
 
-**Turning it on:** `make configure-redis-backup` (step 15) reads the Terraform writer creds, writes
-`backups.bucket`/`region` once into `lib/helm/redis-instance/values.yaml` (chart-wide), and seals `redis-backup-s3`
-into each namespace listed in the script's `REDIS_BACKUP_TARGETS`. Add a line there for every new namespace that
-gains a durable instance, then commit + push (incl. the refreshed consumer `Chart.lock`). Empty
-`AWS_DEPLOY_ACCESS_KEY_ID` in `.env` ⇒ the step no-ops and nothing renders (the repo's "empty = off" contract).
+**Turning it on** (single action): `make configure-redis-backup` (step 15) reads the Terraform writer creds,
+writes `bucket`/`region` once into `argo_apps/platform/charts/07_redis_backup/values.yaml`, and seals
+`redis-backup-s3` into the `redis-backup` namespace. Commit + push. Empty `AWS_DEPLOY_ACCESS_KEY_ID` in `.env` ⇒
+the step no-ops and the CronJob doesn't render (the repo's "empty = off" contract). The bootstrap orchestrator
+runs step 15 automatically, so a fresh cluster comes up with backups on. Schedule lives in the app's `values.yaml`
+(default daily `0 2 * * *`).
 
 Monitoring is two Grafana alerts (`redis-backup-failed`, `redis-backup-stale`) — see `docs/13_backups.md`.
 
@@ -152,14 +158,15 @@ Monitoring is two Grafana alerts (`redis-backup-failed`, `redis-backup-stale`) �
 `make restore-redis` (`recover_redis_from_s3.sh <namespace> <instance> [latest|<s3-key>]`) does a live, in-place,
 full-fidelity restore that **never deletes the CR or touches the PVC/AOF files** (the operator is left alone):
 
-1. a temporary **seed pod** boots a plain `redis-server` from the chosen RDB (`appendonly no`) → holds the dataset.
-   Its image is read from `redis.yaml` at runtime, so it always matches the instance's major (an RDB is
-   forward-only — a v7 seed can't load a v8 dump);
-2. a **break-glass** CiliumNetworkPolicy opens target↔seed on `6379` for the duration;
+1. a temporary **seed pod** in the `redis-backup` namespace (where the sealed creds live) downloads the chosen RDB
+   and boots a plain `redis-server` from it (`appendonly no`) → holds the dataset. Its image is read from
+   `redis.yaml` at runtime, so it always matches the instance's major (an RDB is forward-only — a v7 seed can't
+   load a v8 dump);
+2. **break-glass** CiliumNetworkPolicies open target↔seed on `6379` across the two namespaces for the duration;
 3. the target is `FLUSHALL`ed (a **clean replace**, prompted) then made a replica of the seed (`REPLICAOF`) → a full
    resync pulls the whole dataset (all types + TTLs, exact fidelity), then `REPLICAOF NO ONE` promotes it back to a
    standalone master. Its `appendonly yes` rebuilds the AOF from the restored data automatically;
-4. the seed pod + break-glass policy are torn down (a cleanup trap runs even on failure).
+4. the seed pod + break-glass policies are torn down (a cleanup trap runs even on failure).
 
 Replication is chosen over an offline PVC swap (which fights the operator + AOF) or `redis-rdb-tools` (unmaintained,
 fragile on new RDB versions). The offline path is possible but not scripted. Caveat: the OpsTree operator may

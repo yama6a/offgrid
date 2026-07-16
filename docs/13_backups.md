@@ -71,7 +71,8 @@ That's why the WAL-archive alert below is `critical`.
 - **One bucket, per-cluster prefix.** `destinationPath: s3://<bucket>/cnpg/`; Barman appends each cluster's
   `serverName` (= its `fullnameOverride`, unique per DB here), so clusters land in their own
   `cnpg/<clusterName>/{wals,base}/` — no collisions, one shared bucket + one sealed creds Secret per namespace.
-  Redis reuses the same bucket + writer under `redis/<namespace>/<instance>/` (its own sealed `redis-backup-s3`).
+  Redis reuses the same bucket + writer under `redis/<namespace>/<instance>/`, but with ONE sealed
+  `redis-backup-s3` in a single namespace (its backup runs centrally — see "Redis RDB backups").
 
 ## Terraform (`terraform/`)
 
@@ -201,19 +202,22 @@ the live cluster — see the verify steps below.*
 `05_grafana/values.yaml` group `backups` adds two rules keyed on the CronJob **name** via kube-state-metrics
 (arbitrary pod/job labels aren't exported; the name always is):
 
-- **`redis-backup-failed`** (`warning`): `kube_job_failed{condition="true", job_name=~".+redis-backup.+"} > 0`
-  — a backup Job failed. Frequency-independent.
-- **`redis-backup-stale`** (`warning`): `time() - kube_cronjob_status_last_successful_time{cronjob=~".+-redis-backup"} > 36h`,
-  guarded `> 0` so it stays quiet before the first success. Tuned for the daily default; the failed alert covers
-  faster cadences. Verify `kube_cronjob_status_last_successful_time` exists in the running KSM at apply time.
+- **`redis-backup-failed`** (`warning`): `kube_job_failed{condition="true", namespace="redis-backup", job_name=~"redis-backup-.+"} > 0`
+  — the central backup Job failed (one or more instances failed to dump/upload; the job's stdout says which).
+- **`redis-backup-stale`** (`warning`): `time() - kube_cronjob_status_last_successful_time{namespace="redis-backup", cronjob="redis-backup"} > 36h`,
+  guarded `> 0` so it stays quiet before the first success. Raise it if you set a slower schedule. Verify
+  `kube_cronjob_status_last_successful_time` exists in the running KSM at apply time.
 
 ## Redis RDB backups
 
 Durable (`persistence: true`) Redis instances back up to S3 as periodic RDB dumps, reusing this bucket + writer +
-lifecycle under the `redis/` prefix. It's **auto-on** (a CronJob per durable instance, daily by default) — full
-mechanism, the `make configure-redis-backup` (step 15) runbook, and the `make restore-redis` recovery are
-documented in [12_redis.md](12_redis.md) ("Off-cluster backups — RDB to S3"). Unlike CNPG (Barman-managed
-retention), Redis relies entirely on the bucket's S3 lifecycle for expiry.
+lifecycle under the `redis/` prefix. Done by ONE **central** platform app — `07_redis_backup` (wave 7, ns
+`redis-backup`): a single CronJob discovers every durable instance cluster-wide (by label), dumps each with
+`redis-cli --rdb`, and uploads. So there's **one sealed `redis-backup-s3` secret in one namespace, no
+per-namespace list** — the trade is a single global schedule and job-level alerting (which instance failed is in
+the job's stdout → VictoriaLogs). Full mechanism, the `make configure-redis-backup` (step 15) runbook, and the
+`make restore-redis` recovery are in [12_redis.md](12_redis.md) ("Off-cluster backups — RDB to S3"). Unlike CNPG
+(Barman-managed retention), Redis relies entirely on the bucket's S3 lifecycle for expiry.
 
 ## The two recovery tiers
 

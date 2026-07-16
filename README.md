@@ -274,3 +274,4 @@ Pi 5 Talos image builds on [talos-rpi5/talos-builder](https://github.com/talos-r
 - longhorn backups?
 - remove versions from code comments and markdown.
 - optional DNS-01 auth (fallback to HTTP-01 when cloudflare secret not set in .env)
+- Alerting (prometheus rules and vmalerts to grafana)

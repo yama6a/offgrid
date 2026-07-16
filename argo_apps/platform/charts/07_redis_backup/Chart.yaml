@@ -1,0 +1,11 @@
+apiVersion: v2
+name: redis-backup
+description: >-
+  The CENTRAL Redis backup app: ONE CronJob (in ns redis-backup) that discovers every DURABLE OpsTree Redis
+  instance cluster-wide (by the redis-backup.raspi-cluster/enabled label) and dumps each to S3 as an RDB
+  (redis-cli --rdb -> aws s3 cp). First-party chart (no upstream dependency): ships a ServiceAccount + a
+  read-only ClusterRole on Redis CRs + the CronJob + a default-deny CiliumNetworkPolicy. The single sealed S3
+  writer creds (redis-backup-s3) are committed by lib/shell/15_redis_backup.sh. One namespace => one secret, no
+  per-namespace list. See docs/12_redis.md + docs/13_backups.md.
+type: application
+version: 0.1.0                 # this chart's own version

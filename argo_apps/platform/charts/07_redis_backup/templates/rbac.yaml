@@ -1,0 +1,24 @@
+# Cluster-wide READ on Redis CRs only — the least the discovery step needs to `kubectl get redis -A -l ...`
+# across every namespace. No write, no other resources; the dump reaches instances over the network (netpol),
+# not via the API.
+apiVersion: rbac.authorization.k8s.io/v1
+kind: ClusterRole
+metadata:
+  name: redis-backup
+rules:
+  - apiGroups: ["redis.redis.opstreelabs.in"]
+    resources: ["redis"]
+    verbs: ["get", "list", "watch"]
+---
+apiVersion: rbac.authorization.k8s.io/v1
+kind: ClusterRoleBinding
+metadata:
+  name: redis-backup-bind
+roleRef:
+  apiGroup: rbac.authorization.k8s.io
+  kind: ClusterRole
+  name: redis-backup
+subjects:
+  - kind: ServiceAccount
+    name: redis-backup
+    namespace: {{ .Release.Namespace }}

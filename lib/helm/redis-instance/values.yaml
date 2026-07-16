@@ -48,16 +48,7 @@ persistence: null   # invalid sentinel — validate.yaml fails until set to an e
 # limit. The 1Gi default covers the small instances typical here (e.g. a 96Mi mem limit).
 initialFixedDiskSize: 1Gi
 
-# ---- optional; off-cluster RDB backups to S3 ------------------------------------------------------------
-# Auto-on for DURABLE instances only: a persistence:true instance is backed up as soon as `bucket` is set;
-# ephemeral (persistence:false) instances are NEVER backed up. `bucket`/`region` are injected once, chart-wide,
-# by lib/shell/15_redis_backup.sh from .env — empty `bucket` = feature off (nothing renders), the repo's
-# "empty secret = feature off" contract. Per instance you normally only override `schedule`.
-# Shares the S3 bucket + IAM writer with CNPG. Object key: <prefix><namespace>/<name>/<UTC-timestamp>.rdb.
-# Retention/tiering is the bucket's lifecycle (Glacier IR @30d, expire @180d), NOT set here. See docs/13_backups.md.
-backups:
-  schedule: "14 20 * * *"           # daily 02:00 UTC; override per instance for a different cadence
-  bucket: ""                      # set by 15_redis_backup.sh (.env S3_BACKUP_BUCKET); empty = backups off
-  region: ""                      # set by 15_redis_backup.sh (.env AWS_REGION); required once bucket is set
-  prefix: "redis/"                # bucket prefix for redis dumps (cnpg/ is CNPG's)
-  secretName: "redis-backup-s3"   # per-namespace SealedSecret; keys AWS_ACCESS_KEY_ID / AWS_SECRET_ACCESS_KEY
+# Off-cluster backups: durable (persistence:true) instances are stamped with the
+# `redis-backup.raspi-cluster/enabled` label and backed up to S3 by the CENTRAL platform app
+# `07_redis_backup` (one CronJob discovers all durable instances cluster-wide). Nothing to configure per
+# instance — enable the feature once with `make configure-redis-backup`. See docs/12_redis.md + docs/13_backups.md.
