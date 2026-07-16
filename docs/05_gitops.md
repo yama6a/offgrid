@@ -157,6 +157,12 @@ The 2-replica components carry `global.topologySpreadConstraints` (`maxSkew 1`, 
   `helm dependency build`, which requires the lock. `00_cilium` already has one; `01_argocd`'s is generated on the
   first run of `05_argocd.sh` (`helm dependency update`), commit it before the `argocd` app reconciles (the script
   reminds you).
+- `global.networkPolicy.create` pinned `false`. The argo-cd chart's 10.0.0 major flipped this default `false`->`true`,
+  which renders standard k8s NetworkPolicy objects (the server's is `ingress: - {}`, allow-all). Cilium enforces those
+  too and UNIONs them with our own default-deny CiliumNetworkPolicy for the argocd namespace (the chart's
+  `templates/networkpolicy.yaml`), so an allow-all NP would blow the default-deny open on this cluster-admin/git-creds
+  namespace. Cilium is the sole policy engine here, so we opt back out per the upstream 10.0.0 migration note. See
+  [04_networking.md](04_networking.md).
 - UI over port-forward for now. `server.insecure: true` serves plain HTTP, so no TLS to fumble through a port-forward.
   Cilium's LB-IPAM is live (step 04) and the Envoy Gateway ingress lands later, so a `LoadBalancer` Service or Gateway
   is an option later (see [Exposure](#exposure-the-argocd-ui-behind-google-sso) below); flip `server.insecure` to
