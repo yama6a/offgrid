@@ -258,6 +258,12 @@ so I picked `192.168.100.1` for the VIP (inside the subnet, outside the DHCP ran
    `NODE_INSTANCE_TYPE` in `.env`), and the Cilium prep: `cluster.network.cni.name: none`,
    `cluster.proxy.disabled: true` (Cilium does kube-proxy replacement), and `machine.features.kubePrism.enabled: true`
    (Cilium's API endpoint at `localhost:7445`; default-on in 1.13, set explicitly here to document the dependency).
+   Finally it raises etcd's timeouts — `cluster.etcd.extraArgs: {heartbeat-interval: "500", election-timeout: "5000"}`,
+   5x etcd's 100ms/1000ms defaults. All three nodes are control-plane + worker and etcd shares the single NVMe with
+   Longhorn + CNPG, so during the cold-boot I/O storm etcd's fsyncs stall past the default 1000ms election window and
+   trigger a burst of spurious leader elections — which disrupts apiserver watches and lags the controllers (e.g.
+   cert-manager's HTTP-01 solver endpoints fail to program in time, wedging cert issuance). The 5s election timeout
+   rides out the stalls; the only cost is ~5s vs ~1s failover if a leader truly dies, a non-issue on this cluster.
 4. Appends the partition layout: `EPHEMERAL` capped (default 64 GiB) + a fixed-size `localpath` user volume
    (default 50 GiB, `min == max`, at `/var/mnt/localpath`, node-local storage for CNPG + RabbitMQ via
    [local-path-provisioner](08_storage.md)) + a `longhorn` user volume taking the rest of the NVMe

@@ -139,6 +139,14 @@ ${REGISTRIES_BLOCK}
           ip: ${VIP}
 cluster:
   allowSchedulingOnControlPlanes: true
+  # etcd election tuning: defaults (heartbeat 100ms / election 1000ms) trigger spurious leader elections during
+  # the cold-boot I/O storm (Longhorn+CNPG+image-pulls saturate the single NVMe -> etcd fsync stalls >1s ->
+  # followers time out -> election burst -> watch/informer lag -> flaky bring-up). Raised 5x (election stays
+  # 10x heartbeat) to ride out multi-sec fsync stalls; identical on all 3 CP nodes (one patch). See 03_operating_system.md.
+  etcd:
+    extraArgs:
+      heartbeat-interval: "500"    # ms (etcd default 100)
+      election-timeout: "5000"     # ms (etcd default 1000)
   network:
     cni:
       name: none          # hand the CNI to Cilium
