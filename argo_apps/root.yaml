@@ -4,7 +4,7 @@
 #   0_platform.yaml   (sync-wave "0")  -> recurses argo_apps/platform/apps/   (CNI, operators, storage, ...)
 #   1_workloads.yaml  (sync-wave "1")  -> recurses argo_apps/workloads/apps/  (the actual apps)
 #
-# The waves on those two children order CREATION only (~2s ARGOCD_SYNC_WAVE_DELAY): this root creates
+# The waves on those two children order CREATION only (5s ARGOCD_SYNC_WAVE_DELAY, set in 01_argocd values): this root creates
 # `platform` first, then `workloads` — it does NOT wait for platform health (there is no
 # argoproj.io/Application health check, on purpose). So workloads may reconcile against not-yet-present
 # platform CRDs on a cold boot; they fail and self-converge via unbounded syncPolicy.retry. See 05_gitops.md.

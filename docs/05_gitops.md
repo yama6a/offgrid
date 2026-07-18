@@ -40,7 +40,7 @@ argo_apps/
 ```
 
 - `root.yaml` is the root-of-roots: it recurses `argo_apps/roots/` and manages the two child root Applications it
-  finds. Their sync-waves order CREATION only (a ~2s `ARGOCD_SYNC_WAVE_DELAY`): it creates `platform` (wave 0),
+  finds. Their sync-waves order CREATION only (a 5s `ARGOCD_SYNC_WAVE_DELAY`, set in `01_argocd` values): it creates `platform` (wave 0),
   then `workloads` (wave 1). It does NOT wait for platform health — see below.
   - **No Application health gate (deliberate).** ArgoCD *removed* the built-in health assessment for
     `argoproj.io/Application` in v1.8, so a parent app-of-apps sees its child Applications as health-less and a
@@ -107,10 +107,15 @@ root-of-roots cascades to the two roots, which cascade to every leaf. Two things
 
 Ordering across platform apps is `argocd.argoproj.io/sync-wave` (lower = earlier). Since there is no Application
 health gate (see above), a wave no longer WAITS for the prior wave to be Healthy — waves only order the CREATION
-of the child Application objects (~2s apart). That head-start still helps (CRD/operator apps get applied before
+of the child Application objects (5s apart). That head-start still helps (CRD/operator apps get applied before
 their consumers), but it is advisory: an app that races ahead of a CRD it needs simply fails and retries until the
 CRD lands. The `NN` prefix on each `platform/apps/NN_*.yaml` file equals its wave number, one glance at the dir
 listing tells you the order.
+
+The gap is `ARGOCD_SYNC_WAVE_DELAY`, set to `5` (seconds) via the `controller.sync.wave.delay.seconds` param in
+`argo_apps/platform/charts/01_argocd/values.yaml` (`configs.params`) — a head-start buffer, not a readiness gate
+(it's a fixed timer; retry is what actually guarantees CRD-before-consumer). Controller-wide, so it also spaces
+resource-level waves inside every chart.
 
 - Cilium = wave `0`. The CNI underpins everything, so it's created first.
 - ArgoCD = wave `1`. Adopts the already-running, self-managed ArgoCD.

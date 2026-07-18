@@ -143,7 +143,9 @@ flowchart LR
 └── secrets/            # gitignored: talos certs, talosconfig, kubeconfig, sealed key
 ```
 
-The `NN_` prefixes constitute the sync-wave, i.e. the order in which they are bootstrapped by Argo.
+The `NN_` prefixes mirror the sync-wave: the order Argo *creates* the apps in (advisory creation-ordering, ~5s
+apart, no health gate — a later app that races ahead of a dependency just retries until it lands). See
+[05_gitops](docs/05_gitops.md).
 
 ## Getting started
 
@@ -278,6 +280,3 @@ Pi 5 Talos image builds on [talos-rpi5/talos-builder](https://github.com/talos-r
 - Alerting (prometheus rules and vmalerts to grafana)
 - decide on alerting. grafana good, even though no persistence guarantee? manual alerts will not be created, everything will be in code. But silences would go lost when instance gets replaced (e.g. grafana updates, node restart, ...)
 - drop debug flags from everywhere.
-
-- revisit number prefixes, now that we don't have sync waves anymore.
-- vm+vl backups

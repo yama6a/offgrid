@@ -1,5 +1,5 @@
 # The PLATFORM root. A child of the root-of-roots (argo_apps/root.yaml), which creates it FIRST
-# (sync-wave "0", ~2s before the workloads root). It watches argo_apps/platform/apps/ and manages every
+# (sync-wave "0", ~5s before the workloads root). It watches argo_apps/platform/apps/ and manages every
 # platform Application it finds there (directory.recurse): CNI, operators, CRDs, storage, gateway,
 # monitoring, SSO. Those children keep their own internal sync-waves (00...07), which now order CREATION
 # only — there is no health gate, so a wave no longer waits for the prior wave's apps to be Healthy. See 05_gitops.md.

@@ -26,7 +26,6 @@ spec:
             {{- toYaml .Values.resources | nindent 12 }}
           command:
             - local-path-provisioner
-            - --debug
             - start
             - --config
             - /etc/config/config.json

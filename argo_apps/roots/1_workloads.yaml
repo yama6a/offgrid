@@ -1,5 +1,5 @@
 # The WORKLOADS root. A child of the root-of-roots (argo_apps/root.yaml), which creates it SECOND
-# (sync-wave "1", ~2s after the platform root). It watches argo_apps/workloads/apps/ and manages every
+# (sync-wave "1", ~5s after the platform root). It watches argo_apps/workloads/apps/ and manages every
 # workload Application it finds there (directory.recurse).
 #
 # Workloads carry NO per-app sync-wave and NO NN_ numbering: they all reconcile in PARALLEL. There is NO

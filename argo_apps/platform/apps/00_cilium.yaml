@@ -16,7 +16,7 @@
 # loadBalancer.enabled: true).
 #
 # sync-wave "0": the CNI's Application object is CREATED before ArgoCD (wave 1) and all later apps (waves
-# order creation ~2s apart, not health — there is no health gate). Cilium itself is installed imperatively by
+# order creation ~5s apart, not health — there is no health gate). Cilium itself is installed imperatively by
 # 04_cilium.sh before ArgoCD exists; this app just adopts the running release. See 05_gitops.md "sync-wave convention".
 apiVersion: argoproj.io/v1alpha1
 kind: Application
