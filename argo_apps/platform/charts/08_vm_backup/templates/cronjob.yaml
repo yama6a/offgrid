@@ -1,0 +1,101 @@
+{{- /*
+The central VM/VL backup CronJob. Rendered only when a bucket is configured (empty = feature off; set by
+17_vm_backup.sh). ONE container streams two logical dumps to S3 (no local disk — the export is piped straight
+through gzip into `aws s3 cp -`, so a 50Gi store needs no matching emptyDir):
+  metrics  VMSingle  GET /api/v1/export/native?match[]={__name__!=""}  -> vm/metrics/<UTC>.native.gz
+  logs     VLSingle  GET /select/logsql/query  query=*                 -> vm/logs/<UTC>.jsonl.gz
+Each dump is a self-contained full export (NOT incremental) — restored with vmrestore-equivalent /import endpoints
+by recover_vm_from_s3.sh. `set -o pipefail` makes a failed curl OR upload fail the stage; a partial S3 object is
+deleted and the failure recorded, so the Job exits non-zero => the backup-freshness alert fires. Per-stage detail
+is on stdout (-> VictoriaLogs). Egress is locked down by networkpolicy.yaml; VMSingle/VLSingle each allow THIS
+pod inbound (their networkpolicy.yaml allowlists app.kubernetes.io/name: vm-backup).
+*/ -}}
+{{- if .Values.bucket }}
+apiVersion: batch/v1
+kind: CronJob
+metadata:
+  name: vm-backup
+  namespace: {{ .Release.Namespace }}
+  labels:
+    app.kubernetes.io/name: vm-backup
+    app.kubernetes.io/component: vm-backup
+spec:
+  schedule: {{ .Values.schedule | quote }}
+  concurrencyPolicy: Forbid          # never overlap runs
+  startingDeadlineSeconds: 300        # skip (don't stampede) a run the scheduler missed by >5m
+  successfulJobsHistoryLimit: 3
+  failedJobsHistoryLimit: 3
+  jobTemplate:
+    spec:
+      backoffLimit: 1
+      activeDeadlineSeconds: 3600     # a full metrics+logs export+upload that runs >1h is wedged — fail it
+      ttlSecondsAfterFinished: 86400  # GC finished jobs after a day
+      template:
+        metadata:
+          labels:
+            app.kubernetes.io/name: vm-backup
+            app.kubernetes.io/component: vm-backup
+        spec:
+          restartPolicy: Never
+          securityContext:
+            runAsNonRoot: true
+            runAsUser: 1000
+            runAsGroup: 1000
+            fsGroup: 1000
+            seccompProfile: { type: RuntimeDefault }
+          containers:
+            - name: backup
+              # renovate: datasource=docker
+              image: "alpine/k8s:1.36.2"
+              command: ["/bin/sh", "-c"]
+              args:
+                - |
+                  set -u
+                  ts="$(date -u +%Y%m%dT%H%M%SZ)"
+                  failed=""
+
+                  # stream <url> <curl-data-arg> <s3-key> : export | gzip | upload; delete a partial on failure.
+                  stream() {
+                    url="$1"; data="$2"; key="$3"
+                    dst="s3://${BUCKET}/${key}"
+                    echo "backing up ${url} -> ${dst}"
+                    if ( set -o pipefail; curl -sf --max-time 3000 "$url" $data | gzip | aws s3 cp - "$dst" ); then
+                      echo "  ok"
+                    else
+                      echo "  FAILED ${url}"; failed="${failed} ${key}"
+                      aws s3 rm "$dst" >/dev/null 2>&1 || true   # drop any truncated object
+                    fi
+                  }
+
+                  stream "${VMSINGLE}/api/v1/export/native" "--data-urlencode match[]={__name__!=\"\"}" "${PREFIX}metrics/${ts}.native.gz"
+                  stream "${VLSINGLE}/select/logsql/query"  "--data-urlencode query=*"                  "${PREFIX}logs/${ts}.jsonl.gz"
+
+                  if [ -n "$failed" ]; then echo "FAILURES:${failed}"; exit 1; fi
+                  echo "all backups ok"
+              env:
+                - { name: HOME,   value: /tmp }   # aws-cli config/cache under the writable /tmp mount (root fs is read-only)
+                - { name: TMPDIR, value: /tmp }
+                - { name: BUCKET, value: {{ .Values.bucket | quote }} }
+                - { name: PREFIX, value: {{ .Values.prefix | quote }} }
+                - { name: VMSINGLE, value: {{ .Values.vmsingle | quote }} }
+                - { name: VLSINGLE, value: {{ .Values.vlsingle | quote }} }
+                - { name: AWS_DEFAULT_REGION, value: {{ .Values.region | quote }} }
+                - name: AWS_ACCESS_KEY_ID
+                  valueFrom:
+                    secretKeyRef: { name: {{ .Values.secretName }}, key: AWS_ACCESS_KEY_ID }
+                - name: AWS_SECRET_ACCESS_KEY
+                  valueFrom:
+                    secretKeyRef: { name: {{ .Values.secretName }}, key: AWS_SECRET_ACCESS_KEY }
+              securityContext:
+                allowPrivilegeEscalation: false
+                capabilities: { drop: ["ALL"] }
+                readOnlyRootFilesystem: true
+              resources:
+                requests: { cpu: 50m, memory: 64Mi }
+                limits:   { memory: 256Mi }
+              volumeMounts:
+                - { name: tmp, mountPath: /tmp }   # HOME + aws-cli scratch (root fs is read-only)
+          volumes:
+            - name: tmp
+              emptyDir: {}
+{{- end }}

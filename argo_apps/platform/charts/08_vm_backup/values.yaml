@@ -1,0 +1,18 @@
+# argo_apps/platform/charts/08_vm_backup — the CENTRAL VictoriaMetrics + VictoriaLogs backup CronJob. One job
+# exports the metrics store (VMSingle) and the logs store (VLSingle) over HTTP and streams each to S3. bucket/region
+# are injected once by lib/shell/17_vm_backup.sh from .env; an EMPTY bucket means the feature is off (nothing
+# renders), the repo's "empty = off" contract. Enable with `make configure-vm-backup`. See docs/13_backups.md.
+
+schedule: "0 1 * * *" # daily 01:00 UTC; offset from cnpg/redis (02:00) + longhorn (03:00) to spread S3 upload load
+bucket: "" # set by 17_vm_backup.sh (.env S3_BACKUP_BUCKET); EMPTY = backups off (CronJob/netpol/alerts don't render)
+region: "" # set by 17_vm_backup.sh (.env AWS_REGION)
+prefix: "vm/" # bucket prefix; metrics -> vm/metrics/<UTC>.native.gz, logs -> vm/logs/<UTC>.jsonl.gz (cnpg/,redis/,longhorn/ are the others)
+secretName: "vm-backup-s3" # the sealed S3 writer creds in ns monitoring; keys AWS_ACCESS_KEY_ID / AWS_SECRET_ACCESS_KEY
+
+# The in-cluster stores this job reads (operator-materialised Services in ns monitoring).
+vmsingle: "http://vmsingle-victoria-metrics-k8s-stack.monitoring.svc:8428" # metrics store (05_victoria_metrics_k8s_stack)
+vlsingle: "http://vlsingle-victoria-logs.monitoring.svc:9428"              # logs store   (05_victoria_logs)
+
+# Pinned image (renovate-annotated in templates/cronjob.yaml; multi-arch incl. arm64). alpine/k8s bundles curl +
+# aws-cli + gzip + coreutils — the only tools the export|gzip|upload pipeline needs (no kubectl/CR discovery here).
+image: "alpine/k8s:1.36.2"

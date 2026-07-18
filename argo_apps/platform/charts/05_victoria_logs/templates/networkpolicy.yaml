@@ -12,7 +12,7 @@ spec:
       app.kubernetes.io/name: vlsingle
       app.kubernetes.io/instance: victoria-logs
   ingress:
-    # :9428 — the collector writes, grafana reads, the Envoy edge serves vlogs, vmagent self-scrapes.
+    # :9428 — the collector writes, grafana reads, the Envoy edge serves vlogs, vmagent self-scrapes, vm-backup exports.
     - fromEndpoints:
         - matchLabels:
             k8s:io.kubernetes.pod.namespace: monitoring
@@ -26,6 +26,10 @@ spec:
         - matchLabels:
             k8s:io.kubernetes.pod.namespace: monitoring
             app.kubernetes.io/name: vmagent
+        # The central backup CronJob (08_vm_backup) pulls LogsQL query=* from here. See docs/13_backups.md.
+        - matchLabels:
+            k8s:io.kubernetes.pod.namespace: monitoring
+            app.kubernetes.io/name: vm-backup
       toPorts:
         - ports:
             - { port: "9428", protocol: TCP }

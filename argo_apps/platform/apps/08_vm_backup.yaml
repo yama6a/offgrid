@@ -1,0 +1,44 @@
+# ArgoCD Application for the CENTRAL VM/VL backup job (argo_apps/platform/charts/08_vm_backup/): ONE CronJob in
+# the `monitoring` namespace (co-located with the stores it reads) that exports VMSingle (metrics) + VLSingle
+# (logs) over HTTP and streams each gzip'd to S3 under the vm/ prefix. Ships the CronJob + one egress
+# CiliumNetworkPolicy + backup-health VMRules; the single sealed S3 writer creds (vm-backup-s3) are committed by
+# 17_vm_backup.sh. Reuses the shared bucket + IAM writer. See docs/13_backups.md + docs/09_monitoring.md.
+#
+# AUTOMATED (prune + selfHeal): a safe leaf. The CronJob only READS the stores over HTTP + WRITES to S3; a prune
+# deletes only this app's own objects (the job, netpol, rules, sealed secret), never any metrics/logs data.
+#
+# sync-wave "8": after the monitoring stack (05_victoria_metrics_k8s_stack + 05_victoria_logs, wave 5, so the
+# Services it reads exist) and sealed-secrets (wave 2, to unseal the creds). Deploys INTO the existing
+# `monitoring` namespace, so no CreateNamespace. Nothing to discover at runtime — the two stores are fixed.
+apiVersion: argoproj.io/v1alpha1
+kind: Application
+metadata:
+  name: vm-backup
+  namespace: argocd
+  # Cascade-delete this app's own resources on Application deletion instead of orphaning them; see 05_gitops.md.
+  finalizers:
+    - resources-finalizer.argocd.argoproj.io
+  annotations:
+    argocd.argoproj.io/sync-wave: "8"
+spec:
+  project: default
+  source:
+    repoURL: https://github.com/yama6a/offgrid
+    targetRevision: HEAD
+    path: argo_apps/platform/charts/08_vm_backup
+  destination:
+    server: https://kubernetes.default.svc
+    namespace: monitoring
+  syncPolicy:
+    automated:
+      prune: true
+      selfHeal: true
+    retry:
+      limit: -1  # unbounded; only retry re-drives a failed sync (see 05_gitops.md)
+      refresh: true  # retry the latest revision so a fix commit lands mid-loop
+      backoff:
+        duration: 5s
+        factor: 2
+        maxDuration: 1m
+    syncOptions:
+      - ServerSideApply=true

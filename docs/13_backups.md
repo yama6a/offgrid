@@ -243,9 +243,11 @@ workloads that keep state on a Longhorn PVC with no backup mechanism of its own 
 app data). It is **opt-in per volume via the StorageClass**: `02_longhorn` ships three classes (all r2 —
 `longhorn-r2-ephemeral` / `longhorn-r2-retained` / `longhorn-r2-retained-with-backups`; see
 [08_storage.md](08_storage.md)). Only PVCs on **`longhorn-r2-retained-with-backups`** are backed up off-cluster.
-The monitoring volumes (VM/VL, on `longhorn-r2-retained`) and Redis (on the ephemeral/retained classes, backed up
-via its own RDB path) are deliberately **not** Longhorn-backed-up. A workload opts in simply by naming the
-`-with-backups` class in its PVC / `volumeClaimTemplate`.
+The monitoring volumes (VM/VL, on `longhorn-r2-retained`) and Redis (on the ephemeral/retained classes) are
+deliberately **not** Longhorn-backed-up — each backs up off-cluster via its own logical path instead (Redis RDB
+dumps; VM/VL native exports, see "VictoriaMetrics / VictoriaLogs backups" below), which is app-consistent and far
+cheaper than block-level backup of large, churny stores. A workload opts in simply by naming the `-with-backups`
+class in its PVC / `volumeClaimTemplate`.
 
 **Native Longhorn backup, not a central CronJob (unlike Redis).** Redis is a network service, so its backup is one
 central job that `redis-cli --rdb`s each instance. Longhorn PVCs are RWO block devices attached to a single node
@@ -308,9 +310,76 @@ bash lib/shell/recover_longhorn_from_s3.sh --volume pvc-xxxx --backup latest --t
 
 **Full-cluster DR ordering:** `make restore-secrets-key` (06, so the committed `longhorn-backup-s3` decrypts) →
 platform syncs → Longhorn's `default` BackupTarget goes `available` and auto-discovers the `BackupVolume`s from S3
-(the `pollInterval`) → `make restore-longhorn` per volume you need back. Redis and the monitoring volumes rebuild
-empty by design. As with CNPG/Redis, the whole path hinges on the off-repo sealed-secrets key (backed up by 06):
+(the `pollInterval`) → `make restore-longhorn` per volume you need back. Redis restores from its RDB dumps
+(`make restore-redis`) and the monitoring volumes from their VM/VL exports (`make restore-vm`); both otherwise
+rebuild empty. As with CNPG/Redis, the whole path hinges on the off-repo sealed-secrets key (backed up by 06):
 without it the S3 creds can't decrypt and the backups are unreachable.
+
+## VictoriaMetrics / VictoriaLogs backups
+
+The metrics store (VMSingle) and logs store (VLSingle) back up to S3 under the `vm/` prefix, reusing this bucket +
+writer + lifecycle. Both sit on `longhorn-r2-retained` (r2, `Retain`) — that survives an *accidental delete* but
+NOT a total loss (both replicas / cluster / off-site). This closes that gap with an **app-consistent logical
+export**, done by ONE **central** platform app — `08_vm_backup` (wave 8, ns `monitoring`): a single daily CronJob
+streams both stores to S3, no PVC access needed.
+
+**Why export/import, not `vmbackup`.** The obvious tool, `vmbackup`/`vmrestore`, is open-source but needs
+**filesystem access to the store's data dir** — an RWO Longhorn PVC already attached to the running pod, which a
+separate job can't co-mount, and the operator's `VMSingle`/`VLSingle` spec has no supported general sidecar field.
+The operator's automated `vmBackup` sidecar uses **`vmbackupmanager`, which is Enterprise-only**. So we take the
+FOSS route VictoriaMetrics itself documents for migration/backup — the HTTP export/import API — which needs no
+volume access and mirrors the Redis central-CronJob shape:
+
+- **metrics** — `GET /api/v1/export/native?match[]={__name__!=""}` → gzip → `s3://<bucket>/vm/metrics/<UTC>.native.gz`
+- **logs** — `GET /select/logsql/query?query=*` → gzip → `s3://<bucket>/vm/logs/<UTC>.jsonl.gz`
+
+Pieces, all under `argo_apps/platform/charts/08_vm_backup/` (+ two netpol edits on the `05_*` stores):
+
+- **`values.yaml`** — `bucket`/`region` (filled by `17_vm_backup.sh`; empty = feature off, nothing renders),
+  `prefix: vm/`, `schedule` (01:00 UTC, offset from the 02:00/03:00 crowd), the two store Service URLs.
+- **`templates/cronjob.yaml`** — one container (`alpine/k8s`: curl + aws-cli + gzip) that streams each dump
+  (`curl | gzip | aws s3 cp -`, no local disk); a failed export OR upload deletes the partial object and fails the
+  Job so the alert fires.
+- **`templates/networkpolicy.yaml`** — egress-only lockdown (DNS + S3 + the two stores). The stores'
+  ingress allowlists (`05_victoria_metrics_k8s_stack` / `05_victoria_logs` `networkpolicy.yaml`) each add
+  `app.kubernetes.io/name: vm-backup` so this pod is admitted on 8428 / 9428.
+- **`templates/alerts.yaml`** — `VMBackupJobFailing` (a Job failed) + `VMBackupTooOld` (no success in >36h, catches
+  a CronJob that never fires); PrometheusRules the VM operator converts to VMRules.
+- **`templates/vm-backup-s3-sealedsecret.yaml`** — the sealed `vm-backup-s3` (keys `AWS_ACCESS_KEY_ID` /
+  `AWS_SECRET_ACCESS_KEY`) in `monitoring`, written by `17`.
+
+**Retention is S3's** (same model as Redis): the `vm/` prefix transitions to Glacier IR @`transition_days` and
+expires @`retention_days` — each object is a self-contained full export, so age-expiry is safe. **Caveats:** each
+run is a **full logical dump** (not incremental — tune `schedule` / the `match[]` scope if it grows), and the
+VictoriaLogs JSONL round-trip is **best-effort on stream-field fidelity** (stream labels are re-derived on import).
+
+### Turning VM/VL backups on
+
+```sh
+make s3-backup-bucket       # 13: Terraform (idempotent) — adds the vm/ lifecycle rule
+make configure-vm-backup    # 17: yq bucket/region into 08_vm_backup values + seal writer creds into monitoring
+git add -A && git commit && git push   # ArgoCD applies the 08_vm_backup app (wave 8) + the sealed creds
+# verify:
+kubectl -n monitoring create job --from=cronjob/vm-backup vm-backup-manual
+kubectl -n monitoring logs job/vm-backup-manual -f
+aws s3 ls s3://$S3_BACKUP_BUCKET/vm/ --recursive     # vm/metrics/*.native.gz + vm/logs/*.jsonl.gz
+```
+
+### Restore (and disaster recovery)
+
+`make restore-vm` (`recover_vm_from_s3.sh`) streams a chosen export back into the **live** store's `/import`
+endpoint via a temporary pod in `monitoring` (reusing the sealed `vm-backup-s3` creds + the `vm-backup` ingress
+allowlist; a break-glass egress netpol lets it reach S3 + the store). **Non-destructive** — `/import` MERGES, so
+for a clean DR point it at a fresh/empty store.
+
+```sh
+make restore-vm   # interactive: prompts for kind (metrics|logs) + target (latest|<s3-key>)
+# or non-interactive:
+bash lib/shell/recover_vm_from_s3.sh --kind metrics --target latest --apply
+```
+
+**Full-cluster DR ordering:** `make restore-secrets-key` (06) → platform syncs (VMSingle/VLSingle come up empty) →
+`make restore-vm --kind metrics` + `--kind logs` to backfill. Same key dependency as every other backup here.
 
 ## The two recovery tiers
 

@@ -39,7 +39,10 @@ OUTSIDE ArgoCD** — they're machine-level, not a chart — and scraped by stati
 dropped via `metricRelabelConfigs`.
 
 ### Other decisions
-Both VMSingle and VLSingle PVCs use the `longhorn` (replica-3) class. Metrics retention 180d, logs 60d
+Both VMSingle and VLSingle PVCs use the `longhorn-r2-retained` class (r2, `Retain` — survives an accidental
+delete, but not a total loss). Off-cluster S3 backup of both stores is opt-in via `make configure-vm-backup`
+(a daily native-export CronJob, `08_vm_backup`); mechanism + disaster recovery are in
+[13_backups.md](13_backups.md) ("VictoriaMetrics / VictoriaLogs backups"). Metrics retention 180d, logs 60d
 (logs are bulkier, their own shorter window). Metrics start fresh (no `vmctl` backfill). The logs store is
 the operator `VLSingle` CR (one operator for everything), not the standalone logs chart. node-exporter and
 the log collector are DaemonSets with `tolerations: [{operator: Exists}]` — this is an all-control-plane

@@ -1,10 +1,12 @@
-# The shared backup bucket + a scoped IAM writer. General-purpose, three consumers by prefix:
-#   cnpg/     CNPG WAL/base backups   (lib/helm/pg-cluster + 14_cnpg_backup.sh)
-#   redis/    Redis RDB dumps         (07_redis_backup   + 15_redis_backup.sh)
-#   longhorn/ Longhorn volume backups (02_longhorn       + 16_longhorn_backup.sh)
+# The shared backup bucket + a scoped IAM writer. General-purpose, four consumers by prefix:
+#   cnpg/     CNPG WAL/base backups        (lib/helm/pg-cluster + 14_cnpg_backup.sh)
+#   redis/    Redis RDB dumps              (07_redis_backup    + 15_redis_backup.sh)
+#   longhorn/ Longhorn volume backups      (02_longhorn        + 16_longhorn_backup.sh)
+#   vm/       VictoriaMetrics/Logs exports (08_vm_backup       + 17_vm_backup.sh)
 # Lifecycle is PER-PREFIX (not one bucket-wide rule) because the consumers need different retention:
-#   cnpg/ + redis/  -> Standard -> Glacier IR @transition_days -> delete @retention_days. Their objects are
-#                      self-contained (WAL/base/RDB), so age-expiry is safe and S3 owns retention.
+#   cnpg/ + redis/ + vm/  -> Standard -> Glacier IR @transition_days -> delete @retention_days. Their objects are
+#                      self-contained (WAL/base/RDB, or a full VM/VL logical export), so age-expiry is safe and
+#                      S3 owns retention.
 #   longhorn/       -> Standard, NEVER auto-expired. Longhorn backups are INCREMENTAL dedup block chains: a
 #                      newer backup references older blocks, so an age-based expiry would delete still-referenced
 #                      blocks and corrupt restores. Longhorn's own RecurringJob `retain` is the sole deleter.
@@ -89,6 +91,25 @@ resource "aws_s3_bucket_lifecycle_configuration" "backups" {
     }
   }
 
+  # vm/ — self-contained full VM/VL logical exports (native metrics dump + logs JSONL); same tier-and-expire as
+  # cnpg/redis (S3 owns retention entirely — each object stands alone, no incremental chain).
+  rule {
+    id     = "vm-tier-and-expire"
+    status = "Enabled"
+    filter { prefix = "vm/" }
+
+    transition {
+      days          = var.transition_days
+      storage_class = "GLACIER_IR"
+    }
+    expiration {
+      days = var.retention_days
+    }
+    abort_incomplete_multipart_upload {
+      days_after_initiation = 7
+    }
+  }
+
   # longhorn/ — incremental block chains: NO transition, NO expiration (see header). Longhorn's RecurringJob
   # `retain` prunes backups + their now-unreferenced blocks. We only clean up parts orphaned by an aborted upload.
   rule {
@@ -110,7 +131,7 @@ resource "aws_s3_bucket_lifecycle_configuration" "backups" {
 resource "aws_iam_user" "backup_writer" {
   name = "${var.bucket}-writer"
   # IAM tag values allow only [\p{L}\p{Z}\p{N}_.:/=+\-@] — no parens or commas.
-  tags = { purpose = "raspi-cluster backups - barman-cloud/longhorn/redis" }
+  tags = { purpose = "raspi-cluster backups - barman-cloud/longhorn/redis/vm" }
 }
 
 resource "aws_iam_access_key" "backup_writer" {

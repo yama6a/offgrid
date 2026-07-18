@@ -19,17 +19,19 @@
 #   7. 07_gateway.sh                : write LE_EMAIL/BASE_DOMAIN into the gateway chart values (no cluster)
 #   8. git add/commit/push          : 05 refuses a dirty argo_apps/ tree; ArgoCD deploys the REMOTE
 #   9. 05_argocd.sh                 : bootstrap ArgoCD; it then delivers the whole platform from git
-#  10. wait sealed-secrets ctrl     : ArgoCD wave-2 app; kubeseal (steps 11-13, 15, 18) needs it up
+#  10. wait sealed-secrets ctrl     : ArgoCD wave-2 app; kubeseal (steps 11-13, 15-18) needs it up
 #  11. 07_google_sso.sh </dev/null  : write shared clientID + RE-SEAL google-oauth against the NEW key
 #  12. 09_grafana_smtp.sh           : RE-SEAL grafana-smtp against the NEW key
 #  13. 08_argocd_webhook.sh         : generate+seal the GitHub webhook secret (-> secrets/) + set poll cadence
 #  14. 13_s3_backup_bucket.sh       : Terraform -> S3 backup bucket + scoped IAM writer (skipped if .env AWS creds empty)
 #  15. 14_cnpg_backup.sh            : seal the writer creds per CNPG ns + enable backups in the pg-cluster values
 #  16. 15_redis_backup.sh           : seal ONE writer-creds secret in ns redis-backup + enable the central 07_redis_backup job
-#  17. git add/commit/push          : push the re-sealed SealedSecrets + CNPG/Redis backup creds/values (waves 4 & 7 + argocd)
-#  18. hard-refresh argocd apps     : poll is a slow fallback now, so nudge ArgoCD to pull the just-pushed commit
-#  19. 06_backup_sealed_secrets_key.sh : back up the NEW master key so a future rebuild can restore it
-#  20. verify ingress serving       : wait until each HTTPS host serves an LE cert over clean HTTP/2
+#  17. 16_longhorn_backup.sh        : seal writer creds into longhorn-system + set the backup target in 02_longhorn
+#  18. 17_vm_backup.sh              : seal ONE writer-creds secret in ns monitoring + enable the central 08_vm_backup job
+#  19. git add/commit/push          : push the re-sealed SealedSecrets + CNPG/Redis/Longhorn/VM backup creds/values (waves 2,4,7,8 + argocd)
+#  20. hard-refresh argocd apps     : poll is a slow fallback now, so nudge ArgoCD to pull the just-pushed commit
+#  21. 06_backup_sealed_secrets_key.sh : back up the NEW master key so a future rebuild can restore it
+#  22. verify ingress serving       : wait until each HTTPS host serves an LE cert over clean HTTP/2
 #
 # Why re-seal + back up (and a rebuild doesn't): a fresh controller mints a BRAND-NEW master key, so the
 # two committed SealedSecrets (google-oauth, grafana-smtp, sealed against an OLD key) are orphaned — they
@@ -54,7 +56,7 @@ source "${SCRIPT_DIR}/common.sh"   # say/die/warn/ok + CLUSTER_DIR + CLUSTER_NOD
 cd "$REPO_ROOT"                     # run from the repo root (git ops, relative hints)
 
 # ---- knobs ------------------------------------------------------------------
-STEP=0; STEP_TOTAL=20                          # shared step counter (common.sh step/run_step); bump TOTAL if you add/remove a step
+STEP=0; STEP_TOTAL=22                          # shared step counter (common.sh step/run_step); bump TOTAL if you add/remove a step
 STEP_DIR="$SCRIPT_DIR"                          # every step script is a sibling of this orchestrator in lib/shell/
 KUBECONFIG_FILE="${CLUSTER_DIR}/kubeconfig"
 INGRESS_GW_NS="gateway"                        # namespace of the shared Gateway (ingress verify)
@@ -237,8 +239,30 @@ else
   step "enable Redis S3 backups (skipped: .env AWS creds empty)"
 fi
 
-# === STEP 17. commit + push the re-sealed secrets + backup config (best-effort) ===
-step "git add + commit + push the re-sealed secrets (ArgoCD unseals them, waves 4 & 7 + argocd)"
+# === STEP 17. enable Longhorn volume S3 backups: seal creds + backup target (best-effort) ==
+# Needs the controller (STEP 10) + the Terraform outputs from STEP 14. Seals the writer creds into
+# longhorn-system and writes the backup target into the 02_longhorn values (which renders the -with-backups SC +
+# RecurringJobs); the commit below pushes both. Skipped when creds empty (paired with STEP 14-16).
+if [ -n "$AWS_DEPLOY_ACCESS_KEY_ID" ]; then
+  run_step "enable Longhorn volume S3 backups (seal creds + backup target)" "$STEP_DIR" 16_longhorn_backup.sh best-effort \
+    "16_longhorn_backup didn't complete; re-run it by hand ('make configure-longhorn-backup') + commit/push"
+else
+  step "enable Longhorn volume S3 backups (skipped: .env AWS creds empty)"
+fi
+
+# === STEP 18. enable central VM/VL S3 backups: bucket/region + one sealed secret (best-effort) ==
+# Needs the controller (STEP 10) + the Terraform outputs from STEP 14. Writes bucket/region into the central
+# 08_vm_backup chart and seals ONE writer-creds secret into ns monitoring; the commit below pushes both.
+# Skipped when creds empty (paired with STEP 14-17 so nothing runs half-configured).
+if [ -n "$AWS_DEPLOY_ACCESS_KEY_ID" ]; then
+  run_step "enable central VM/VL S3 backups (seal creds + chart values)" "$STEP_DIR" 17_vm_backup.sh best-effort \
+    "17_vm_backup didn't complete; re-run it by hand ('make configure-vm-backup') + commit/push"
+else
+  step "enable VM/VL S3 backups (skipped: .env AWS creds empty)"
+fi
+
+# === STEP 19. commit + push the re-sealed secrets + backup config (best-effort) ===
+step "git add + commit + push the re-sealed secrets + backup creds/values (ArgoCD unseals them; waves 2,4,7,8 + argocd)"
 git add -A
 if git diff --cached --quiet; then
   ok "nothing new to commit"
@@ -247,21 +271,22 @@ else
 fi
 git push || warn "push failed; push by hand so ArgoCD picks up the re-sealed secrets"
 
-# === STEP 18. converge ArgoCD (pull the pushed commit + self-heal backstop) ===
+# === STEP 20. converge ArgoCD (pull the pushed commit + self-heal backstop) ===
 # The git poll is a 300s fallback and the GitHub webhook isn't configured yet, so ArgoCD won't pick up STEP
-# 17's push (re-sealed google-oauth/grafana-smtp/argocd secrets) on its own for up to ~5 min. converge_argocd_apps
+# 19's push (re-sealed google-oauth/grafana-smtp/argocd secrets + backup creds/values) on its own for up to ~5
+# min. converge_argocd_apps
 # hard-refreshes EVERY app first (so they re-compare against the pushed commit and apply the re-sealed secrets
 # now), then nudges any straggler to Synced+Healthy (unbounded per-app retry converges the rest on its own).
 # Best-effort: never fails the bootstrap.
 step "converge ArgoCD (pull re-sealed secrets + self-heal backstop, up to ${CONVERGE_WAIT}s)"
 converge_argocd_apps "$CONVERGE_WAIT" || true
 
-# === STEP 19. back up the NEW master key (best-effort) ========================
+# === STEP 21. back up the NEW master key (best-effort) ========================
 # So a future DANGEROUS_rebuild_cluster.sh can RESTORE it instead of orphaning these SealedSecrets again.
 run_step "back up the new sealed-secrets master key" "$STEP_DIR" 06_backup_sealed_secrets_key.sh best-effort \
   "key backup didn't complete; run 06_backup_sealed_secrets_key.sh by hand once the controller is up"
 
-# === STEP 20. verify the ingress data path actually serves (best-effort) ======
+# === STEP 22. verify the ingress data path actually serves (best-effort) ======
 # ArgoCD brings up the ingress stack ASYNC after step 8 and HTTP-01 issuance takes minutes; verify_ingress
 # (lib/shell/common.sh) polls each HTTPS host until it serves a REAL, LE-backed response over clean HTTP/2.
 # Best-effort: warns, never fails the bootstrap.

@@ -1,0 +1,45 @@
+{{- /*
+Backup-health alerts for the VM/VL S3 backup CronJob. Rendered under the same bucket gate as the CronJob. The VM
+operator converts this PrometheusRule to a VMRule (converter ON in 01_victoria_metrics_operator), same as the
+CNPG backup alerts. Two signals off kube-state-metrics — a failed run, and no successful run in too long (covers a
+CronJob that never fires at all, which the failed-job alert can't see). See docs/13_backups.md.
+*/ -}}
+{{- if .Values.bucket }}
+apiVersion: monitoring.coreos.com/v1
+kind: PrometheusRule
+metadata:
+  name: vm-backup-alerts
+  namespace: {{ .Release.Namespace }}
+spec:
+  groups:
+    - name: vm-backup/{{ .Release.Namespace }}
+      rules:
+        # A backup Job failed (export or upload errored -> the container exit 1 -> Job failed). kube_job_failed
+        # stays 1 until the failed Job is GC'd (ttlSecondsAfterFinished 24h), so a 15m `for` debounces the brief
+        # window before a retry/next-run succeeds without missing a genuinely stuck backup.
+        - alert: VMBackupJobFailing
+          expr: max(kube_job_failed{namespace="{{ .Release.Namespace }}",job_name=~"vm-backup.*"}) > 0
+          for: 15m
+          labels:
+            severity: warning
+          annotations:
+            summary: "VM/VL backup Job failed"
+            description: >-
+              The vm-backup CronJob's most recent Job failed (metrics or logs export/upload to S3 errored). Check
+              `kubectl -n {{ .Release.Namespace }} logs job/<vm-backup-...>` and the S3 creds/bucket/endpoint.
+        # No successful run in >36h (daily schedule + generous slack). Catches a CronJob that is suspended, never
+        # scheduled, or failing every run. `> 0` guards the metric being absent/zero before the first success.
+        - alert: VMBackupTooOld
+          expr: >-
+            (kube_cronjob_status_last_successful_time{namespace="{{ .Release.Namespace }}",cronjob="vm-backup"} > 0)
+            and
+            ((time() - kube_cronjob_status_last_successful_time{namespace="{{ .Release.Namespace }}",cronjob="vm-backup"}) > 129600)
+          for: 30m
+          labels:
+            severity: warning
+          annotations:
+            summary: "VM/VL backup: last successful run is >36h old"
+            description: >-
+              The vm-backup CronJob has not completed successfully in over 36 hours (daily schedule expected).
+              Metrics + logs are drifting out of the S3 recovery window. Check the CronJob and its latest Job.
+{{- end }}

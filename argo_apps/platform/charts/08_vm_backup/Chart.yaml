@@ -1,0 +1,12 @@
+apiVersion: v2
+name: vm-backup
+description: >-
+  The CENTRAL VictoriaMetrics + VictoriaLogs backup app: ONE CronJob (in ns monitoring) that exports the metrics
+  store (VMSingle, /api/v1/export/native) and the logs store (VLSingle, LogsQL query=*) over HTTP and streams each
+  gzip'd to S3 under the vm/ prefix. First-party chart (no upstream dependency): ships the CronJob, an egress-only
+  CiliumNetworkPolicy, and backup-health alerts. The single sealed S3 writer creds (vm-backup-s3) are committed by
+  lib/shell/17_vm_backup.sh. Restore with lib/shell/recover_vm_from_s3.sh. Chosen over vmbackup/vmbackupmanager:
+  vmbackup needs filesystem access to the RWO PVC (can't co-mount) and vmbackupmanager is Enterprise-only.
+  See docs/13_backups.md + docs/09_monitoring.md.
+type: application
+version: 0.1.0                 # this chart's own version
