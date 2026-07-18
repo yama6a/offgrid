@@ -40,12 +40,13 @@ upgrade path, and that combination doesn't exist as a published image anywhere:
 
 - Raspberry Pi OS ships a Pi 5 kernel, but it's not a Talos kernel. Talos welds a hardened, clang/ThinLTO kernel into
   its initramfs/installer, so you can't just drop a foreign kernel in.
-- The official Talos `metal-arm64` image won't boot a Pi 5 headlessly. Even though recent Talos ships a 6.18 kernel,
-  it's missing the fork-only RP1 bring-up (`MFD_RP1`) and has no Pi 5 boot chain (u-boot + BCM2712 device tree).
+- The official Talos `metal-arm64` image won't boot a Pi 5 headlessly. Even though recent Talos ships a similarly
+  recent kernel, it's missing the fork-only RP1 bring-up (`MFD_RP1`) and has no Pi 5 boot chain (u-boot + BCM2712
+  device tree).
 - The only prebuilt Talos Pi 5 image is the community one, which is old.
 
-So we drive the `talos-rpi5` pipeline but rebase it onto latest Talos. The 6.18 kernel is the whole point: it carries
-the upstream RP1 patches that allow step 04 to disable EEE on the NIC.
+So we drive the `talos-rpi5` pipeline but rebase it onto latest Talos. The recent Pi kernel is the whole point: it
+carries the upstream RP1 patches that allow step 04 to disable EEE on the NIC.
 
 ## Versions
 
@@ -56,9 +57,9 @@ each is, and the constraints that matter:
 - **Talos** (`TALOS_VERSION`, `siderolabs/talos`) — the release we rebase onto.
 - **Kubernetes** (`KUBERNETES_VERSION`) — the pin `03d` passes to `gen config` and `03g` upgrades to. Ceiling =
   the Talos release's own k8s default; raise it only after bumping Talos.
-- **pkgs** (`PKG_VERSION`, `siderolabs/pkgs`) — ships a stock 6.18 arm64 kernel config (already 4K pages).
-- **Kernel** (`KERNEL_REF`, `raspberrypi/linux` on the `rpi-6.18.y` line) — the 6.18 line is the whole point: it
-  carries the RP1 patches step 04 needs to disable EEE on the NIC.
+- **pkgs** (`PKG_VERSION`, `siderolabs/pkgs`) — ships a stock arm64 kernel config (already 4K pages).
+- **Kernel** (`KERNEL_REF`, `raspberrypi/linux` on the current rpi kernel line) — the kernel line is the whole point:
+  it carries the RP1 patches step 04 needs to disable EEE on the NIC.
 - **Overlay** (`SBCOVERLAY_VERSION`, `talos-rpi5/sbc-raspberrypi5`@`main`) — u-boot + rpi firmware + the Pi 5 boot
   chain; ported to the pinned Talos machinery at build time.
 - **Extensions** (`ISCSI_EXT`, `UTIL_EXT`) — digest-pinned system extensions from the Image Factory.
@@ -90,14 +91,14 @@ Prerequisites (the script checks all of these, with the `brew` fix for each):
 The four rebases (things the upstream pipeline can't handle at this Talos version, all automated by the script):
 
 1. Kernel source + config: Point the kernel at `raspberrypi/linux@<tag>` and layer a small Pi 5/RP1 config fragment on
-   top of the stock 6.18 config, then reconcile with `make olddefconfig` under the real clang toolchain. The build fails
+   top of the stock kernel config, then reconcile with `make olddefconfig` under the real clang toolchain. The build fails
    immediately if any required symbol didn't make it in (4K pages, NVMe, MACB, watchdog, RP1, BCM2712).
 2. Module list: Filter `hack/modules-arm64.txt` to what the rpi kernel actually built. The stock list references
    drivers our config doesn't include (e.g. `bnxt_re`), and `nvme` is now built-in rather than a module. The script
    regenerates the list by intersecting against the real kernel module tree.
-3. Overlay port: The overlay (copies u-boot/config.txt/dtb to disk) was written against older machinery; Talos
-   1.13's overlay API added a `ctx` argument. The script bumps machinery to match and patches `main.go` in the overlay.
-4. Grub profile: Build with the overlay's `rpi5` grub profile, not `metal`. Talos 1.13's `metal` default is
+3. Overlay port: The overlay (copies u-boot/config.txt/dtb to disk) was written against older machinery; a newer
+   Talos's overlay API added a `ctx` argument. The script bumps machinery to match and patches `main.go` in the overlay.
+4. Grub profile: Build with the overlay's `rpi5` grub profile, not `metal`. Talos's `metal` default is
    sd-boot, and sd-boot's image path silently skips the overlay installer entirely. So a Pi 5 image built as `metal`
    has the kernel but no u-boot/config.txt/dtb and won't boot. The grub profile runs the overlay install
    properly and the EFI partition ends up with the boot bits it needs.
@@ -153,8 +154,8 @@ container. Exits non-zero on any failure.
   `EPHEMERAL` don't exist yet, they're created on first boot.
 - Pi 5 boot bits in the EFI partition: `config.txt` (with the disable-wifi/bt lines), `u-boot.bin`,
   `bcm2712-rpi-5-b.dtb`, `overlays/disable-{wifi,bt}.dtbo`.
-- Kernel version: pulled from the installer UKI's `.uname` section. Asserts 6.18.x, which proves the kernel
-  actually got swapped out.
+- Kernel version: pulled from the installer UKI's `.uname` section. Asserts the expected rpi kernel line, which proves
+  the kernel actually got swapped out.
 - Extensions baked: decompress the UKI's `.initrd` and confirm `iscsi-tools` and `util-linux-tools` are in there.
 
 ## Flash the NVMe
@@ -257,7 +258,7 @@ so I picked `192.168.100.1` for the VIP (inside the subnet, outside the DHCP ran
    see [Runtime: the recovery DaemonSet](#runtime-the-recovery-daemonset-nic-keeper-gitops);
    `NODE_INSTANCE_TYPE` in `.env`), and the Cilium prep: `cluster.network.cni.name: none`,
    `cluster.proxy.disabled: true` (Cilium does kube-proxy replacement), and `machine.features.kubePrism.enabled: true`
-   (Cilium's API endpoint at `localhost:7445`; default-on in 1.13, set explicitly here to document the dependency).
+   (Cilium's API endpoint at `localhost:7445`; default-on in recent Talos, set explicitly here to document the dependency).
    Finally it raises etcd's timeouts — `cluster.etcd.extraArgs: {heartbeat-interval: "500", election-timeout: "5000"}`,
    5x etcd's 100ms/1000ms defaults. All three nodes are control-plane + worker and etcd shares the single NVMe with
    Longhorn + CNPG, so during the cold-boot I/O storm etcd's fsyncs stall past the default 1000ms election window and
@@ -440,8 +441,8 @@ Decisions:
 
 Caveats / preconditions:
 
-- Kernel 6.18: older Pi 5 kernels can't toggle EEE; the loop logs `event=eee-unsupported` and keeps
-  running the link-watchdog. The custom image already ships 6.18 (see [the build](#the-build)).
+- Kernel: older Pi 5 kernels can't toggle EEE; the loop logs `event=eee-unsupported` and keeps
+  running the link-watchdog. The custom image already ships a new-enough kernel (see [the build](#the-build)).
 - `CONFIG_INET_DIAG_DESTROY` is required for `ss -K`; absent, the loop logs `event=ss-k-unsupported`
   once and skips the socket-drop (link bounce + EEE still run).
 - A brief link bounce (~2s, `linkDownSeconds`) is expected on every recovery.
@@ -491,7 +492,7 @@ A recovery, in the affected node's pod logs:
   `apply-config`/full replace, which would clobber the live certSAN fix.
 - `kube-system` PSS exemption: Talos applies Pod Security elsewhere; the privileged
   probe pod runs in `kube-system`, which is exempt.
-- Image: see step 03a (build) for the 6.18 kernel that makes EEE controllable; the EEE
+- Image: see step 03a (build) for the recent kernel that makes EEE controllable; the EEE
   step itself is in the deferred DaemonSet, not the image.
 
 ## Troubleshooting

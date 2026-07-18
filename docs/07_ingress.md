@@ -33,7 +33,7 @@ Pure GitOps, no imperative script:
 
 ### Envoy Gateway owns the Gateway API CRDs
 `cilium.gatewayAPI.enabled: false` drops the `cilium` `GatewayClass` and Cilium's gateway
-controller. `gateway-helm` vendors the Gateway API CRDs (v1.5.1, newer than the v1.4.1 Cilium
+controller. `gateway-helm` vendors the Gateway API CRDs (a newer version than the ones Cilium
 vendored), so we remove `argo_apps/platform/charts/00_cilium/crds/gateway.networking.k8s.io_*.yaml`
 and let Envoy Gateway be the single owner. The handover is safe because Envoy Gateway re-applies the
 same CRDs via ServerSideApply and takes over ArgoCD ownership of them, so they stay present in the
@@ -202,7 +202,7 @@ callback route **and** every gated app route, plus the shared `google-sso.<domai
 the library) + a tiny whoami + the sealed OAuth client secret.
 
 **Why one policy per domain, not per app (the constraint that shapes this).** Envoy's OAuth2 filter signs its
-CSRF-nonce cookie under a name suffixed **per SecurityPolicy** (`OauthNonce-<hash>`), and EG (v1.8.1) gives no
+CSRF-nonce cookie under a name suffixed **per SecurityPolicy** (`OauthNonce-<hash>`), and EG gives no
 way to pin it. So the login handshake only completes if the **same** policy both starts the flow (on the app
 host) and finishes it (on the callback host) — a shared callback host with *separate* per-app policies fails
 with `CSRF token validation failed`. Hence: one policy per domain covering the app routes **and** the callback

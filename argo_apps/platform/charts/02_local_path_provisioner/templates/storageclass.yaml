@@ -1,4 +1,4 @@
-# Vendored from rancher/local-path-provisioner v0.0.36, parameterized from values.yaml.
+# Vendored from rancher/local-path-provisioner, parameterized from values.yaml; release tracked in Chart.yaml appVersion.
 # One StorageClass per entry in .Values.storageClasses, all served by the single rancher.io/local-path
 # provisioner: `local-path` (Retain) for CNPG, `local-path-ephemeral` (Delete) for RabbitMQ. Node-local: a PV
 # lives only on the node where its consumer pod is scheduled, hence WaitForFirstConsumer. Not the cluster

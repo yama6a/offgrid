@@ -35,10 +35,10 @@ Decision notes:
 
 - Encryption is WireGuard, not mTLS. Transparent, node-to-node, no certs/SPIFFE, exactly "encrypt the wire."
   Same-node pod traffic isn't encrypted (it never leaves the host). Cilium's SPIFFE mutual-auth is a separate feature we
-  don't enable. The 6.18 image kernel already carries `CONFIG_WIREGUARD`.
+  don't enable. The image kernel already carries `CONFIG_WIREGUARD`.
 - kube-proxy replacement is mandatory here, L2 announcements requires it. Hence `proxy.disabled: true` at the Talos
   layer and `kubeProxyReplacement: true` in the values.
-- KubePrism (`localhost:7445`, default-on in Talos 1.13) is Cilium's API endpoint, pure host networking, no
+- KubePrism (`localhost:7445`, default-on in recent Talos) is Cilium's API endpoint, pure host networking, no
   external LB needed for Cilium to reach the API server.
 
 ## What `04_cilium.sh` does
@@ -124,7 +124,7 @@ log-only (`hubble observe --verdict AUDIT`) until validated, then enforced by tu
 - All nodes are control-plane, so the L2 policy selects every Linux node. The common
   `node-role.kubernetes.io/control-plane: DoesNotExist` selector from upstream examples would match zero nodes here
   and nothing would answer ARP. `cilium-lb.yaml` gets this right, don't copy the example blindly.
-- CRD apiVersion split in 1.19: `CiliumLoadBalancerIPPool` is `cilium.io/v2`, but `CiliumL2AnnouncementPolicy` is
+- CRD apiVersion split: `CiliumLoadBalancerIPPool` is `cilium.io/v2`, but `CiliumL2AnnouncementPolicy` is
   still `cilium.io/v2alpha1`. Mixed, easy to get wrong by hand.
 - L2 announcements is Beta and leans on leader-election leases; if you grow the pool and see operator API
   throttling, raise `k8sClientRateLimit` in the values.

@@ -1,6 +1,6 @@
 {{- if .Values.loadBalancer.enabled }}
 # LoadBalancer IPs for the cluster. COMMIT THIS, later managed by ArgoCD.
-apiVersion: cilium.io/v2          # promoted to v2 in Cilium 1.19
+apiVersion: cilium.io/v2          # promoted to v2 in a recent Cilium
 kind: CiliumLoadBalancerIPPool
 metadata:
   name: pool-default
@@ -9,7 +9,7 @@ spec:
     - start: "{{ .Values.loadBalancer.ipPool.start }}"
       stop:  "{{ .Values.loadBalancer.ipPool.stop }}"
 ---
-apiVersion: cilium.io/v2alpha1    # L2 policy is still v2alpha1 in 1.19
+apiVersion: cilium.io/v2alpha1    # L2 policy is still v2alpha1
 kind: CiliumL2AnnouncementPolicy
 metadata:
   name: l2-default

@@ -5,8 +5,8 @@ description: >-
   its ServiceMonitor and a default-deny CiliumNetworkPolicy, as a small curated interface for workloads. A
   first-party chart (no upstream dependency — pure templates); the Redis CRD it targets is installed by the
   platform's 03_redis_operator. A REQUIRED `persistence` flag (no default) selects the mode: durable
-  (longhorn-redis-persistent class, Retain + AOF) or ephemeral cache (longhorn-redis-ephemeral class, Delete,
-  RDB-only) — the two 2-replica classes are shipped by the platform's 03_redis_operator app. Everything a workload
+  (longhorn-r2-retained class, Retain + AOF) or ephemeral cache (longhorn-r2-ephemeral class, Delete,
+  RDB-only) — the two 2-replica classes are shipped by the platform's 02_longhorn app. Everything a workload
   shouldn't decide is HARDCODED in the templates (images + tags, the redis-exporter, a maxmemory bound, a non-root
   podSecurityContext, and no-auth — gated by the network policy instead); a workload sets four REQUIRED knobs
   (name / resources / allowedClients / persistence) plus an OPTIONAL create-time initialFixedDiskSize (default 1Gi;
@@ -17,4 +17,4 @@ description: >-
   values key), the same shape as pg-cluster — so "one or more Redis per workload" is just "one or more aliases".
   See README.md and docs/12_redis.md.
 type: application
-version: 0.3.0                 # this chart's own version (0.3.0: durable instances labelled for central S3 backup)
+version: 0.3.0                 # this chart's own version

@@ -52,7 +52,7 @@ argo_apps/
     is gone. Ordering is now eventual: `workloads` is created while the platform may still be coming up, and a
     workload whose platform CRD isn't registered yet fails its sync and self-converges via **unbounded**
     `syncPolicy.retry` (`limit: -1`, `refresh: true`), typically within ~1-2 min. Only within-operation retry
-    re-drives a failed sync (selfHeal and the poll do NOT — verified against ArgoCD v3.4.4), which is why every
+    re-drives a failed sync (selfHeal and the poll do NOT — verified against ArgoCD), which is why every
     app's `retry.limit` is `-1`.
 - Each child Application points at a wrapper chart under its own tree's `charts/`.
 - Add a platform app = drop a wrapper chart under `argo_apps/platform/charts/NN_name/` + an Application manifest under

@@ -57,7 +57,7 @@ cluster:
   # Retain (a lost instance is rebuilt from a survivor; a deleted Cluster CR is reattached to its retained PV by
   # recover_cnpg_from_pv.sh). S3 covers what that can't: total data loss, corruption, PITR, a full rebuild.
   #
-  # Driven ENTIRELY through the upstream chart's `backups` values (0.8.0+): with method=plugin it renders the
+  # Driven ENTIRELY through the upstream chart's `backups` values: with method=plugin it renders the
   # `ObjectStore` CR, auto-adds the plugin to the Cluster's `.spec.plugins` (isWALArchiver), and renders the
   # ScheduledBackup — no hand-written templates here. See docs/13_backups.md.
   #

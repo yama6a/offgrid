@@ -49,7 +49,7 @@ rabbitmq-cluster-operator:
     extraEnvVars:
       - name: SYNC_PERIOD # re-reconcile all topology CRs so a declare that failed on out-of-order deps self-heals
         value: "1m"
-    # metrics left off: as of topology-operator v1.19.0 the metrics endpoint requires TLS, which the plaintext
+    # metrics left off: the topology-operator's metrics endpoint requires TLS, which the plaintext
     # vmagent scrape can't consume without extra config — not worth it for the homelab.
 
 # ---- The single shared broker (rendered by templates/, this chart's OWN resources, NOT the operator subchart) ----
@@ -65,8 +65,8 @@ name: rabbitmq
 replicas: 3
 
 # Pinned RabbitMQ server image. `-management` bundles the management plugin (the 15672 UI); `-alpine` is the
-# small variant (kind to the Pis). Multi-arch incl. arm64. 4.2.x matches the line the operator subchart
-# (CloudPirates 0.3.3) is built/tested against; bump deliberately.
+# small variant (kind to the Pis). Multi-arch incl. arm64. Track the server line the operator subchart
+# is built/tested against; bump deliberately.
 image: rabbitmq:4.3.2-management-alpine
 
 # Per-instance requests/limits. RabbitMQ sizes its memory high-watermark off the memory LIMIT, so the limit

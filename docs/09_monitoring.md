@@ -190,7 +190,7 @@ the density; keep a node eviction headroom and watch for OOMKills.
 
 It loads without rebuilding the image: `lib/shell/krr.sh` bind-mounts `conservative.py` into the image's
 `robusta_krr/strategies/` package plus a shadow `__init__.py` (`lib/krr/strategies_init.py`) that imports it,
-so KRR's `__subclasses__()` discovery registers it. Written against KRR **v1.28.0** internals — revisit both
+so KRR's `__subclasses__()` discovery registers it. Written against the pinned KRR's internals — revisit both
 files on an image bump.
 
 ### Metrics dependency

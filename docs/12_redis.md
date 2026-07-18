@@ -10,7 +10,7 @@ Three pieces (the operator + storage classes are platform; the instances are per
 
 | Piece | Where | What |
 |-------|-------|------|
-| **operator + storage** | `argo_apps/platform/{apps,charts}/03_redis_operator` (wave 3) | wraps the OpsTree `ot-helm/redis-operator` chart (the controller + its `Redis`/`RedisReplication`/`RedisCluster`/`RedisSentinel` CRDs) AND ships the two Longhorn classes `redis-instance` selects between via `persistence`: `longhorn-redis-persistent` (Retain) + `longhorn-redis-ephemeral` (Delete), both 2-replica. Wave 3 because those classes use Longhorn's provisioner. |
+| **the operator** | `argo_apps/platform/{apps,charts}/03_redis_operator` (wave 3) | wraps the OpsTree `ot-helm/redis-operator` chart (the controller + its `Redis`/`RedisReplication`/`RedisCluster`/`RedisSentinel` CRDs). The Longhorn classes `redis-instance` selects between via `persistence` — `longhorn-r2-retained` (Retain) + `longhorn-r2-ephemeral` (Delete), both 2-replica — are shipped by `02_longhorn`, not here (see [08_storage.md](08_storage.md)). |
 | **the reusable chart** | `lib/helm/redis-instance/` (`type: application`) | renders ONE standalone `Redis` CR + its `ServiceMonitor` + a default-deny `CiliumNetworkPolicy`. A workload consumes it via an aliased `file://` dependency, one alias per instance (like `pg-cluster`). |
 | **sample usage** | `argo_apps/workloads/charts/sample_user_manager` | two instances showcasing BOTH modes — `redis-cache` (the audit-log demo, **ephemeral** for the demo) + `redis-sessions` (**persistent**, provisioned but unused). The manager binary stores audit events in `redis-cache` and serves them at `GET /audit`. |
 
@@ -87,15 +87,14 @@ workload interface is deliberately just four required knobs, plus an optional cr
 ## Storage & persistence
 
 A standalone `Redis` is one PVC. A **REQUIRED `persistence`** flag (no default) picks the mode; the two Longhorn
-StorageClasses it selects between are shipped by the **`03_redis_operator`** app (wave 3, after Longhorn) alongside
-the operator — NOT in the Longhorn chart, since this is Redis's storage policy, not Longhorn's. Both classes are `numberOfReplicas: 2`
-(this cluster's nodes are flaky, so even a cache should survive a node loss) and mirror Longhorn's default-class
-parameters, differing only in reclaimPolicy:
+StorageClasses it selects between are the shared classes shipped by **`02_longhorn`** (they're generic Longhorn
+tiers, not Redis-specific — see [08_storage.md](08_storage.md)). Both are `numberOfReplicas: 2` (this cluster's
+nodes are flaky, so even a cache should survive a node loss), differing only in reclaimPolicy:
 
 | `persistence` | Storage class | reclaimPolicy | AOF | For |
 |---|---|---|---|---|
-| `true` | `longhorn-redis-persistent` | **Retain** — volume survives a PVC delete/prune, so an ArgoCD prune is data-safe (Released volumes cleaned up manually) | **on** (`appendfsync everysec`) | durable data |
-| `false` | `longhorn-redis-ephemeral` | **Delete** — volume cleaned up when its PVC is deleted | **off** (RDB only) | disposable caches |
+| `true` | `longhorn-r2-retained` | **Retain** — volume survives a PVC delete/prune, so an ArgoCD prune is data-safe (Released volumes cleaned up manually) | **on** (`appendfsync everysec`) | durable data |
+| `false` | `longhorn-r2-ephemeral` | **Delete** — volume cleaned up when its PVC is deleted | **off** (RDB only) | disposable caches |
 
 - **AOF (persistent only).** `templates/configmap.yaml` renders an extra-config ConfigMap (`<name>-ext-config`,
   wired via the CR's `redisConfig.additionalRedisConfig`) that sets `appendonly yes` + `appendfsync everysec`. On
@@ -252,9 +251,9 @@ operator-created Service (`app: <name>, redis_setup_type: standalone, role: stan
 VM operator auto-converts it to a `VMServiceScrape` and vmagent discovers it cluster-wide (`selectAllByDefault`), so
 it wires into VictoriaMetrics with no extra config (CRDs exist from wave 0). See [09_monitoring.md](09_monitoring.md).
 
-**arm64 exporter caveat.** The OpsTree `redis` chart's default exporter tag `quay.io/opstree/redis-exporter:v1.44.0`
-is **amd64-only** and will not run on the Pi 5. The `redis-instance` chart pins a recent multi-arch tag
-(`v1.84.0`); verify arm64 (quay v2 manifest-list API) before bumping. The redis + operator images are multi-arch.
+**arm64 exporter caveat.** The OpsTree `redis` chart's default exporter tag (`quay.io/opstree/redis-exporter`)
+is **amd64-only** and will not run on the Pi 5. The `redis-instance` chart pins a recent multi-arch tag instead;
+verify arm64 (quay v2 manifest-list API) before bumping. The redis + operator images are multi-arch.
 
 ## The sample: audit-log cache + `GET /audit`
 
@@ -281,13 +280,13 @@ pin an exact tag). Until then the running image lacks `/audit`.
 ```bash
 # Charts render (local)
 helm dependency update argo_apps/platform/charts/03_redis_operator
-helm template argo_apps/platform/charts/03_redis_operator --include-crds | grep -cE '^kind: (CustomResourceDefinition|StorageClass)'   # 6 = 4 CRDs + 2 StorageClasses (longhorn-redis-persistent/ephemeral)
+helm template argo_apps/platform/charts/03_redis_operator --include-crds | grep -cE '^kind: CustomResourceDefinition'   # 4 CRDs (StorageClasses now live in 02_longhorn)
 helm dependency update argo_apps/workloads/charts/sample_user_manager && helm template argo_apps/workloads/charts/sample_user_manager -n sample-user-manager | grep -c '^kind: Redis'   # 2
 
 export KUBECONFIG=secrets/kubeconfig
 kubectl -n redis-operator get pods                                        # operator Running
 kubectl -n sample-user-manager get redis                                  # redis-cache + redis-sessions
-kubectl -n sample-user-manager get pvc -o wide                            # redis-cache=longhorn-redis-ephemeral, redis-sessions=longhorn-redis-persistent
+kubectl -n sample-user-manager get pvc -o wide                            # redis-cache=longhorn-r2-ephemeral, redis-sessions=longhorn-r2-retained
 kubectl -n longhorn-system get volumes.longhorn.io                        # each Redis volume: 2 replicas
 kubectl get vmservicescrape -A | grep -i redis                            # metrics wired into VictoriaMetrics
 ```

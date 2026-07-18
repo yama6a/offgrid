@@ -23,7 +23,7 @@ cilium:
   gatewayAPI:
     # OFF: the cluster's Gateway API data plane is Envoy Gateway (argo app 01_envoy_gateway), not
     # Cilium. Cilium stays the CNI + LB-IPAM only. Disabling this drops the `cilium` GatewayClass and
-    # Cilium's gateway controller. Envoy Gateway now OWNS the Gateway API CRDs (it ships v1.5.1), so the
+    # Cilium's gateway controller. Envoy Gateway now OWNS the Gateway API CRDs (it ships its own), so the
     # previously-vendored crds/gateway.networking.k8s.io_*.yaml are removed from this chart. The live
     # CRDs survive the removal (this app is prune:false) and Envoy Gateway adopts them via SSA.
     # See 11_envoy_gateway.md.

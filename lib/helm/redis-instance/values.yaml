@@ -26,12 +26,12 @@ resources: {}
 allowedClients: []
 
 # REQUIRED: persistence mode — NO default; each instance must choose explicitly (durability is a deliberate call).
-#   true  = DURABLE: storage class `longhorn-redis-persistent` (reclaimPolicy Retain — the volume survives a PVC
+#   true  = DURABLE: storage class `longhorn-r2-retained` (reclaimPolicy Retain — the volume survives a PVC
 #           delete/prune) + AOF (appendfsync everysec, crash-durable to ~1s).
-#   false = EPHEMERAL cache: storage class `longhorn-redis-ephemeral` (reclaimPolicy Delete — the volume is
+#   false = EPHEMERAL cache: storage class `longhorn-r2-ephemeral` (reclaimPolicy Delete — the volume is
 #           cleaned up when the PVC is deleted) + NO AOF (RDB only, less write overhead).
 # Both classes are 2-replica (this cluster's nodes are flaky, so even a cache should survive a node loss); they
-# differ only in reclaimPolicy. The classes are shipped by the platform's 03_redis_operator app. See docs/12_redis.md.
+# differ only in reclaimPolicy. The classes are shipped by the platform's 02_longhorn app. See docs/12_redis.md.
 persistence: null   # invalid sentinel — validate.yaml fails until set to an explicit true or false
 
 # ---- optional; defaulted ----
@@ -41,8 +41,8 @@ persistence: null   # invalid sentinel — validate.yaml fails until set to an e
 # existing volume keeps its original size. To actually grow a running instance you expand its PVC out-of-band;
 # shrinking is impossible in place. See docs/12_redis.md ("Resizing an instance").
 #
-# The storage CLASS is chosen by `persistence` (longhorn-redis-persistent/ephemeral, both 2-replica); size is the
-# only storage knob.
+# The storage CLASS is chosen by `persistence` (longhorn-r2-retained / longhorn-r2-ephemeral, both 2-replica); size
+# is the only storage knob.
 # Size it against the MEMORY LIMIT, not just the dataset: with noeviction + AOF/RDB the whole in-RAM dataset (up to
 # maxmemory = 80% of the mem limit) is persisted and the append-log adds overhead, so budget disk >= ~2x the memory
 # limit. The 1Gi default covers the small instances typical here (e.g. a 96Mi mem limit).

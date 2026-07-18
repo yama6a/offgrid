@@ -46,15 +46,28 @@ pods come up but every node's disk shows unschedulable.
 
 - `defaultSettings.defaultDataPath: /var/mnt/longhorn`: the dedicated user volume, not the ephemeral
   `/var/lib/longhorn`.
-- `defaultSettings.defaultReplicaCount: 3` with `replicaSoftAntiAffinity` left default (`false`) → **hard
-  anti-affinity, one replica per node**. Full HA: a volume survives a single node loss intact. Trade-off:
-  usable capacity ~1/3 of raw.
-- `persistence.defaultClass: true` (+ `defaultClassReplicaCount: 3`): Longhorn is the cluster default
-  `StorageClass`; unqualified PVCs land on it.
-- Per-workload **Redis** defines its own two Longhorn classes (`longhorn-redis-persistent` /
-  `longhorn-redis-ephemeral`, both `numberOfReplicas: 2`, differing in reclaimPolicy) in the wave-3
-  `03_redis_operator` app (alongside the operator), not here — that's Redis's storage policy, not Longhorn's. See
-  [12_redis.md](12_redis.md).
+- `defaultSettings.defaultReplicaCount: 2` with `replicaSoftAntiAffinity` left default (`false`) → **hard
+  anti-affinity, one replica per node**. 2 replicas on 3 nodes survives the single node loss we design for AND
+  leaves a spare node to rebuild the lost replica onto (at 3 replicas there's no spare → the volume stays degraded
+  until the dead node returns). A global fallback only — every class below sets `numberOfReplicas: 2` explicitly.
+- `persistence.defaultClass: false`: there is **no default StorageClass**. Every PVC must name one of the three
+  classes below; a PVC that omits a class stays `Pending` rather than silently landing on Longhorn.
+
+**The three StorageClasses** (rendered by `templates/storageclasses.yaml`, all `numberOfReplicas: 2`; the only
+Longhorn classes in the cluster). They differ in reclaim + off-cluster backup:
+
+| Class | reclaimPolicy | S3 backup | Use for |
+|---|---|---|---|
+| `longhorn-r2-ephemeral` | Delete | — | regenerable data that still wants node-loss survival while alive (redis caches) |
+| `longhorn-r2-retained` | Retain | — | zero-RPO recovery of an accidental delete; total loss covered app-side or accepted (VM, VL, persistent redis) |
+| `longhorn-r2-retained-with-backups` | Retain | daily + weekly | precious data with no app-level backup (sqlite / config) |
+
+`Retain` means a PVC/app delete leaves the volume intact — recover an accidental delete with **zero data loss** by
+clearing the released PV's `claimRef` and rebinding (vs restoring from a backup, which costs up to the backup
+interval). The cost is orphaned `Released` PVs + their Longhorn volumes on delete, cleaned up manually. The
+`-with-backups` class adds off-cluster S3 backups via `recurringJobSelector`; see [13_backups.md](13_backups.md)
+("Longhorn volume backups"). Redis selects between the ephemeral/retained classes via its `persistence` flag; see
+[12_redis.md](12_redis.md).
 - `preUpgradeChecker.jobEnabled: false`: that Helm pre-upgrade hook Job can stall an ArgoCD sync waiting on
   completion; version control lives in git anyway.
 - `storageMinimalAvailablePercentage: 15`: leave headroom on the Pi NVMes; don't schedule onto a disk under
@@ -71,15 +84,17 @@ last-applied-annotation limit.
 talosctl -n 192.168.10.201 read /proc/mounts | grep longhorn   # /var/mnt/longhorn present (after the patch)
 kubectl -n longhorn-system get pods                            # manager on all 3 nodes + CSI Running
 kubectl -n longhorn-system get nodes.longhorn.io -o wide       # each node's disk Schedulable
-kubectl get storageclass                                       # `longhorn` present and (default)
+kubectl get storageclass                                       # the three longhorn-r2-* classes, NO default
 ```
 
-Smoke test: apply a 1Gi PVC with `storageClassName: longhorn` + a pod, confirm it `Bound` and the volume shows
-3 healthy replicas, one per node.
+Smoke test: apply a 1Gi PVC with `storageClassName: longhorn-r2-retained` + a pod, confirm it `Bound` and the
+volume shows 2 healthy replicas on two distinct nodes.
 
-**Caveat.** Deliberately deleting the app/CRDs destroys the volumes — back up (Longhorn snapshots/backups)
-before any teardown. If a Longhorn-managed field flaps `OutOfSync` after first sync (it mutates its own
-StorageClass or a webhook config), add a targeted `ignoreDifferences` rather than fighting `selfHeal`.
+**Caveat.** Deliberately deleting the app/CRDs destroys the volumes — back up before any teardown. Selected
+volumes can back up **off-cluster to S3** (opt-in via the `longhorn-r2-retained-with-backups` class; native
+Longhorn backups on a daily+weekly schedule) — see **[13_backups.md](13_backups.md)** ("Longhorn volume backups"). If a
+Longhorn-managed field flaps `OutOfSync` after first sync (it mutates its own StorageClass or a webhook config),
+add a targeted `ignoreDifferences` rather than fighting `selfHeal`.
 
 ## local-path-provisioner
 
@@ -126,8 +141,8 @@ Config worth calling out (`values.yaml`):
   catch-all means every node uses this path on its own disk). Shared by both classes below — RabbitMQ's
   quorum-log volumes co-tenant this 50 GiB slice with Postgres (tiny, accepted; see
   [11_messaging.md](11_messaging.md)).
-- `storageClasses`: two classes on the one provisioner, both `defaultClass: false` (Longhorn stays the cluster
-  default; consumers opt in by name) and `volumeBindingMode: WaitForFirstConsumer`, differing only in reclaim
+- `storageClasses`: two classes on the one provisioner, both `defaultClass: false` (there is no cluster-default
+  class; consumers opt in by name) and `volumeBindingMode: WaitForFirstConsumer`, differing only in reclaim
   policy — `local-path` (`Retain`, for CNPG: Postgres data is the source of truth) and `local-path-ephemeral`
   (`Delete`, for RabbitMQ: quorum queues replicate at the app layer, so the volume is disposable and a deleted
   PVC auto-cleans its dir).

@@ -6,9 +6,9 @@ Field shape mirrors the upstream ot-helm/redis chart's standalone template (veri
 
 A workload sets name / resources / allowedClients (+ optional persistence + initialFixedDiskSize). EVERYTHING
 ELSE IS PINNED HERE, once, for every instance at once:
-  storage class    persistence=true -> longhorn-redis-persistent (Retain); false -> longhorn-redis-ephemeral
-                   (Delete); both 2-replica, from the platform 03_redis_operator app. initialFixedDiskSize is the
-                   only storage knob, create-time only — default 1Gi (see docs/12_redis.md "Resizing an instance")
+  storage class    persistence=true -> longhorn-r2-retained (Retain); false -> longhorn-r2-ephemeral (Delete);
+                   both 2-replica, from the platform 02_longhorn app. initialFixedDiskSize is the only storage
+                   knob, create-time only — default 1Gi (see docs/12_redis.md "Resizing an instance")
   persistence      REQUIRED (no default). true: AOF appendfsync everysec + RDB, crash-durable. false: RDB only, no AOF
   maxmemory        80% of the container memory limit (noeviction: writes fail at the cap, never drop data)
   security         non-root uid/gid 1000
@@ -60,8 +60,8 @@ spec:
       spec:
         accessModes: ["ReadWriteOnce"]
         # persistence -> Retain class (volume survives a PVC delete); ephemeral -> Delete class. Both 2-replica,
-        # defined by the platform 03_redis_operator app.
-        storageClassName: {{ if .Values.persistence }}longhorn-redis-persistent{{ else }}longhorn-redis-ephemeral{{ end }}
+        # defined by the platform 02_longhorn app.
+        storageClassName: {{ if .Values.persistence }}longhorn-r2-retained{{ else }}longhorn-r2-ephemeral{{ end }}
         resources:
           requests:
             storage: {{ .Values.initialFixedDiskSize }}

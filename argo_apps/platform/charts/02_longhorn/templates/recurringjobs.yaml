@@ -1,0 +1,33 @@
+{{- /*
+Longhorn backup RecurringJobs for OPT-IN volumes. Rendered only when backups are configured (backupTarget set by
+16_longhorn_backup.sh) — off by default. Both jobs share the `backup` GROUP; the longhorn-r2-retained-with-backups
+StorageClass (templates/storageclasses.yaml) selects that group, so every volume on it gets BOTH tiers automatically.
+task: backup uploads to the S3 backupTarget; `retain` is the ONLY retention (the S3 longhorn/ prefix is delete-free,
+terraform/main.tf). No snapshot job — local snapshots cost scarce Pi NVMe. See docs/13_backups.md.
+*/ -}}
+{{- if .Values.longhorn.defaultBackupStore.backupTarget }}
+---
+apiVersion: longhorn.io/v1beta2
+kind: RecurringJob
+metadata:
+  name: backup-daily
+  namespace: {{ .Release.Namespace }}
+spec:
+  cron: "0 3 * * *"   # 03:00 UTC daily; offset from CNPG/Redis (02:00) to spread S3 upload load
+  task: backup
+  groups: [backup]    # volumes join via the longhorn-r2-retained-with-backups class's recurringJobSelector
+  retain: 7           # ~1 week of daily restore points; Longhorn prunes older backups + their now-unused blocks
+  concurrency: 1      # one volume at a time — 3 Pis, don't saturate the home uplink
+---
+apiVersion: longhorn.io/v1beta2
+kind: RecurringJob
+metadata:
+  name: backup-weekly
+  namespace: {{ .Release.Namespace }}
+spec:
+  cron: "0 4 * * 0"   # Sunday 04:00 UTC, after the daily so they don't collide
+  task: backup
+  groups: [backup]
+  retain: 8           # ~2 months of weekly restore points
+  concurrency: 1
+{{- end }}

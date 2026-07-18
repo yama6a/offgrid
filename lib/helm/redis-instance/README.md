@@ -10,9 +10,9 @@ Shared wrapper chart that renders **one** standalone OpsTree `Redis` instance fo
 First-party chart — no upstream dependency, no `Chart.lock`, no vendored tgz. The Redis CRD comes from the operator.
 
 A **REQUIRED `persistence`** flag (no default) picks the mode: `true` = durable (storage class
-`longhorn-redis-persistent`, `reclaimPolicy: Retain`, + AOF `everysec`); `false` = ephemeral cache
-(`longhorn-redis-ephemeral`, `reclaimPolicy: Delete`, RDB-only, no AOF). Both classes are 2-replica and shipped by
-the platform's `03_redis_operator` app. Almost everything else is **hardcoded in the templates** (single source of
+`longhorn-r2-retained`, `reclaimPolicy: Retain`, + AOF `everysec`); `false` = ephemeral cache
+(`longhorn-r2-ephemeral`, `reclaimPolicy: Delete`, RDB-only, no AOF). Both classes are 2-replica and shipped by
+the platform's `02_longhorn` app. Almost everything else is **hardcoded in the templates** (single source of
 truth, updated for every instance at once): the redis + exporter images/tags, `maxmemory` (80% of the memory limit,
 `noeviction`), the non-root uid/gid 1000 security context, and no-auth. A workload sets four **required** knobs
 (`name`, `resources`, `allowedClients`, `persistence`), plus an optional create-time `initialFixedDiskSize`. It is a

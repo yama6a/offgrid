@@ -1,21 +1,17 @@
-# ArgoCD Application for the OpsTree Redis operator + the two Redis StorageClasses
-# (argo_apps/platform/charts/03_redis_operator/): the ot-container-kit redis-operator controller + its CRDs
-# (Redis / RedisReplication / RedisCluster / RedisSentinel), PLUS the two Longhorn classes the per-workload
-# redis-instance chart selects between via its `persistence` flag — `longhorn-redis-persistent` (Retain) and
-# `longhorn-redis-ephemeral` (Delete), both 2-replica. The actual instances (single-node `Redis` CRs) are
-# PER-WORKLOAD, rendered by lib/helm/redis-instance in the workloads tree (like Postgres via pg-cluster). See 12_redis.md.
+# ArgoCD Application for the OpsTree Redis operator (argo_apps/platform/charts/03_redis_operator/): the
+# ot-container-kit redis-operator controller + its CRDs (Redis / RedisReplication / RedisCluster / RedisSentinel).
+# The Longhorn StorageClasses redis-instance selects between via its `persistence` flag — `longhorn-r2-retained`
+# (Retain) and `longhorn-r2-ephemeral` (Delete), both 2-replica — are shipped by 02_longhorn, not here. The actual
+# instances (single-node `Redis` CRs) are PER-WORKLOAD, rendered by lib/helm/redis-instance in the workloads tree
+# (like Postgres via pg-cluster). See 12_redis.md.
 #
 # AUTOMATED (prune + selfHeal): a safe leaf, like cert-manager / longhorn / cnpg-operator. A prune won't
-# cascade-delete cache data: the Redis CRs live in the workloads tree and their PVCs are Longhorn (not this app);
-# pruning a StorageClass only affects NEW PVCs (already-bound volumes reference their PV, not the class).
+# cascade-delete cache data: the Redis CRs live in the workloads tree and their PVCs are Longhorn (not this app).
 #
-# sync-wave "3": the operator ALONE would be a wave-2 independent leaf (needs only the CNI, like cnpg-operator).
-# But this app ALSO ships the two StorageClasses, which use the driver.longhorn.io provisioner — so the whole app
-# lands at wave 3, CREATED after Longhorn (wave 2) so the driver is likely present (waves order creation, not
-# health; a StorageClass is inert until a PVC binds anyway). Bundling the classes with the operator keeps all
-# Redis platform setup in ONE app; the only cost is
-# the operator installing one wave later, invisible in practice (redis workloads are post-platform and need
-# Longhorn anyway). The operator's admission webhook is DISABLED (values.yaml: webhook=false — it only guards the
+# sync-wave "3": now that the StorageClasses moved to 02_longhorn, the operator is a plain leaf that needs only the
+# CNI (like cnpg-operator, a wave-2 leaf). Kept at wave 3 to avoid renumbering (we treat the prefix as stable, see
+# CLAUDE.md); it installs one wave later than strictly necessary, invisible in practice (redis workloads are
+# post-platform). The operator's admission webhook is DISABLED (values.yaml: webhook=false — it only guards the
 # master-slave anti-affinity feature we don't use), so this has NO dependency on cert-manager for a serving-cert.
 apiVersion: argoproj.io/v1alpha1
 kind: Application

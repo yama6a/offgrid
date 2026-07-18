@@ -1,4 +1,4 @@
-# Vendored from rancher/local-path-provisioner v0.0.36 (deploy/local-path-storage.yaml).
+# Vendored from rancher/local-path-provisioner (deploy/local-path-storage.yaml); release tracked in Chart.yaml appVersion.
 # config.json: every node provisions PVs under .Values.dataPath on its OWN disk (node-local, via the
 # DEFAULT_PATH_FOR_NON_LISTED_NODES catch-all). setup/teardown: the helper-pod scripts that mkdir/rm
 # the per-volume dir. helperPod.yaml: the spec the provisioner stamps out to run those scripts.

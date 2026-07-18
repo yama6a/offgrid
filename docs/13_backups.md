@@ -1,4 +1,4 @@
-# 13: Off-cluster backups — CNPG Postgres (+ Redis) to S3
+# 13: Off-cluster backups — CNPG Postgres + Redis + Longhorn to S3
 
 Until now durability was entirely **in-cluster**: Postgres replication across 2 instances + `local-path`
 `reclaimPolicy: Retain` ([08_storage.md](08_storage.md)). That survives a node loss, but not a bad `DROP`,
@@ -7,16 +7,17 @@ archiving + daily base backups from every CloudNativePG cluster to **S3**, via t
 **Barman Cloud CNPG-I plugin** — giving point-in-time recovery and a ~180-day recovery window.
 
 The S3 bucket is created by **Terraform** (the repo's only Terraform) and is deliberately general-purpose:
-CNPG backups land under `cnpg/` and Redis RDB dumps under `redis/` (see below); the `longhorn/` prefix is
-reserved for later. Redis reuses the SAME bucket, lifecycle, and IAM writer — see "Redis RDB backups" below.
+CNPG backups land under `cnpg/`, Redis RDB dumps under `redis/`, and Longhorn volume backups under `longhorn/`
+(see below). All three reuse the SAME bucket + IAM writer. The S3 lifecycle is **per-prefix**, not bucket-wide —
+`cnpg/`+`redis/` tier-and-expire, `longhorn/` never auto-expires (see "Terraform" and "Longhorn volume backups").
 
 Pieces (Terraform is out-of-cluster; the plugin is platform; backups are configured per-cluster via the shared chart):
 
 | Piece                   | Where                                                              | What                                                                                                                                                                                     |
 |-------------------------|--------------------------------------------------------------------|------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------|
-| **the bucket + IAM**    | `terraform/`                                                       | one S3 bucket + a bucket-wide lifecycle (Standard → Glacier IR @30d → expire @180d), SSE, public-access block, and a scoped IAM writer. Local state (gitignored — holds the IAM secret). |
+| **the bucket + IAM**    | `terraform/`                                                       | one S3 bucket + a **per-prefix** lifecycle (`cnpg/`+`redis/`: Standard → Glacier IR @30d → expire @180d; `longhorn/`: Standard, never expires), SSE, public-access block, and a scoped IAM writer. Local state (gitignored — holds the IAM secret). |
 | **the plugin**          | `argo_apps/platform/{apps,charts}/03_barman_cloud_plugin` (wave 3) | the `ObjectStore` CRD + the Barman Cloud plugin Deployment/Service/RBAC + its cert-manager mTLS certs, in `cnpg-system`. Vendored release manifest (no upstream Helm chart).             |
-| **per-cluster backups** | `lib/helm/pg-cluster` (`backups.method: plugin`)                   | every CNPG cluster inherits WAL archiving + a daily `ScheduledBackup` + its own `ObjectStore`, all rendered by the upstream `cnpg/cluster` chart (0.8.0+) from values.                   |
+| **per-cluster backups** | `lib/helm/pg-cluster` (`backups.method: plugin`)                   | every CNPG cluster inherits WAL archiving + a daily `ScheduledBackup` + its own `ObjectStore`, all rendered by the upstream `cnpg/cluster` chart from values.                   |
 | **wiring scripts**      | `lib/shell/13_s3_backup_bucket.sh`, `14_cnpg_backup.sh`            | 13 runs Terraform; 14 seals the writer creds into each CNPG namespace + flips backups on in the chart values.                                                                            |
 | **recovery**            | `lib/shell/recover_cnpg_from_s3.sh`                                | restore (latest or PITR) into a fresh cluster from the object store.                                                                                                                     |
 
@@ -35,9 +36,9 @@ That's why the WAL-archive alert below is `critical`.
 ## Decisions (and the why)
 
 - **Barman Cloud *plugin*, not the in-tree integration.** CNPG deprecated the in-tree `barmanObjectStore` in
-  1.26 in favour of the CNPG-I plugin. We run CNPG 1.29.x, so we build on the plugin. This forced the
-  `cnpg/cluster` chart bump **0.7.0 → 0.8.0** (0.7.0 only rendered the deprecated path; 0.8.0 renders the
-  plugin `ObjectStore` + auto-adds `.spec.plugins` + the `ScheduledBackup`).
+  favour of the CNPG-I plugin, so we build on the plugin. This forced a `cnpg/cluster` chart bump: the older
+  chart only rendered the deprecated path; the newer one renders the plugin `ObjectStore` + auto-adds
+  `.spec.plugins` + the `ScheduledBackup`.
 - **ARM64.** Both the CNPG operand images and the plugin **sidecar** image
   (`ghcr.io/cloudnative-pg/plugin-barman-cloud-sidecar`) ship multi-arch manifests incl. `linux/arm64` — they
   run on the Pi 5s (the usual Pi gate, cf. the Redis exporter in [12_redis.md](12_redis.md)).
@@ -88,6 +89,14 @@ make s3-backup-destroy    # 13 destroy: empty the bucket THEN terraform-destroy 
 
 The bucket is `force_destroy = false`, so a bare `terraform destroy` refuses a non-empty bucket — that's why
 `destroy` empties it first (an explicit, typed-confirmed act) and nothing deletes backups by accident.
+
+**Per-prefix lifecycle (not bucket-wide).** `main.tf` has three lifecycle rules, one per consumer prefix, because
+they need different retention. `cnpg/` and `redis/` both tier to Glacier IR @`transition_days` and expire
+@`retention_days` — their objects are self-contained (WAL/base sets, whole RDB dumps), so age-expiry is safe and S3
+owns retention. `longhorn/` gets **no transition and no expiration** (only an aborted-multipart cleanup): Longhorn
+backups are incremental, deduplicated block chains, so a newer backup references older blocks — an age-based expiry
+would delete still-referenced blocks and corrupt restores. Longhorn's own RecurringJob `retain` is the sole deleter
+for `longhorn/`. This is why enabling Longhorn backups needed a Terraform change (redis/CNPG did not).
 
 ### The deployer IAM credentials (`.env`)
 
@@ -186,7 +195,7 @@ operator) when backups are on — the upstream CNPG rules cover HA/replication/d
 - **`CNPGWALArchiveFailing`** (`critical`): `cnpg_collector_pg_wal_archive_status{value="ready"} > 0` for 15 min —
   WAL segments piling up unarchived. This is the load-bearing one (a stalled archiver fills `pg_wal`).
 - **`CNPGBackupTooOld`** (`warning`): last successful base backup >36h old. Guarded with `> 0` because the
-  `cnpg_collector_last_available_backup_timestamp` metric is deprecated since 1.26 and **may stay 0 under the
+  `cnpg_collector_last_available_backup_timestamp` metric is deprecated and **may stay 0 under the
   plugin** — if so, this alert simply won't fire and we lean on the WAL alert + `kubectl cnpg status`.
 
 *Verify the exact metric/label (`value` vs `status`) and whether the backup-timestamp metric populates against
@@ -208,6 +217,14 @@ the live cluster — see the verify steps below.*
   guarded `> 0` so it stays quiet before the first success. Raise it if you set a slower schedule. Verify
   `kube_cronjob_status_last_successful_time` exists in the running KSM at apply time.
 
+The same `backups` group also carries the **Longhorn** pair (Longhorn's own metrics, its ServiceMonitor is on):
+
+- **`longhorn-backup-failed`** (`warning`): `max by (volume) (longhorn_backup_state == 4)` — a volume's backup is in
+  Error state (`4`).
+- **`longhorn-backup-stale`** (`warning`): `time() - longhorn_volume_last_backup_at > 48h` (guarded `> 0`) — a
+  silently stopped RecurringJob makes no Error state, so this is the only signal. **Verify the metric name** against
+  the running Longhorn at apply time; a wrong name → NoData → OK (silent, never a false alert).
+
 ## Redis RDB backups
 
 Durable (`persistence: true`) Redis instances back up to S3 as periodic RDB dumps, reusing this bucket + writer +
@@ -218,6 +235,82 @@ per-namespace list** — the trade is a single global schedule and job-level ale
 the job's stdout → VictoriaLogs). Full mechanism, the `make configure-redis-backup` (step 15) runbook, and the
 `make restore-redis` recovery are in [12_redis.md](12_redis.md) ("Off-cluster backups — RDB to S3"). Unlike CNPG
 (Barman-managed retention), Redis relies entirely on the bucket's S3 lifecycle for expiry.
+
+## Longhorn volume backups
+
+Selected Longhorn volumes back up to S3 under the `longhorn/` prefix, reusing this bucket + writer. This is for
+workloads that keep state on a Longhorn PVC with no backup mechanism of its own (sqlite files, config dirs, generic
+app data). It is **opt-in per volume via the StorageClass**: `02_longhorn` ships three classes (all r2 —
+`longhorn-r2-ephemeral` / `longhorn-r2-retained` / `longhorn-r2-retained-with-backups`; see
+[08_storage.md](08_storage.md)). Only PVCs on **`longhorn-r2-retained-with-backups`** are backed up off-cluster.
+The monitoring volumes (VM/VL, on `longhorn-r2-retained`) and Redis (on the ephemeral/retained classes, backed up
+via its own RDB path) are deliberately **not** Longhorn-backed-up. A workload opts in simply by naming the
+`-with-backups` class in its PVC / `volumeClaimTemplate`.
+
+**Native Longhorn backup, not a central CronJob (unlike Redis).** Redis is a network service, so its backup is one
+central job that `redis-cli --rdb`s each instance. Longhorn PVCs are RWO block devices attached to a single node
+with no network pull interface — the only way to read one for backup *is* Longhorn's own backup API. So Longhorn
+uses its **built-in** backup target + `RecurringJob`s + a StorageClass `recurringJobSelector`, all configured inside
+the existing `02_longhorn` app (wave 2) — there is deliberately **no** separate `NN_longhorn_backup` platform app.
+Native backup is also incremental/deduplicated (cheap on the home uplink), crash-consistent, and content-agnostic
+(no per-app dump logic). The classes always exist, but the `RecurringJob`s render only `{{- if backupTarget }}`, so
+no backup runs until `16_longhorn_backup.sh` sets the target — the same "empty = off" contract as CNPG/Redis.
+
+Pieces, all under `argo_apps/platform/charts/02_longhorn/`:
+
+- **`values.yaml` `defaultBackupStore`** — `backupTarget` (`s3://<bucket>@<region>/longhorn/`) +
+  `backupTargetCredentialSecret` (`longhorn-backup-s3`), filled by `16_longhorn_backup.sh`. `pollInterval: 300`.
+- **`templates/recurringjobs.yaml`** — two `RecurringJob`s (`task: backup`) in the shared `backup` group: `backup-daily`
+  (03:00 UTC, `retain 7`) + `backup-weekly` (Sun 04:00 UTC, `retain 8`, ~2 months). No snapshot job (local snapshots
+  cost scarce Pi NVMe).
+- **`templates/storageclasses.yaml`** — the three classes (`longhorn-r2-ephemeral` Delete, `longhorn-r2-retained`
+  Retain, `longhorn-r2-retained-with-backups` Retain). The `-with-backups` class carries
+  `recurringJobSelector: '[{"name":"backup","isGroup":true}]'`, so every volume it provisions joins the `backup`
+  group and gets both tiers automatically.
+- **`templates/backup-s3-sealedsecret.yaml`** — the sealed `longhorn-backup-s3` (keys `AWS_ACCESS_KEY_ID` /
+  `AWS_SECRET_ACCESS_KEY`, the names Longhorn's S3 target expects) in `longhorn-system`, written by `16`.
+
+**Retention is Longhorn's, not S3's.** The `longhorn/` prefix is lifecycle-exempt (see "Terraform"), so the
+RecurringJob `retain` counts are the only thing that deletes anything: Longhorn prunes old backups and the blocks
+they no longer reference. This is the third of three retention models in this doc — CNPG (Barman + aligned S3
+expiry), Redis (self-contained RDBs, S3 owns expiry), Longhorn (incremental chains, Longhorn owns expiry, S3 must
+NOT expire). **Consistency is crash-consistent** (a block snapshot, like pulling the power cord). That's fine for
+sqlite (its journal/WAL survives power loss); a future app needing app-consistency should dump itself to a backed-up
+volume, the way CNPG/Redis do.
+
+### Turning Longhorn backups on
+
+```sh
+make s3-backup-bucket           # 13: Terraform (idempotent) — now also splits the lifecycle per-prefix
+make configure-longhorn-backup  # 16: yq the backup target into 02_longhorn values + seal writer creds into longhorn-system
+git add -A && git commit && git push   # ArgoCD applies: backupTarget + sealed creds + the -with-backups SCs + RecurringJobs
+# verify:
+kubectl -n longhorn-system get backuptargets.longhorn.io default -o jsonpath='{.status.available}{"\n"}'  # true
+kubectl -n longhorn-system get recurringjobs.longhorn.io      # backup-daily + backup-weekly
+kubectl get storageclass | grep longhorn-           # longhorn-r2-ephemeral / -retained / -retained-with-backups
+```
+
+### Restore (and disaster recovery)
+
+`make restore-longhorn` (`recover_longhorn_from_s3.sh`) restores a volume from S3. Because this cluster runs with
+the CSI snapshotter sidecar **disabled** (`02_longhorn` `csi.snapshotterReplicaCount: 0`), the Kubernetes
+`VolumeSnapshot` restore path is unavailable — the script uses Longhorn's native path instead: it discovers
+`BackupVolume`s, picks a `Backup` (latest or named, reading the exact `fromBackup` URL off its `.status.url`), then
+creates a Longhorn `Volume` CR with `spec.fromBackup` + a static PV + PVC in the target namespace. Non-destructive
+(never touches the source backups or a live volume; refuses to overwrite). Then point your workload at the restored
+PVC.
+
+```sh
+make restore-longhorn   # interactive: lists BackupVolumes, prompts for volume + target namespace
+# or non-interactive:
+bash lib/shell/recover_longhorn_from_s3.sh --volume pvc-xxxx --backup latest --target-ns myns --name myns-data-restore --apply
+```
+
+**Full-cluster DR ordering:** `make restore-secrets-key` (06, so the committed `longhorn-backup-s3` decrypts) →
+platform syncs → Longhorn's `default` BackupTarget goes `available` and auto-discovers the `BackupVolume`s from S3
+(the `pollInterval`) → `make restore-longhorn` per volume you need back. Redis and the monitoring volumes rebuild
+empty by design. As with CNPG/Redis, the whole path hinges on the off-repo sealed-secrets key (backed up by 06):
+without it the S3 creds can't decrypt and the backups are unreachable.
 
 ## The two recovery tiers
 
@@ -289,7 +382,7 @@ was removed, and it **never came back**: WAL archiving stopped, the CNPG cluster
 unready cluster (verified on a rebuild: 3 stale S3 objects, then nothing for ~1 h). Not a "tiny blip" — a hard
 break.
 
-Fix (applied): the vendored `charts/cluster-0.8.0.tgz` is **patched** — the ObjectStore templates' `helm.sh/hook`
-is stripped and replaced with `argocd.argoproj.io/sync-wave: "-1"`, so the ObjectStore is a normal persistent
+Fix (applied): the vendored `cnpg/cluster` chart tarball (`charts/cluster-*.tgz`) is **patched** — the ObjectStore
+templates' `helm.sh/hook` is stripped and replaced with `argocd.argoproj.io/sync-wave: "-1"`, so the ObjectStore is a normal persistent
 resource applied just before the Cluster. Re-apply after any `helm dependency update` (repack with
 `COPYFILE_DISABLE=1` so macOS AppleDouble files don't break `helm dependency build`). See `lib/helm/pg-cluster/.gitignore`.

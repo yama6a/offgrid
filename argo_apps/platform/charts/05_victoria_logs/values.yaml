@@ -16,7 +16,7 @@ vlsingle:
   # Logs are bulkier than metrics, so they get their OWN, shorter window (metrics are 180d). 60d here.
   retentionPeriod: "60d"
   storage:
-    storageClassName: longhorn   # default global class, replica 3 (02_longhorn)
+    storageClassName: longhorn-r2-retained   # Retain r2 (02_longhorn): survives an accidental delete; VL has no off-cluster backup
     size: 30Gi
   resources:
     requests: {cpu: 10m, memory: 96Mi}

@@ -94,7 +94,7 @@ rm -rf "$CHK/pkgs" "$CHK/talos" "$CHK/sbc-raspberrypi5"
 git -C "$CHK/sbc-raspberrypi5" checkout -q "$SBCOVERLAY_VERSION" || die "could not pin overlay to ${SBCOVERLAY_VERSION}"
 
 # === 3. REBASE 1, kernel: raspberrypi/linux source + Pi5 config fragment ====
-# pkgs ships a stock 6.18 arm64 config (already 4K). We point the kernel source
+# pkgs ships a stock arm64 config (already 4K). We point the kernel source
 # at raspberrypi/linux (for the RP1/BCM2712 drivers that are fork-only) and add a
 # small fragment, reconciled with olddefconfig under the real clang toolchain.
 say "REBASE 1, kernel source -> raspberrypi/linux ${KERNEL_REF} (served locally), + Pi5 config fragment"
@@ -184,8 +184,8 @@ grep "usr/lib/modules/${KVER}/" "$BUILD_DIR/kfiles.txt" | sed "s#usr/lib/modules
 MF="$CHK/talos/hack/modules-arm64.txt"
 grep -Fxf "$BUILD_DIR/kexist.txt" "$MF" > "$MF.new" && mv "$MF.new" "$MF"
 # This rewrite is the ONLY change to the talos checkout, but it makes `git describe --dirty` report
-# `-dirty` — and that string stamps the OS version (--build-arg=TAG), so nodes report e.g. 1.13.5-dirty
-# and a clean talosctl warns it's "older than client" (semver ranks a -dirty prerelease below 1.13.5).
+# `-dirty` — and that string stamps the OS version (--build-arg=TAG), so nodes report e.g. <version>-dirty
+# and a clean talosctl warns it's "older than client" (semver ranks a -dirty prerelease below the clean release).
 # Mark the file assume-unchanged so every describe in the build (OS version + image tags) stays clean;
 # the modified content still feeds the installer build. Idempotent across re-runs / cached checkouts.
 git -C "$CHK/talos" update-index --assume-unchanged hack/modules-arm64.txt
@@ -204,7 +204,7 @@ grep -q '"context"' "$OSRC/main.go" || perl -0pi -e 's/(import \(\n)/$1\t"contex
 
 # === 7. REBASE 4, extensions + grub profile + network in the Makefile ========
 # Bake both extensions (one --system-extension-image flag each) and image with the
-# overlay's `rpi5` (grub) profile, NOT `metal` (1.13's sd-boot default silently
+# overlay's `rpi5` (grub) profile, NOT `metal` (Talos's sd-boot default silently
 # skips the overlay installer, so a Pi-5 image built as `metal` has no boot bits).
 say "REBASE 4, wire extensions + grub (rpi5) profile + --network host"
 python3 - "$WORK/Makefile" "$ISCSI_EXT" "$UTIL_EXT" <<'PY'

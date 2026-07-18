@@ -1,4 +1,4 @@
-# Vendored from rancher/local-path-provisioner v0.0.36 (deploy/local-path-storage.yaml).
+# Vendored from rancher/local-path-provisioner (deploy/local-path-storage.yaml); release tracked in Chart.yaml appVersion.
 # Single controller replica; spawns helper pods on demand to create/remove volume dirs. It does NOT
 # mount the host data path itself, only the config. The kubelet mounts the resulting hostPath PVs
 # directly (which is why /var/mnt/localpath must be in the kubelet's extraMounts; see 03d).

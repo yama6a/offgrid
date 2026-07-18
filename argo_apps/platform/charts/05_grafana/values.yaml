@@ -406,6 +406,79 @@ grafana:
                     conditions:
                       - type: query
                         evaluator: {type: gt, params: [129600]}
+            # Native Longhorn volume backups (daily/weekly RecurringJobs on the longhorn-r2-retained-with-backups class, 02_longhorn +
+            # 16_longhorn_backup.sh). Longhorn's ServiceMonitor is enabled (02_longhorn metrics.serviceMonitor), so
+            # these scrape via VictoriaMetrics like the redis rules. Per-volume; the volume is in $labels.volume.
+            # See docs/13_backups.md.
+            - uid: longhorn-backup-failed
+              title: Longhorn backup failed
+              condition: C
+              for: 15m
+              labels: {severity: warning}
+              annotations:
+                summary: 'Longhorn backup for volume {{`{{ $labels.volume }}`}} is in Error state'
+              noDataState: OK
+              execErrState: Error
+              data:
+                - refId: A
+                  relativeTimeRange: {from: 600, to: 0}
+                  datasourceUid: VictoriaMetrics
+                  model:
+                    refId: A
+                    instant: true
+                    expr: 'max by (volume) (longhorn_backup_state == 4)'  # 4 = Error (0=New,1=Pending,2=InProgress,3=Completed)
+                - refId: B
+                  relativeTimeRange: {from: 600, to: 0}
+                  datasourceUid: __expr__
+                  model: {refId: B, type: reduce, expression: A, reducer: last, datasource: {type: __expr__, uid: __expr__}}
+                - refId: C
+                  relativeTimeRange: {from: 600, to: 0}
+                  datasourceUid: __expr__
+                  model:
+                    refId: C
+                    type: threshold
+                    expression: B
+                    datasource: {type: __expr__, uid: __expr__}
+                    conditions:
+                      - type: query
+                        evaluator: {type: gt, params: [0]}
+            # Staleness: a backed-up volume hasn't had a successful backup recently — a silently stopped
+            # RecurringJob produces NO Error state, so this is the only signal. 172800s = 48h (daily + slack).
+            # VERIFY the metric name longhorn_volume_last_backup_at exists in the running Longhorn at apply time (the
+            # Longhorn docs list a per-volume "last backup" timestamp but not the exact name); a wrong name => NoData =>
+            # OK (silent, never a false alert), so adjust if it never fires after a known-good backup.
+            - uid: longhorn-backup-stale
+              title: Longhorn backup is stale
+              condition: C
+              for: 30m
+              labels: {severity: warning}
+              annotations:
+                summary: 'Longhorn volume {{`{{ $labels.volume }}`}} has no successful backup in >48h'
+              noDataState: OK
+              execErrState: Error
+              data:
+                - refId: A
+                  relativeTimeRange: {from: 600, to: 0}
+                  datasourceUid: VictoriaMetrics
+                  model:
+                    refId: A
+                    instant: true
+                    expr: 'time() - max by (volume) (longhorn_volume_last_backup_at > 0)'
+                - refId: B
+                  relativeTimeRange: {from: 600, to: 0}
+                  datasourceUid: __expr__
+                  model: {refId: B, type: reduce, expression: A, reducer: last, datasource: {type: __expr__, uid: __expr__}}
+                - refId: C
+                  relativeTimeRange: {from: 600, to: 0}
+                  datasourceUid: __expr__
+                  model:
+                    refId: C
+                    type: threshold
+                    expression: B
+                    datasource: {type: __expr__, uid: __expr__}
+                    conditions:
+                      - type: query
+                        evaluator: {type: gt, params: [172800]}
     # Log-based alert in its OWN file so a VL-datasource model mismatch can't break the metrics rules
     # above. VERIFY the query model against the live victoriametrics-logs-datasource at apply time (the
     # plugin's alerting model field names can change between versions). See 16_grafana.md.

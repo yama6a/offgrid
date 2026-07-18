@@ -12,10 +12,11 @@ longhorn:
     # disk here on every node and reads its (fixed, grow-once-at-provision) capacity via statfs.
     defaultDataPath: /var/mnt/longhorn
 
-    # 3 nodes -> one replica per node: full HA, survives a single node loss with data intact.
-    # replicaSoftAntiAffinity is left at its default (false) => hard anti-affinity, so the three
-    # replicas always land on three distinct nodes (exactly what we want at 3 nodes / 3 replicas).
-    defaultReplicaCount: 3
+    # Longhorn's global default replica count (a fallback — every StorageClass here sets numberOfReplicas: 2
+    # explicitly). 2 on a 3-node cluster survives the one node loss we design for AND leaves a spare node to rebuild
+    # the lost replica onto; at 3 replicas / hard anti-affinity there's no spare, so a volume stays degraded until
+    # the dead node returns. replicaSoftAntiAffinity stays default false => hard anti-affinity, one replica per node.
+    defaultReplicaCount: 2
 
     # Keep headroom on the Pi NVMes, don't schedule replicas onto a disk under 15% free.
     storageMinimalAvailablePercentage: 15
@@ -28,11 +29,20 @@ longhorn:
     # 15_monitoring.md (failover).
     nodeDownPodDeletionPolicy: delete-statefulset-pod
 
+  # Off-cluster S3 backup target for OPT-IN volumes (the longhorn-r2-retained-with-backups class -> templates/storageclasses.yaml).
+  # 16_longhorn_backup.sh fills these from .env/terraform when AWS creds are present; empty here = backups OFF (the
+  # committed default). Longhorn owns retention via the RecurringJob `retain` counts (the S3 longhorn/ prefix is
+  # delete-free, terraform/main.tf) — see templates/recurringjobs.yaml + docs/13_backups.md.
+  defaultBackupStore:
+    backupTarget: ""                  # -> s3://<S3_BACKUP_BUCKET>@<AWS_REGION>/longhorn/
+    backupTargetCredentialSecret: ""  # -> longhorn-backup-s3 (sealed into longhorn-system, templates/backup-s3-sealedsecret.yaml)
+    pollInterval: 300                 # s; how often Longhorn rescans S3 (also how DR discovers BackupVolumes on a rebuild)
+
   persistence:
-    # Longhorn is the cluster's only storage, so make it the default StorageClass. Flip to false
-    # if you'd rather PVCs name `longhorn` explicitly.
-    defaultClass: true
-    defaultClassReplicaCount: 3
+    # NO default StorageClass. The three explicit classes (templates/storageclasses.yaml: longhorn-r2-ephemeral /
+    # -retained / -retained-with-backups) are the only Longhorn classes, and every workload names one deliberately
+    # — a PVC that omits a class stays Pending rather than silently landing on Longhorn. See docs/08_storage.md.
+    defaultClass: false
 
   # The pre-upgrade checker is a Helm pre-upgrade HOOK Job. Under ArgoCD a hook Job can stall the
   # sync waiting on its completion; version control already lives in git, so disable it.

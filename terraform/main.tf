@@ -1,7 +1,14 @@
-# The shared backup bucket + a scoped IAM writer. General-purpose: CNPG WAL/base backups land under cnpg/
-# today (see lib/helm/pg-cluster + 14_cnpg_backup.sh); longhorn/ and redis/ prefixes are reserved for later.
-# One bucket-wide lifecycle governs ALL prefixes: land in Standard -> Glacier IR at transition_days -> delete
-# at retention_days. Retention is owned HERE (S3 lifecycle), not by Barman. See docs/13_backups.md.
+# The shared backup bucket + a scoped IAM writer. General-purpose, three consumers by prefix:
+#   cnpg/     CNPG WAL/base backups   (lib/helm/pg-cluster + 14_cnpg_backup.sh)
+#   redis/    Redis RDB dumps         (07_redis_backup   + 15_redis_backup.sh)
+#   longhorn/ Longhorn volume backups (02_longhorn       + 16_longhorn_backup.sh)
+# Lifecycle is PER-PREFIX (not one bucket-wide rule) because the consumers need different retention:
+#   cnpg/ + redis/  -> Standard -> Glacier IR @transition_days -> delete @retention_days. Their objects are
+#                      self-contained (WAL/base/RDB), so age-expiry is safe and S3 owns retention.
+#   longhorn/       -> Standard, NEVER auto-expired. Longhorn backups are INCREMENTAL dedup block chains: a
+#                      newer backup references older blocks, so an age-based expiry would delete still-referenced
+#                      blocks and corrupt restores. Longhorn's own RecurringJob `retain` is the sole deleter.
+# See docs/13_backups.md.
 
 resource "aws_s3_bucket" "backups" {
   bucket = var.bucket
@@ -44,24 +51,51 @@ resource "aws_s3_bucket_versioning" "backups" {
 resource "aws_s3_bucket_lifecycle_configuration" "backups" {
   bucket = aws_s3_bucket.backups.id
 
+  # cnpg/ — self-contained WAL/base objects. Written as Standard (Barman sets no storage class); we skip
+  # Standard-IA (can't transition before 30d anyway, and IA's 128 KB min-billable-size + retrieval fees punish
+  # the churny small WAL objects) and go straight to Glacier Instant Retrieval, then expire. S3 owns retention.
   rule {
-    id     = "backups-tier-and-expire"
+    id     = "cnpg-tier-and-expire"
     status = "Enabled"
-    filter {} # whole bucket (all prefixes: cnpg/, future longhorn/, redis/)
+    filter { prefix = "cnpg/" }
 
-    # Objects are WRITTEN as Standard (Barman/clients don't set a storage class). We do NOT transition to
-    # Standard-IA: lifecycle can't move to IA before 30d anyway, and IA's 128 KB min-billable-size + retrieval
-    # fees punish the churny small WAL objects. Straight to Glacier Instant Retrieval instead.
     transition {
       days          = var.transition_days
       storage_class = "GLACIER_IR"
     }
-
     expiration {
       days = var.retention_days
     }
+    abort_incomplete_multipart_upload {
+      days_after_initiation = 7
+    }
+  }
 
-    # Barman uploads base backups via S3 multipart; clean up parts orphaned by an aborted/failed backup.
+  # redis/ — self-contained RDB dumps; same tier-and-expire as cnpg/ (S3 owns Redis's retention entirely).
+  rule {
+    id     = "redis-tier-and-expire"
+    status = "Enabled"
+    filter { prefix = "redis/" }
+
+    transition {
+      days          = var.transition_days
+      storage_class = "GLACIER_IR"
+    }
+    expiration {
+      days = var.retention_days
+    }
+    abort_incomplete_multipart_upload {
+      days_after_initiation = 7
+    }
+  }
+
+  # longhorn/ — incremental block chains: NO transition, NO expiration (see header). Longhorn's RecurringJob
+  # `retain` prunes backups + their now-unreferenced blocks. We only clean up parts orphaned by an aborted upload.
+  rule {
+    id     = "longhorn-abort-incomplete"
+    status = "Enabled"
+    filter { prefix = "longhorn/" }
+
     abort_incomplete_multipart_upload {
       days_after_initiation = 7
     }

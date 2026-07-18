@@ -1,5 +1,5 @@
-# Vendored VERBATIM from the plugin-barman-cloud v0.13.0 release — DO NOT EDIT BY HAND.
-# Source: https://github.com/cloudnative-pg/plugin-barman-cloud/releases/download/v0.13.0/manifest.yaml
+# Vendored VERBATIM from the plugin-barman-cloud release pinned in Chart.yaml appVersion — DO NOT EDIT BY HAND.
+# Source: https://github.com/cloudnative-pg/plugin-barman-cloud/releases/download/<appVersion>/manifest.yaml
 # Re-vendor via this chart README; bump appVersion in Chart.yaml to match. See docs/13_backups.md.
 ---
 apiVersion: apiextensions.k8s.io/v1

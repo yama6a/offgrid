@@ -43,17 +43,6 @@ redis-operator:
                 app.kubernetes.io/name: redis-operator
             topologyKey: kubernetes.io/hostname
 
-# ---- The two Redis Longhorn StorageClasses (rendered by templates/storageclasses.yaml — this app's OWN
-# resources, NOT the operator subchart). The redis-instance chart picks between them via its `persistence` flag.
-# Both are 2-replica (flaky nodes — even a cache should survive a node loss, see 08_storage.md); they differ ONLY
-# in reclaimPolicy: Retain keeps the volume when its PVC is deleted/pruned (durable), Delete cleans it up
-# (disposable cache). Top-level keys (NOT under `redis-operator:`). See 12_redis.md.
-persistent:
-  name: longhorn-redis-persistent
-  numberOfReplicas: "2"
-  reclaimPolicy: Retain
-
-ephemeral:
-  name: longhorn-redis-ephemeral
-  numberOfReplicas: "2"
-  reclaimPolicy: Delete
+# Storage: this app no longer ships its own StorageClasses. redis-instance selects between the shared Longhorn
+# classes owned by 02_longhorn — longhorn-r2-ephemeral (Delete) for caches, longhorn-r2-retained (Retain) for
+# durable instances — via its `persistence` flag. See 08_storage.md + 12_redis.md.

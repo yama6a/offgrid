@@ -266,12 +266,16 @@ Pi 5 Talos image builds on [talos-rpi5/talos-builder](https://github.com/talos-r
 - check all logs/hubble for network policies in audit more that are dropping traffic that should be allowed
 - rewrite git history to remove secrets and email addresses and domains from past commits
 - read and shorten all md files.
-- apply comment rules from claude.md to all yaml and other code files.
+- improve then apply comment rules from claude.md to all yaml and other code files.
 - disaster recovery exercise
 - add something to test in CI so that PRs have at least SOME confidence in not being garbage.
-- compare .env and .env.example to make sure they are in sync / nothing is missing from either of them.
-- remove non-config stuff from .env and put into common.sh or something. namespace names are not config options, nobody will change them. SMTP_SECRET_KEY doesnt seem variable either. also consider if this setup even works with other non-gmail smp providers. if not, maybe more can be hardcoded. if yes, anything we need to change? also see if the SS_* env vars are real config toggles... NODE_INSTANCE_TYPE seems non-variable, EXPECT_* as well...
-- longhorn backups?
-- remove versions from code comments and markdown.
 - optional DNS-01 auth (fallback to HTTP-01 when cloudflare secret not set in .env)
 - Alerting (prometheus rules and vmalerts to grafana)
+- decide on alerting. grafana good, even though no persistence guarantee? manual alerts will not be created, everything will be in code. But silences would go lost when instance gets replaced (e.g. grafana updates, node restart, ...)
+- revisit number prefixes, now that we don't have sync waves anymore.
+- ugly redis helm loop over 2 SCs is unreadable und unnecessary. make them plain. 
+
+- compare .env and .env.example to make sure they are in sync / nothing is missing from either of them.
+- longhorn storage classes (-r2 -r2-with-backups -r3 -r3-with-backups)
+- remove non-config stuff from .env and put into common.sh or something. namespace names are not config options, nobody will change them. SMTP_SECRET_KEY doesnt seem variable either. also consider if this setup even works with other non-gmail smp providers. if not, maybe more can be hardcoded. if yes, anything we need to change? also see if the SS_* env vars are real config toggles... NODE_INSTANCE_TYPE seems non-variable, EXPECT_* as well...
+- vmbackup

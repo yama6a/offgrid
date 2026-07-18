@@ -30,8 +30,8 @@ version: 0.1.0                 # this wrapper chart's own version
 
 dependencies:
   - name: cluster
-    version: "0.8.0"          # cnpg/cluster chart, THE single source for the pin. 0.8.0 (was 0.7.0) is the
-                              # first version that natively renders the Barman Cloud PLUGIN path (the
-                              # ObjectStore CR + auto .spec.plugins + ScheduledBackup) from `backups.method:
-                              # plugin`; 0.7.0 only supported the deprecated in-tree barmanObjectStore.
+    version: "0.8.0"          # cnpg/cluster chart, THE single source for the pin. Pinned at/above the first
+                              # version that natively renders the Barman Cloud PLUGIN path (the ObjectStore CR
+                              # + auto .spec.plugins + ScheduledBackup) from `backups.method: plugin`; older
+                              # versions only supported the deprecated in-tree barmanObjectStore.
     repository: https://cloudnative-pg.github.io/charts

@@ -36,7 +36,7 @@ spec:
               being archived to S3. RPO is degrading and pg_wal will grow until the volume fills and the
               primary goes read-only. Check the barman-cloud sidecar logs and the S3 creds/bucket.
         # No recent successful base backup. The `cnpg_collector_last_available_backup_timestamp` metric is
-        # deprecated since 1.26 and MAY stay 0 under the plugin (only guaranteed for the native path) — so we
+        # deprecated and MAY stay 0 under the plugin (only guaranteed for the native path) — so we
         # guard with `> 0`: if it's never populated the alert simply won't fire (we lean on the WAL alert +
         # `kubectl cnpg status` then), rather than firing forever against a zero timestamp. 36h = a daily
         # schedule plus generous slack. See docs/13_backups.md.
