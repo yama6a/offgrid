@@ -1,5 +1,6 @@
-# Static config — your real IPs / domains / usernames / versions. Gitignored so they stay out of git.
-# Copy the committed template and edit:  cp .env.example .env
+# Personal config + secrets — your real IPs / domains / usernames / tokens. Gitignored so they stay out of
+# git. Copy the committed template and edit:  cp .env.example .env  (the version recipe is the COMMITTED
+# versions.env — deliberately NOT ignored; only bare `.env` is, so `.env.example`/`versions.env` are tracked.)
 .env
 
 # Live cluster credentials (talosconfig, kubeconfig, secrets.yaml, sealed-secrets master key), written by

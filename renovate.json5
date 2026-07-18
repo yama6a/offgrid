@@ -4,7 +4,7 @@
   //  - container images in values.yaml (single-string + repository/tag)     -> helm-values
   //  - the aws terraform provider (versions.tf + .terraform.lock.hcl)       -> terraform
   //  - the renovate workflow's own action pins                              -> github-actions
-  //  - images in chart templates + shell scripts, and the .env.example      -> customManagers (regex)
+  //  - images in chart templates + shell scripts, and versions.env          -> customManagers (regex)
   //    Talos/kernel build recipe
   // Cadence is the GHA cron (every 3h — frequent so Renovate can self-merge the combined PR; see below). No
   // internal `schedule`, so a manual workflow_dispatch works too.
@@ -37,13 +37,13 @@
   customManagers: [
     {
       // Container images annotated `# renovate: datasource=docker` in files helm-values can't read: chart
-      // templates (redis-instance), shell-script literals, and the .env.example system extensions. (Images
+      // templates (redis-instance), shell-script literals, and the versions.env system extensions. (Images
       // in values.yaml are handled by helm-values — NOT here — to avoid double-managing.)
       // Captures repo:tag(+@sha256 digest) from the ref itself, so the tag AND digest stay fresh.
       customType: "regex",
-      description: "docker image refs (annotated) in chart templates, shell scripts, .env.example",
+      description: "docker image refs (annotated) in chart templates, shell scripts, versions.env",
       managerFilePatterns: [
-        "/^\\.env\\.example$/",
+        "/^versions\\.env$/",
         "/^lib/shell/.*\\.sh$/",
         "/^lib/helm/redis-instance/templates/redis\\.yaml$/",
         "/^argo_apps/platform/charts/07_redis_backup/templates/cronjob\\.yaml$/", // alpine/k8s + opstree-redis refs
@@ -54,11 +54,11 @@
       datasourceTemplate: "docker",
     },
     {
-      // Scalar version vars in .env.example carrying a full `# renovate: datasource=... depName=...` comment
+      // Scalar version vars in versions.env carrying a full `# renovate: datasource=... depName=...` comment
       // (Talos / pkgs / talos-builder / kernel / kubernetes). SBCOVERLAY is handled separately below.
       customType: "regex",
-      description: "annotated version scalars in .env.example",
-      managerFilePatterns: ["/^\\.env\\.example$/"],
+      description: "annotated version scalars in versions.env",
+      managerFilePatterns: ["/^versions\\.env$/"],
       matchStrings: [
         "# renovate: datasource=(?<datasource>[a-z-]+) depName=(?<depName>\\S+)(?: versioning=(?<versioning>\\S+))?\\s+\\w+=\"(?<currentValue>[^\"]+)\"",
       ],
@@ -68,7 +68,7 @@
       // then checks out this SHA. Track main's HEAD and keep the SHA fresh via git-refs.
       customType: "regex",
       description: "sbc-raspberrypi5 overlay commit pin",
-      managerFilePatterns: ["/^\\.env\\.example$/"],
+      managerFilePatterns: ["/^versions\\.env$/"],
       matchStrings: ["SBCOVERLAY_VERSION=\"(?<currentDigest>[a-f0-9]{40})\""],
       currentValueTemplate: "main",
       depNameTemplate: "talos-rpi5/sbc-raspberrypi5",
@@ -83,7 +83,7 @@
       // Renovate self-merges it once mergeable (~2h after creation, no CI gate). WARNING: this reaches the live
       // cluster unattended via ArgoCD self-heal — including Cilium (which can cut the cluster off its own
       // network) and any local-path tag bump (which really needs a manual re-vendor, see below); it also bumps
-      // the Talos/kernel .env recipe, which a merge does NOT apply (that needs a manual rebuild — 03a). Accepted
+      // the Talos/kernel versions.env recipe, which a merge does NOT apply (that needs a manual rebuild — 03a). Accepted
       // trade-off for a hands-off homelab. To de-risk later: add `minimumReleaseAge` so bumps bake first, or
       // drop `automerge` from the deps you want to gate. See docs/14_renovate.md.
       description: "combine all non-major updates into one auto-merged PR",
@@ -101,7 +101,7 @@
       groupName: "victoriametrics stack (major)",
     },
     {
-      // k8s release tags are v-prefixed; the .env value is not. Strip the v when comparing.
+      // k8s release tags are v-prefixed; the versions.env value is not. Strip the v when comparing.
       description: "kubernetes tags are v-prefixed",
       matchPackageNames: ["kubernetes/kubernetes"],
       extractVersion: "^v(?<version>.+)$",

@@ -29,10 +29,23 @@ _COMMON_SH=1
 # Repo root = two dirs above this file (lib/shell/). Robust regardless of which script sources it.
 REPO_ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/../.." && pwd)"
 
-# ---- static config: the gitignored .env (copy .env.example -> .env and edit it) -------------------
-# Holds the plain scalar config (versions, topology, domains, namespaces, ...). Gitignored so your
-# IPs/domains/usernames stay out of git; .env.example is the committed template. die() isn't defined
-# yet (helpers are below), so error raw.
+# ---- pinned version recipe: the COMMITTED versions.env (shared, renovate-managed) -----------------
+# The build recipe (versions + digest pins), same for everyone, so it's committed (not in .env). Sourced
+# FIRST; the derived block below (BUILD_KEY, *_VERSION aliases) reads it. die() isn't defined yet, error raw.
+VERSIONS_FILE="${REPO_ROOT}/versions.env"
+if [ ! -f "$VERSIONS_FILE" ]; then
+  printf '\033[1;31mERROR: missing %s (committed recipe; it should be in the repo checkout)\033[0m\n' \
+    "$VERSIONS_FILE" >&2
+  exit 1
+fi
+# shellcheck disable=SC1090
+source "$VERSIONS_FILE"
+
+# ---- personal config + secrets: the gitignored .env (copy .env.example -> .env and edit it) --------
+# Holds the plain scalar config (topology, domains, ...) + secrets; fixed identifiers (namespaces,
+# operator names, hardware NIC/disk) are NOT here, they're constants below, and versions are in
+# versions.env. Gitignored so your IPs/domains/usernames/tokens stay out of git; .env.example is the
+# committed template. die() isn't defined yet (helpers are below), so error raw.
 ENV_FILE="${REPO_ROOT}/.env"
 if [ ! -f "$ENV_FILE" ]; then
   printf '\033[1;31mERROR: missing %s\n       copy the template and edit it:  cp .env.example .env\033[0m\n' \
@@ -54,12 +67,26 @@ source "$ENV_FILE"
 : "${AWS_DEPLOY_ACCESS_KEY_ID:=}"          # 13 runs Terraform with these; empty = skip S3 backups (13/14 no-op)
 : "${AWS_DEPLOY_SECRET_ACCESS_KEY_SECRET:=}"  # 13 Terraform deployer secret (never sealed into the cluster)
 # Not a secret, but defaulted here for the same reason (an older .env missing the key must not trip set -u).
-: "${POLL_SYNC_ENABLED:=false}"    # 08 patches timeout.reconciliation from this (false=3600s fallback / true=60s)
+: "${POLL_SYNC_ENABLED:=false}"    # 08 patches timeout.reconciliation from this (false=300s fallback / true=60s)
 : "${AWS_REGION:=}"                    # 13 Terraform region + 14 CNPG S3 endpoint region
 : "${S3_BACKUP_BUCKET:=}"              # 13 Terraform bucket name + 14 injects it into pg-cluster values
 : "${S3_BACKUP_TRANSITION_DAYS:=30}"   # 13 lifecycle: Glacier-IR transition age
 : "${S3_BACKUP_RETENTION_DAYS:=180}"   # 13 lifecycle: expiry age (recovery window)
 : "${CNPG_BACKUP_RPO:=15min}"          # 14 sets archive_timeout in pg-cluster values
+
+# ---- fixed cluster identifiers (NOT user config; not in .env) -------------------------------------
+# Pinned by the hardware + platform install, not per-deployment. Changing one only makes sense alongside
+# the matching component (a different SBC, a re-namespaced operator), so they live here, not in .env.
+EXPECT_NIC="end0"          # Pi 5 wired NIC (the VIP binds to it)
+EXPECT_DISK="nvme0n1"      # the NVMe (install target)
+API_PORT=50000            # Talos API port
+GHCR_SERVER="ghcr.io"     # registry the GHCR tokens + installer package are scoped to
+INSTALLER_PACKAGE="talos-installer"                           # GHCR package 03a publishes the installer to (03f pulls it)
+SS_CONTROLLER_NS="sealed-secrets"                            # kubeseal --controller-namespace (== 02_sealed_secrets)
+SS_CONTROLLER_NAME="sealed-secrets"                          # kubeseal --controller-name
+SS_POD_SELECTOR="app.kubernetes.io/name=sealed-secrets"     # the controller pods (readiness probe)
+SS_KEY_LABEL="sealedsecrets.bitnami.com/sealed-secrets-key"  # label on its key Secrets (06 backup/restore)
+MONITORING_NS="monitoring"                                   # the monitoring-stack namespace (09/krr)
 
 # ---- derived config (computed from the .env scalars; not user-editable) ---------------------------
 # These can't live in a flat .env (arrays, interpolation, a shasum-keyed path), so they're computed here.

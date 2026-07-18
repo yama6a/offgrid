@@ -11,7 +11,7 @@
 # PRIVATE ${INSTALLER_PACKAGE} works with no extra steps here.
 #
 # This upgrades the Talos OS only; it does NOT change the Kubernetes version. k8s is a separate, no-reboot
-# roll — bump KUBERNETES_VERSION in .env and run 03g_k8s_upgrade.sh. If both changed, run 03f then 03g.
+# roll — bump KUBERNETES_VERSION in versions.env and run 03g_k8s_upgrade.sh. If both changed, run 03f then 03g.
 #
 # Prereqs:
 #   - 03a was run with GITHUB_GHCR_PUSH_TOKEN_SECRET set, so ${INSTALLER_REF} exists on GHCR.

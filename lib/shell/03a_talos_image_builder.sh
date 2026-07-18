@@ -24,7 +24,7 @@
 #
 set -euo pipefail
 
-# All config (versions, kernel ref, extensions, registry, paths) lives in .env.
+# The version recipe (versions, kernel ref, extensions) lives in the committed versions.env; registry/paths in .env.
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 source "${SCRIPT_DIR}/common.sh"
 

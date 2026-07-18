@@ -27,6 +27,7 @@ source "${SCRIPT_DIR}/common.sh"
 GRAFANA_CHART="${REPO_ROOT}/argo_apps/platform/charts/05_grafana"                    # the wrapper chart
 SEALED_OUT="${GRAFANA_CHART}/templates/grafana-smtp-sealedsecret.yaml"               # sealed app-password (committed)
 SMTP_SECRET_NAME="grafana-smtp"                                                      # Secret Grafana reads GF_SMTP_PASSWORD from
+SMTP_SECRET_KEY="password"                                                           # data key in the sealed secret; fixed contract with 05_grafana values (key: password)
 # -----------------------------------------------------------------------------
 
 # === 0. prereqs ==============================================================

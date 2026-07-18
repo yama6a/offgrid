@@ -13,11 +13,11 @@
 # Requires: docker, with host networking enabled in Docker Desktop
 #           (Settings -> Resources -> Network -> Enable host networking).
 #
-# Cluster name, VIP, disk, NIC, and the node list all come from .env.
+# Cluster name, VIP, and the node list come from .env; disk/NIC are fixed constants in common.sh.
 #
 set -euo pipefail
 
-# Config (CLUSTER_*, CLUSTER_NODES, EXPECT_*) in .env; INSTALL_DISK/IFACE/TALOSCTL_VERSION derived in lib/shell/common.sh.
+# Config (CLUSTER_*, CLUSTER_NODES) in .env; EXPECT_*/INSTALL_DISK/IFACE/TALOSCTL_VERSION in lib/shell/common.sh.
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 source "${SCRIPT_DIR}/common.sh"
 
@@ -37,6 +37,7 @@ echo "Scratch:  ${TALOS_SCRATCH}   (throwaway render files; OS-reaped)"
 
 # Working vars from shared config (IFACE is used directly).
 CLUSTER="$CLUSTER_NAME"; DISK="$INSTALL_DISK"; EPHEMERAL="$EPHEMERAL_SIZE"; VIP="$CLUSTER_VIP"; LOCALPATH_SIZE="$LOCALPATH_VOLUME_SIZE"; KVER="$KUBERNETES_VERSION"
+NODE_INSTANCE_TYPE="rpi5"   # node.kubernetes.io/instance-type label (nic-keeper selector); fixed to the hardware
 HOSTNAMES=(); IPS=()
 for e in "${CLUSTER_NODES[@]}"; do HOSTNAMES+=("${e%%:*}"); IPS+=("${e##*:}"); done
 
@@ -87,9 +88,9 @@ if [ ! -f "${OUTDIR}/secrets.yaml" ]; then
   fi
 fi
 
-# 1b. Render the base control-plane config FRESH each run from the durable secrets + the CURRENT .env knobs
-#     (k8s version, install disk, VIP endpoint). Regenerating every run (--force) is the whole point of the
-#     split: a version bump in .env actually lands here, instead of being frozen into a preserved
+# 1b. Render the base control-plane config FRESH each run from the durable secrets + the CURRENT versions.env/.env
+#     values (k8s version, VIP endpoint, install disk). Regenerating every run (--force) is the whole point of the
+#     split: a version bump in versions.env actually lands here, instead of being frozen into a preserved
 #     controlplane.yaml. --with-secrets reuses secrets.yaml so the re-render never rotates PKI; worker.yaml
 #     is skipped (every node here is control-plane); talosconfig is re-issued off the same CA (still valid).
 talosctl gen config "${CLUSTER}" "https://${VIP}:6443" \

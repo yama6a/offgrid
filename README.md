@@ -49,14 +49,15 @@ The bring-up has a imperative shell steps do only what must exist **before GitOp
 and then **everything else is GitOps**. Argo CD reconciles this repo's `argo_apps/` tree and delivers the whole
 platform (ingress, TLS, SSO, storage, databases, monitoring) and the workloads on top of it.
 
-Config lives in exactly one place: a gitignored `.env` (copied from `.env.example`). It holds every tunable value and
-secret; nothing is hardcoded in scripts, and every app is a thin Helm wrapper chart that pins its upstream version. The
-repo doubles as its own decision record: `docs/01`–`10` explain *why* each choice was made.
+Config lives in two files: a committed `versions.env` (the shared, renovate-managed version recipe) and a gitignored
+`.env` (copied from `.env.example`) holding your config + secrets. Nothing is hardcoded in scripts, and every app is a
+thin Helm wrapper chart that pins its upstream version. The repo doubles as its own decision record: `docs/01`–`10`
+explain *why* each choice was made.
 
 ## The stack
 
 Everything after `04`/`05` is delivered by Argo CD as a thin wrapper chart. Versions are pinned per chart (`Chart.yaml`)
-and in `.env`. Those files are the source of truth. The roles are:
+and in `versions.env`. Those files are the source of truth. The roles are:
 
 | Layer             | Component                      | Role                                                                                                         |
 |-------------------|--------------------------------|--------------------------------------------------------------------------------------------------------------|
@@ -127,8 +128,9 @@ flowchart LR
 ```
 .
 ├── Makefile            # thin dispatcher over lib/shell — run `make help`
+├── versions.env        # committed version recipe (renovate-managed)
 ├── .env.example        # template for config & secrets — copy to .env
-├── .env                # single source of truth for config & secrets
+├── .env                # your config & secrets (gitignored)
 ├── docs/               # the numbered runbook + decision records (01–10)
 ├── lib/
 │   ├── shell/          # bootstrap shell scripts & helpers
@@ -165,8 +167,8 @@ make build-eeprom-card              # 02 — write the EEPROM boot config to a m
 # --> Now insert SD card into each pi one-by-one, power on, wait for LED to flash green rapidly, which means flashing is
 #     done, then power off and remove the SD card.
 
-# 1. Configure — the single source of truth
-cp .env.example .env                # then edit: node IPs, domains, versions, secrets. Go over everything, to be sure.
+# 1. Configure — versions.env is committed; copy the config+secrets template
+cp .env.example .env                # then edit: node IPs, domains, secrets. Go over everything, to be sure. (Versions live in the committed versions.env.)
 
 # 2. Build the custom Talos image
 make build-talos-image              # 03a — build (+ optionally publish) Talos OS image w/ custom kernel and extensions
@@ -202,6 +204,8 @@ least:
 - **Git remote**: `REPO_URL` **must** equal your forked `repoURL` committed across `argo_apps/`. Argo CD reconciles
   the pushed remote, not your working tree, so **commit + push before you expect a sync**.
 - **Registry**: `GHCR_USER` and, if you publish the installer image or use private images, the GHCR tokens.
+- **Email**: Grafana alert email is Gmail-baked — set `SMTP_GOOGLE_APP_PASSWORD_SECRET` in `.env`; for a
+  non-Gmail provider edit the `[smtp]` block + NetworkPolicy port in `argo_apps/platform/charts/05_grafana`.
 - **Secrets**: every secret in `.env` is optional; leaving one empty **disables the feature it enables**
   (Google SSO, private GHCR pulls, talos upgrades via pushed images, Argo CD private-repo access, Grafana email).
 
@@ -213,8 +217,8 @@ SBCs or the stock Talos image. Start from [docs/03](docs/03_operating_system.md)
 
 | Task                      | Command                                                                          | Notes                                                                                                               |
 |---------------------------|----------------------------------------------------------------------------------|---------------------------------------------------------------------------------------------------------------------|
-| Upgrade Talos             | `make upgrade-talos`                                                             | Rolling A/B in-place to the pinned installer (03f) (bump `TALOS_VERSION` in .env)                                   |
-| Upgrade Kubernetes        | `make upgrade-k8s`                                                               | Rolling, no reboot (03g). (Bump `KUBERNETES_VERSION` in `.env`)                                                     |
+| Upgrade Talos             | `make upgrade-talos`                                                             | Rolling A/B in-place to the pinned installer (03f) (bump `TALOS_VERSION` in `versions.env`)                         |
+| Upgrade Kubernetes        | `make upgrade-k8s`                                                               | Rolling, no reboot (03g). (Bump `KUBERNETES_VERSION` in `versions.env`)                                             |
 | Rebuild a running cluster | `make rebuild-cluster`                                                           | Wipes + rebuilds end-to-end, restores the sealed-secret key. Destructive to the persistence layer (cnpg, longhorn). |
 | Reset all nodes           | `make reset-cluster`                                                             | Wipes back to maintenance mode. Destructive to the persistence layer (cnpg, longhorn).                              |
 | Inspect                   | `make check-health` · `make talosctl <args>` · `eval "$(make print-kubeconfig)"` | Read-only.                                                                                                          |
@@ -275,7 +279,5 @@ Pi 5 Talos image builds on [talos-rpi5/talos-builder](https://github.com/talos-r
 - revisit number prefixes, now that we don't have sync waves anymore.
 - ugly redis helm loop over 2 SCs is unreadable und unnecessary. make them plain. 
 
-- compare .env and .env.example to make sure they are in sync / nothing is missing from either of them.
 - longhorn storage classes (-r2 -r2-with-backups -r3 -r3-with-backups)
-- remove non-config stuff from .env and put into common.sh or something. namespace names are not config options, nobody will change them. SMTP_SECRET_KEY doesnt seem variable either. also consider if this setup even works with other non-gmail smp providers. if not, maybe more can be hardcoded. if yes, anything we need to change? also see if the SS_* env vars are real config toggles... NODE_INSTANCE_TYPE seems non-variable, EXPECT_* as well...
 - vmbackup

@@ -50,8 +50,8 @@ carries the upstream RP1 patches that allow step 04 to disable EEE on the NIC.
 
 ## Versions
 
-Every pin lives in `.env` (template `.env.example`); Renovate opens PRs to bump them, grouped as the "talos
-build recipe" and PR-only — merging changes only `.env`, a real bump needs a manual image rebuild (below). What
+Every pin lives in the committed `versions.env`; Renovate opens PRs to bump them, grouped as the "talos
+build recipe" and PR-only — merging changes only `versions.env`, a real bump needs a manual image rebuild (below). What
 each is, and the constraints that matter:
 
 - **Talos** (`TALOS_VERSION`, `siderolabs/talos`) — the release we rebase onto.
@@ -66,9 +66,9 @@ each is, and the constraints that matter:
 
 ## The build
 
-Script: `03a_talos_image_builder.sh` (MacOS, Apple Silicon). All config (version knobs, kernel ref, registry,
-extensions) lives in `.env` (build-cache output path derived in `lib/shell/common.sh`), shared by all the step-03
-scripts.
+Script: `03a_talos_image_builder.sh` (MacOS, Apple Silicon). The version recipe (version knobs, kernel ref,
+extensions) lives in the committed `versions.env`, the registry/user in `.env` (build-cache output path derived in
+`lib/shell/common.sh`), shared by all the step-03 scripts.
 A clean run builds and validates; it exits non-zero if anything goes wrong.
 
 What it does:
@@ -134,14 +134,14 @@ classic token scoped `write:packages`) in `.env`. This will let `03a` push the i
 allows a first bootstrap of all nodes, but later upgrades won't work.
 
 **Upgrading the cluster.** During first setup, the NVMe is flashed once (`03b`). After that, Talos upgrades are
-atomic A/B over the network without needing manua reflashing. For that, bump the Talos version in `.env`, re-run
+atomic A/B over the network without needing manua reflashing. For that, bump the Talos version in `versions.env`, re-run
 `03a` to build + publish the new installer, then run **`03f_talos_upgrade.sh`** which runs
 `talosctl upgrade --image "$INSTALLER_REF"` one node at a time. This is re-run-safe (an already-upgraded node is a
 no-op). The nodes pull the installer using the `read:packages` auth `03d` baked into their machine config in `03d`.
 
 **Upgrading Kubernetes (separate from the OS).** The Talos OS version and the Kubernetes version upgrade independently.
 `03g_k8s_upgrade.sh` updates the k8s control plane (`talosctl upgrade-k8s --to "$KUBERNETES_VERSION"`). So bump *only*
-`KUBERNETES_VERSION` in `.env`, and then run `03g`. `KUBERNETES_VERSION` can't exceed the pinned Talos release's default
+`KUBERNETES_VERSION` in `versions.env`, and then run `03g`. `KUBERNETES_VERSION` can't exceed the pinned Talos release's default
 k8s version (its supported ceiling). So it is useful to always first bump Talos.
 
 ## Validation (offline, no hardware)
@@ -198,7 +198,7 @@ If `nc` succeeds but `talosctl ... --insecure` comes back with `no route to host
 the container:
 
 ```bash
-talosctl() { docker run --rm --network host -v "$HOME/.talos:/root/.talos" ghcr.io/siderolabs/talosctl:<TALOS_VERSION> "$@"; }  # match TALOS_VERSION in .env
+talosctl() { docker run --rm --network host -v "$HOME/.talos:/root/.talos" ghcr.io/siderolabs/talosctl:<TALOS_VERSION> "$@"; }  # match TALOS_VERSION in versions.env
 ```
 
 Drop that in `~/.zshrc` or `~/.bash_profile`, reload, and `talosctl` works normally from there.
@@ -209,8 +209,8 @@ Per-node identity (hostname, role) is applied now via `talosctl`. The CNI is dis
 and kube-proxy is off (`proxy.disabled: true`), both replaced by Cilium in [step 04](04_networking.md). All three nodes
 are control-plane and schedulable. Nodes come up NotReady until Cilium lands, that's expected, not a fault.
 
-> The cluster name, VIP, install disk, NIC, and the node list (hostname + IP per node) all live in `.env`, nothing is
-> hardcoded in the script. Edit them there to match your network.
+> The cluster name, VIP, and the node list (hostname + IP per node) live in `.env`; the install disk + NIC are fixed
+> constants in `common.sh` (Pi 5 hardware). Nothing is hardcoded in the script — edit `.env` to match your network.
 
 ### Router reservations (manual, once)
 
@@ -244,7 +244,7 @@ so I picked `192.168.100.1` for the VIP (inside the subnet, outside the DHCP ran
    key, bootstrap/join tokens) is generated **once** and never rotated, so the cluster identity survives every
    re-run and rebuild. Everything else is **disposable scratch re-rendered each run**: `talosctl gen config
    --with-secrets secrets.yaml --force` regenerates the base machine config from that bundle + the *current*
-   `.env` knobs, so a version bump in `.env` actually lands (unlike the old preserved `controlplane.yaml`,
+   `versions.env`/`.env` values, so a version bump in `versions.env` actually lands (unlike the old preserved `controlplane.yaml`,
    which froze the version it was first generated with). Kubernetes is pinned explicitly with
    `--kubernetes-version "$KUBERNETES_VERSION"` rather than taking the Talos release default, so the k8s
    version is a reviewed knob, not an implicit side effect of a Talos bump. `worker.yaml` is skipped (every
@@ -256,7 +256,7 @@ so I picked `192.168.100.1` for the VIP (inside the subnet, outside the DHCP ran
    true`, `certSANs` (VIP + node IPs), the node label `machine.nodeLabels: node.kubernetes.io/instance-type=rpi5`
    (so the `nic-keeper` DaemonSet targets rpi5 hardware only,
    see [Runtime: the recovery DaemonSet](#runtime-the-recovery-daemonset-nic-keeper-gitops);
-   `NODE_INSTANCE_TYPE` in `.env`), and the Cilium prep: `cluster.network.cni.name: none`,
+   `NODE_INSTANCE_TYPE` knob in `03d`), and the Cilium prep: `cluster.network.cni.name: none`,
    `cluster.proxy.disabled: true` (Cilium does kube-proxy replacement), and `machine.features.kubePrism.enabled: true`
    (Cilium's API endpoint at `localhost:7445`; default-on in recent Talos, set explicitly here to document the dependency).
    Finally it raises etcd's timeouts — `cluster.etcd.extraArgs: {heartbeat-interval: "500", election-timeout: "5000"}`,
@@ -281,8 +281,8 @@ so I picked `192.168.100.1` for the VIP (inside the subnet, outside the DHCP ran
 8. Waits for health, writes `kubeconfig`.
 
 > NIC selector: the VIP is bound to `interface: end0` (the Pi 5 wired NIC) rather than `physical: true`, so it can
-> never latch onto WiFi. Confirm the name on a live node with `talosctl get links` if unsure (`EXPECT_NIC` in `.env`,
-> default `end0`).
+> never latch onto WiFi. Confirm the name on a live node with `talosctl get links` if unsure (`EXPECT_NIC` constant
+> in `common.sh`, default `end0`).
 
 > GHCR registry auth (optional, global): to pull private container images, `03d` reads `GITHUB_GHCR_PULL_TOKEN_SECRET`
 > (a GitHub classic token scoped `read:packages`) from the gitignored `.env` and bakes a
@@ -291,7 +291,8 @@ so I picked `192.168.100.1` for the VIP (inside the subnet, outside the DHCP ran
 > workloads. We chose node-level auth over an in-cluster (sealed-secret) pull secret precisely because it's global
 > and namespace-agnostic; the cost is that the token lives in the machine config (in the gitignored
 > `secrets/cp-patch.yaml`, never committed) rather than in the sealed-secrets pipeline, and rotating it means
-> editing `.env` and re-running `03d`. The host + username are plain config (`GHCR_SERVER`/`GHCR_USER`); leave
+> editing `.env` and re-running `03d`. The username is plain `.env` config (`GHCR_USER`); the registry host
+> (`GHCR_SERVER`) is a fixed constant in `common.sh`. Leave
 > `GITHUB_GHCR_PULL_TOKEN_SECRET` empty to skip (the auth block is simply omitted). This is the **pull** token —
 > distinct
 > from the `write:packages` `GITHUB_GHCR_PUSH_TOKEN_SECRET` `03a` uses to publish, which never touches node config. GHCR
@@ -437,7 +438,7 @@ Decisions:
 | Active ping, not carrier       | the wedge is link-up-no-traffic; carrier reads healthy, only a probe catches it.                                                                                                                                                                                                                                                                                                                                    |
 | `NET_ADMIN` + `NET_RAW`        | NET_ADMIN covers `ethtool` EEE / `ip link` / `ss -K`; NET_RAW is required for `ping`'s ICMP socket. Still least-privilege, beats `privileged: true`.                                                                                                                                                                                                                                                                |
 | Auto-sync (prune + selfHeal)   | safe leaf — it can't cut the cluster off its own network, so drift just auto-corrects. Cilium (wave 0) runs the SAME prune+selfHeal even though it CAN cut the cluster off its own network — a convenience trade-off, knowingly accepted.                                                                                                                                                                                                                                |
-| `instance-type: rpi5` selector | the macb wedge is Pi 5-only. Stamped by Talos `machine.nodeLabels` in [`03d`](#what-03d_talos_cluster_configsh-does) (`NODE_INSTANCE_TYPE` in `.env`); that key works because it's on the kubelet NodeRestriction allowlist (an arbitrary `kubernetes.io/*` label is rejected by admission). Not `os: linux` (too broad) nor `control-plane:DoesNotExist` (every node here is control-plane -> matches zero nodes). |
+| `instance-type: rpi5` selector | the macb wedge is Pi 5-only. Stamped by Talos `machine.nodeLabels` in [`03d`](#what-03d_talos_cluster_configsh-does) (`NODE_INSTANCE_TYPE` knob in `03d`); that key works because it's on the kubelet NodeRestriction allowlist (an arbitrary `kubernetes.io/*` label is rejected by admission). Not `os: linux` (too broad) nor `control-plane:DoesNotExist` (every node here is control-plane -> matches zero nodes). |
 
 Caveats / preconditions:
 

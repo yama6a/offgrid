@@ -6,7 +6,7 @@ solely to run Renovate (nothing here builds or tests the cluster).
 
 ## Why Renovate, not Dependabot
 
-Dependabot has no Helm manager and can't touch image tags inside `values.yaml` or the version vars in `.env`.
+Dependabot has no Helm manager and can't touch image tags inside `values.yaml` or the version vars in `versions.env`.
 It would cover only Terraform and (once they exist) GitHub Actions. Renovate covers everything this repo pins:
 
 - **Helm chart deps** — every wrapper chart's `Chart.yaml`, its `Chart.lock`, and the committed vendored
@@ -15,7 +15,7 @@ It would cover only Terraform and (once they exist) GitHub Actions. Renovate cov
 - **Terraform** — the aws provider in `terraform/versions.tf` + `.terraform.lock.hcl`.
 - **GitHub Actions** — the workflow's own action pins (kept digest-pinned).
 - **Everything else, via comment-annotated regex** (`# renovate: datasource=…`): single-string `image:` values,
-  chart-template images, shell-script image literals, and the Talos/kernel build recipe in `.env.example`.
+  chart-template images, shell-script image literals, and the Talos/kernel build recipe in `versions.env`.
 
 We keep the pin as the single source of truth (see [CLAUDE.md]) and do NOT restate versions in prose/comments,
 so a bump never strands a stale number. Version literals survive in docs only where the specific version is
@@ -55,7 +55,7 @@ therefore applies everything in it **unattended**, including:
 - **`local-path-provisioner`** (labeled `needs-revendor`) — its manifests are vendored verbatim; a tag bump
   really needs a manual re-diff against the upstream release. If it appears in the PR, split it out and
   re-vendor rather than letting it merge.
-- **The Talos/kernel build recipe** (`.env.example`) — merging these lines does NOT self-apply; a real bump
+- **The Talos/kernel build recipe** (`versions.env`) — merging these lines does NOT self-apply; a real bump
   needs a manual image rebuild ([03a]). Treat them as a "newer version exists" signal. `KUBERNETES_VERSION` is
   coupled to Talos (its ceiling is the Talos release's k8s default), so move it WITH Talos.
 
@@ -64,7 +64,7 @@ This is an accepted hands-off trade-off. To de-risk without splitting the PR: ad
 
 Two things ride in the combined PR that need care before merging:
 
-- **The Talos/kernel build recipe** (`.env.example`) — a bump here does NOT self-apply: it needs a manual image
+- **The Talos/kernel build recipe** (`versions.env`) — a bump here does NOT self-apply: it needs a manual image
   rebuild with source rebases ([03a]). Treat those lines as a "newer version exists" signal. `KUBERNETES_VERSION`
   is coupled to Talos (its ceiling is the Talos release's k8s default), so move it WITH Talos.
 - **`local-path-provisioner`** — its manifests are vendored verbatim (a tag bump must be re-diffed against the
@@ -75,7 +75,7 @@ Two things ride in the combined PR that need care before merging:
 - **No `**/charts/**` disable rule.** The wrapper charts themselves live under paths containing `/charts/`, so the
   usual Helm guard would disable the whole repo.
 - **`helm-values` owns all `values.yaml` images; the docker regex manager does NOT scan `values.yaml`** — it
-  covers only chart templates, shell scripts, and `.env.example`. They must not overlap: a built-in manager's
+  covers only chart templates, shell scripts, and `versions.env`. They must not overlap: a built-in manager's
   `managerFilePatterns` is additive (can't narrow it), so the split is enforced by keeping `values.yaml` out of
   the regex manager, not by scoping `helm-values`.
 - **The barman-cloud vendored manifest is in `ignorePaths`** — bumping it re-vendors an upstream release verbatim

@@ -2,7 +2,7 @@
 #
 # 03g_k8s_upgrade.sh  (macOS)
 #
-# Rolling, in-place upgrade of the running cluster's KUBERNETES version to KUBERNETES_VERSION (.env), via
+# Rolling, in-place upgrade of the running cluster's KUBERNETES version to KUBERNETES_VERSION (versions.env), via
 # `talosctl upgrade-k8s`. This is the k8s-only counterpart to 03f (which upgrades the Talos OS): the two are
 # independent. `talosctl upgrade --image` (03f) swaps the node OS and does NOT touch k8s; `upgrade-k8s`
 # (here) rolls the control-plane static pods (apiserver/controller-manager/scheduler) + kubelet component
@@ -13,7 +13,7 @@
 # registry.k8s.io, not our GHCR installer), so unlike 03f there's no 03a prerequisite.
 #
 # Order when BOTH change: upgrade Talos first (03f), then k8s (03g) — a newer Talos always supports the k8s
-# version it defaults to. KUBERNETES_VERSION can't exceed the pinned Talos's default (see .env); bump
+# version it defaults to. KUBERNETES_VERSION can't exceed the pinned Talos's default (see versions.env); bump
 # TALOS_VERSION + run 03a/03f before raising it past that ceiling, or upgrade-k8s rejects it.
 #
 # Self-contained: talosctl runs as a pinned Docker image against secrets/ (talosconfig from 03d),
@@ -25,7 +25,7 @@
 #
 set -euo pipefail
 
-# KUBERNETES_VERSION / NODES / TALOSCTL_VERSION derived-or-read in lib/shell/common.sh (from .env).
+# KUBERNETES_VERSION / NODES / TALOSCTL_VERSION derived-or-read in lib/shell/common.sh (from versions.env + .env).
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 source "${SCRIPT_DIR}/common.sh"
 
