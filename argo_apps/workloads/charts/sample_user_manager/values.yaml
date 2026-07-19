@@ -74,6 +74,11 @@ maindb:
     type: postgresql        # postgresql | postgis | timescaledb
     cluster:
       instances: 2
+      # Primary DB — the app can't function without it. Labels the Cluster CR; the CNPG operator's
+      # INHERITED_LABELS (02_cnpg_operator) copies it onto the Postgres pods, so the container-waiting-fatal
+      # outage rule pages `critical` if a DB pod crashloops. See docs/09_monitoring.md.
+      additionalLabels:
+        alert-criticality: critical
       # Conservative footprint for the Pi 5s (8 GB RAM, lots already running). Per-instance.
       resources:
         requests:
@@ -116,6 +121,7 @@ analyticsdb:
 # Primary Redis: the manager's audit-log store (RPUSH per user UUID, 1h TTL; read back by GET /audit). EPHEMERAL.
 redis-cache:
   name: sample-user-manager-redis-cache
+  alertCritical: true   # the app's primary datastore -> outage rules page `critical` (see docs/09_monitoring.md)
   # For the sake of the demo we treat the audit-log cache as EPHEMERAL: Delete class + RDB-only, no AOF. Real
   # audit logs might warrant durability, but these are 1h-TTL and regenerable — so this also exercises (and
   # showcases) the non-durable path. See 12_redis.md.

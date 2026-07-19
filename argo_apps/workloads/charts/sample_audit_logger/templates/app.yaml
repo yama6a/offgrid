@@ -10,6 +10,7 @@ metadata:
   namespace: {{ .Release.Namespace }}
   labels:
     app: {{ .Values.app.name }}
+    alert-criticality: critical   # app workload down -> `critical` (deployment/container outage rules). See docs/09_monitoring.md.
 spec:
   replicas: {{ .Values.app.replicas }}
   selector:
@@ -19,6 +20,7 @@ spec:
     metadata:
       labels:
         app: {{ .Values.app.name }}
+        alert-criticality: critical   # pods carry it too, for the container-waiting-fatal outage rule. See docs/09_monitoring.md.
         messaging-client: "true"   # opts this pod into the broker's CiliumNetworkPolicy ingress on 5672. See 11_messaging.md.
     spec:
       # Single replica today, but if app.replicas is raised keep replicas off the same Pi node. PREFERRED

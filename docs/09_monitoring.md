@@ -76,10 +76,80 @@ the k8s-stack subchart so it versions/syncs/rolls back independently, no feature
   stays ON** (`searchNamespace: ALL`) and ingests the k8s-stack's `grafana_dashboard` ConfigMaps on every
   start.
 - Contact point (an **ntfy webhook** → self-hosted ntfy, `05_ntfy`), notification policy, and alert rule groups:
-  `cluster-health` (node NotReady, high node mem/CPU, pod CrashLoopBackOff, PVC >85%, target down), `backups`
-  (redis + longhorn + VM/VL + CNPG backup health), `cnpg-health` (connection saturation + physical replication
-  lag), plus a VictoriaLogs error-rate alert. Rules are file-provisioned (survive restart); alert *state* resets
-  on restart (no PVC).
+  `cluster-health` (node NotReady/pressure, node mem/CPU/disk/inodes, disk-fill-predict, memory committed +
+  cluster overcommit, PVC >85%, target down), `workload-outages` + `workload-anomalies` (the global k8s object
+  alerts — see the severity model below), `storage-tls-health` (cert-manager TLS expiry/ready, Longhorn volume
+  degraded/faulted, PV/PVC errors), `backups` (redis + longhorn + VM/VL + CNPG backup health), `cnpg-health`
+  (connection saturation + physical replication lag), plus a VictoriaLogs error-rate alert. Rules are
+  file-provisioned (survive restart); alert *state* resets on restart (no PVC).
+
+### Alert severity model & the `alert-criticality` label
+
+Alerts carry exactly two severities — **`critical`** and **`warning`** (never `info`) — mapped by the ntfy
+webhook to priority 5 / 4. Severity is a function of **what broke** × **how important the component is**:
+
+| Alert semantics | Component labeled `alert-criticality: critical` | Not labeled |
+|---|---|---|
+| **Outage** — workload down / broken so it can't serve | **critical** | warning |
+| **Anomaly / about-to-break** — degraded, saturating, restarting, near-limit, capacity | warning | warning |
+
+So `critical` fires only when an *outage-class* alert triggers on a component that has opted in with the
+`alert-criticality: critical` label. Everything else is `warning`. `Node NotReady` is the one static
+`critical` (infra, not a workload).
+
+**Opting a component in.** Put `alert-criticality: critical` on the workload. It must reach the object the
+firing alert keys off:
+
+- **Plain Deployments/StatefulSets/DaemonSets** (e.g. the sample apps): set it on BOTH the workload
+  `metadata.labels` *and* the pod template `spec.template.metadata.labels` (so the object AND its pods carry
+  it). See `argo_apps/workloads/charts/*/templates/app.yaml`.
+- **CNPG Postgres**: set `cluster.cluster.additionalLabels.alert-criticality: critical` on the DB (per
+  consumer/alias). CNPG has no Deployment/StatefulSet, so the operator's `INHERITED_LABELS: alert-criticality`
+  (`02_cnpg_operator`) copies it from the Cluster CR onto the Postgres pods — the pod path is what pages.
+- **Redis** (`lib/helm/redis-instance`): set `alertCritical: true` on the instance; OpsTree propagates the CR
+  label onto the StatefulSet + pods. Default `false` — a plain cache being down usually just degrades.
+- **Ingress** (`01_envoy_gateway`): the merged Envoy proxy pods are labeled `critical` in the EnvoyProxy
+  (`envoyDeployment.pod.labels`) — a crashlooping ingress pod pages `critical` via `container-waiting-fatal`.
+
+The label value is the self-documenting string `critical` (a numeric value would save nothing).
+
+**Mechanism (how the label drives severity).** kube-state-metrics is told to expose the label as a metric
+dimension via `metricLabelsAllowlist` (`05_victoria_metrics_k8s_stack`) — modern KSM emits NO `kube_*_labels`
+without this, so that one setting both *creates* the join target and *adds* the `label_alert_criticality`
+dimension. Each outage-class rule joins it into its series
+(`<expr> * on(<keys>) group_left(label_alert_criticality) kube_<obj>_labels`) and sets severity with a
+per-instance Grafana label template:
+
+```yaml
+severity: '{{`{{ if eq $labels.label_alert_criticality "critical" }}critical{{ else }}warning{{ end }}`}}'
+```
+
+An absent label evaluates to `""` → `warning`. Anomaly-class rules skip the join and set `severity: warning`
+statically.
+
+**The global alert catalog** (all cluster-wide, one rule per problem, in `05_grafana/values.yaml`):
+
+- **`workload-outages`** (dynamic severity): `deployment-not-available`, `statefulset-not-available`,
+  `daemonset-not-available` (all: desired>0 but 0 available), `container-waiting-fatal` (stuck ≥15m in
+  CrashLoopBackOff / ImagePullBackOff / config error). The old warning-only `pod-crashloop` was folded into
+  `container-waiting-fatal`.
+- **`workload-anomalies`** (warning): `container-oomkilled`, `container-high-restarts`,
+  `container-cpu-throttling`, `container-memory-near-limit`, `pod-pending`, `pod-not-ready`,
+  `replicaset-degraded`, `deployment-degraded` (partial), `deployment-generation-mismatch`, and HPA
+  (`hpa-at-max`, `hpa-scaling-blocked`, `hpa-below-min` — dormant until an HPA exists).
+- **`cluster-health`** node/cluster alerts (warning, plus the static-critical `node-not-ready`):
+  `node-disk-space`/`node-disk-inodes` (>85%), `node-disk-fill-predict` (fills within 24h), `node-high-memory`
+  (>90%), `node-memory-committed` (requests >80% allocatable), `node-high-cpu`, `node-pressure`
+  (Memory/Disk/PID), `cluster-memory-overcommit` (can't absorb one node loss), `pvc-nearly-full`, `target-down`.
+- **`storage-tls-health`** (warning): `cert-expiring-soon` (<14d), `cert-not-ready`,
+  `longhorn-volume-degraded`/`longhorn-volume-faulted`, `pv-errors`, `pvc-pending`.
+
+**Coverage nuance.** Outage→`critical` is guaranteed for Deployment/StatefulSet/DaemonSet workloads (incl. the
+sample apps and Redis's StatefulSet) and for any crashlooping labeled-critical container (incl. CNPG). A CNPG
+pod that goes *not-ready without crashlooping* pages `warning` via `pod-not-ready` — CNPG has no
+Deployment/StatefulSet the availability rules can see. Promote `pod-not-ready` to dynamic severity if that
+should page `critical`. Likewise the Envoy *Deployment* object isn't labeled (only its pods), so a graceful
+ingress scale-to-zero warns rather than pages.
 
 ### No persistence (`persistence.enabled: false`)
 Explicit requirement, safe because Grafana holds no state worth keeping: datasources + curated dashboards

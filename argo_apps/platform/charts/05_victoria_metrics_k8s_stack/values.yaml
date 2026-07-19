@@ -1,5 +1,5 @@
 # Values for the 05_victoria_metrics_k8s_stack wrapper chart. SINGLE SOURCE OF TRUTH, ArgoCD (and any
-# local `helm template`) consume this. Chart version pinned in Chart.yaml. See 15_monitoring.md.
+# local `helm template`) consume this. Chart version pinned in Chart.yaml. See 09_monitoring.md.
 #
 # Everything under `victoria-metrics-k8s-stack:` is passed to the upstream subchart (key == dependency
 # name). Resource numbers are sized for 8GB Pi 5 nodes already running etcd + control plane + Cilium +
@@ -34,7 +34,7 @@ victoria-metrics-k8s-stack:
         requests: {cpu: 50m, memory: 256Mi}
         limits: {memory: 512Mi}     # no CPU limit, avoid throttling merges/queries
       # Reschedule fast on node loss instead of the default. Pair with Longhorn
-      # nodeDownPodDeletionPolicy=delete-statefulset-pod (02_longhorn). See 15_monitoring.md (failover).
+      # nodeDownPodDeletionPolicy=delete-statefulset-pod (02_longhorn). See 09_monitoring.md (failover).
       tolerations:
         - key: node.kubernetes.io/unreachable
           operator: Exists
@@ -145,7 +145,7 @@ victoria-metrics-k8s-stack:
 
   # Curated default dashboards, emitted as ConfigMaps labelled `grafana_dashboard` (the sync-job reads
   # grafana.sidecar.dashboards.label, default `grafana_dashboard`) so the standalone Grafana sidecar
-  # (05_grafana, searchNamespace ALL) picks them up with zero rework. See 15_monitoring.md.
+  # (05_grafana, searchNamespace ALL) picks them up with zero rework. See 09_monitoring.md.
   defaultDashboards:
     enabled: true
     # Per-dashboard pruning. Keys are the dashboard SOURCE names (the `...-dashboard-<key>` ConfigMap
@@ -184,7 +184,7 @@ victoria-metrics-k8s-stack:
   # ---- exporters -----------------------------------------------------------------------------------
   prometheus-node-exporter:
     # Enabled at cutover, together with the removal of kube-prometheus-stack (whose node-exporter freed
-    # hostPort 9100). DaemonSet lands on all 3 nodes via the tolerations below. See 15_monitoring.md.
+    # hostPort 9100). DaemonSet lands on all 3 nodes via the tolerations below. See 09_monitoring.md.
     enabled: true
     # DaemonSet must land on all 3 nodes. All-control-plane cluster, so tolerate everything rather than a
     # control-plane nodeSelector (a node-role.kubernetes.io/control-plane:DoesNotExist selector would match
@@ -197,6 +197,17 @@ victoria-metrics-k8s-stack:
 
   kube-state-metrics:
     enabled: true
+    # Expose the `alert-criticality` workload label as `label_alert_criticality` on the kube_<obj>_labels
+    # metrics, so the outage-class Grafana alert rules (05_grafana) can group_left it in and raise `critical`
+    # only for labeled-critical components. Modern KSM emits NO kube_*_labels at all without an allowlist, so
+    # this both CREATES the join target and injects the dimension. See 09_monitoring.md (alerting severity model).
+    metricLabelsAllowlist:
+      - deployments=[alert-criticality]
+      - statefulsets=[alert-criticality]
+      - daemonsets=[alert-criticality]
+      - replicasets=[alert-criticality]
+      - pods=[alert-criticality]
+      - horizontalpodautoscalers=[alert-criticality]
     resources:
       requests: {cpu: 10m, memory: 32Mi}
       limits: {memory: 64Mi}
@@ -215,7 +226,7 @@ victoria-metrics-k8s-stack:
 
   # ---- Talos control-plane scrape targets ----------------------------------------------------------
   # Talos binds kube-controller-manager / kube-scheduler / etcd metrics to localhost by DEFAULT; we expose
-  # them via Talos machine config (OUTSIDE ArgoCD, already applied, see 15_monitoring.md "control-plane
+  # them via Talos machine config (OUTSIDE ArgoCD, already applied, see 09_monitoring.md "control-plane
   # scrape"): bind-address 0.0.0.0 for the two controllers, etcd listen-metrics-urls http://0.0.0.0:2381.
   # `endpoints` are the control-plane node IPs (static, reserved, mirror 03_operating_system/03_config.sh
   # CLUSTER_NODES); every node runs all three on this all-control-plane cluster.

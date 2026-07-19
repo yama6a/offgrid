@@ -242,38 +242,9 @@ grafana:
                     conditions:
                       - type: query
                         evaluator: {type: gt, params: [90]}
-            - uid: pod-crashloop
-              title: Pod CrashLoopBackOff
-              condition: C
-              for: 5m
-              labels: {severity: warning}
-              annotations:
-                summary: 'Pod {{`{{ $labels.namespace }}`}}/{{`{{ $labels.pod }}`}} is CrashLoopBackOff'
-              noDataState: OK
-              execErrState: Error
-              data:
-                - refId: A
-                  relativeTimeRange: {from: 600, to: 0}
-                  datasourceUid: VictoriaMetrics
-                  model:
-                    refId: A
-                    instant: true
-                    expr: 'max by (namespace, pod) (kube_pod_container_status_waiting_reason{reason="CrashLoopBackOff"})'
-                - refId: B
-                  relativeTimeRange: {from: 600, to: 0}
-                  datasourceUid: __expr__
-                  model: {refId: B, type: reduce, expression: A, reducer: last, datasource: {type: __expr__, uid: __expr__}}
-                - refId: C
-                  relativeTimeRange: {from: 600, to: 0}
-                  datasourceUid: __expr__
-                  model:
-                    refId: C
-                    type: threshold
-                    expression: B
-                    datasource: {type: __expr__, uid: __expr__}
-                    conditions:
-                      - type: query
-                        evaluator: {type: gt, params: [0]}
+            # NOTE: the old `pod-crashloop` (warning-always) rule was REMOVED — it's superseded by the
+            # criticality-aware `container-waiting-fatal` in the workload-outages group below (fires critical for
+            # labeled-critical components, warning otherwise). See 09_monitoring.md (alerting severity model).
             - uid: pvc-nearly-full
               title: PVC nearly full
               condition: C
@@ -338,6 +309,209 @@ grafana:
                     conditions:
                       - type: query
                         evaluator: {type: gt, params: [0]}
+            # ---- node capacity/health (node-exporter + kube-state) — all warning (infra headroom, not workload down)
+            # Real disks only: Talos exposes ~19 tmpfs/rootfs mounts; the xfs mounts are /var, /var/mnt/localpath
+            # (local-path/CNPG), /var/mnt/longhorn. `instance` is the node IP:9100 (node-exporter has no `node` label).
+            - uid: node-disk-space
+              title: Node disk almost full
+              condition: C
+              for: 15m
+              labels: {severity: warning}
+              annotations:
+                summary: 'Disk {{`{{ $labels.mountpoint }}`}} on {{`{{ $labels.instance }}`}} above 85% used'
+              noDataState: OK
+              execErrState: Error
+              data:
+                - refId: A
+                  relativeTimeRange: {from: 600, to: 0}
+                  datasourceUid: VictoriaMetrics
+                  model:
+                    refId: A
+                    instant: true
+                    expr: '100 * (1 - node_filesystem_avail_bytes{fstype=~"ext4|xfs"} / node_filesystem_size_bytes{fstype=~"ext4|xfs"})'
+                - refId: B
+                  relativeTimeRange: {from: 600, to: 0}
+                  datasourceUid: __expr__
+                  model: {refId: B, type: reduce, expression: A, reducer: last, datasource: {type: __expr__, uid: __expr__}}
+                - refId: C
+                  relativeTimeRange: {from: 600, to: 0}
+                  datasourceUid: __expr__
+                  model:
+                    refId: C
+                    type: threshold
+                    expression: B
+                    datasource: {type: __expr__, uid: __expr__}
+                    conditions:
+                      - type: query
+                        evaluator: {type: gt, params: [85]}
+            # Inode exhaustion fills a disk that still has free bytes (many small files) — separate signal.
+            - uid: node-disk-inodes
+              title: Node disk inodes almost exhausted
+              condition: C
+              for: 15m
+              labels: {severity: warning}
+              annotations:
+                summary: 'Inodes on {{`{{ $labels.mountpoint }}`}} / {{`{{ $labels.instance }}`}} above 85% used'
+              noDataState: OK
+              execErrState: Error
+              data:
+                - refId: A
+                  relativeTimeRange: {from: 600, to: 0}
+                  datasourceUid: VictoriaMetrics
+                  model:
+                    refId: A
+                    instant: true
+                    expr: '100 * (1 - node_filesystem_files_free{fstype=~"ext4|xfs"} / node_filesystem_files{fstype=~"ext4|xfs"})'
+                - refId: B
+                  relativeTimeRange: {from: 600, to: 0}
+                  datasourceUid: __expr__
+                  model: {refId: B, type: reduce, expression: A, reducer: last, datasource: {type: __expr__, uid: __expr__}}
+                - refId: C
+                  relativeTimeRange: {from: 600, to: 0}
+                  datasourceUid: __expr__
+                  model:
+                    refId: C
+                    type: threshold
+                    expression: B
+                    datasource: {type: __expr__, uid: __expr__}
+                    conditions:
+                      - type: query
+                        evaluator: {type: gt, params: [85]}
+            # Predictive: fires when a disk (already <50% free) will hit zero within 24h at the last 6h trend.
+            # A yields the predicted free bytes; threshold `lt 0` = will run out. Early warning before disk-full.
+            - uid: node-disk-fill-predict
+              title: Node disk will fill within 24h
+              condition: C
+              for: 30m
+              labels: {severity: warning}
+              annotations:
+                summary: 'Disk {{`{{ $labels.mountpoint }}`}} on {{`{{ $labels.instance }}`}} will fill within 24h at current rate'
+              noDataState: OK
+              execErrState: Error
+              data:
+                - refId: A
+                  relativeTimeRange: {from: 21600, to: 0}
+                  datasourceUid: VictoriaMetrics
+                  model:
+                    refId: A
+                    instant: true
+                    expr: 'predict_linear(node_filesystem_avail_bytes{fstype=~"ext4|xfs"}[6h], 86400) < 0 and (node_filesystem_avail_bytes{fstype=~"ext4|xfs"} / node_filesystem_size_bytes{fstype=~"ext4|xfs"}) < 0.5'
+                - refId: B
+                  relativeTimeRange: {from: 21600, to: 0}
+                  datasourceUid: __expr__
+                  model: {refId: B, type: reduce, expression: A, reducer: last, datasource: {type: __expr__, uid: __expr__}}
+                - refId: C
+                  relativeTimeRange: {from: 21600, to: 0}
+                  datasourceUid: __expr__
+                  model:
+                    refId: C
+                    type: threshold
+                    expression: B
+                    datasource: {type: __expr__, uid: __expr__}
+                    conditions:
+                      - type: query
+                        evaluator: {type: lt, params: [0]}
+            # Memory COMMITTED: sum of pod memory requests / node allocatable. High commit => scheduler can't
+            # place more + eviction risk if actual use spikes. (requests + allocatable both carry `node` here.)
+            - uid: node-memory-committed
+              title: Node memory requests committed >80%
+              condition: C
+              for: 15m
+              labels: {severity: warning}
+              annotations:
+                summary: 'Node {{`{{ $labels.node }}`}} memory requests committed above 80% of allocatable'
+              noDataState: OK
+              execErrState: Error
+              data:
+                - refId: A
+                  relativeTimeRange: {from: 600, to: 0}
+                  datasourceUid: VictoriaMetrics
+                  model:
+                    refId: A
+                    instant: true
+                    expr: '100 * sum by (node) (kube_pod_container_resource_requests{resource="memory"}) / sum by (node) (kube_node_status_allocatable{resource="memory"})'
+                - refId: B
+                  relativeTimeRange: {from: 600, to: 0}
+                  datasourceUid: __expr__
+                  model: {refId: B, type: reduce, expression: A, reducer: last, datasource: {type: __expr__, uid: __expr__}}
+                - refId: C
+                  relativeTimeRange: {from: 600, to: 0}
+                  datasourceUid: __expr__
+                  model:
+                    refId: C
+                    type: threshold
+                    expression: B
+                    datasource: {type: __expr__, uid: __expr__}
+                    conditions:
+                      - type: query
+                        evaluator: {type: gt, params: [80]}
+            # Kubelet-reported node pressure conditions (kernel is squeezing mem/disk/PIDs) — imminent evictions.
+            - uid: node-pressure
+              title: Node under resource pressure
+              condition: C
+              for: 5m
+              labels: {severity: warning}
+              annotations:
+                summary: 'Node {{`{{ $labels.node }}`}} reports {{`{{ $labels.condition }}`}}'
+              noDataState: OK
+              execErrState: Error
+              data:
+                - refId: A
+                  relativeTimeRange: {from: 600, to: 0}
+                  datasourceUid: VictoriaMetrics
+                  model:
+                    refId: A
+                    instant: true
+                    expr: 'max by (node, condition) (kube_node_status_condition{condition=~"MemoryPressure|DiskPressure|PIDPressure", status="true"})'
+                - refId: B
+                  relativeTimeRange: {from: 600, to: 0}
+                  datasourceUid: __expr__
+                  model: {refId: B, type: reduce, expression: A, reducer: last, datasource: {type: __expr__, uid: __expr__}}
+                - refId: C
+                  relativeTimeRange: {from: 600, to: 0}
+                  datasourceUid: __expr__
+                  model:
+                    refId: C
+                    type: threshold
+                    expression: B
+                    datasource: {type: __expr__, uid: __expr__}
+                    conditions:
+                      - type: query
+                        evaluator: {type: gt, params: [0]}
+            # 3-node headroom: total pod memory requests exceed capacity-minus-largest-node => a single node loss
+            # can't be absorbed (survivors can't fit the evacuated pods). Warning: reduce requests or add capacity.
+            - uid: cluster-memory-overcommit
+              title: Cluster can't tolerate one node loss (memory)
+              condition: C
+              for: 15m
+              labels: {severity: warning}
+              annotations:
+                summary: 'Cluster memory requests exceed capacity minus one node — a node loss would not fit'
+              noDataState: OK
+              execErrState: Error
+              data:
+                - refId: A
+                  relativeTimeRange: {from: 600, to: 0}
+                  datasourceUid: VictoriaMetrics
+                  model:
+                    refId: A
+                    instant: true
+                    expr: 'sum(kube_pod_container_resource_requests{resource="memory"}) > (sum(kube_node_status_allocatable{resource="memory"}) - max(kube_node_status_allocatable{resource="memory"}))'
+                - refId: B
+                  relativeTimeRange: {from: 600, to: 0}
+                  datasourceUid: __expr__
+                  model: {refId: B, type: reduce, expression: A, reducer: last, datasource: {type: __expr__, uid: __expr__}}
+                - refId: C
+                  relativeTimeRange: {from: 600, to: 0}
+                  datasourceUid: __expr__
+                  model:
+                    refId: C
+                    type: threshold
+                    expression: B
+                    datasource: {type: __expr__, uid: __expr__}
+                    conditions:
+                      - type: query
+                        evaluator: {type: gt, params: [0]}
         # Off-cluster Redis RDB backups (the single central CronJob `redis-backup` in ns redis-backup, from the
         # 07_redis_backup app). vmalert is off so VMRules are inert — these live here (the only path that fires)
         # and key off the CronJob/Job NAME via kube-state-metrics. Job-level, not per-instance: which instance
@@ -363,7 +537,7 @@ grafana:
                   model:
                     refId: A
                     instant: true
-                    expr: 'max by (namespace, job_name) (kube_job_failed{condition="true", namespace="redis-backup", job_name=~"redis-backup-.+"})'
+                    expr: 'max by (namespace, job_name) (kube_job_status_failed{namespace="redis-backup", job_name=~"redis-backup-.+"})'  # kube_job_status_failed (this KSM has no kube_job_failed{condition=...})
                 - refId: B
                   relativeTimeRange: {from: 600, to: 0}
                   datasourceUid: __expr__
@@ -508,7 +682,7 @@ grafana:
                   model:
                     refId: A
                     instant: true
-                    expr: 'max by (namespace, job_name) (kube_job_failed{condition="true", namespace="monitoring", job_name=~"vm-backup.*"})'
+                    expr: 'max by (namespace, job_name) (kube_job_status_failed{namespace="monitoring", job_name=~"vm-backup.*"})'  # kube_job_status_failed (this KSM has no kube_job_failed{condition=...})
                 - refId: B
                   relativeTimeRange: {from: 600, to: 0}
                   datasourceUid: __expr__
@@ -768,6 +942,751 @@ grafana:
                     conditions:
                       - type: query
                         evaluator: {type: gt, params: [15]}
+        # ================================================================================================
+        # GLOBAL WORKLOAD ALERTS (all namespaces, one rule each). Severity model, see 09_monitoring.md:
+        #   OUTAGE-class (this group) = workload down / broken -> severity is DYNAMIC: `critical` when the
+        #     firing object carries alert-criticality=critical (joined in via kube_<obj>_labels +
+        #     group_left(label_alert_criticality); needs the KSM metricLabelsAllowlist in 05_vm_k8s_stack),
+        #     else `warning`. Absent label => "" => warning.
+        #   ANOMALY-class (next group) = degraded / saturating / about-to-break -> always `warning`.
+        # The `spec>0 and available==0` ordering keeps the firing value >0 after the `* kube_<obj>_labels`
+        # (value 1) multiply that attaches the criticality label.
+        # ================================================================================================
+        - orgId: 1
+          name: workload-outages
+          folder: raspi-cluster
+          interval: 1m
+          rules:
+            - uid: deployment-not-available
+              title: Deployment has no available replicas
+              condition: C
+              for: 5m
+              labels:
+                severity: '{{`{{ if eq $labels.label_alert_criticality "critical" }}critical{{ else }}warning{{ end }}`}}'
+              annotations:
+                summary: 'Deployment {{`{{ $labels.namespace }}`}}/{{`{{ $labels.deployment }}`}} has no available replicas'
+              noDataState: OK
+              execErrState: Error
+              data:
+                - refId: A
+                  relativeTimeRange: {from: 600, to: 0}
+                  datasourceUid: VictoriaMetrics
+                  model:
+                    refId: A
+                    instant: true
+                    expr: '(kube_deployment_spec_replicas > 0 and kube_deployment_status_replicas_available == 0) * on(namespace, deployment) group_left(label_alert_criticality) kube_deployment_labels'
+                - refId: B
+                  relativeTimeRange: {from: 600, to: 0}
+                  datasourceUid: __expr__
+                  model: {refId: B, type: reduce, expression: A, reducer: last, datasource: {type: __expr__, uid: __expr__}}
+                - refId: C
+                  relativeTimeRange: {from: 600, to: 0}
+                  datasourceUid: __expr__
+                  model:
+                    refId: C
+                    type: threshold
+                    expression: B
+                    datasource: {type: __expr__, uid: __expr__}
+                    conditions:
+                      - type: query
+                        evaluator: {type: gt, params: [0]}
+            - uid: statefulset-not-available
+              title: StatefulSet has no ready replicas
+              condition: C
+              for: 5m
+              labels:
+                severity: '{{`{{ if eq $labels.label_alert_criticality "critical" }}critical{{ else }}warning{{ end }}`}}'
+              annotations:
+                summary: 'StatefulSet {{`{{ $labels.namespace }}`}}/{{`{{ $labels.statefulset }}`}} has no ready replicas'
+              noDataState: OK
+              execErrState: Error
+              data:
+                - refId: A
+                  relativeTimeRange: {from: 600, to: 0}
+                  datasourceUid: VictoriaMetrics
+                  model:
+                    refId: A
+                    instant: true
+                    expr: '(kube_statefulset_replicas > 0 and kube_statefulset_status_replicas_ready == 0) * on(namespace, statefulset) group_left(label_alert_criticality) kube_statefulset_labels'
+                - refId: B
+                  relativeTimeRange: {from: 600, to: 0}
+                  datasourceUid: __expr__
+                  model: {refId: B, type: reduce, expression: A, reducer: last, datasource: {type: __expr__, uid: __expr__}}
+                - refId: C
+                  relativeTimeRange: {from: 600, to: 0}
+                  datasourceUid: __expr__
+                  model:
+                    refId: C
+                    type: threshold
+                    expression: B
+                    datasource: {type: __expr__, uid: __expr__}
+                    conditions:
+                      - type: query
+                        evaluator: {type: gt, params: [0]}
+            - uid: daemonset-not-available
+              title: DaemonSet has no available pods
+              condition: C
+              for: 5m
+              labels:
+                severity: '{{`{{ if eq $labels.label_alert_criticality "critical" }}critical{{ else }}warning{{ end }}`}}'
+              annotations:
+                summary: 'DaemonSet {{`{{ $labels.namespace }}`}}/{{`{{ $labels.daemonset }}`}} has no available pods'
+              noDataState: OK
+              execErrState: Error
+              data:
+                - refId: A
+                  relativeTimeRange: {from: 600, to: 0}
+                  datasourceUid: VictoriaMetrics
+                  model:
+                    refId: A
+                    instant: true
+                    expr: '(kube_daemonset_status_desired_number_scheduled > 0 and kube_daemonset_status_number_available == 0) * on(namespace, daemonset) group_left(label_alert_criticality) kube_daemonset_labels'
+                - refId: B
+                  relativeTimeRange: {from: 600, to: 0}
+                  datasourceUid: __expr__
+                  model: {refId: B, type: reduce, expression: A, reducer: last, datasource: {type: __expr__, uid: __expr__}}
+                - refId: C
+                  relativeTimeRange: {from: 600, to: 0}
+                  datasourceUid: __expr__
+                  model:
+                    refId: C
+                    type: threshold
+                    expression: B
+                    datasource: {type: __expr__, uid: __expr__}
+                    conditions:
+                      - type: query
+                        evaluator: {type: gt, params: [0]}
+            # Container stuck in a FATAL waiting reason (can't start). This is the criticality-critical path for
+            # CNPG too (bespoke controller, no Deployment/StatefulSet): a crashlooping labeled CNPG/Redis pod pages
+            # critical here. `reason` kept in the series for the summary; join on (namespace,pod) to kube_pod_labels.
+            - uid: container-waiting-fatal
+              title: Container stuck (crashloop / image / config)
+              condition: C
+              for: 15m
+              labels:
+                severity: '{{`{{ if eq $labels.label_alert_criticality "critical" }}critical{{ else }}warning{{ end }}`}}'
+              annotations:
+                summary: 'Container {{`{{ $labels.namespace }}`}}/{{`{{ $labels.pod }}`}}/{{`{{ $labels.container }}`}} stuck: {{`{{ $labels.reason }}`}}'
+              noDataState: OK
+              execErrState: Error
+              data:
+                - refId: A
+                  relativeTimeRange: {from: 600, to: 0}
+                  datasourceUid: VictoriaMetrics
+                  model:
+                    refId: A
+                    instant: true
+                    expr: '(max by (namespace, pod, container, reason) (kube_pod_container_status_waiting_reason{reason=~"CrashLoopBackOff|ImagePullBackOff|ErrImagePull|CreateContainerConfigError|CreateContainerError|InvalidImageName"}) > 0) * on(namespace, pod) group_left(label_alert_criticality) kube_pod_labels'
+                - refId: B
+                  relativeTimeRange: {from: 600, to: 0}
+                  datasourceUid: __expr__
+                  model: {refId: B, type: reduce, expression: A, reducer: last, datasource: {type: __expr__, uid: __expr__}}
+                - refId: C
+                  relativeTimeRange: {from: 600, to: 0}
+                  datasourceUid: __expr__
+                  model:
+                    refId: C
+                    type: threshold
+                    expression: B
+                    datasource: {type: __expr__, uid: __expr__}
+                    conditions:
+                      - type: query
+                        evaluator: {type: gt, params: [0]}
+        # Anomaly / about-to-break / degraded — always `warning` (no criticality join). Symptoms; the
+        # workload-outages group above is the `critical` path. See 09_monitoring.md.
+        - orgId: 1
+          name: workload-anomalies
+          folder: raspi-cluster
+          interval: 1m
+          rules:
+            - uid: container-oomkilled
+              title: Container OOMKilled
+              condition: C
+              for: 2m
+              labels: {severity: warning}
+              annotations:
+                summary: 'Container {{`{{ $labels.namespace }}`}}/{{`{{ $labels.pod }}`}}/{{`{{ $labels.container }}`}} was OOMKilled'
+              noDataState: OK
+              execErrState: Error
+              data:
+                - refId: A
+                  relativeTimeRange: {from: 600, to: 0}
+                  datasourceUid: VictoriaMetrics
+                  model:
+                    refId: A
+                    instant: true
+                    expr: '(kube_pod_container_status_last_terminated_reason{reason="OOMKilled"} == 1) and on(namespace, pod, container) (increase(kube_pod_container_status_restarts_total[10m]) > 0)'
+                - refId: B
+                  relativeTimeRange: {from: 600, to: 0}
+                  datasourceUid: __expr__
+                  model: {refId: B, type: reduce, expression: A, reducer: last, datasource: {type: __expr__, uid: __expr__}}
+                - refId: C
+                  relativeTimeRange: {from: 600, to: 0}
+                  datasourceUid: __expr__
+                  model:
+                    refId: C
+                    type: threshold
+                    expression: B
+                    datasource: {type: __expr__, uid: __expr__}
+                    conditions:
+                      - type: query
+                        evaluator: {type: gt, params: [0]}
+            - uid: container-high-restarts
+              title: Container restarting frequently
+              condition: C
+              for: 5m
+              labels: {severity: warning}
+              annotations:
+                summary: 'Container {{`{{ $labels.namespace }}`}}/{{`{{ $labels.pod }}`}}/{{`{{ $labels.container }}`}} restarted >5 times in the last hour'
+              noDataState: OK
+              execErrState: Error
+              data:
+                - refId: A
+                  relativeTimeRange: {from: 3600, to: 0}
+                  datasourceUid: VictoriaMetrics
+                  model:
+                    refId: A
+                    instant: true
+                    expr: 'sum by (namespace, pod, container) (increase(kube_pod_container_status_restarts_total[1h]))'
+                - refId: B
+                  relativeTimeRange: {from: 3600, to: 0}
+                  datasourceUid: __expr__
+                  model: {refId: B, type: reduce, expression: A, reducer: last, datasource: {type: __expr__, uid: __expr__}}
+                - refId: C
+                  relativeTimeRange: {from: 3600, to: 0}
+                  datasourceUid: __expr__
+                  model:
+                    refId: C
+                    type: threshold
+                    expression: B
+                    datasource: {type: __expr__, uid: __expr__}
+                    conditions:
+                      - type: query
+                        evaluator: {type: gt, params: [5]}
+            - uid: container-cpu-throttling
+              title: Container heavily CPU throttled
+              condition: C
+              for: 10m
+              labels: {severity: warning}
+              annotations:
+                summary: 'Container {{`{{ $labels.namespace }}`}}/{{`{{ $labels.pod }}`}}/{{`{{ $labels.container }}`}} CPU throttled >50% of the time'
+              noDataState: OK
+              execErrState: Error
+              data:
+                - refId: A
+                  relativeTimeRange: {from: 600, to: 0}
+                  datasourceUid: VictoriaMetrics
+                  model:
+                    refId: A
+                    instant: true
+                    expr: 'sum by (namespace, pod, container) (rate(container_cpu_cfs_throttled_periods_total{container!=""}[5m])) / sum by (namespace, pod, container) (rate(container_cpu_cfs_periods_total{container!=""}[5m]))'
+                - refId: B
+                  relativeTimeRange: {from: 600, to: 0}
+                  datasourceUid: __expr__
+                  model: {refId: B, type: reduce, expression: A, reducer: last, datasource: {type: __expr__, uid: __expr__}}
+                - refId: C
+                  relativeTimeRange: {from: 600, to: 0}
+                  datasourceUid: __expr__
+                  model:
+                    refId: C
+                    type: threshold
+                    expression: B
+                    datasource: {type: __expr__, uid: __expr__}
+                    conditions:
+                      - type: query
+                        evaluator: {type: gt, params: [0.5]}
+            - uid: container-memory-near-limit
+              title: Container near memory limit
+              condition: C
+              for: 10m
+              labels: {severity: warning}
+              annotations:
+                summary: 'Container {{`{{ $labels.namespace }}`}}/{{`{{ $labels.pod }}`}}/{{`{{ $labels.container }}`}} above 90% of its memory limit (OOM risk)'
+              noDataState: OK
+              execErrState: Error
+              data:
+                - refId: A
+                  relativeTimeRange: {from: 600, to: 0}
+                  datasourceUid: VictoriaMetrics
+                  model:
+                    refId: A
+                    instant: true
+                    expr: 'max by (namespace, pod, container) (container_memory_working_set_bytes{container!=""}) / max by (namespace, pod, container) (kube_pod_container_resource_limits{resource="memory"} > 0)'
+                - refId: B
+                  relativeTimeRange: {from: 600, to: 0}
+                  datasourceUid: __expr__
+                  model: {refId: B, type: reduce, expression: A, reducer: last, datasource: {type: __expr__, uid: __expr__}}
+                - refId: C
+                  relativeTimeRange: {from: 600, to: 0}
+                  datasourceUid: __expr__
+                  model:
+                    refId: C
+                    type: threshold
+                    expression: B
+                    datasource: {type: __expr__, uid: __expr__}
+                    conditions:
+                      - type: query
+                        evaluator: {type: gt, params: [0.9]}
+            - uid: pod-pending
+              title: Pod stuck Pending
+              condition: C
+              for: 20m
+              labels: {severity: warning}
+              annotations:
+                summary: 'Pod {{`{{ $labels.namespace }}`}}/{{`{{ $labels.pod }}`}} stuck Pending/Unknown for >20m'
+              noDataState: OK
+              execErrState: Error
+              data:
+                - refId: A
+                  relativeTimeRange: {from: 600, to: 0}
+                  datasourceUid: VictoriaMetrics
+                  model:
+                    refId: A
+                    instant: true
+                    expr: 'max by (namespace, pod) (kube_pod_status_phase{phase=~"Pending|Unknown"})'
+                - refId: B
+                  relativeTimeRange: {from: 600, to: 0}
+                  datasourceUid: __expr__
+                  model: {refId: B, type: reduce, expression: A, reducer: last, datasource: {type: __expr__, uid: __expr__}}
+                - refId: C
+                  relativeTimeRange: {from: 600, to: 0}
+                  datasourceUid: __expr__
+                  model:
+                    refId: C
+                    type: threshold
+                    expression: B
+                    datasource: {type: __expr__, uid: __expr__}
+                    conditions:
+                      - type: query
+                        evaluator: {type: gt, params: [0]}
+            # Some (not all) replicas failing readiness. Excludes completed (Job) pods. Full outage is caught
+            # by workload-outages (critical); this is the partial/degraded warning.
+            - uid: pod-not-ready
+              title: Pod not ready
+              condition: C
+              for: 15m
+              labels: {severity: warning}
+              annotations:
+                summary: 'Pod {{`{{ $labels.namespace }}`}}/{{`{{ $labels.pod }}`}} not ready for >15m'
+              noDataState: OK
+              execErrState: Error
+              data:
+                - refId: A
+                  relativeTimeRange: {from: 600, to: 0}
+                  datasourceUid: VictoriaMetrics
+                  model:
+                    refId: A
+                    instant: true
+                    expr: 'max by (namespace, pod) (kube_pod_status_ready{condition="false"} == 1) unless on(namespace, pod) (kube_pod_status_phase{phase="Succeeded"} == 1)'
+                - refId: B
+                  relativeTimeRange: {from: 600, to: 0}
+                  datasourceUid: __expr__
+                  model: {refId: B, type: reduce, expression: A, reducer: last, datasource: {type: __expr__, uid: __expr__}}
+                - refId: C
+                  relativeTimeRange: {from: 600, to: 0}
+                  datasourceUid: __expr__
+                  model:
+                    refId: C
+                    type: threshold
+                    expression: B
+                    datasource: {type: __expr__, uid: __expr__}
+                    conditions:
+                      - type: query
+                        evaluator: {type: gt, params: [0]}
+            - uid: replicaset-degraded
+              title: ReplicaSet missing ready replicas
+              condition: C
+              for: 30m
+              labels: {severity: warning}
+              annotations:
+                summary: 'ReplicaSet {{`{{ $labels.namespace }}`}}/{{`{{ $labels.replicaset }}`}} has fewer ready replicas than desired'
+              noDataState: OK
+              execErrState: Error
+              data:
+                - refId: A
+                  relativeTimeRange: {from: 600, to: 0}
+                  datasourceUid: VictoriaMetrics
+                  model:
+                    refId: A
+                    instant: true
+                    expr: '(kube_replicaset_spec_replicas > 0) and (kube_replicaset_status_ready_replicas < kube_replicaset_spec_replicas)'
+                - refId: B
+                  relativeTimeRange: {from: 600, to: 0}
+                  datasourceUid: __expr__
+                  model: {refId: B, type: reduce, expression: A, reducer: last, datasource: {type: __expr__, uid: __expr__}}
+                - refId: C
+                  relativeTimeRange: {from: 600, to: 0}
+                  datasourceUid: __expr__
+                  model:
+                    refId: C
+                    type: threshold
+                    expression: B
+                    datasource: {type: __expr__, uid: __expr__}
+                    conditions:
+                      - type: query
+                        evaluator: {type: gt, params: [0]}
+            - uid: deployment-degraded
+              title: Deployment degraded (some replicas unavailable)
+              condition: C
+              for: 15m
+              labels: {severity: warning}
+              annotations:
+                summary: 'Deployment {{`{{ $labels.namespace }}`}}/{{`{{ $labels.deployment }}`}} has fewer available replicas than desired'
+              noDataState: OK
+              execErrState: Error
+              data:
+                - refId: A
+                  relativeTimeRange: {from: 600, to: 0}
+                  datasourceUid: VictoriaMetrics
+                  model:
+                    refId: A
+                    instant: true
+                    expr: '(kube_deployment_status_replicas_available > 0) and (kube_deployment_status_replicas_available < kube_deployment_spec_replicas)'
+                - refId: B
+                  relativeTimeRange: {from: 600, to: 0}
+                  datasourceUid: __expr__
+                  model: {refId: B, type: reduce, expression: A, reducer: last, datasource: {type: __expr__, uid: __expr__}}
+                - refId: C
+                  relativeTimeRange: {from: 600, to: 0}
+                  datasourceUid: __expr__
+                  model:
+                    refId: C
+                    type: threshold
+                    expression: B
+                    datasource: {type: __expr__, uid: __expr__}
+                    conditions:
+                      - type: query
+                        evaluator: {type: gt, params: [0]}
+            - uid: deployment-generation-mismatch
+              title: Deployment rollout stuck (generation mismatch)
+              condition: C
+              for: 15m
+              labels: {severity: warning}
+              annotations:
+                summary: 'Deployment {{`{{ $labels.namespace }}`}}/{{`{{ $labels.deployment }}`}} observed generation lags spec (rollout stuck)'
+              noDataState: OK
+              execErrState: Error
+              data:
+                - refId: A
+                  relativeTimeRange: {from: 600, to: 0}
+                  datasourceUid: VictoriaMetrics
+                  model:
+                    refId: A
+                    instant: true
+                    expr: 'kube_deployment_status_observed_generation != bool kube_deployment_metadata_generation'
+                - refId: B
+                  relativeTimeRange: {from: 600, to: 0}
+                  datasourceUid: __expr__
+                  model: {refId: B, type: reduce, expression: A, reducer: last, datasource: {type: __expr__, uid: __expr__}}
+                - refId: C
+                  relativeTimeRange: {from: 600, to: 0}
+                  datasourceUid: __expr__
+                  model:
+                    refId: C
+                    type: threshold
+                    expression: B
+                    datasource: {type: __expr__, uid: __expr__}
+                    conditions:
+                      - type: query
+                        evaluator: {type: gt, params: [0]}
+            # HPA rules are DORMANT until an HPA exists (none today). Standard KSM metric names.
+            - uid: hpa-at-max
+              title: HPA at max replicas
+              condition: C
+              for: 15m
+              labels: {severity: warning}
+              annotations:
+                summary: 'HPA {{`{{ $labels.namespace }}`}}/{{`{{ $labels.horizontalpodautoscaler }}`}} at max replicas — can''t scale further'
+              noDataState: OK
+              execErrState: Error
+              data:
+                - refId: A
+                  relativeTimeRange: {from: 600, to: 0}
+                  datasourceUid: VictoriaMetrics
+                  model:
+                    refId: A
+                    instant: true
+                    expr: 'kube_horizontalpodautoscaler_status_current_replicas / kube_horizontalpodautoscaler_spec_max_replicas'
+                - refId: B
+                  relativeTimeRange: {from: 600, to: 0}
+                  datasourceUid: __expr__
+                  model: {refId: B, type: reduce, expression: A, reducer: last, datasource: {type: __expr__, uid: __expr__}}
+                - refId: C
+                  relativeTimeRange: {from: 600, to: 0}
+                  datasourceUid: __expr__
+                  model:
+                    refId: C
+                    type: threshold
+                    expression: B
+                    datasource: {type: __expr__, uid: __expr__}
+                    conditions:
+                      - type: query
+                        evaluator: {type: gt, params: [0.99]}
+            - uid: hpa-scaling-blocked
+              title: HPA unable to scale
+              condition: C
+              for: 15m
+              labels: {severity: warning}
+              annotations:
+                summary: 'HPA {{`{{ $labels.namespace }}`}}/{{`{{ $labels.horizontalpodautoscaler }}`}} can''t scale (AbleToScale/ScalingActive false)'
+              noDataState: OK
+              execErrState: Error
+              data:
+                - refId: A
+                  relativeTimeRange: {from: 600, to: 0}
+                  datasourceUid: VictoriaMetrics
+                  model:
+                    refId: A
+                    instant: true
+                    expr: 'max by (namespace, horizontalpodautoscaler) (kube_horizontalpodautoscaler_status_condition{condition=~"AbleToScale|ScalingActive", status="false"})'
+                - refId: B
+                  relativeTimeRange: {from: 600, to: 0}
+                  datasourceUid: __expr__
+                  model: {refId: B, type: reduce, expression: A, reducer: last, datasource: {type: __expr__, uid: __expr__}}
+                - refId: C
+                  relativeTimeRange: {from: 600, to: 0}
+                  datasourceUid: __expr__
+                  model:
+                    refId: C
+                    type: threshold
+                    expression: B
+                    datasource: {type: __expr__, uid: __expr__}
+                    conditions:
+                      - type: query
+                        evaluator: {type: gt, params: [0]}
+            - uid: hpa-below-min
+              title: HPA below min replicas
+              condition: C
+              for: 15m
+              labels: {severity: warning}
+              annotations:
+                summary: 'HPA {{`{{ $labels.namespace }}`}}/{{`{{ $labels.horizontalpodautoscaler }}`}} running below its min replicas'
+              noDataState: OK
+              execErrState: Error
+              data:
+                - refId: A
+                  relativeTimeRange: {from: 600, to: 0}
+                  datasourceUid: VictoriaMetrics
+                  model:
+                    refId: A
+                    instant: true
+                    expr: 'kube_horizontalpodautoscaler_spec_min_replicas - kube_horizontalpodautoscaler_status_current_replicas'
+                - refId: B
+                  relativeTimeRange: {from: 600, to: 0}
+                  datasourceUid: __expr__
+                  model: {refId: B, type: reduce, expression: A, reducer: last, datasource: {type: __expr__, uid: __expr__}}
+                - refId: C
+                  relativeTimeRange: {from: 600, to: 0}
+                  datasourceUid: __expr__
+                  model:
+                    refId: C
+                    type: threshold
+                    expression: B
+                    datasource: {type: __expr__, uid: __expr__}
+                    conditions:
+                      - type: query
+                        evaluator: {type: gt, params: [0]}
+        # Storage + TLS health — all warning. cert-manager (ingress TLS), Longhorn volume robustness, PV/PVC phase.
+        - orgId: 1
+          name: storage-tls-health
+          folder: raspi-cluster
+          interval: 1m
+          rules:
+            # A = seconds until expiry; threshold `lt` 1209600 (14d). Also fires once already expired (negative).
+            - uid: cert-expiring-soon
+              title: TLS certificate expiring soon
+              condition: C
+              for: 1h
+              labels: {severity: warning}
+              annotations:
+                summary: 'Certificate {{`{{ $labels.exported_namespace }}`}}/{{`{{ $labels.name }}`}} expires in <14d'
+              noDataState: OK
+              execErrState: Error
+              data:
+                - refId: A
+                  relativeTimeRange: {from: 600, to: 0}
+                  datasourceUid: VictoriaMetrics
+                  model:
+                    refId: A
+                    instant: true
+                    expr: 'certmanager_certificate_expiration_timestamp_seconds - time()'
+                - refId: B
+                  relativeTimeRange: {from: 600, to: 0}
+                  datasourceUid: __expr__
+                  model: {refId: B, type: reduce, expression: A, reducer: last, datasource: {type: __expr__, uid: __expr__}}
+                - refId: C
+                  relativeTimeRange: {from: 600, to: 0}
+                  datasourceUid: __expr__
+                  model:
+                    refId: C
+                    type: threshold
+                    expression: B
+                    datasource: {type: __expr__, uid: __expr__}
+                    conditions:
+                      - type: query
+                        evaluator: {type: lt, params: [1209600]}
+            # `== bool 0` -> 1 when the cert's Ready=True condition is not 1 (i.e. not ready).
+            - uid: cert-not-ready
+              title: TLS certificate not ready
+              condition: C
+              for: 1h
+              labels: {severity: warning}
+              annotations:
+                summary: 'Certificate {{`{{ $labels.exported_namespace }}`}}/{{`{{ $labels.name }}`}} is not Ready'
+              noDataState: OK
+              execErrState: Error
+              data:
+                - refId: A
+                  relativeTimeRange: {from: 600, to: 0}
+                  datasourceUid: VictoriaMetrics
+                  model:
+                    refId: A
+                    instant: true
+                    expr: 'certmanager_certificate_ready_status{condition="True"} == bool 0'
+                - refId: B
+                  relativeTimeRange: {from: 600, to: 0}
+                  datasourceUid: __expr__
+                  model: {refId: B, type: reduce, expression: A, reducer: last, datasource: {type: __expr__, uid: __expr__}}
+                - refId: C
+                  relativeTimeRange: {from: 600, to: 0}
+                  datasourceUid: __expr__
+                  model:
+                    refId: C
+                    type: threshold
+                    expression: B
+                    datasource: {type: __expr__, uid: __expr__}
+                    conditions:
+                      - type: query
+                        evaluator: {type: gt, params: [0]}
+            # Longhorn robustness: 0=unknown 1=healthy 2=degraded 3=faulted.
+            - uid: longhorn-volume-degraded
+              title: Longhorn volume degraded
+              condition: C
+              for: 10m
+              labels: {severity: warning}
+              annotations:
+                summary: 'Longhorn volume {{`{{ $labels.volume }}`}} (pvc {{`{{ $labels.pvc }}`}}) is degraded'
+              noDataState: OK
+              execErrState: Error
+              data:
+                - refId: A
+                  relativeTimeRange: {from: 600, to: 0}
+                  datasourceUid: VictoriaMetrics
+                  model:
+                    refId: A
+                    instant: true
+                    expr: 'longhorn_volume_robustness == 2'
+                - refId: B
+                  relativeTimeRange: {from: 600, to: 0}
+                  datasourceUid: __expr__
+                  model: {refId: B, type: reduce, expression: A, reducer: last, datasource: {type: __expr__, uid: __expr__}}
+                - refId: C
+                  relativeTimeRange: {from: 600, to: 0}
+                  datasourceUid: __expr__
+                  model:
+                    refId: C
+                    type: threshold
+                    expression: B
+                    datasource: {type: __expr__, uid: __expr__}
+                    conditions:
+                      - type: query
+                        evaluator: {type: gt, params: [0]}
+            - uid: longhorn-volume-faulted
+              title: Longhorn volume faulted
+              condition: C
+              for: 1m
+              labels: {severity: warning}
+              annotations:
+                summary: 'Longhorn volume {{`{{ $labels.volume }}`}} (pvc {{`{{ $labels.pvc }}`}}) is FAULTED (data at risk)'
+              noDataState: OK
+              execErrState: Error
+              data:
+                - refId: A
+                  relativeTimeRange: {from: 600, to: 0}
+                  datasourceUid: VictoriaMetrics
+                  model:
+                    refId: A
+                    instant: true
+                    expr: 'longhorn_volume_robustness == 3'
+                - refId: B
+                  relativeTimeRange: {from: 600, to: 0}
+                  datasourceUid: __expr__
+                  model: {refId: B, type: reduce, expression: A, reducer: last, datasource: {type: __expr__, uid: __expr__}}
+                - refId: C
+                  relativeTimeRange: {from: 600, to: 0}
+                  datasourceUid: __expr__
+                  model:
+                    refId: C
+                    type: threshold
+                    expression: B
+                    datasource: {type: __expr__, uid: __expr__}
+                    conditions:
+                      - type: query
+                        evaluator: {type: gt, params: [0]}
+            - uid: pv-errors
+              title: PersistentVolume in error state
+              condition: C
+              for: 15m
+              labels: {severity: warning}
+              annotations:
+                summary: 'PersistentVolume {{`{{ $labels.persistentvolume }}`}} is {{`{{ $labels.phase }}`}}'
+              noDataState: OK
+              execErrState: Error
+              data:
+                - refId: A
+                  relativeTimeRange: {from: 600, to: 0}
+                  datasourceUid: VictoriaMetrics
+                  model:
+                    refId: A
+                    instant: true
+                    expr: 'kube_persistentvolume_status_phase{phase=~"Failed|Pending"} == 1'
+                - refId: B
+                  relativeTimeRange: {from: 600, to: 0}
+                  datasourceUid: __expr__
+                  model: {refId: B, type: reduce, expression: A, reducer: last, datasource: {type: __expr__, uid: __expr__}}
+                - refId: C
+                  relativeTimeRange: {from: 600, to: 0}
+                  datasourceUid: __expr__
+                  model:
+                    refId: C
+                    type: threshold
+                    expression: B
+                    datasource: {type: __expr__, uid: __expr__}
+                    conditions:
+                      - type: query
+                        evaluator: {type: gt, params: [0]}
+            - uid: pvc-pending
+              title: PersistentVolumeClaim unbound
+              condition: C
+              for: 15m
+              labels: {severity: warning}
+              annotations:
+                summary: 'PVC {{`{{ $labels.namespace }}`}}/{{`{{ $labels.persistentvolumeclaim }}`}} is {{`{{ $labels.phase }}`}}'
+              noDataState: OK
+              execErrState: Error
+              data:
+                - refId: A
+                  relativeTimeRange: {from: 600, to: 0}
+                  datasourceUid: VictoriaMetrics
+                  model:
+                    refId: A
+                    instant: true
+                    expr: 'kube_persistentvolumeclaim_status_phase{phase=~"Pending|Lost"} == 1'
+                - refId: B
+                  relativeTimeRange: {from: 600, to: 0}
+                  datasourceUid: __expr__
+                  model: {refId: B, type: reduce, expression: A, reducer: last, datasource: {type: __expr__, uid: __expr__}}
+                - refId: C
+                  relativeTimeRange: {from: 600, to: 0}
+                  datasourceUid: __expr__
+                  model:
+                    refId: C
+                    type: threshold
+                    expression: B
+                    datasource: {type: __expr__, uid: __expr__}
+                    conditions:
+                      - type: query
+                        evaluator: {type: gt, params: [0]}
     # Log-based alert in its OWN file so a VL-datasource model mismatch can't break the metrics rules
     # above. VERIFY the query model against the live victoriametrics-logs-datasource at apply time (the
     # plugin's alerting model field names can change between versions). See 09_monitoring.md.

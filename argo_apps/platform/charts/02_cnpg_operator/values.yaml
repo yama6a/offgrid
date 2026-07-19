@@ -14,9 +14,18 @@ cloudnative-pg:
   crds:
     create: true
 
+  # Propagate the `alert-criticality` label from each Cluster CR's metadata.labels onto the Postgres PODS the
+  # operator spawns (CNPG only inherits labels named here). This is how a labeled-critical DB (set via a
+  # consumer's `cluster.cluster.additionalLabels`) reaches kube_pod_labels, so the container-waiting-fatal
+  # outage alert can page `critical` for it — CNPG has no Deployment/StatefulSet the availability rules see.
+  # See 09_monitoring.md (alerting severity model).
+  config:
+    data:
+      INHERITED_LABELS: alert-criticality
+
   # Emit the operator's PodMonitor so vmagent scrapes the controller's /metrics. The VM operator
   # auto-converts PodMonitor -> VMPodScrape, and the k8s-stack discovers every scrape cluster-wide,
-  # so this wires into VictoriaMetrics with no extra config. CRDs exist from wave 0. See 15_monitoring.md.
+  # so this wires into VictoriaMetrics with no extra config. CRDs exist from wave 0. See 09_monitoring.md.
   monitoring:
     podMonitorEnabled: true
 

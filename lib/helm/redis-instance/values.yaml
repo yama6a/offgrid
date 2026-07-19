@@ -36,6 +36,12 @@ persistence: null   # invalid sentinel — validate.yaml fails until set to an e
 
 # ---- optional; defaulted ----
 
+# Mark this instance as an app-critical component. When true, the CR (and thus, via OpsTree label propagation,
+# the StatefulSet + pods) carries `alert-criticality: critical`, so the outage alerts fire `critical` (not
+# warning) if it goes down / crashloops. Default false: a plain cache being down usually just degrades. Set
+# true for a Redis a workload can't function without. See docs/09_monitoring.md (alerting severity model).
+alertCritical: false
+
 # INITIAL PVC size, set ONCE at creation. CHANGING THIS ON A LIVE INSTANCE HAS NO EFFECT — the size lives in the
 # StatefulSet's (immutable) volumeClaimTemplate and the OpsTree operator does not reconcile PVC expansion, so an
 # existing volume keeps its original size. To actually grow a running instance you expand its PVC out-of-band;

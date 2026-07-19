@@ -27,12 +27,19 @@ spec:
         container:
           resources:
             {{- toYaml .Values.envoyProxy.resources | nindent 12 }}
-        {{- with .Values.envoyProxy.affinity }}
-        # Data-plane proxy pod scheduling: spread the merged Envoy replicas across Pi nodes (see values.yaml).
         pod:
+          # Ingress data plane — the cluster's single merged proxy (the chokepoint all app ingress rides). Label
+          # the proxy PODS `critical` so a crashlooping/unstartable ingress pod pages `critical` via the
+          # container-waiting-fatal outage rule. (The Deployment object itself isn't labeled — Envoy Gateway has
+          # no field for it short of an envoyDeployment.patch, deliberately avoided so a bad patch can't wedge ALL
+          # ingress; a graceful scale-to-zero would page warning, not critical.) See docs/09_monitoring.md.
+          labels:
+            alert-criticality: critical
+          {{- with .Values.envoyProxy.affinity }}
+          # Data-plane proxy pod scheduling: spread the merged Envoy replicas across Pi nodes (see values.yaml).
           affinity:
             {{- toYaml . | nindent 12 }}
-        {{- end }}
+          {{- end }}
       envoyService:
         type: LoadBalancer
         # Cluster, not EG's default Local: the Cilium L2 announcer node isn't necessarily the node
