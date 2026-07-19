@@ -6,7 +6,7 @@
 # a RUNNING cluster and reuses preserved state). This assumes freshly-flashed nodes (03a/03b done) sitting
 # in MAINTENANCE mode — it runs 03c (boot-verify) itself as an up-front gate — and takes them from there to
 # a fully delivered cluster. One confirmation up front, non-interactive after that.
-# Sequence (STEP N/20):
+# Sequence (STEP N/22):
 #   1. maintenance preflight        : every node must answer the INSECURE (maintenance) API — fast-fail
 #                                      if any is already configured (that's a rebuild, not a bootstrap)
 #   2. 03c_talos_boot_verify.sh     : deep per-node verify (our image/Talos version + rpi5 overlay, NVMe,
@@ -19,29 +19,29 @@
 #   7. 07_gateway.sh                : write LE_EMAIL/BASE_DOMAIN into the gateway chart values (no cluster)
 #   8. git add/commit/push          : 05 refuses a dirty argo_apps/ tree; ArgoCD deploys the REMOTE
 #   9. 05_argocd.sh                 : bootstrap ArgoCD; it then delivers the whole platform from git
-#  10. wait sealed-secrets ctrl     : ArgoCD wave-2 app; kubeseal (steps 11-13, 15-18) needs it up
+#  10. wait sealed-secrets ctrl     : ArgoCD wave-2 app; kubeseal (the re-seal / backup / ntfy-seal steps) needs it up
 #  11. 07_google_sso.sh </dev/null  : write shared clientID + RE-SEAL google-oauth against the NEW key
-#  12. ntfy auth (deferred)          : ntfy's Grafana token is minted from the running pod post-boot — see notes
-#  13. 08_argocd_webhook.sh         : generate+seal the GitHub webhook secret (-> secrets/) + set poll cadence
-#  14. 13_s3_backup_bucket.sh       : Terraform -> S3 backup bucket + scoped IAM writer (skipped if .env AWS creds empty)
-#  15. 14_cnpg_backup.sh            : seal the writer creds per CNPG ns + enable backups in the pg-cluster values
-#  16. 15_redis_backup.sh           : seal ONE writer-creds secret in ns redis-backup + enable the central 07_redis_backup job
-#  17. 16_longhorn_backup.sh        : seal writer creds into longhorn-system + set the backup target in 02_longhorn
-#  18. 17_vm_backup.sh              : seal ONE writer-creds secret in ns monitoring + enable the central 08_vm_backup job
-#  19. git add/commit/push          : push the re-sealed SealedSecrets + CNPG/Redis/Longhorn/VM backup creds/values (waves 2,4,7,8 + argocd)
-#  20. hard-refresh argocd apps     : poll is a slow fallback now, so nudge ArgoCD to pull the just-pushed commit
+#  12. 08_argocd_webhook.sh         : generate+seal the GitHub webhook secret (-> secrets/) + set poll cadence
+#  13. 13_s3_backup_bucket.sh       : Terraform -> S3 backup bucket + scoped IAM writer (skipped if .env AWS creds empty)
+#  14. 14_cnpg_backup.sh            : seal the writer creds per CNPG ns + enable backups in the pg-cluster values
+#  15. 15_redis_backup.sh           : seal ONE writer-creds secret in ns redis-backup + enable the central 07_redis_backup job
+#  16. 16_longhorn_backup.sh        : seal writer creds into longhorn-system + set the backup target in 02_longhorn
+#  17. 17_vm_backup.sh              : seal ONE writer-creds secret in ns monitoring + enable the central 08_vm_backup job
+#  18. git add/commit/push          : push the re-sealed SealedSecrets + CNPG/Redis/Longhorn/VM backup creds/values (waves 2,4,7,8 + argocd)
+#  19. converge argocd apps         : nudge ArgoCD to pull the pushed commit + wait every app Healthy (ntfy must be up for STEP 20)
+#  20. 10_ntfy_auth.sh              : seed ntfy users + seal Grafana's token, push it, restart grafana (skipped if .env pw empty)
 #  21. 06_backup_sealed_secrets_key.sh : back up the NEW master key so a future rebuild can restore it
 #  22. verify ingress serving       : wait until each HTTPS host serves an LE cert over clean HTTP/2
 #
 # Why re-seal + back up (and a rebuild doesn't): a fresh controller mints a BRAND-NEW master key, so a
 # committed SealedSecret (google-oauth, sealed against an OLD key) is orphaned — it must be re-sealed against
 # the new key. The rebuild instead RESTORES the old key (06_restore) and skips re-sealing. Here there is no old
-# key to restore, so we re-seal and then back the new key up. (ntfy's Grafana token isn't re-sealed here — it's
-# minted fresh from the running ntfy pod post-boot; see STEP 12 + the summary.)
+# key to restore, so we re-seal and then back the new key up. (ntfy's Grafana token isn't re-sealed against the
+# key — it's minted fresh from the running ntfy pod at STEP 20, after convergence.)
 #
 # Skips 03a/03b (image build/flash): bootstrap assumes the OS is already flashed and the nodes are in
 # maintenance, but it DOES run 03c (boot-verify) as a hard gate up front. Bootstrap steps (1-10) abort on
-# the first failure with a resume hint; the re-seal/backup/verify steps (11-19) are best-effort so a slow
+# the first failure with a resume hint; the re-seal/backup/verify steps (11-22) are best-effort so a slow
 # ArgoCD never wedges the run.
 #
 # FIRST-TIME semantics: archiving secrets.yaml makes 03d mint a NEW Talos CA — the archived
@@ -85,7 +85,7 @@ This will BOOTSTRAP a FIRST-TIME Talos cluster on freshly-flashed nodes:
   archive : secrets.yaml + kubeconfig + talosconfig + sealed-secrets-master.key (+ 03d scratch)
             -> secrets/backup_<timestamp>/   (03d then mints a NEW Talos CA; the old creds stop working)
   flow    : preflight -> 03c verify -> archive -> 03d -> 03e -> 04 -> 07_gateway -> commit/push -> 05 (ArgoCD)
-            -> re-seal SSO against the new key -> commit/push -> back up the new key -> verify ingress
+            -> re-seal SSO -> commit/push -> converge -> seed ntfy -> back up the new key -> verify ingress
 
 Requires nodes in MAINTENANCE mode (03a/03b done; 03c boot-verify is run for you below). To re-initialize
 a RUNNING cluster instead, abort and use DANGEROUS_rebuild_cluster.sh (it wipes first).
@@ -166,7 +166,7 @@ ok "remote up to date"
 run_step "bootstrap ArgoCD; it delivers the rest from git" "$STEP_DIR" 05_argocd.sh
 
 # === STEP 10. wait for the sealed-secrets controller (ArgoCD wave 2) ==========
-# kubeseal (steps 11-12, 15) + the key backup (18) all need the controller up. It's a wave-2 app, so ArgoCD
+# kubeseal (the SSO/webhook/backup + ntfy-seal steps) + the key backup all need the controller up. It's a wave-2 app, so ArgoCD
 # creates it a bit after 05; poll until a controller pod is Ready. Abort with a manual-recovery hint if
 # it never comes up (the cluster is still fine — you'd just re-seal + back up by hand later).
 step "waiting for the sealed-secrets controller (ArgoCD wave 2), up to ${CONTROLLER_WAIT}s"
@@ -190,15 +190,7 @@ else
   warn "GOOGLE_SSO_CLIENT_ID/SECRET empty in .env -> skipping SSO re-seal (google-oauth stays orphaned until you set them + run 07)"
 fi
 
-# === STEP 12. ntfy alerting auth is seeded POST-BOOT (needs the running platform) =============
-# Unlike the SSO/webhook secrets (re-sealed early against the new key), ntfy's Grafana token is MINTED from the
-# running ntfy pod (05_ntfy, wave 5) — not up yet in this early batch — so it can't be sealed here. Like the
-# GitHub webhook, it's a manual post-boot step: once the platform is Healthy, `make configure-ntfy-auth` seeds the
-# ntfy users + seals Grafana's token; commit/push; restart Grafana. See the summary + docs/09_monitoring.md.
-step "ntfy alerting auth (deferred to post-boot, see summary)"
-warn "ntfy's Grafana token is minted from the running pod -> run 'make configure-ntfy-auth' after the platform is up"
-
-# === STEP 13. seal the ArgoCD GitHub webhook secret + set poll cadence (best-effort) ===
+# === STEP 12. seal the ArgoCD GitHub webhook secret + set poll cadence (best-effort) ===
 # Not guarded on a .env secret: 08 GENERATES its own webhook secret (into secrets/) and always runs. It
 # seals webhook.github.secret into argocd-secret (patch-merge; 05 marked the live secret patch-managed) and
 # writes timeout.reconciliation from .env POLL_SYNC_ENABLED. The GitHub webhook itself is a manual post-boot
@@ -206,7 +198,7 @@ warn "ntfy's Grafana token is minted from the running pod -> run 'make configure
 run_step "generate+seal the GitHub webhook secret + set poll cadence" "$STEP_DIR" 08_argocd_webhook.sh best-effort \
   "08_argocd_webhook didn't complete; re-run it by hand ('08_argocd_webhook.sh') + commit/push"
 
-# === STEP 14. Terraform: S3 backup bucket + scoped IAM writer (best-effort) ===
+# === STEP 13. Terraform: S3 backup bucket + scoped IAM writer (best-effort) ===
 # Needs NO cluster (pure AWS), but grouped here so the commit below carries any resulting state note. Skipped
 # when the .env deployer creds are empty (backups off). Idempotent (terraform apply), so a re-run reconciles.
 if [ -n "$AWS_DEPLOY_ACCESS_KEY_ID" ]; then
@@ -217,10 +209,10 @@ else
   warn "AWS_DEPLOY_ACCESS_KEY_ID empty in .env -> skipping S3 backups (no bucket; CNPG backups stay off)"
 fi
 
-# === STEP 15. enable CNPG S3 backups: seal creds + chart values (best-effort) ==
-# Needs the controller (STEP 10) + the Terraform outputs from STEP 14. Seals the writer creds into each CNPG
+# === STEP 14. enable CNPG S3 backups: seal creds + chart values (best-effort) ==
+# Needs the controller (STEP 10) + the Terraform outputs from STEP 13. Seals the writer creds into each CNPG
 # namespace and flips backups on in the shared pg-cluster values; the commit below pushes both. Skipped when
-# creds empty (kept paired with STEP 14 so neither runs half-configured).
+# creds empty (kept paired with STEP 13 so neither runs half-configured).
 if [ -n "$AWS_DEPLOY_ACCESS_KEY_ID" ]; then
   run_step "seal S3 creds per CNPG ns + enable backups in pg-cluster" "$STEP_DIR" 14_cnpg_backup.sh best-effort \
     "14_cnpg_backup didn't complete; re-run it by hand ('make configure-cnpg-backup') + commit/push"
@@ -228,10 +220,10 @@ else
   step "enable CNPG S3 backups (skipped: .env AWS creds empty)"
 fi
 
-# === STEP 16. enable central Redis S3 backups: bucket/region + one sealed secret (best-effort) ==
-# Needs the controller (STEP 10) + the Terraform outputs from STEP 14. Writes bucket/region into the central
+# === STEP 15. enable central Redis S3 backups: bucket/region + one sealed secret (best-effort) ==
+# Needs the controller (STEP 10) + the Terraform outputs from STEP 13. Writes bucket/region into the central
 # 07_redis_backup chart and seals ONE writer-creds secret into ns redis-backup; the commit below pushes both.
-# Skipped when creds empty (kept paired with STEP 14/15 so nothing runs half-configured).
+# Skipped when creds empty (kept paired with STEP 13/14 so nothing runs half-configured).
 if [ -n "$AWS_DEPLOY_ACCESS_KEY_ID" ]; then
   run_step "enable central Redis S3 backups (seal creds + chart values)" "$STEP_DIR" 15_redis_backup.sh best-effort \
     "15_redis_backup didn't complete; re-run it by hand ('make configure-redis-backup') + commit/push"
@@ -239,10 +231,10 @@ else
   step "enable Redis S3 backups (skipped: .env AWS creds empty)"
 fi
 
-# === STEP 17. enable Longhorn volume S3 backups: seal creds + backup target (best-effort) ==
-# Needs the controller (STEP 10) + the Terraform outputs from STEP 14. Seals the writer creds into
+# === STEP 16. enable Longhorn volume S3 backups: seal creds + backup target (best-effort) ==
+# Needs the controller (STEP 10) + the Terraform outputs from STEP 13. Seals the writer creds into
 # longhorn-system and writes the backup target into the 02_longhorn values (which renders the -with-backups SC +
-# RecurringJobs); the commit below pushes both. Skipped when creds empty (paired with STEP 14-16).
+# RecurringJobs); the commit below pushes both. Skipped when creds empty (paired with STEP 13-15).
 if [ -n "$AWS_DEPLOY_ACCESS_KEY_ID" ]; then
   run_step "enable Longhorn volume S3 backups (seal creds + backup target)" "$STEP_DIR" 16_longhorn_backup.sh best-effort \
     "16_longhorn_backup didn't complete; re-run it by hand ('make configure-longhorn-backup') + commit/push"
@@ -250,10 +242,10 @@ else
   step "enable Longhorn volume S3 backups (skipped: .env AWS creds empty)"
 fi
 
-# === STEP 18. enable central VM/VL S3 backups: bucket/region + one sealed secret (best-effort) ==
-# Needs the controller (STEP 10) + the Terraform outputs from STEP 14. Writes bucket/region into the central
+# === STEP 17. enable central VM/VL S3 backups: bucket/region + one sealed secret (best-effort) ==
+# Needs the controller (STEP 10) + the Terraform outputs from STEP 13. Writes bucket/region into the central
 # 08_vm_backup chart and seals ONE writer-creds secret into ns monitoring; the commit below pushes both.
-# Skipped when creds empty (paired with STEP 14-17 so nothing runs half-configured).
+# Skipped when creds empty (paired with STEP 13-16 so nothing runs half-configured).
 if [ -n "$AWS_DEPLOY_ACCESS_KEY_ID" ]; then
   run_step "enable central VM/VL S3 backups (seal creds + chart values)" "$STEP_DIR" 17_vm_backup.sh best-effort \
     "17_vm_backup didn't complete; re-run it by hand ('make configure-vm-backup') + commit/push"
@@ -261,7 +253,7 @@ else
   step "enable VM/VL S3 backups (skipped: .env AWS creds empty)"
 fi
 
-# === STEP 19. commit + push the re-sealed secrets + backup config (best-effort) ===
+# === STEP 18. commit + push the re-sealed secrets + backup config (best-effort) ===
 step "git add + commit + push the re-sealed secrets + backup creds/values (ArgoCD unseals them; waves 2,4,7,8 + argocd)"
 git add -A
 if git diff --cached --quiet; then
@@ -271,15 +263,37 @@ else
 fi
 git push || warn "push failed; push by hand so ArgoCD picks up the re-sealed secrets"
 
-# === STEP 20. converge ArgoCD (pull the pushed commit + self-heal backstop) ===
+# === STEP 19. converge ArgoCD (pull the pushed commit + self-heal backstop) ===
 # The git poll is a 300s fallback and the GitHub webhook isn't configured yet, so ArgoCD won't pick up STEP
-# 19's push (re-sealed google-oauth/argocd secrets + backup creds/values) on its own for up to ~5
+# 18's push (re-sealed google-oauth/argocd secrets + backup creds/values) on its own for up to ~5
 # min. converge_argocd_apps
 # hard-refreshes EVERY app first (so they re-compare against the pushed commit and apply the re-sealed secrets
 # now), then nudges any straggler to Synced+Healthy (unbounded per-app retry converges the rest on its own).
-# Best-effort: never fails the bootstrap.
+# Best-effort: never fails the bootstrap. ntfy (wave 5) is up once this returns, so STEP 20 can seed it.
 step "converge ArgoCD (pull re-sealed secrets + self-heal backstop, up to ${CONVERGE_WAIT}s)"
 converge_argocd_apps "$CONVERGE_WAIT" || true
+
+# === STEP 20. seed ntfy auth + wire Grafana's token (best-effort) =============
+# ntfy (05_ntfy, wave 5) is up now that STEP 19 converged the platform, so seed it: 10_ntfy_auth.sh execs the
+# running pod to create the phone/grafana users + ACLs and seal Grafana's write token into grafana-ntfy. Then push
+# it (so ArgoCD applies the SealedSecret) and restart Grafana to pick up GF_NTFY_TOKEN. Skipped when the .env
+# password is empty. Best-effort: a slow/absent ntfy never wedges the run. See docs/09_monitoring.md.
+if [ -n "$NTFY_PHONE_PASSWORD_SECRET" ]; then
+  if run_step "seed ntfy users + seal Grafana's ntfy token" "$STEP_DIR" 10_ntfy_auth.sh best-effort \
+       "10_ntfy_auth didn't complete; re-run 'make configure-ntfy-auth' + commit/push once ntfy is up"; then
+    git add -A
+    if git diff --cached --quiet; then ok "no ntfy token change to commit"; else
+      git commit -m "bootstrap: seal Grafana ntfy token" >/dev/null && ok "committed sealed ntfy token" || warn "commit failed; commit by hand"
+    fi
+    git push || warn "push failed; push the sealed grafana-ntfy token by hand"
+    converge_argocd_apps "$CONVERGE_WAIT" || true                                   # apply the pushed SealedSecret
+    kubectl -n "$MONITORING_NS" rollout restart deploy/grafana >/dev/null 2>&1 \
+      && ok "grafana restarted (picks up GF_NTFY_TOKEN)" || warn "restart grafana by hand to pick up GF_NTFY_TOKEN"
+  fi
+else
+  step "seed ntfy auth (skipped: .env NTFY_PHONE_PASSWORD_SECRET empty)"
+  warn "NTFY_PHONE_PASSWORD_SECRET empty in .env -> ntfy alerting off; set it + run 'make configure-ntfy-auth' later"
+fi
 
 # === STEP 21. back up the NEW master key (best-effort) ========================
 # So a future DANGEROUS_rebuild_cluster.sh can RESTORE it instead of orphaning these SealedSecrets again.
@@ -304,12 +318,12 @@ Notes:
   - Old creds were archived under ${BACKUP_SUBDIR:-secrets/backup_<ts>} (the previous Talos CA /
     kubeconfig / sealed-secrets key). The cluster now uses a FRESH identity.
   - A NEW sealed-secrets master key was backed up to ${CLUSTER_DIR}/sealed-secrets-master.key
-    (if STEP 16 succeeded) — keep a copy off-cluster; a future rebuild restores from it.
+    (if STEP 21 succeeded) — keep a copy off-cluster; a future rebuild restores from it.
   - If the SSO re-seal (STEP 11) was skipped or failed, set the .env creds and re-run
     07_google_sso.sh </dev/null, then commit + push.
-  - ntfy mobile-push alerting: once every app is Healthy, run 'make configure-ntfy-auth' (seeds the ntfy users +
-    seals Grafana's write token), commit + push, then 'kubectl -n monitoring rollout restart deploy/grafana'.
-    On your phone: add server https://ntfy.ops.example.com, log in as 'phone', subscribe 'cluster-alerts'.
+  - ntfy mobile-push alerting: STEP 20 seeded it automatically (if NTFY_PHONE_PASSWORD_SECRET was set) — on your
+    phone, add server https://ntfy.ops.example.com, log in as 'phone', subscribe 'cluster-alerts'. If it was
+    skipped/failed, set the .env password + run 'make configure-ntfy-auth' + commit/push + restart grafana.
   - ArgoCD git-poll is a slow fallback now (webhook-driven). Finish the GitHub webhook: paste
     ${CLUSTER_DIR}/argocd-github-webhook-secret.txt into the repo's webhook (Payload URL
     https://argocd.<domain>/api/webhook, content-type application/json, push event). See 05_gitops.md.

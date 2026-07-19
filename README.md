@@ -279,7 +279,15 @@ Pi 5 Talos image builds on [talos-rpi5/talos-builder](https://github.com/talos-r
 - add something to test in CI so that PRs have at least SOME confidence in not being garbage.
 - optional DNS-01 auth (fallback to HTTP-01 when cloudflare secret not set in .env)
 - add alerts for everything!
-- add alerts for everything!
+  - nodes: down, disk full, ram full, ...
+  - k8s deployments: not ready, crashlooping, not enough replicas, 
+  - k8s pods consistently more resources than requested, has cpu limit set (shouldn't), reached 80% of mem limit, oom killed,
+  - cnpg
+  - redis
+  - longhorn
+  - rabbitmq
+  - all platform apps, if they provide metrics and mearuable health
+  - check alerting library for more ideas.
 - Alerting (prometheus rules and vmalerts to grafana)
 - decide on alerting. grafana good, even though no persistence guarantee? manual alerts will not be created, everything will be in code. But silences would go lost when instance gets replaced (e.g. grafana updates, node restart, ...)
 

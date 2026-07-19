@@ -12,7 +12,8 @@
 #   5. 05_argocd.sh                    : bootstrap ArgoCD; it then deploys everything else from git
 #   6. 06_restore_sealed_secrets_key.sh, restore the master key so committed SealedSecrets decrypt
 #   7. 13_s3_backup_bucket.sh wipe     : DELETE all backups in the S3 bucket (keep the bucket/IAM; no terraform)
-#   8. verify ingress serving          : wait until each HTTPS host serves an LE cert over clean HTTP/2
+#   8. 10_ntfy_auth.sh                 : seed ntfy users + seal Grafana's token, push + restart grafana (skipped if .env pw empty)
+#   9. verify ingress serving          : wait until each HTTPS host serves an LE cert over clean HTTP/2
 #
 # A rebuild is a FULL fresh start: it wipes local CNPG data AND the S3 backups (step 7), so the empty,
 # same-named clusters ArgoCD recreates begin a CLEAN backup history (no old-vs-new systemID conflict). The
@@ -40,7 +41,7 @@ source "${SCRIPT_DIR}/common.sh"   # say/die/warn/ok + CLUSTER_DIR + CLUSTER_NOD
 cd "$REPO_ROOT"                     # run from the repo root (git ops)
 
 # ---- knobs ------------------------------------------------------------------
-STEP=0; STEP_TOTAL=10                           # shared step counter (common.sh step/run_step); bump TOTAL if you add/remove a step
+STEP=0; STEP_TOTAL=11                           # shared step counter (common.sh step/run_step); bump TOTAL if you add/remove a step
 STEP_DIR="$SCRIPT_DIR"                          # every step script (+ the reset script) is a sibling of this orchestrator in lib/shell/
 RESET="${STEP_DIR}/DANGEROUS_reset_talos_cluster.sh"
 RESTORE="${STEP_DIR}/06_restore_sealed_secrets_key.sh"
@@ -66,7 +67,7 @@ cat <<EOF
 This will DESTROY and REBUILD the entire Talos cluster:
   nodes : ${IPS[*]}
   wipe  : STATE + EPHEMERAL + u-longhorn + u-localpath  (ALL k8s state AND all Longhorn + local-path data, gone for good)
-  flow  : commit+push -> reset -> 03d -> 03e -> 04 -> 05 -> restore sealed-secrets key -> WIPE S3 backups
+  flow  : commit+push -> reset -> 03d -> 03e -> 04 -> 05 -> restore sealed-secrets key -> WIPE S3 backups -> seed ntfy
           (ArgoCD then redeploys cilium/cert-manager/longhorn/gateway/SSO/monitoring from git)
   note  : FULL fresh start — wipes local CNPG data AND the S3 backups. The DBs come back EMPTY. If you want
           the old data, restore from S3 BEFORE rebuilding (make restore-cnpg); a rebuild discards it.
@@ -137,7 +138,29 @@ step "let ArgoCD settle ${CONVERGE_SETTLE}s, then converge all apps to Synced+He
 sleep "$CONVERGE_SETTLE"
 converge_argocd_apps "$CONVERGE_WAIT" || true
 
-# === STEP 10. verify the ingress data path actually serves (best-effort) ======
+# === STEP 10. seed ntfy auth + wire Grafana's token (best-effort) =============
+# The reset wiped ntfy's Longhorn PVC, so ntfy came back with an EMPTY auth DB and the committed grafana-ntfy
+# token is stale. 10_ntfy_auth.sh re-creates the phone/grafana users + ACLs and mints + re-seals a FRESH token;
+# push it (ArgoCD applies it) and restart Grafana to pick up GF_NTFY_TOKEN. Skipped when the .env password is
+# empty. Best-effort. See docs/09_monitoring.md.
+if [ -n "$NTFY_PHONE_PASSWORD_SECRET" ]; then
+  if run_step "seed ntfy users + seal Grafana's ntfy token" "$STEP_DIR" 10_ntfy_auth.sh best-effort \
+       "10_ntfy_auth didn't complete; re-run 'make configure-ntfy-auth' + commit/push once ntfy is up"; then
+    git add -A
+    if git diff --cached --quiet; then ok "no ntfy token change to commit"; else
+      git commit -m "rebuild: re-seal Grafana ntfy token" >/dev/null && ok "committed sealed ntfy token" || warn "commit failed; commit by hand"
+    fi
+    git push || warn "push failed; push the sealed grafana-ntfy token by hand"
+    converge_argocd_apps "$CONVERGE_WAIT" || true                                   # apply the pushed SealedSecret
+    kubectl -n "$MONITORING_NS" rollout restart deploy/grafana >/dev/null 2>&1 \
+      && ok "grafana restarted (picks up GF_NTFY_TOKEN)" || warn "restart grafana by hand to pick up GF_NTFY_TOKEN"
+  fi
+else
+  step "seed ntfy auth (skipped: .env NTFY_PHONE_PASSWORD_SECRET empty)"
+  warn "NTFY_PHONE_PASSWORD_SECRET empty in .env -> ntfy alerting off; set it + run 'make configure-ntfy-auth' later"
+fi
+
+# === STEP 11. verify the ingress data path actually serves (best-effort) ======
 # ArgoCD brings up the ingress stack (envoy-gateway -> gateway -> cert-manager -> apps) ASYNC after the
 # ArgoCD bootstrap, and HTTP-01 issuance takes minutes, so "05 done" does NOT mean the sites work yet.
 # verify_ingress (lib/shell/common.sh) polls each HTTPS host until it serves a REAL, LE-backed response over
@@ -156,8 +179,9 @@ envoy-gateway, gateway, SSO, monitoring). Watch it:
 Notes:
   - If the key restore (STEP 7) didn't run, do it once sealed-secrets is up
     (lib/shell/06_restore_sealed_secrets_key.sh), or re-seal with 07_google_sso and commit+push.
-  - ntfy alerting: after the platform is Healthy, run 'make configure-ntfy-auth' (seeds ntfy users + seals
-    Grafana's write token), commit+push, then 'kubectl -n monitoring rollout restart deploy/grafana'.
+  - ntfy alerting: STEP 10 re-seeded it automatically (if NTFY_PHONE_PASSWORD_SECRET was set) — the reset wiped
+    ntfy's PVC, so a fresh token was minted + re-sealed. If it was skipped/failed, run 'make configure-ntfy-auth'
+    + commit/push + restart grafana. On your phone, re-subscribe 'cluster-alerts' at https://ntfy.ops.example.com.
   - FULL FRESH START: the wipe cleared local-path AND the S3 backups (STEP 8). The DBs come back EMPTY and
     begin a clean backup history. If you wanted the old data, you had to restore BEFORE rebuilding
     (make restore-cnpg) — a rebuild discards it. The bucket + IAM stay; only \`make reset-cluster\` destroys them.
