@@ -128,7 +128,7 @@ username + password into a Secret `<user>-user-credentials` (keys `username`/`pa
 own namespace**. The pod mounts it via `secretKeyRef`, identical to how the app reads CNPG's `<db>-app`
 Secret — this is the repo's "operator-generated" secret class from [06_secrets.md](06_secrets.md): nothing
 secret is committed, no `SealedSecret`, no `.env` key, no `seal_secret` call. (Sealing is only for secrets that
-originate *outside* the cluster — OAuth/SMTP. RabbitMQ has none.) The username is generated, so the app reads it
+originate *outside* the cluster — e.g. OAuth. RabbitMQ has none.) The username is generated, so the app reads it
 from the Secret too (it can't be hardcoded), and the `Permission` references the user via `userReference` (the
 User CR name), not a literal username.
 

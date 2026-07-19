@@ -34,3 +34,16 @@ ingress:
           targetNamespace: rabbitmq        # the shared broker's client Service (03_rabbitmq_cluster)
           targetService: rabbitmq          # management UI on 15672; gated by google-sso (wave 4), then RabbitMQ's own login
           targetPort: 15672
+    # ntfy gets its OWN ingress (not a host under `platform`) because the Android app validates TLS, so its cert
+    # must be PUBLICLY TRUSTED -> letsencrypt-PROD, while `platform` stays on staging during rebuild-heavy dev.
+    # Per-ingress issuer => a separate ntfy-tls Certificate, no overlap with the staging SAN set. Deliberately NOT
+    # listed in 04_google_sso, so the edge stays OPEN (the mobile app can't do human OAuth) — ntfy's own deny-all
+    # + token/user auth is the only gate. See 07_ingress.md / 09_monitoring.md.
+    - name: ntfy
+      domain: ops.example.com
+      issuer: letsencrypt-prod
+      hosts:
+        - subdomain: ntfy                  # -> ntfy.ops.example.com (the phone subscribes here; Grafana publishes in-cluster)
+          targetNamespace: monitoring
+          targetService: ntfy
+          targetPort: 8080

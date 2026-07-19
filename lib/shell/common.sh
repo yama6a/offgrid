@@ -61,7 +61,7 @@ source "$ENV_FILE"
 : "${GITHUB_GHCR_PULL_TOKEN_SECRET:=}"    # 03d bakes into node machine config (kubelet pulls private ghcr.io)
 : "${GITHUB_GHCR_PUSH_TOKEN_SECRET:=}"    # 03a docker-login + push of the installer image (build host only)
 : "${ARGOCD_GITHUB_PAT_SECRET:=}"         # 05 seeds ArgoCD's repo-creds Secret
-: "${SMTP_GOOGLE_APP_PASSWORD_SECRET:=}"  # 09 seals it for Grafana email
+: "${NTFY_PHONE_PASSWORD_SECRET:=}"       # 10 seeds the ntfy 'phone' user (Grafana pushes alerts to ntfy, phone subscribes)
 : "${GOOGLE_SSO_CLIENT_ID:=}"      # 07 writes into the google-sso values
 : "${GOOGLE_SSO_CLIENT_SECRET:=}"  # 07 seals it for Envoy Gateway OIDC
 : "${AWS_DEPLOY_ACCESS_KEY_ID:=}"          # 13 runs Terraform with these; empty = skip S3 backups (13/14 no-op)

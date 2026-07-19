@@ -44,11 +44,15 @@ spec:
       toPorts:
         - ports:
             - { port: "9428", protocol: TCP }
-    # Gmail SMTP for alert email.
-    - toEntities: [world]
+    # ntfy webhook (in-cluster) — publish firing alerts to the ntfy notification server (05_ntfy). REPLACES the
+    # former Gmail SMTP :587 egress (email notifier retired in favour of ntfy mobile push).
+    - toEndpoints:
+        - matchLabels:
+            k8s:io.kubernetes.pod.namespace: monitoring
+            app.kubernetes.io/name: ntfy
       toPorts:
         - ports:
-            - { port: "587", protocol: TCP }
+            - { port: "8080", protocol: TCP }
     # Datasource plugin download at first boot.
     - toEntities: [world]
       toPorts:

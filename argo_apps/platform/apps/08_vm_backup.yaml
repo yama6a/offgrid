@@ -1,11 +1,12 @@
 # ArgoCD Application for the CENTRAL VM/VL backup job (argo_apps/platform/charts/08_vm_backup/): ONE CronJob in
 # the `monitoring` namespace (co-located with the stores it reads) that exports VMSingle (metrics) + VLSingle
 # (logs) over HTTP and streams each gzip'd to S3 under the vm/ prefix. Ships the CronJob + one egress
-# CiliumNetworkPolicy + backup-health VMRules; the single sealed S3 writer creds (vm-backup-s3) are committed by
-# 17_vm_backup.sh. Reuses the shared bucket + IAM writer. See docs/13_backups.md + docs/09_monitoring.md.
+# CiliumNetworkPolicy; backup-health alerts are Grafana rules (05_grafana), not shipped here. The single sealed
+# S3 writer creds (vm-backup-s3) are committed by 17_vm_backup.sh. Reuses the shared bucket + IAM writer. See
+# docs/13_backups.md + docs/09_monitoring.md.
 #
 # AUTOMATED (prune + selfHeal): a safe leaf. The CronJob only READS the stores over HTTP + WRITES to S3; a prune
-# deletes only this app's own objects (the job, netpol, rules, sealed secret), never any metrics/logs data.
+# deletes only this app's own objects (the job, netpol, sealed secret), never any metrics/logs data.
 #
 # sync-wave "8": after the monitoring stack (05_victoria_metrics_k8s_stack + 05_victoria_logs, wave 5, so the
 # Services it reads exist) and sealed-secrets (wave 2, to unseal the creds). Deploys INTO the existing

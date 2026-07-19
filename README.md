@@ -206,10 +206,11 @@ least:
 - **Git remote**: `REPO_URL` **must** equal your forked `repoURL` committed across `argo_apps/`. Argo CD reconciles
   the pushed remote, not your working tree, so **commit + push before you expect a sync**.
 - **Registry**: `GHCR_USER` and, if you publish the installer image or use private images, the GHCR tokens.
-- **Email**: Grafana alert email is Gmail-baked — set `SMTP_GOOGLE_APP_PASSWORD_SECRET` in `.env`; for a
-  non-Gmail provider edit the `[smtp]` block + NetworkPolicy port in `argo_apps/platform/charts/05_grafana`.
+- **Alerting (mobile push)**: alerts reach your phone via self-hosted **ntfy** (no email). Set
+  `NTFY_PHONE_PASSWORD_SECRET` in `.env`, then post-boot run `make configure-ntfy-auth` (seeds the ntfy users +
+  seals Grafana's write token). See `docs/09_monitoring.md`.
 - **Secrets**: every secret in `.env` is optional; leaving one empty **disables the feature it enables**
-  (Google SSO, private GHCR pulls, talos upgrades via pushed images, Argo CD private-repo access, Grafana email).
+  (Google SSO, private GHCR pulls, talos upgrades via pushed images, Argo CD private-repo access, ntfy mobile-push alerting).
 
 **Hardware caveats worth knowing before you commit:** the build assumes Raspberry Pi 5 + NVMe with **all nodes as
 control-plane**, and a **custom-built kernel** (4K pages) for Longhorn/XFS compatibility. So it is not drop-in for other
@@ -277,6 +278,8 @@ Pi 5 Talos image builds on [talos-rpi5/talos-builder](https://github.com/talos-r
 - disaster recovery exercise
 - add something to test in CI so that PRs have at least SOME confidence in not being garbage.
 - optional DNS-01 auth (fallback to HTTP-01 when cloudflare secret not set in .env)
+- add alerts for everything!
+- add alerts for everything!
 - Alerting (prometheus rules and vmalerts to grafana)
 - decide on alerting. grafana good, even though no persistence guarantee? manual alerts will not be created, everything will be in code. But silences would go lost when instance gets replaced (e.g. grafana updates, node restart, ...)
-- drop debug flags from everywhere.
+

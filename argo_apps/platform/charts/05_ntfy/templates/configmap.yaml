@@ -1,0 +1,22 @@
+# ntfy server config (server.yml), rolled into the pod via the Deployment's checksum/config annotation.
+# Private instance: deny-all + per-topic ACLs seeded by lib/shell/10_ntfy_auth.sh (ntfy has NO declarative
+# user/token config, so seeding is imperative). See 09_monitoring.md.
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: ntfy
+  namespace: {{ .Release.Namespace }}
+  labels:
+    app.kubernetes.io/name: ntfy
+data:
+  server.yml: |
+    base-url: {{ .Values.baseUrl | quote }}
+    listen-http: ":8080"                 # non-root; same port end-to-end (Service / netpol / edge)
+    behind-proxy: true                   # Envoy edge fronts it -> trust X-Forwarded-For (real visitor IP / rate-limit)
+    auth-file: "/var/lib/ntfy/user.db"   # SQLite users/tokens/ACL, on the Longhorn PVC
+    auth-default-access: "deny-all"      # private: every topic denied unless an ACL grants it (seeded by 10_ntfy_auth.sh)
+    enable-login: true                   # the phone user logs in via the Android app
+    enable-signup: false                 # no self-service signup; users are seeded, not self-registered
+    cache-file: "/var/lib/ntfy/cache.db" # message cache (disposable)
+    cache-duration: "12h"
+    # Android-only: self-contained instant delivery. No upstream-base-url / firebase (those are the iOS/ntfy.sh push proxy).

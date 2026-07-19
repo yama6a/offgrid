@@ -217,9 +217,10 @@ workload only overrides the ⭐ **set-per-workload** ones (in `sample_workload/v
   so it stays sane if the class is ever swapped.
 - `postgresql.parameters` (`shared_buffers: 128MB`, `max_connections: 50`) (wrapper defaults, overridable):
   sized for the Pi 5s.
-- `monitoring.enabled: true` (+ `podMonitor`; `prometheusRule` on by default) (wrapper-baked): per-instance
-  Postgres metrics + CNPG alert rules, auto-converted by the VM operator and discovered by the
-  [monitoring](09_monitoring.md) stack.
+- `monitoring.enabled: true` (+ `podMonitor`; `prometheusRule` OFF) (wrapper-baked): per-instance Postgres
+  metrics, discovered by the [monitoring](09_monitoring.md) stack. The chart's CNPG alert rules are disabled
+  (`vmalert` is off, so a VMRule never fires) — the CNPG backup + operational alerts are Grafana rules instead
+  (see [13_backups.md](13_backups.md)).
 - `initdb: { database: app, owner: app }` (wrapper-baked): bootstraps a demo `app` DB; the operator
   auto-generates the owner's credentials into the `<name>-app` Secret (e.g. `sample-workload-db-app`, where the
   name is the instance's REQUIRED `cluster.fullnameOverride`) — no sealed-secret needed.

@@ -1,0 +1,11 @@
+apiVersion: v2
+name: ntfy
+description: >-
+  Self-hosted ntfy notification server — the alert transport for the cluster. Grafana's unified-alerting
+  webhook contact point publishes firing alerts to the `cluster-alerts` topic in-cluster, and the Android app
+  subscribes to it over the public edge (06_platform_ingress, letsencrypt-prod, no SSO — ntfy's own token/user
+  auth gates it). First-party chart (no upstream dependency): ships a Deployment + Service + ConfigMap + PVC +
+  a pod-scoped CiliumNetworkPolicy. Users/ACLs/token seeded by lib/shell/10_ntfy_auth.sh. See docs/09_monitoring.md.
+type: application
+version: 0.1.0                 # this chart's own version
+# No upstream dependency (our own Deployment), so there is no Chart.lock / charts/ to build, unlike 00_cilium / 01_argocd.

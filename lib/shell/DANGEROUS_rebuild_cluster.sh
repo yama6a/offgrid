@@ -28,7 +28,8 @@
 # This script does NOT back up the sealed-secrets key, doing it here would risk overwriting a good
 # backup with the about-to-be-wiped cluster's key. Back up DELIBERATELY beforehand
 # (lib/shell/06_backup_sealed_secrets_key.sh) so step 6 has something to restore; with no backup,
-# step 6 fails cleanly and you re-seal instead (07_google_sso, 09_grafana_smtp) + commit/push.
+# step 6 fails cleanly and you re-seal instead (07_google_sso) + commit/push. (ntfy's Grafana token is minted
+# post-boot from the running ntfy pod via 10_ntfy_auth, regardless of the key.)
 #
 # Needs Docker (host networking), git, kubectl.
 #
@@ -70,8 +71,8 @@ This will DESTROY and REBUILD the entire Talos cluster:
   note  : FULL fresh start — wipes local CNPG data AND the S3 backups. The DBs come back EMPTY. If you want
           the old data, restore from S3 BEFORE rebuilding (make restore-cnpg); a rebuild discards it.
 
-Have a CURRENT sealed-secrets key backup (06_backup_sealed_secrets_key.sh), else SSO + Grafana
-email won't decrypt until you re-seal (07_google_sso, 09_grafana_smtp).
+Have a CURRENT sealed-secrets key backup (06_backup_sealed_secrets_key.sh), else SSO won't decrypt
+until you re-seal (07_google_sso). ntfy alerting is seeded post-boot via 10_ntfy_auth regardless.
 EOF
 read -r -p ">> type REBUILD to proceed: " ans
 [ "$ans" = "REBUILD" ] || { echo "aborted (phew!)."; exit 0; }
@@ -154,8 +155,9 @@ envoy-gateway, gateway, SSO, monitoring). Watch it:
 
 Notes:
   - If the key restore (STEP 7) didn't run, do it once sealed-secrets is up
-    (lib/shell/06_restore_sealed_secrets_key.sh), or re-seal with 07_google_sso +
-    09_grafana_smtp and commit+push.
+    (lib/shell/06_restore_sealed_secrets_key.sh), or re-seal with 07_google_sso and commit+push.
+  - ntfy alerting: after the platform is Healthy, run 'make configure-ntfy-auth' (seeds ntfy users + seals
+    Grafana's write token), commit+push, then 'kubectl -n monitoring rollout restart deploy/grafana'.
   - FULL FRESH START: the wipe cleared local-path AND the S3 backups (STEP 8). The DBs come back EMPTY and
     begin a clean backup history. If you wanted the old data, you had to restore BEFORE rebuilding
     (make restore-cnpg) — a rebuild discards it. The bucket + IAM stay; only \`make reset-cluster\` destroys them.

@@ -7,7 +7,7 @@
 # the backed-up key Secret(s) into the sealed-secrets namespace and restarts the controller so it loads
 # them; once loaded, every SealedSecret committed to this repo (sealed against that key) decrypts again.
 # Without this, a rebuilt cluster's controller mints a BRAND-NEW key and every committed SealedSecret is
-# orphaned (google-oauth, grafana-smtp, ...). See 06_secrets.md.
+# orphaned (google-oauth, grafana-ntfy, ...). See 06_secrets.md.
 #
 # On a fresh rebuild the controller is delivered by ArgoCD (wave 2), so it may not be up yet, this WAITS
 # for it (up to WAIT secs) before applying. The fresh controller mints its OWN key on first start; we
@@ -37,7 +37,7 @@ WAIT=900                                                                     # s
 say "prerequisites"
 require kubectl
 use_kubeconfig
-[ -f "$BACKUP_FILE" ] || die "no backup at ${BACKUP_FILE}, run 06_backup_sealed_secrets_key.sh first (while a cluster holding the key is up), or re-seal instead (07_google_sso, 09_grafana_smtp)"
+[ -f "$BACKUP_FILE" ] || die "no backup at ${BACKUP_FILE}, run 06_backup_sealed_secrets_key.sh first (while a cluster holding the key is up), or re-seal instead (07_google_sso, 10_ntfy_auth)"
 [ -s "$BACKUP_FILE" ] || die "backup ${BACKUP_FILE} is empty, do not trust it"
 grep -q 'kind: Secret' "$BACKUP_FILE" 2>/dev/null || die "backup ${BACKUP_FILE} has no 'kind: Secret', wrong/corrupt file"
 assert_api
@@ -106,10 +106,10 @@ Sealed Secrets master key restored from:
 The controller is back up with the old key loaded; the committed SealedSecrets decrypt into their Secrets
 as ArgoCD (re)applies them. Verify:
   kubectl get sealedsecret -A
-  kubectl get secret -A | grep -E 'google-oauth|grafana-smtp'
+  kubectl get secret -A | grep -E 'google-oauth|grafana-ntfy'
 EOF
 else
   echo "Restore did NOT complete cleanly. If the controller wasn't up, wait for ArgoCD (wave 2) and re-run,"
-  echo "or re-seal instead (07_google_sso, 09_grafana_smtp) + commit/push."
+  echo "or re-seal instead (07_google_sso, 10_ntfy_auth) + commit/push."
 fi
 [ "$FAIL" -eq 0 ]

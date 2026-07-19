@@ -7,12 +7,12 @@ description: >-
   Grafana's OWN auth is off (anonymous Admin, no login form), the only gate is Google SSO applied by the
   consolidated platform-ingress app (06_platform_ingress), which fronts grafana.ops.example.com alongside the
   other platform UIs; this chart no longer ships its own edge. No persistence (ephemeral pod); the VictoriaMetrics + VictoriaLogs datasources
-  (pinned UIDs), the contact point / notification policy / alert rules, and the SMTP config are all
-  PROVISIONED as code here (the Gmail app-password comes from the sealed grafana-smtp Secret). Curated
+  (pinned UIDs) and the contact point / notification policy / alert rules are all PROVISIONED as code here
+  (alerts go to self-hosted ntfy; the write token comes from the sealed grafana-ntfy Secret). Curated
   dashboards still arrive as `grafana_dashboard` ConfigMaps via the sidecar (search-all-namespaces) from
   05_victoria_metrics_k8s_stack. The VictoriaLogs datasource is the signed victoriametrics-logs-datasource
   plugin (GF_INSTALL_PLUGINS). Delivered by ArgoCD via argo_apps/apps/05_grafana.yaml, wave 5, same as
-  the stacks it reads from (05_victoria_metrics_k8s_stack, 05_victoria_logs). See 16_grafana.md.
+  the stacks it reads from (05_victoria_metrics_k8s_stack, 05_victoria_logs). See 09_monitoring.md.
 type: application
 version: 0.1.0                 # this wrapper chart's own version
 

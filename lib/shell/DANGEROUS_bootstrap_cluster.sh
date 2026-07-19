@@ -21,7 +21,7 @@
 #   9. 05_argocd.sh                 : bootstrap ArgoCD; it then delivers the whole platform from git
 #  10. wait sealed-secrets ctrl     : ArgoCD wave-2 app; kubeseal (steps 11-13, 15-18) needs it up
 #  11. 07_google_sso.sh </dev/null  : write shared clientID + RE-SEAL google-oauth against the NEW key
-#  12. 09_grafana_smtp.sh           : RE-SEAL grafana-smtp against the NEW key
+#  12. ntfy auth (deferred)          : ntfy's Grafana token is minted from the running pod post-boot — see notes
 #  13. 08_argocd_webhook.sh         : generate+seal the GitHub webhook secret (-> secrets/) + set poll cadence
 #  14. 13_s3_backup_bucket.sh       : Terraform -> S3 backup bucket + scoped IAM writer (skipped if .env AWS creds empty)
 #  15. 14_cnpg_backup.sh            : seal the writer creds per CNPG ns + enable backups in the pg-cluster values
@@ -33,10 +33,11 @@
 #  21. 06_backup_sealed_secrets_key.sh : back up the NEW master key so a future rebuild can restore it
 #  22. verify ingress serving       : wait until each HTTPS host serves an LE cert over clean HTTP/2
 #
-# Why re-seal + back up (and a rebuild doesn't): a fresh controller mints a BRAND-NEW master key, so the
-# two committed SealedSecrets (google-oauth, grafana-smtp, sealed against an OLD key) are orphaned — they
-# must be re-sealed against the new key. The rebuild instead RESTORES the old key (06_restore) and skips
-# re-sealing. Here there is no old key to restore, so we re-seal and then back the new key up.
+# Why re-seal + back up (and a rebuild doesn't): a fresh controller mints a BRAND-NEW master key, so a
+# committed SealedSecret (google-oauth, sealed against an OLD key) is orphaned — it must be re-sealed against
+# the new key. The rebuild instead RESTORES the old key (06_restore) and skips re-sealing. Here there is no old
+# key to restore, so we re-seal and then back the new key up. (ntfy's Grafana token isn't re-sealed here — it's
+# minted fresh from the running ntfy pod post-boot; see STEP 12 + the summary.)
 #
 # Skips 03a/03b (image build/flash): bootstrap assumes the OS is already flashed and the nodes are in
 # maintenance, but it DOES run 03c (boot-verify) as a hard gate up front. Bootstrap steps (1-10) abort on
@@ -66,7 +67,7 @@ CONTROLLER_WAIT=900                            # secs to wait for the sealed-sec
 INGRESS_WAIT=900                               # secs to wait for the ingress to actually serve (HTTP-01 is slow)
 CONVERGE_WAIT=900                              # secs for the converge backstop to drive every app to Synced+Healthy
 COMMIT_MSG_SYNC="bootstrap: sync config before ArgoCD bootstrap"
-COMMIT_MSG_SEAL="bootstrap: re-seal SSO/SMTP + argocd webhook secrets + CNPG/Redis S3 backup creds/values"
+COMMIT_MSG_SEAL="bootstrap: re-seal SSO + argocd webhook secrets + CNPG/Redis S3 backup creds/values"
 # -----------------------------------------------------------------------------
 
 # === prereqs =================================================================
@@ -84,7 +85,7 @@ This will BOOTSTRAP a FIRST-TIME Talos cluster on freshly-flashed nodes:
   archive : secrets.yaml + kubeconfig + talosconfig + sealed-secrets-master.key (+ 03d scratch)
             -> secrets/backup_<timestamp>/   (03d then mints a NEW Talos CA; the old creds stop working)
   flow    : preflight -> 03c verify -> archive -> 03d -> 03e -> 04 -> 07_gateway -> commit/push -> 05 (ArgoCD)
-            -> re-seal SSO + SMTP against the new key -> commit/push -> back up the new key -> verify ingress
+            -> re-seal SSO against the new key -> commit/push -> back up the new key -> verify ingress
 
 Requires nodes in MAINTENANCE mode (03a/03b done; 03c boot-verify is run for you below). To re-initialize
 a RUNNING cluster instead, abort and use DANGEROUS_rebuild_cluster.sh (it wipes first).
@@ -173,7 +174,7 @@ export KUBECONFIG="$KUBECONFIG_FILE"
 deadline=$(( $(date +%s) + CONTROLLER_WAIT ))
 until kubectl get pods -n "$SS_CONTROLLER_NS" -l "$SS_POD_SELECTOR" \
         -o jsonpath='{.items[*].status.conditions[?(@.type=="Ready")].status}' 2>/dev/null | grep -q True; do
-  [ "$(date +%s)" -lt "$deadline" ] || die "sealed-secrets controller not Ready within ${CONTROLLER_WAIT}s (kubectl -n ${SS_CONTROLLER_NS} get pods). Cluster is up; once the controller is Ready, re-seal by hand (07_google_sso, 09_grafana_smtp, 08_argocd_webhook) + commit/push, then 06_backup_sealed_secrets_key.sh."
+  [ "$(date +%s)" -lt "$deadline" ] || die "sealed-secrets controller not Ready within ${CONTROLLER_WAIT}s (kubectl -n ${SS_CONTROLLER_NS} get pods). Cluster is up; once the controller is Ready, re-seal by hand (07_google_sso, 08_argocd_webhook) + commit/push, then 06_backup_sealed_secrets_key.sh."
   printf '.'; sleep 10
 done
 echo; ok "sealed-secrets controller Ready"
@@ -189,14 +190,13 @@ else
   warn "GOOGLE_SSO_CLIENT_ID/SECRET empty in .env -> skipping SSO re-seal (google-oauth stays orphaned until you set them + run 07)"
 fi
 
-# === STEP 12. re-seal Grafana SMTP against the NEW key (best-effort) ==========
-if [ -n "$SMTP_GOOGLE_APP_PASSWORD_SECRET" ]; then
-  run_step "re-seal Grafana SMTP against the new key" "$STEP_DIR" 09_grafana_smtp.sh best-effort \
-    "09_grafana_smtp didn't complete; re-run it by hand + commit/push"
-else
-  step "re-seal Grafana SMTP (skipped: .env secret empty)"
-  warn "SMTP_GOOGLE_APP_PASSWORD_SECRET empty in .env -> skipping SMTP re-seal (Grafana email off; committed grafana-smtp stays orphaned)"
-fi
+# === STEP 12. ntfy alerting auth is seeded POST-BOOT (needs the running platform) =============
+# Unlike the SSO/webhook secrets (re-sealed early against the new key), ntfy's Grafana token is MINTED from the
+# running ntfy pod (05_ntfy, wave 5) — not up yet in this early batch — so it can't be sealed here. Like the
+# GitHub webhook, it's a manual post-boot step: once the platform is Healthy, `make configure-ntfy-auth` seeds the
+# ntfy users + seals Grafana's token; commit/push; restart Grafana. See the summary + docs/09_monitoring.md.
+step "ntfy alerting auth (deferred to post-boot, see summary)"
+warn "ntfy's Grafana token is minted from the running pod -> run 'make configure-ntfy-auth' after the platform is up"
 
 # === STEP 13. seal the ArgoCD GitHub webhook secret + set poll cadence (best-effort) ===
 # Not guarded on a .env secret: 08 GENERATES its own webhook secret (into secrets/) and always runs. It
@@ -273,7 +273,7 @@ git push || warn "push failed; push by hand so ArgoCD picks up the re-sealed sec
 
 # === STEP 20. converge ArgoCD (pull the pushed commit + self-heal backstop) ===
 # The git poll is a 300s fallback and the GitHub webhook isn't configured yet, so ArgoCD won't pick up STEP
-# 19's push (re-sealed google-oauth/grafana-smtp/argocd secrets + backup creds/values) on its own for up to ~5
+# 19's push (re-sealed google-oauth/argocd secrets + backup creds/values) on its own for up to ~5
 # min. converge_argocd_apps
 # hard-refreshes EVERY app first (so they re-compare against the pushed commit and apply the re-sealed secrets
 # now), then nudges any straggler to Synced+Healthy (unbounded per-app retry converges the rest on its own).
@@ -305,8 +305,11 @@ Notes:
     kubeconfig / sealed-secrets key). The cluster now uses a FRESH identity.
   - A NEW sealed-secrets master key was backed up to ${CLUSTER_DIR}/sealed-secrets-master.key
     (if STEP 16 succeeded) — keep a copy off-cluster; a future rebuild restores from it.
-  - If the SSO/SMTP re-seal (STEP 11/12) was skipped or failed, set the .env secrets and re-run
-    07_google_sso.sh </dev/null / 09_grafana_smtp.sh, then commit + push.
+  - If the SSO re-seal (STEP 11) was skipped or failed, set the .env creds and re-run
+    07_google_sso.sh </dev/null, then commit + push.
+  - ntfy mobile-push alerting: once every app is Healthy, run 'make configure-ntfy-auth' (seeds the ntfy users +
+    seals Grafana's write token), commit + push, then 'kubectl -n monitoring rollout restart deploy/grafana'.
+    On your phone: add server https://ntfy.ops.example.com, log in as 'phone', subscribe 'cluster-alerts'.
   - ArgoCD git-poll is a slow fallback now (webhook-driven). Finish the GitHub webhook: paste
     ${CLUSTER_DIR}/argocd-github-webhook-secret.txt into the repo's webhook (Payload URL
     https://argocd.<domain>/api/webhook, content-type application/json, push event). See 05_gitops.md.

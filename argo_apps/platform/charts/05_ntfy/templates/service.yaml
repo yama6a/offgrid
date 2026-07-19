@@ -1,0 +1,15 @@
+# ClusterIP on :8080 -> container :8080. Targeted by the Grafana webhook (in-cluster publish) and the ntfy
+# edge (06_platform_ingress, phone subscribe). Same port number end-to-end. See 09_monitoring.md.
+apiVersion: v1
+kind: Service
+metadata:
+  name: ntfy
+  namespace: {{ .Release.Namespace }}
+  labels:
+    app.kubernetes.io/name: ntfy
+spec:
+  type: ClusterIP
+  selector:
+    app.kubernetes.io/name: ntfy
+  ports:
+    - { name: http, port: 8080, targetPort: 8080, protocol: TCP }

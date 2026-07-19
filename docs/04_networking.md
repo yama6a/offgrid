@@ -104,7 +104,7 @@ policy-verdict visibility (`hubble observe --verdict DROPPED`). Two places carry
   shares the `monitoring` namespace and scrapes the whole cluster, so it must stay unrestricted). Each is a
   full, explicit `CiliumNetworkPolicy` written out in that chart's `templates/networkpolicy.yaml` — no shared
   library or render abstraction; the policy reads as the resource it is. External egress (argocd→GitHub,
-  cert-manager→ACME, grafana→SMTP) is `toEntities: [world]` on the specific port, not `toFQDNs` — no DNS-proxy
+  cert-manager→ACME, grafana→plugin download) is `toEntities: [world]` on the specific port, not `toFQDNs` — no DNS-proxy
   dependency. Peer selectors (CoreDNS `k8s-app: kube-dns`, vmagent, the Envoy edge, the stores) are repeated
   verbatim across the manifests; if a platform component is relabeled, grep and update each.
 

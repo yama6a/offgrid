@@ -225,7 +225,7 @@ default-deny `CiliumNetworkPolicy`: only the owning workload's pods (`allowedCli
 plus the operator (reconcile) and vmagent (metrics). Instances are ClusterIP-only and never exposed via ingress.
 
 Why not a password? The repo's [secrets bright line](06_secrets.md) is: never commit cluster-mintable secrets —
-Sealed Secrets are for externally-sourced, human-supplied credentials (OAuth, SMTP). A Redis password is
+Sealed Secrets are for externally-sourced, human-supplied credentials (e.g. the OAuth client secret). A Redis password is
 cluster-mintable, so it'd want the CNPG/RabbitMQ route (operator generates it, app reads it via `secretKeyRef`,
 nothing in git). But the OpsTree operator does **not** auto-generate one, and a Helm-generated "sticky random"
 password is unreliable under ArgoCD (its repo-server renders with `helm template`, where the `lookup` function

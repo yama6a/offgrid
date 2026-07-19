@@ -1,5 +1,5 @@
 # Values for the 05_grafana wrapper chart. SINGLE SOURCE OF TRUTH, ArgoCD (and any local
-# `helm template`) consume this. Chart version pinned in Chart.yaml. See 16_grafana.md for the why.
+# `helm template`) consume this. Chart version pinned in Chart.yaml. See 09_monitoring.md for the why.
 #
 # Grafana runs in the `monitoring` namespace (release name `grafana`), alongside the VictoriaMetrics +
 # VictoriaLogs stack it visualises AND alerts on. Everything under `grafana:` is passed to the upstream
@@ -10,7 +10,7 @@ grafana:
   # No persistent storage (explicit request). Ephemeral pod, the datasources, dashboards and alert rules
   # are all re-provisioned on every start (from these values + the k8s-stack's emitted dashboard
   # ConfigMaps). TRADE-OFF: alert *state* (firing history, silences) and any UI-created dashboards reset
-  # on restart; rules themselves survive because they are file-provisioned. See 16_grafana.md.
+  # on restart; rules themselves survive because they are file-provisioned. See 09_monitoring.md.
   persistence:
     enabled: false
 
@@ -41,26 +41,17 @@ grafana:
       org_role: Admin                # everyone who clears the SSO allowlist gets full admin
     auth.basic:
       enabled: false                 # no basic-auth path either
-    # SMTP for unified-alerting email. The PASSWORD is NOT here, Grafana maps the GF_SMTP_PASSWORD env
-    # (injected from the sealed `grafana-smtp` Secret via envValueFrom below) onto [smtp].password. The
-    # Gmail app-password is sealed by 16_grafana_smtp/16_grafana_smtp.sh (plaintext never committed).
-    smtp:
-      enabled: true
-      host: smtp.gmail.com:587
-      user: you@example.com
-      from_address: you@example.com
-      from_name: Grafana (raspi-cluster)
-      startTLS_policy: MandatoryStartTLS
 
-  # GF_SMTP_PASSWORD <- the sealed grafana-smtp Secret (key `password`). Grafana auto-maps it to
-  # [smtp].password. The Secret is created by the committed SealedSecret (templates/grafana-smtp-sealedsecret.yaml).
+  # GF_NTFY_TOKEN <- the sealed grafana-ntfy Secret (key `token`), referenced (env-interpolated) by the ntfy
+  # webhook contact point below as ${GF_NTFY_TOKEN}, so the write token never lands in git. The Secret is
+  # created by the committed SealedSecret (templates/grafana-ntfy-sealedsecret.yaml), written by 10_ntfy_auth.sh.
   envValueFrom:
-    GF_SMTP_PASSWORD:
+    GF_NTFY_TOKEN:
       secretKeyRef:
-        name: grafana-smtp
-        key: password
-        optional: true   # so Grafana starts before 16_grafana_smtp.sh seals the secret; SMTP stays
-                         # unconfigured (test email fails) until the SealedSecret lands and the pod restarts
+        name: grafana-ntfy
+        key: token
+        optional: true   # so Grafana starts before 10_ntfy_auth.sh seals the token; the ntfy contact point just
+                         # fails to publish (auth rejected) until the SealedSecret lands and the pod restarts
 
   # The VictoriaLogs datasource is NOT built in (unlike Loki), install the signed plugin (commercial
   # signature, so no allow-unsigned needed). Version pinned; the space-separated form pins the version via
@@ -70,7 +61,7 @@ grafana:
 
   # Provisioned datasources (replaces the old sidecar-fed Prometheus datasource ConfigMap). UIDs are PINNED
   # and deliberately match the k8s-stack's defaults (`VictoriaMetrics` / `VictoriaLogs`) so BOTH the
-  # synced default dashboards AND the alert rules below resolve their datasource. See 16_grafana.md.
+  # synced default dashboards AND the alert rules below resolve their datasource. See 09_monitoring.md.
   datasources:
     datasources.yaml:
       apiVersion: 1
@@ -109,22 +100,40 @@ grafana:
   # Metrics rules query the `VictoriaMetrics` datasource (PromQL); the log rule queries `VictoriaLogs`
   # (LogsQL). Recording rules from kube-prometheus-stack are gone (no vmalert), so expressions are inlined.
   alerting:
+    # Contact point: an ntfy webhook that JSON-publishes to the in-cluster ntfy Service (05_ntfy). The write
+    # token is env-interpolated from the sealed grafana-ntfy Secret (${GF_NTFY_TOKEN}), never in git. A Custom
+    # Payload builds ntfy's JSON body (the webhook has no header field, so title/priority/tags go in the body).
+    # The whole alerting block is Helm-tpl'd, so the inner {{ }} are wrapped in ONE Helm raw-string escape
+    # ({{` … `}}) — Helm outputs them literally for Grafana's notifier to render. See 09_monitoring.md.
     contactpoints.yaml:
       apiVersion: 1
       contactPoints:
         - orgId: 1
-          name: email
+          name: ntfy
           receivers:
-            - uid: email-default
-              type: email
+            - uid: ntfy-webhook
+              type: webhook
               settings:
-                addresses: you@example.com
-                singleEmail: true
+                url: http://ntfy.monitoring.svc.cluster.local:8080/   # in-cluster JSON publish (topic is in the body)
+                httpMethod: POST
+                authorization_scheme: Bearer
+                authorization_credentials: ${GF_NTFY_TOKEN}           # sealed write token, env-interpolated; never committed
+                maxAlerts: 0                                          # no cap on alerts bundled per notification
+                payload:
+                  # severity -> ntfy priority (critical=5 / warning=4 / else=3) + a matching tag (ntfy renders known tags as emoji).
+                  template: |
+                    {{`{
+                      "topic": "cluster-alerts",
+                      "title": "{{ .Status | toUpper }}: {{ index .CommonLabels "alertname" }}",
+                      "message": "{{ if index .CommonAnnotations "summary" }}{{ index .CommonAnnotations "summary" }}{{ else }}{{ index .CommonLabels "alertname" }}{{ end }}",
+                      "priority": {{ if eq (index .CommonLabels "severity") "critical" }}5{{ else if eq (index .CommonLabels "severity") "warning" }}4{{ else }}3{{ end }},
+                      "tags": ["{{ index .CommonLabels "severity" }}"]
+                    }`}}
     policies.yaml:
       apiVersion: 1
       policies:
         - orgId: 1
-          receiver: email
+          receiver: ntfy
           group_by: [alertname, namespace]
           group_wait: 30s
           group_interval: 5m
@@ -479,9 +488,289 @@ grafana:
                     conditions:
                       - type: query
                         evaluator: {type: gt, params: [172800]}
+            # ---- CNPG + VM/VL backup health -----------------------------------------------------------------
+            # Ported from the former chart PrometheusRules (08_vm_backup + pg-cluster), now DISABLED: vmalert is
+            # off so their converted VMRules never fired — Grafana is the only path. Metric names lifted verbatim
+            # from those rules. See docs/13_backups.md.
+            - uid: vm-backup-failed
+              title: VM/VL backup job failed
+              condition: C
+              for: 15m
+              labels: {severity: warning}
+              annotations:
+                summary: 'VM/VL backup Job {{`{{ $labels.namespace }}`}}/{{`{{ $labels.job_name }}`}} failed'
+              noDataState: OK
+              execErrState: Error
+              data:
+                - refId: A
+                  relativeTimeRange: {from: 600, to: 0}
+                  datasourceUid: VictoriaMetrics
+                  model:
+                    refId: A
+                    instant: true
+                    expr: 'max by (namespace, job_name) (kube_job_failed{condition="true", namespace="monitoring", job_name=~"vm-backup.*"})'
+                - refId: B
+                  relativeTimeRange: {from: 600, to: 0}
+                  datasourceUid: __expr__
+                  model: {refId: B, type: reduce, expression: A, reducer: last, datasource: {type: __expr__, uid: __expr__}}
+                - refId: C
+                  relativeTimeRange: {from: 600, to: 0}
+                  datasourceUid: __expr__
+                  model:
+                    refId: C
+                    type: threshold
+                    expression: B
+                    datasource: {type: __expr__, uid: __expr__}
+                    conditions:
+                      - type: query
+                        evaluator: {type: gt, params: [0]}
+            # Staleness: no successful run in >36h (129600s; daily + slack). `> 0` guards the metric being
+            # absent/zero before the first success (absent => NoData => OK). Catches a suspended/never-scheduled job.
+            - uid: vm-backup-stale
+              title: VM/VL backup is stale
+              condition: C
+              for: 30m
+              labels: {severity: warning}
+              annotations:
+                summary: 'VM/VL backup {{`{{ $labels.namespace }}`}}/{{`{{ $labels.cronjob }}`}} has no success in >36h'
+              noDataState: OK
+              execErrState: Error
+              data:
+                - refId: A
+                  relativeTimeRange: {from: 600, to: 0}
+                  datasourceUid: VictoriaMetrics
+                  model:
+                    refId: A
+                    instant: true
+                    expr: 'time() - max by (namespace, cronjob) (kube_cronjob_status_last_successful_time{namespace="monitoring", cronjob="vm-backup"} > 0)'
+                - refId: B
+                  relativeTimeRange: {from: 600, to: 0}
+                  datasourceUid: __expr__
+                  model: {refId: B, type: reduce, expression: A, reducer: last, datasource: {type: __expr__, uid: __expr__}}
+                - refId: C
+                  relativeTimeRange: {from: 600, to: 0}
+                  datasourceUid: __expr__
+                  model:
+                    refId: C
+                    type: threshold
+                    expression: B
+                    datasource: {type: __expr__, uid: __expr__}
+                    conditions:
+                      - type: query
+                        evaluator: {type: gt, params: [129600]}
+            # WAL archiving to S3 falling behind/failing (load-bearing: a stalled archiver fills pg_wal -> primary
+            # read-only). `value="ready"` counts not-yet-archived segments; sustained >0 for 15m = not keeping up.
+            # Cluster-wide (dropped the per-instance pod regex the PrometheusRule used). See docs/13_backups.md.
+            - uid: cnpg-wal-archive-failing
+              title: CNPG WAL archiving to S3 failing
+              condition: C
+              for: 15m
+              labels: {severity: critical}
+              annotations:
+                summary: 'CNPG {{`{{ $labels.namespace }}`}}/{{`{{ $labels.pod }}`}}: WAL archiving to S3 is failing'
+              noDataState: OK
+              execErrState: Error
+              data:
+                - refId: A
+                  relativeTimeRange: {from: 600, to: 0}
+                  datasourceUid: VictoriaMetrics
+                  model:
+                    refId: A
+                    instant: true
+                    expr: 'max by (namespace, pod) (cnpg_collector_pg_wal_archive_status{value="ready"})'
+                - refId: B
+                  relativeTimeRange: {from: 600, to: 0}
+                  datasourceUid: __expr__
+                  model: {refId: B, type: reduce, expression: A, reducer: last, datasource: {type: __expr__, uid: __expr__}}
+                - refId: C
+                  relativeTimeRange: {from: 600, to: 0}
+                  datasourceUid: __expr__
+                  model:
+                    refId: C
+                    type: threshold
+                    expression: B
+                    datasource: {type: __expr__, uid: __expr__}
+                    conditions:
+                      - type: query
+                        evaluator: {type: gt, params: [0]}
+            # No recent base backup (>36h). The timestamp metric MAY stay 0 under the barman plugin, so `> 0`
+            # guards it: never populated => won't fire (we lean on the WAL alert then). See docs/13_backups.md.
+            - uid: cnpg-backup-too-old
+              title: CNPG base backup is stale
+              condition: C
+              for: 30m
+              labels: {severity: warning}
+              annotations:
+                summary: 'CNPG {{`{{ $labels.namespace }}`}}/{{`{{ $labels.pod }}`}}: last base backup is >36h old'
+              noDataState: OK
+              execErrState: Error
+              data:
+                - refId: A
+                  relativeTimeRange: {from: 600, to: 0}
+                  datasourceUid: VictoriaMetrics
+                  model:
+                    refId: A
+                    instant: true
+                    expr: 'time() - max by (namespace, pod) (cnpg_collector_last_available_backup_timestamp > 0)'
+                - refId: B
+                  relativeTimeRange: {from: 600, to: 0}
+                  datasourceUid: __expr__
+                  model: {refId: B, type: reduce, expression: A, reducer: last, datasource: {type: __expr__, uid: __expr__}}
+                - refId: C
+                  relativeTimeRange: {from: 600, to: 0}
+                  datasourceUid: __expr__
+                  model:
+                    refId: C
+                    type: threshold
+                    expression: B
+                    datasource: {type: __expr__, uid: __expr__}
+                    conditions:
+                      - type: query
+                        evaluator: {type: gt, params: [129600]}
+        # CNPG operational health, ported from the upstream cnpg/cluster PrometheusRules (now disabled). Curated to
+        # what fires meaningfully on this 1-2 instance, streaming-only topology: connection saturation + physical
+        # replication lag. Exprs + thresholds lifted verbatim (per-instance pod regex dropped for cluster-wide).
+        # `CNPGClusterOffline` is intentionally NOT ported — the generic `target-down` rule already catches a down
+        # CNPG pod (its scrape target goes down); and the HA / zone-spread / same-node / logical-replication rules
+        # are dropped (need 3+ instances / zone labels / logical replication this cluster doesn't use). See docs/13_backups.md.
+        - orgId: 1
+          name: cnpg-health
+          folder: raspi-cluster
+          interval: 1m
+          rules:
+            - uid: cnpg-high-connections-warning
+              title: CNPG high connection usage
+              condition: C
+              for: 5m
+              labels: {severity: warning}
+              annotations:
+                summary: 'CNPG {{`{{ $labels.namespace }}`}}/{{`{{ $labels.pod }}`}} using >80% of max_connections'
+              noDataState: OK
+              execErrState: Error
+              data:
+                - refId: A
+                  relativeTimeRange: {from: 600, to: 0}
+                  datasourceUid: VictoriaMetrics
+                  model:
+                    refId: A
+                    instant: true
+                    expr: 'sum by (namespace, pod) (cnpg_backends_total) / max by (namespace, pod) (cnpg_pg_settings_setting{name="max_connections"}) * 100'
+                - refId: B
+                  relativeTimeRange: {from: 600, to: 0}
+                  datasourceUid: __expr__
+                  model: {refId: B, type: reduce, expression: A, reducer: last, datasource: {type: __expr__, uid: __expr__}}
+                - refId: C
+                  relativeTimeRange: {from: 600, to: 0}
+                  datasourceUid: __expr__
+                  model:
+                    refId: C
+                    type: threshold
+                    expression: B
+                    datasource: {type: __expr__, uid: __expr__}
+                    conditions:
+                      - type: query
+                        evaluator: {type: gt, params: [80]}
+            - uid: cnpg-high-connections-critical
+              title: CNPG connection usage critical
+              condition: C
+              for: 5m
+              labels: {severity: critical}
+              annotations:
+                summary: 'CNPG {{`{{ $labels.namespace }}`}}/{{`{{ $labels.pod }}`}} using >95% of max_connections'
+              noDataState: OK
+              execErrState: Error
+              data:
+                - refId: A
+                  relativeTimeRange: {from: 600, to: 0}
+                  datasourceUid: VictoriaMetrics
+                  model:
+                    refId: A
+                    instant: true
+                    expr: 'sum by (namespace, pod) (cnpg_backends_total) / max by (namespace, pod) (cnpg_pg_settings_setting{name="max_connections"}) * 100'
+                - refId: B
+                  relativeTimeRange: {from: 600, to: 0}
+                  datasourceUid: __expr__
+                  model: {refId: B, type: reduce, expression: A, reducer: last, datasource: {type: __expr__, uid: __expr__}}
+                - refId: C
+                  relativeTimeRange: {from: 600, to: 0}
+                  datasourceUid: __expr__
+                  model:
+                    refId: C
+                    type: threshold
+                    expression: B
+                    datasource: {type: __expr__, uid: __expr__}
+                    conditions:
+                      - type: query
+                        evaluator: {type: gt, params: [95]}
+            # Physical replication lag (seconds). Only produces series when a standby exists (instances>=2);
+            # absent => NoData => OK at a single instance. > 1s warning, > 15s critical (upstream thresholds).
+            - uid: cnpg-replication-lag-warning
+              title: CNPG physical replication lag
+              condition: C
+              for: 5m
+              labels: {severity: warning}
+              annotations:
+                summary: 'CNPG {{`{{ $labels.namespace }}`}}/{{`{{ $labels.pod }}`}} physical replication lag >1s'
+              noDataState: OK
+              execErrState: Error
+              data:
+                - refId: A
+                  relativeTimeRange: {from: 600, to: 0}
+                  datasourceUid: VictoriaMetrics
+                  model:
+                    refId: A
+                    instant: true
+                    expr: 'max by (namespace, pod) (cnpg_pg_replication_lag)'
+                - refId: B
+                  relativeTimeRange: {from: 600, to: 0}
+                  datasourceUid: __expr__
+                  model: {refId: B, type: reduce, expression: A, reducer: last, datasource: {type: __expr__, uid: __expr__}}
+                - refId: C
+                  relativeTimeRange: {from: 600, to: 0}
+                  datasourceUid: __expr__
+                  model:
+                    refId: C
+                    type: threshold
+                    expression: B
+                    datasource: {type: __expr__, uid: __expr__}
+                    conditions:
+                      - type: query
+                        evaluator: {type: gt, params: [1]}
+            - uid: cnpg-replication-lag-critical
+              title: CNPG physical replication lag critical
+              condition: C
+              for: 5m
+              labels: {severity: critical}
+              annotations:
+                summary: 'CNPG {{`{{ $labels.namespace }}`}}/{{`{{ $labels.pod }}`}} physical replication lag >15s'
+              noDataState: OK
+              execErrState: Error
+              data:
+                - refId: A
+                  relativeTimeRange: {from: 600, to: 0}
+                  datasourceUid: VictoriaMetrics
+                  model:
+                    refId: A
+                    instant: true
+                    expr: 'max by (namespace, pod) (cnpg_pg_replication_lag)'
+                - refId: B
+                  relativeTimeRange: {from: 600, to: 0}
+                  datasourceUid: __expr__
+                  model: {refId: B, type: reduce, expression: A, reducer: last, datasource: {type: __expr__, uid: __expr__}}
+                - refId: C
+                  relativeTimeRange: {from: 600, to: 0}
+                  datasourceUid: __expr__
+                  model:
+                    refId: C
+                    type: threshold
+                    expression: B
+                    datasource: {type: __expr__, uid: __expr__}
+                    conditions:
+                      - type: query
+                        evaluator: {type: gt, params: [15]}
     # Log-based alert in its OWN file so a VL-datasource model mismatch can't break the metrics rules
     # above. VERIFY the query model against the live victoriametrics-logs-datasource at apply time (the
-    # plugin's alerting model field names can change between versions). See 16_grafana.md.
+    # plugin's alerting model field names can change between versions). See 09_monitoring.md.
     rules-logs.yaml:
       apiVersion: 1
       groups:
@@ -547,7 +836,7 @@ grafana:
   # label, and soft so a scale-up never wedges as Pending on the 3-node cluster. No-op at the default single
   # replica. NOTE: this only pre-stages placement — actually running replicas>1 first needs unified-alerting
   # HA (grafana.ini `unified_alerting.ha_*`), else each replica evaluates rules independently and double-sends
-  # email; and with persistence off, UI-created annotations/silences aren't shared. See 16_grafana.md.
+  # email; and with persistence off, UI-created annotations/silences aren't shared. See 09_monitoring.md.
   affinity:
     podAntiAffinity:
       preferredDuringSchedulingIgnoredDuringExecution:

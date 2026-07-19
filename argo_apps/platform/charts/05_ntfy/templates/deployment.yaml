@@ -1,0 +1,60 @@
+# Single-replica ntfy server (RWO PVC + one small Go binary; Recreate so a redeploy releases the volume
+# before the new pod mounts it). Runs restricted: non-root, drops all caps, never calls the k8s API. Config
+# in templates/configmap.yaml (checksum-rolled); auth + cache DBs on the PVC. See 09_monitoring.md.
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: ntfy
+  namespace: {{ .Release.Namespace }}
+  labels:
+    app.kubernetes.io/name: ntfy
+spec:
+  replicas: 1
+  strategy:
+    type: Recreate            # RWO PVC: the old pod must release the volume before the new one mounts it
+  selector:
+    matchLabels:
+      app.kubernetes.io/name: ntfy
+  template:
+    metadata:
+      labels:
+        app.kubernetes.io/name: ntfy
+      annotations:
+        # Roll the pod whenever server.yml changes.
+        checksum/config: {{ include (print $.Template.BasePath "/configmap.yaml") . | sha256sum | quote }}
+    spec:
+      automountServiceAccountToken: false      # never talks to the k8s API
+      securityContext:
+        runAsNonRoot: true
+        runAsUser: 2121
+        runAsGroup: 2121
+        fsGroup: 2121                          # own the Longhorn volume so /var/lib/ntfy is writable
+        seccompProfile: { type: RuntimeDefault }
+      containers:
+        - name: ntfy
+          image: {{ .Values.image | quote }}
+          args: ["serve"]                      # image entrypoint is `ntfy`; reads /etc/ntfy/server.yml by default
+          securityContext:
+            allowPrivilegeEscalation: false
+            capabilities: { drop: ["ALL"] }
+          ports:
+            - { name: http, containerPort: 8080, protocol: TCP }
+          readinessProbe:
+            httpGet: { path: /v1/health, port: http }
+            initialDelaySeconds: 5
+            periodSeconds: 10
+          livenessProbe:
+            httpGet: { path: /v1/health, port: http }
+            initialDelaySeconds: 15
+            periodSeconds: 30
+          volumeMounts:
+            - { name: config, mountPath: /etc/ntfy, readOnly: true }
+            - { name: data, mountPath: /var/lib/ntfy }
+          resources: {{ .Values.resources | toYaml | nindent 12 }}
+      volumes:
+        - name: config
+          configMap:
+            name: ntfy
+        - name: data
+          persistentVolumeClaim:
+            claimName: ntfy

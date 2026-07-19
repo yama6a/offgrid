@@ -189,22 +189,24 @@ reset-cluster`** tears the bucket down (empty + `terraform destroy`). See the tw
 
 ## Monitoring (alerts)
 
-`lib/helm/pg-cluster/templates/backup-alerts.yaml` adds a `PrometheusRule` (converted to a VMRule by the VM
-operator) when backups are on — the upstream CNPG rules cover HA/replication/disk but nothing for backups:
+Backup health is alerted by **Grafana-provisioned rules** (`05_grafana/values.yaml`) — the only path that fires,
+since `vmalert` + Alertmanager are off (a chart `PrometheusRule` is converted to a VMRule, but nothing evaluates
+it). The chart PrometheusRules that used to define these are therefore **disabled** to avoid inert duplicates:
+`lib/helm/pg-cluster` sets `cluster.cluster.monitoring.prometheusRule.enabled: false` (this also drops the 18
+upstream CNPG rules), and the `08_vm_backup` alerts template was removed. The CNPG backup rules (Grafana `backups`
+group), exprs lifted verbatim from the old PrometheusRule (per-instance pod regex dropped for cluster-wide):
 
-- **`CNPGWALArchiveFailing`** (`critical`): `cnpg_collector_pg_wal_archive_status{value="ready"} > 0` for 15 min —
-  WAL segments piling up unarchived. This is the load-bearing one (a stalled archiver fills `pg_wal`).
-- **`CNPGBackupTooOld`** (`warning`): last successful base backup >36h old. Guarded with `> 0` because the
-  `cnpg_collector_last_available_backup_timestamp` metric is deprecated and **may stay 0 under the
-  plugin** — if so, this alert simply won't fire and we lean on the WAL alert + `kubectl cnpg status`.
+- **`cnpg-wal-archive-failing`** (`critical`): `cnpg_collector_pg_wal_archive_status{value="ready"} > 0` for 15 min —
+  WAL segments piling up unarchived. The load-bearing one (a stalled archiver fills `pg_wal`).
+- **`cnpg-backup-too-old`** (`warning`): last successful base backup >36h old. Guarded with `> 0` because the
+  `cnpg_collector_last_available_backup_timestamp` metric is deprecated and **may stay 0 under the plugin** — if
+  so, this alert simply won't fire and we lean on the WAL alert + `kubectl cnpg status`.
 
-*Verify the exact metric/label (`value` vs `status`) and whether the backup-timestamp metric populates against
-the live cluster — see the verify steps below.*
-
-> ⚠️ **These CNPG PrometheusRule/VMRule alerts do NOT currently fire.** This cluster runs `vmalert` +
-> Alertmanager **disabled** (`05_victoria_metrics_k8s_stack`), so nothing evaluates VMRules — the only working
-> alert path is **Grafana-provisioned rules** (`05_grafana/values.yaml`). The Redis backup alerts below take
-> that path. The CNPG alerts above should be ported to Grafana rules too (tracked as an inconsistency).
+The `08_vm_backup` export CronJob is likewise covered by two Grafana rules (`vm-backup-failed`, `vm-backup-stale`),
+and the upstream CNPG operational rules are represented by a curated `cnpg-health` group (connection saturation +
+physical replication lag; cluster "offline" is already covered by the generic `target-down` rule). All query the
+`VictoriaMetrics` datasource directly. *Verify the exact metric/label names (`value` vs `status`, and whether the
+backup-timestamp metric populates) against the live cluster — see the verify steps below.*
 
 ### Redis backup alerts (Grafana — the path that fires)
 
@@ -343,8 +345,8 @@ Pieces, all under `argo_apps/platform/charts/08_vm_backup/` (+ two netpol edits 
 - **`templates/networkpolicy.yaml`** — egress-only lockdown (DNS + S3 + the two stores). The stores'
   ingress allowlists (`05_victoria_metrics_k8s_stack` / `05_victoria_logs` `networkpolicy.yaml`) each add
   `app.kubernetes.io/name: vm-backup` so this pod is admitted on 8428 / 9428.
-- **`templates/alerts.yaml`** — `VMBackupJobFailing` (a Job failed) + `VMBackupTooOld` (no success in >36h, catches
-  a CronJob that never fires); PrometheusRules the VM operator converts to VMRules.
+- Backup-health alerts are **Grafana-provisioned rules** (`vm-backup-failed` + `vm-backup-stale` in `05_grafana`),
+  not shipped here — `vmalert` is off, so a chart `PrometheusRule`/VMRule would never fire.
 - **`templates/vm-backup-s3-sealedsecret.yaml`** — the sealed `vm-backup-s3` (keys `AWS_ACCESS_KEY_ID` /
   `AWS_SECRET_ACCESS_KEY`) in `monitoring`, written by `17`.
 

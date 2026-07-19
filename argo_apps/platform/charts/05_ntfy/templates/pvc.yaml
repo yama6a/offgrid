@@ -1,0 +1,15 @@
+# Persistent store for ntfy's SQLite auth + cache DBs (mounted at /var/lib/ntfy). See values.yaml `storage`.
+apiVersion: v1
+kind: PersistentVolumeClaim
+metadata:
+  name: ntfy
+  namespace: {{ .Release.Namespace }}
+  labels:
+    app.kubernetes.io/name: ntfy
+spec:
+  storageClassName: {{ .Values.storage.storageClassName }}
+  accessModes:
+    - ReadWriteOnce
+  resources:
+    requests:
+      storage: {{ .Values.storage.size }}

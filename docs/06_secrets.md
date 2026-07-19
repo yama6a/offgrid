@@ -75,9 +75,9 @@ them:
   backed-up master key (`06_restore`) so the committed `SealedSecret`s decrypt unchanged. It does *not*
   re-seal. Requires a current key backup (run `06_backup` beforehand).
 - **`DANGEROUS_bootstrap_cluster.sh`** — **first-time** init on freshly-flashed nodes in maintenance mode.
-  There is no prior key to restore, so the fresh controller mints a **brand-new** key and the two committed
-  `SealedSecret`s (`google-oauth`, `grafana-smtp`) are orphaned. It therefore **re-seals** them against the
-  new key (`07_google_sso </dev/null` — keeps the committed allowlists — and `09_grafana_smtp`), commits +
+  There is no prior key to restore, so the fresh controller mints a **brand-new** key and the committed
+  `google-oauth` `SealedSecret` is orphaned. It therefore **re-seals** it against the new key
+  (`07_google_sso </dev/null` — keeps the committed allowlists), commits +
   pushes, then **backs up** the new key (`06_backup`) so future rebuilds can restore it. It also archives
   the old `secrets.yaml`/`kubeconfig`/`talosconfig`/`sealed-secrets-master.key` to
   `secrets/backup_<timestamp>/` and starts from a fresh Talos CA. To re-initialize a *running*

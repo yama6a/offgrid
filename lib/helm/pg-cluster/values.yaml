@@ -29,13 +29,15 @@ cluster:
         # Only binds when backups are ON; harmless otherwise (WAL is just recycled). Set from .env CNPG_BACKUP_RPO
         # by 14_cnpg_backup.sh. See docs/13_backups.md for why 15min (and why idle DBs don't churn empty WAL).
         archive_timeout: "15min"
-    # PodMonitor + PrometheusRule -> auto-converted by the VM operator, scraped cluster-wide. See 09_monitoring.md.
+    # PodMonitor -> scraped cluster-wide by vmagent. The chart's PrometheusRule is OFF: vmalert is disabled so its
+    # converted VMRules never fired — the CNPG alerts that matter (WAL archiving + backup staleness, connection
+    # saturation, physical replication lag) are Grafana-provisioned rules instead. See 09_monitoring.md / 13_backups.md.
     monitoring:
       enabled: true # hardcoded — do not override.
       podMonitor:
         enabled: true # hardcoded — do not override.
       prometheusRule:
-        enabled: true # DEFAULT: ship the 18 CNPG alert rules; set false to suppress them.
+        enabled: false # OFF: vmalert disabled => these VMRules are inert; the CNPG alerts live in 05_grafana now.
     # ---- everything below is hardcoded — do not override (soft: settable, but shouldn't be) ----
     storage:
       # Node-local /var/mnt/localpath partition (02_local_path_provisioner), isolated from Longhorn; Postgres

@@ -75,9 +75,11 @@ the k8s-stack subchart so it versions/syncs/rolls back independently, no feature
   dashboards resolve. The **datasources sidecar is OFF** (provisioned directly); the **dashboards sidecar
   stays ON** (`searchNamespace: ALL`) and ingests the k8s-stack's `grafana_dashboard` ConfigMaps on every
   start.
-- Contact point (Gmail email), notification policy, and an alert rule group (node NotReady, high node
-  mem/CPU, pod CrashLoopBackOff, PVC >85%, target down, plus a VictoriaLogs error-rate alert). Rules are
-  file-provisioned (survive restart); alert *state* resets on restart (no PVC).
+- Contact point (an **ntfy webhook** → self-hosted ntfy, `05_ntfy`), notification policy, and alert rule groups:
+  `cluster-health` (node NotReady, high node mem/CPU, pod CrashLoopBackOff, PVC >85%, target down), `backups`
+  (redis + longhorn + VM/VL + CNPG backup health), `cnpg-health` (connection saturation + physical replication
+  lag), plus a VictoriaLogs error-rate alert. Rules are file-provisioned (survive restart); alert *state* resets
+  on restart (no PVC).
 
 ### No persistence (`persistence.enabled: false`)
 Explicit requirement, safe because Grafana holds no state worth keeping: datasources + curated dashboards
@@ -91,12 +93,19 @@ there's no second login. This is only safe because the edge gates it: anonymous 
 SSO-allowlisted user is a full Grafana admin — acceptable for a small trusted allowlist, the gateway
 allowlist is the real boundary. Drop `auth.anonymous.org_role` to `Viewer` if that's ever too broad.
 
-### SMTP secret
-Grafana's Gmail app-password comes from `SMTP_GOOGLE_APP_PASSWORD_SECRET` in the gitignored `.env`; `lib/shell/09_grafana_smtp.sh`
-seals it into the `grafana-smtp` Secret (key `password`), surfaced as `GF_SMTP_PASSWORD` (optional, so Grafana starts
-before it's sealed). Leave the var empty and the script offers to delete the sealed file (disables outgoing email).
-Host/user/from are non-secret in the values. This is the only imperative script for this step; the VM stack
-and metrics-server are pure GitOps.
+### ntfy alerting (mobile push, replaces email)
+Alerts go to your phone via self-hosted **ntfy** (`05_ntfy`), not email. Grafana's webhook contact point publishes
+to the in-cluster ntfy Service on the `cluster-alerts` topic; the Android app subscribes over the public edge
+`ntfy.ops.example.com` (`06_platform_ingress`, on `letsencrypt-prod` — the app validates TLS — and deliberately
+**not** behind Google SSO, since the mobile app can't do human OAuth; ntfy's own deny-all + token/user auth is the gate).
+
+ntfy is a private, deny-all instance with no declarative user config, so `lib/shell/10_ntfy_auth.sh` (`make
+configure-ntfy-auth`, run post-boot once the pod is up) seeds two users on `cluster-alerts` — `phone` (read-only,
+password from `NTFY_PHONE_PASSWORD_SECRET` in `.env`) and `grafana` (write-only) — and mints + **seals** Grafana's
+write token into the `grafana-ntfy` Secret (key `token`), surfaced as `GF_NTFY_TOKEN` and interpolated into the
+webhook's `authorization_credentials` (optional env, so Grafana starts before it's sealed). Leave
+`NTFY_PHONE_PASSWORD_SECRET` empty and the script offers to delete the sealed token (disables ntfy alerting).
+This is the only imperative script for this step; the VM stack and metrics-server are pure GitOps.
 
 Grafana's `grafana.ops.example.com` edge (Gateway + Certificate + SSO HTTPRoute) is served by the consolidated
 platform-ingress app (wave 6), not the `05_grafana` chart; see [07_ingress.md](07_ingress.md).

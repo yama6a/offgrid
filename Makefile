@@ -85,9 +85,9 @@ configure-gateway: ## 07: write LE_EMAIL/BASE_DOMAIN into the gateway chart valu
 configure-sso: ## 07: write the SSO clientID + seal the OAuth client secret (needs .env creds).
 	bash lib/shell/07_google_sso.sh
 
-.PHONY: configure-grafana-smtp
-configure-grafana-smtp: ## 09: seal the Grafana SMTP app password (needs .env secret).
-	bash lib/shell/09_grafana_smtp.sh
+.PHONY: configure-ntfy-auth
+configure-ntfy-auth: ## 10: seed ntfy users/ACLs + seal Grafana's ntfy write token (needs 05_ntfy synced + .env secret).
+	bash lib/shell/10_ntfy_auth.sh
 
 ##@ Backups  (step 13–17; S3 bucket via Terraform + CNPG WAL/base + Redis RDB + Longhorn volume + VM/VL export backups)
 .PHONY: s3-backup-bucket
