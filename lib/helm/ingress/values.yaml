@@ -22,4 +22,3 @@ cloudflareZones:
   - example.com
   - ops.example.com
   - app.example.com
-  - example.net
