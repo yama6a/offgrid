@@ -61,7 +61,7 @@ cert-manager:
   cainjector:
     resources:
       requests: { cpu: 10m, memory: 96Mi }
-      limits:   { memory: 128Mi }
+      limits:   { memory: 200Mi }
     # Leader-elected (one active + standby). Spread across Pi nodes if replicaCount is raised.
     # PREFERRED + hostname (no zone label; soft so a scale-up never wedges). No-op at one replica.
     affinity:

@@ -31,7 +31,7 @@ acme:
       server: "https://acme-staging-v02.api.letsencrypt.org/directory"
     - name: letsencrypt-prod
       server: "https://acme-v02.api.letsencrypt.org/directory"
-  # Cloudflare DNS-01 (optional, per-domain). 07_gateway.sh writes `zones` from .env CLOUDFLARE_ZONES and
+  # Cloudflare DNS-01 (optional, per-domain). 07_gateway.sh writes `zones` from .env CLOUDFLARE_WILDCARD_DOMAINS and
   # seals the token; empty zones => no dns01 solver + no wildcard certs => HTTP-01 for everything (unchanged).
   # When non-empty: each issuer above gets a dns01.cloudflare solver scoped to these zones (+ the http01
   # catch-all stays), and one shared wildcard cert per zone is minted (wildcard-certificates.yaml).

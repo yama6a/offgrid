@@ -6,7 +6,7 @@
 # render the SAME values). PURE yq, NO cluster access — safe to run before ArgoCD/sealed-secrets exist (it
 # runs early in the bootstrap, step 7):
 #   - LE_EMAIL         -> 03_gateway/values.yaml  (acme.email)
-#   - CLOUDFLARE_ZONES -> 03_gateway/values.yaml  (acme.cloudflare.zones: the DNS-01 solver scope + the shared
+#   - CLOUDFLARE_WILDCARD_DOMAINS -> 03_gateway/values.yaml  (acme.cloudflare.zones: the DNS-01 solver scope + the shared
 #                         wildcard certs) AND lib/helm/ingress/values.yaml (cloudflareZones: so CF domains
 #                         reference the shared wildcard secret and skip their per-ingress cert — every consumer
 #                         inherits this library default)
@@ -21,7 +21,7 @@
 # default. See 07_ingress.md.
 #
 # SINGLE SOURCE OF TRUTH:
-#   - .env (here)  -> LE_EMAIL + CLOUDFLARE_ZONES (+ CLOUDFLARE_API_TOKEN_SECRET only to gate the zones)
+#   - .env (here)  -> LE_EMAIL + CLOUDFLARE_WILDCARD_DOMAINS (+ CLOUDFLARE_API_TOKEN_SECRET only to gate the zones)
 #   - argo_apps/platform/charts/03_gateway/values.yaml + lib/helm/ingress/values.yaml -> what ArgoCD renders
 # This script writes the former into the latter (yq). No values are hardcoded in this script.
 #
@@ -60,12 +60,12 @@ fi
 # === 2. Cloudflare DNS-01 zones: gateway solver + ingress-lib wildcard decision ===============
 # DNS-01 needs the token; without it a rendered dns01 solver would reference a missing Secret and every
 # challenge would fail. So the token gates the zones: no token => force zones to [] (HTTP-01 for all).
-EFFECTIVE_ZONES="$CLOUDFLARE_ZONES"
-if [ -z "${CLOUDFLARE_API_TOKEN_SECRET}" ] && [ -n "${CLOUDFLARE_ZONES}" ]; then
-  warn "CLOUDFLARE_ZONES set but CLOUDFLARE_API_TOKEN_SECRET empty -> DNS-01 stays OFF (need the token); zones ignored"
+EFFECTIVE_ZONES="$CLOUDFLARE_WILDCARD_DOMAINS"
+if [ -z "${CLOUDFLARE_API_TOKEN_SECRET}" ] && [ -n "${CLOUDFLARE_WILDCARD_DOMAINS}" ]; then
+  warn "CLOUDFLARE_WILDCARD_DOMAINS set but CLOUDFLARE_API_TOKEN_SECRET empty -> DNS-01 stays OFF (need the token); zones ignored"
   EFFECTIVE_ZONES=""
 fi
-say ".env CLOUDFLARE_ZONES -> gateway + ingress-lib values  (${EFFECTIVE_ZONES:-<none, HTTP-01 for all>})"
+say ".env CLOUDFLARE_WILDCARD_DOMAINS -> gateway + ingress-lib values  (${EFFECTIVE_ZONES:-<none, HTTP-01 for all>})"
 # split(" ") + map(select) turns the space-separated scalar into a YAML list, and "" -> [] (not [""]).
 if CF_ZONES="$EFFECTIVE_ZONES" yq -i '.acme.cloudflare.zones = (strenv(CF_ZONES) | split(" ") | map(select(. != "")))' "$GW_VALUES"; then
   ok "03_gateway acme.cloudflare.zones written"
@@ -100,7 +100,7 @@ Next:
                argo_apps/workloads/charts/sample_user_manager; do
         helm dependency update "\$c"; done
   - git add -A && git commit && git push   # ArgoCD (wave 3) applies the Gateway + ClusterIssuers + wildcard certs
-$(if [ -n "${CLOUDFLARE_ZONES}" ]; then cat <<'HINT'
+$(if [ -n "${CLOUDFLARE_WILDCARD_DOMAINS}" ]; then cat <<'HINT'
   - once ArgoCD + the sealed-secrets controller are up, seal the Cloudflare token:  make configure-cloudflare-token
     (the bootstrap orchestrator runs this for you). Without it the dns01 solver can't authenticate.
 HINT

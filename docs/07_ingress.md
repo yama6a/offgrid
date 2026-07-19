@@ -120,7 +120,7 @@ Pure GitOps plus one values-propagation helper (no cluster apply):
 - a one-line enablement (`enableGatewayAPI: true`) in
   `argo_apps/platform/charts/02_cert_manager/values.yaml`.
 - `lib/shell/07_gateway.sh`: writes `.env`'s `LE_EMAIL` into the chart's `values.yaml` (`acme.email`)
-  via `yq`, and propagates `CLOUDFLARE_ZONES` (into `acme.cloudflare.zones` here **and** the ingress
+  via `yq`, and propagates `CLOUDFLARE_WILDCARD_DOMAINS` (into `acme.cloudflare.zones` here **and** the ingress
   library's `cloudflareZones`). PURE `yq`, no cluster — runs early (bootstrap step 7, before ArgoCD).
   Non-interactive. Commit the rewritten files.
 - `lib/shell/07_cloudflare_token.sh`: seals `CLOUDFLARE_API_TOKEN_SECRET` into `cert-manager` (see
@@ -148,7 +148,7 @@ issuer ALSO gets a `dns01.cloudflare` solver (below), and cert-manager picks per
 
 ### Cloudflare DNS-01 & wildcards (per-domain, HTTP-01 fallback)
 We have Cloudflare for only *some* domains, so DNS-01 is **optional and per-domain**. One list drives it:
-`CLOUDFLARE_ZONES` in `.env` (space-separated host tiers on Cloudflare, e.g.
+`CLOUDFLARE_WILDCARD_DOMAINS` in `.env` (space-separated host tiers on Cloudflare, e.g.
 `"ops.example.com app.example.com example.com"`), gated by `CLOUDFLARE_API_TOKEN_SECRET` (a scoped API
 token, Zone:DNS:Edit + Zone:Read). Empty ⇒ DNS-01 off, HTTP-01 for everything (unchanged). `07_gateway.sh`
 writes the zones into two places (`07_cloudflare_token.sh` seals the token separately, after the
