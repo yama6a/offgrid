@@ -120,10 +120,13 @@ Pure GitOps plus one values-propagation helper (no cluster apply):
 - a one-line enablement (`enableGatewayAPI: true`) in
   `argo_apps/platform/charts/02_cert_manager/values.yaml`.
 - `lib/shell/07_gateway.sh`: writes `.env`'s `LE_EMAIL` into the chart's `values.yaml` (`acme.email`)
-  via `yq`, so the shell side and ArgoCD render the same.
-  Also propagates `CLOUDFLARE_ZONES` (into `acme.cloudflare.zones` here **and** the ingress library's
-  `cloudflareZones`) and, when `CLOUDFLARE_API_TOKEN_SECRET` is set, seals the Cloudflare token into
-  `cert-manager` (see "Cloudflare DNS-01 & wildcards" below). Non-interactive. Commit the rewritten files.
+  via `yq`, and propagates `CLOUDFLARE_ZONES` (into `acme.cloudflare.zones` here **and** the ingress
+  library's `cloudflareZones`). PURE `yq`, no cluster — runs early (bootstrap step 7, before ArgoCD).
+  Non-interactive. Commit the rewritten files.
+- `lib/shell/07_cloudflare_token.sh`: seals `CLOUDFLARE_API_TOKEN_SECRET` into `cert-manager` (see
+  "Cloudflare DNS-01 & wildcards" below). Split out because sealing needs the live sealed-secrets
+  controller, so it runs **after** ArgoCD is up (bootstrap step 12, beside the SSO/webhook re-seals);
+  `make configure-cloudflare-token`. Skips + cleans up if the token is empty.
 
 ### The `:80` ACME listener (HTTP-01 fallback)
 `shared-gateway` owns just the `:80` HTTP listener, no cert, no `:443`. It serves cert-manager's
@@ -148,7 +151,8 @@ We have Cloudflare for only *some* domains, so DNS-01 is **optional and per-doma
 `CLOUDFLARE_ZONES` in `.env` (space-separated host tiers on Cloudflare, e.g.
 `"ops.example.com app.example.com example.com"`), gated by `CLOUDFLARE_API_TOKEN_SECRET` (a scoped API
 token, Zone:DNS:Edit + Zone:Read). Empty ⇒ DNS-01 off, HTTP-01 for everything (unchanged). `07_gateway.sh`
-seals the token into `cert-manager` and writes the zones into two places:
+writes the zones into two places (`07_cloudflare_token.sh` seals the token separately, after the
+controller is up):
 
 - **`03_gateway`** — each ClusterIssuer gets a `dns01.cloudflare` solver scoped `selector.dnsZones: <zones>`
   *plus* the existing `http01` catch-all. cert-manager picks the most-specific matching solver per dnsName,

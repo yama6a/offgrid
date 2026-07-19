@@ -78,8 +78,12 @@ configure-argocd-webhook: ## 08: generate+seal the ArgoCD GitHub webhook secret 
 	bash lib/shell/08_argocd_webhook.sh
 
 .PHONY: configure-gateway
-configure-gateway: ## 07: write LE_EMAIL/BASE_DOMAIN into the gateway chart values.
+configure-gateway: ## 07: write LE_EMAIL + Cloudflare DNS-01 zones into the gateway/ingress chart values (pure yq, no cluster).
 	bash lib/shell/07_gateway.sh
+
+.PHONY: configure-cloudflare-token
+configure-cloudflare-token: ## 07: seal the Cloudflare DNS-01 API token into cert-manager (needs the sealed-secrets controller + .env token).
+	bash lib/shell/07_cloudflare_token.sh
 
 .PHONY: configure-sso
 configure-sso: ## 07: write the SSO clientID + seal the OAuth client secret (needs .env creds).
