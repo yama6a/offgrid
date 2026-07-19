@@ -56,10 +56,13 @@ longhorn:
       enabled: true
 
   csi:
-    # Disable the CSI snapshotter sidecar, the chart has no on/off toggle, so scale its replica
-    # count to 0 (default 3). We don't use Longhorn CSI VolumeSnapshots, so the sidecar is dead weight,
-    # and it was generating constant log noise.
-    snapshotterReplicaCount: 0
+    # Disable the CSI snapshotter sidecar (we don't use CSI VolumeSnapshots; it spams "failed to watch
+    # VolumeSnapshotClass" since those CRDs aren't installed). No on/off toggle -> drop replica count to 0.
+    # MUST be the STRING "0": int 0 is falsy in the chart's `{{- if .snapshotterReplicaCount }}` env guard
+    # -> the var is dropped and Longhorn falls back to its default of 3 (that's why plain 0 did nothing).
+    # Deployer sets replicas only at CREATE, so after this lands delete the live deploy once to recreate at
+    # 0: kubectl -n longhorn-system delete deploy csi-snapshotter.
+    snapshotterReplicaCount: "0"
 
   # longhorn-manager DaemonSet is a real ~134Mi/node consumer (KRR) that ships with NO resources set, so
   # the scheduler treats it as free and a manager leak could pressure a node. Request + bound it. (The tiny

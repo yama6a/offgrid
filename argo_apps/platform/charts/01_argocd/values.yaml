@@ -46,6 +46,12 @@ argo-cd:
       # CRD-before-consumer convergence comes from unbounded syncPolicy.retry. Controller-wide: also
       # spaces resource-level waves inside every chart. See 05_gitops.md.
       controller.sync.wave.delay.seconds: "5"
+      # Stop the benign, ~hourly-per-app `DiffFromCache error: ... cache: key is missing` (ERROR-level)
+      # noise: the app|managed-resources cache key ages out at the 1h --app-state-cache-expiration default,
+      # so a stable/idle app's next refresh reads it just after expiry, logs the miss, then recomputes.
+      # Raise it to match the 24h default-cache-expiration so the key survives between recomputes (also
+      # less recompute churn on these low-power nodes). Doesn't hide drift: watch events + selfHeal still reconcile.
+      controller.app.state.cache.expiration: "24h0m0s"
     # Don't let the chart create argocd-secret: we ship the GitHub webhook.github.secret into it out of
     # band as a sealed Secret that MERGES in (patch-mode). If the chart also owned argocd-secret, ArgoCD
     # self-heal would fight the merged-in webhook key. Trade-off: with createSecret:false nothing creates
