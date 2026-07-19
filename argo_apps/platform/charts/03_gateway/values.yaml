@@ -40,7 +40,6 @@ acme:
       - example.com
       - ops.example.com
       - app.example.com
-      - example.net
     apiTokenSecretName: cloudflare-api-token # SealedSecret in cert-manager ns (sealed by 07_gateway.sh)
     apiTokenSecretKey: api-token # data key inside that Secret
     wildcardIssuer: letsencrypt-staging # issuer for ALL shared wildcard certs; flip to letsencrypt-prod once issuance is verified (wildcards need DNS-01, staging first dodges prod rate limits)
