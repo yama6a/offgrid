@@ -1,0 +1,206 @@
+apiVersion: 1
+groups:
+  # Storage + TLS health — all warning. cert-manager (ingress TLS), Longhorn volume robustness, PV/PVC phase.
+  - orgId: 1
+    name: storage-tls-health
+    folder: raspi-cluster
+    interval: 1m
+    rules:
+      # A = seconds until expiry; threshold `lt` 1209600 (14d). Also fires once already expired (negative).
+      - uid: cert-expiring-soon
+        title: TLS certificate expiring soon
+        condition: C
+        for: 1h
+        labels: {severity: warning}
+        annotations:
+          summary: 'Certificate {{ $labels.exported_namespace }}/{{ $labels.name }} expires in <14d'
+        noDataState: OK
+        execErrState: Error
+        data:
+          - refId: A
+            relativeTimeRange: {from: 600, to: 0}
+            datasourceUid: VictoriaMetrics
+            model:
+              refId: A
+              instant: true
+              expr: 'certmanager_certificate_expiration_timestamp_seconds - time()'
+          - refId: B
+            relativeTimeRange: {from: 600, to: 0}
+            datasourceUid: __expr__
+            model: {refId: B, type: reduce, expression: A, reducer: last, datasource: {type: __expr__, uid: __expr__}}
+          - refId: C
+            relativeTimeRange: {from: 600, to: 0}
+            datasourceUid: __expr__
+            model:
+              refId: C
+              type: threshold
+              expression: B
+              datasource: {type: __expr__, uid: __expr__}
+              conditions:
+                - type: query
+                  evaluator: {type: lt, params: [1209600]}
+      # `== bool 0` -> 1 when the cert's Ready=True condition is not 1 (i.e. not ready).
+      - uid: cert-not-ready
+        title: TLS certificate not ready
+        condition: C
+        for: 1h
+        labels: {severity: warning}
+        annotations:
+          summary: 'Certificate {{ $labels.exported_namespace }}/{{ $labels.name }} is not Ready'
+        noDataState: OK
+        execErrState: Error
+        data:
+          - refId: A
+            relativeTimeRange: {from: 600, to: 0}
+            datasourceUid: VictoriaMetrics
+            model:
+              refId: A
+              instant: true
+              expr: 'certmanager_certificate_ready_status{condition="True"} == bool 0'
+          - refId: B
+            relativeTimeRange: {from: 600, to: 0}
+            datasourceUid: __expr__
+            model: {refId: B, type: reduce, expression: A, reducer: last, datasource: {type: __expr__, uid: __expr__}}
+          - refId: C
+            relativeTimeRange: {from: 600, to: 0}
+            datasourceUid: __expr__
+            model:
+              refId: C
+              type: threshold
+              expression: B
+              datasource: {type: __expr__, uid: __expr__}
+              conditions:
+                - type: query
+                  evaluator: {type: gt, params: [0]}
+      # Longhorn robustness: 0=unknown 1=healthy 2=degraded 3=faulted.
+      - uid: longhorn-volume-degraded
+        title: Longhorn volume degraded
+        condition: C
+        for: 10m
+        labels: {severity: warning}
+        annotations:
+          summary: 'Longhorn volume {{ $labels.volume }} (pvc {{ $labels.pvc }}) is degraded'
+        noDataState: OK
+        execErrState: Error
+        data:
+          - refId: A
+            relativeTimeRange: {from: 600, to: 0}
+            datasourceUid: VictoriaMetrics
+            model:
+              refId: A
+              instant: true
+              expr: 'longhorn_volume_robustness == 2'
+          - refId: B
+            relativeTimeRange: {from: 600, to: 0}
+            datasourceUid: __expr__
+            model: {refId: B, type: reduce, expression: A, reducer: last, datasource: {type: __expr__, uid: __expr__}}
+          - refId: C
+            relativeTimeRange: {from: 600, to: 0}
+            datasourceUid: __expr__
+            model:
+              refId: C
+              type: threshold
+              expression: B
+              datasource: {type: __expr__, uid: __expr__}
+              conditions:
+                - type: query
+                  evaluator: {type: gt, params: [0]}
+      - uid: longhorn-volume-faulted
+        title: Longhorn volume faulted
+        condition: C
+        for: 1m
+        labels: {severity: warning}
+        annotations:
+          summary: 'Longhorn volume {{ $labels.volume }} (pvc {{ $labels.pvc }}) is FAULTED (data at risk)'
+        noDataState: OK
+        execErrState: Error
+        data:
+          - refId: A
+            relativeTimeRange: {from: 600, to: 0}
+            datasourceUid: VictoriaMetrics
+            model:
+              refId: A
+              instant: true
+              expr: 'longhorn_volume_robustness == 3'
+          - refId: B
+            relativeTimeRange: {from: 600, to: 0}
+            datasourceUid: __expr__
+            model: {refId: B, type: reduce, expression: A, reducer: last, datasource: {type: __expr__, uid: __expr__}}
+          - refId: C
+            relativeTimeRange: {from: 600, to: 0}
+            datasourceUid: __expr__
+            model:
+              refId: C
+              type: threshold
+              expression: B
+              datasource: {type: __expr__, uid: __expr__}
+              conditions:
+                - type: query
+                  evaluator: {type: gt, params: [0]}
+      - uid: pv-errors
+        title: PersistentVolume in error state
+        condition: C
+        for: 15m
+        labels: {severity: warning}
+        annotations:
+          summary: 'PersistentVolume {{ $labels.persistentvolume }} is {{ $labels.phase }}'
+        noDataState: OK
+        execErrState: Error
+        data:
+          - refId: A
+            relativeTimeRange: {from: 600, to: 0}
+            datasourceUid: VictoriaMetrics
+            model:
+              refId: A
+              instant: true
+              expr: 'kube_persistentvolume_status_phase{phase=~"Failed|Pending"} == 1'
+          - refId: B
+            relativeTimeRange: {from: 600, to: 0}
+            datasourceUid: __expr__
+            model: {refId: B, type: reduce, expression: A, reducer: last, datasource: {type: __expr__, uid: __expr__}}
+          - refId: C
+            relativeTimeRange: {from: 600, to: 0}
+            datasourceUid: __expr__
+            model:
+              refId: C
+              type: threshold
+              expression: B
+              datasource: {type: __expr__, uid: __expr__}
+              conditions:
+                - type: query
+                  evaluator: {type: gt, params: [0]}
+      - uid: pvc-pending
+        title: PersistentVolumeClaim unbound
+        condition: C
+        for: 15m
+        labels: {severity: warning}
+        annotations:
+          summary: 'PVC {{ $labels.namespace }}/{{ $labels.persistentvolumeclaim }} is {{ $labels.phase }}'
+        noDataState: OK
+        execErrState: Error
+        data:
+          - refId: A
+            relativeTimeRange: {from: 600, to: 0}
+            datasourceUid: VictoriaMetrics
+            model:
+              refId: A
+              instant: true
+              expr: 'kube_persistentvolumeclaim_status_phase{phase=~"Pending|Lost"} == 1'
+          - refId: B
+            relativeTimeRange: {from: 600, to: 0}
+            datasourceUid: __expr__
+            model: {refId: B, type: reduce, expression: A, reducer: last, datasource: {type: __expr__, uid: __expr__}}
+          - refId: C
+            relativeTimeRange: {from: 600, to: 0}
+            datasourceUid: __expr__
+            model:
+              refId: C
+              type: threshold
+              expression: B
+              datasource: {type: __expr__, uid: __expr__}
+              conditions:
+                - type: query
+                  evaluator: {type: gt, params: [0]}
+# Log-based alert in its OWN file so a VL-datasource model mismatch can't break the metrics rules
+# above. VERIFY the query model against the live victoriametrics-logs-datasource at apply time (the
+# plugin's alerting model field names can change between versions). See 09_monitoring.md.

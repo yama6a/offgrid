@@ -1,0 +1,396 @@
+apiVersion: 1
+groups:
+  # Anomaly / about-to-break / degraded — always `warning` (no criticality join). Symptoms; the
+  # workload-outages group above is the `critical` path. See 09_monitoring.md.
+  - orgId: 1
+    name: workload-anomalies
+    folder: raspi-cluster
+    interval: 1m
+    rules:
+      - uid: container-oomkilled
+        title: Container OOMKilled
+        condition: C
+        for: 2m
+        labels: {severity: warning}
+        annotations:
+          summary: 'Container {{ $labels.namespace }}/{{ $labels.pod }}/{{ $labels.container }} was OOMKilled'
+        noDataState: OK
+        execErrState: Error
+        data:
+          - refId: A
+            relativeTimeRange: {from: 600, to: 0}
+            datasourceUid: VictoriaMetrics
+            model:
+              refId: A
+              instant: true
+              expr: '(kube_pod_container_status_last_terminated_reason{reason="OOMKilled"} == 1) and on(namespace, pod, container) (increase(kube_pod_container_status_restarts_total[10m]) > 0)'
+          - refId: B
+            relativeTimeRange: {from: 600, to: 0}
+            datasourceUid: __expr__
+            model: {refId: B, type: reduce, expression: A, reducer: last, datasource: {type: __expr__, uid: __expr__}}
+          - refId: C
+            relativeTimeRange: {from: 600, to: 0}
+            datasourceUid: __expr__
+            model:
+              refId: C
+              type: threshold
+              expression: B
+              datasource: {type: __expr__, uid: __expr__}
+              conditions:
+                - type: query
+                  evaluator: {type: gt, params: [0]}
+      - uid: container-high-restarts
+        title: Container restarting frequently
+        condition: C
+        for: 5m
+        labels: {severity: warning}
+        annotations:
+          summary: 'Container {{ $labels.namespace }}/{{ $labels.pod }}/{{ $labels.container }} restarted >5 times in the last hour'
+        noDataState: OK
+        execErrState: Error
+        data:
+          - refId: A
+            relativeTimeRange: {from: 3600, to: 0}
+            datasourceUid: VictoriaMetrics
+            model:
+              refId: A
+              instant: true
+              expr: 'sum by (namespace, pod, container) (increase(kube_pod_container_status_restarts_total[1h]))'
+          - refId: B
+            relativeTimeRange: {from: 3600, to: 0}
+            datasourceUid: __expr__
+            model: {refId: B, type: reduce, expression: A, reducer: last, datasource: {type: __expr__, uid: __expr__}}
+          - refId: C
+            relativeTimeRange: {from: 3600, to: 0}
+            datasourceUid: __expr__
+            model:
+              refId: C
+              type: threshold
+              expression: B
+              datasource: {type: __expr__, uid: __expr__}
+              conditions:
+                - type: query
+                  evaluator: {type: gt, params: [5]}
+      - uid: container-cpu-throttling
+        title: Container heavily CPU throttled
+        condition: C
+        for: 10m
+        labels: {severity: warning}
+        annotations:
+          summary: 'Container {{ $labels.namespace }}/{{ $labels.pod }}/{{ $labels.container }} CPU throttled >50% of the time'
+        noDataState: OK
+        execErrState: Error
+        data:
+          - refId: A
+            relativeTimeRange: {from: 600, to: 0}
+            datasourceUid: VictoriaMetrics
+            model:
+              refId: A
+              instant: true
+              expr: 'sum by (namespace, pod, container) (rate(container_cpu_cfs_throttled_periods_total{container!=""}[5m])) / sum by (namespace, pod, container) (rate(container_cpu_cfs_periods_total{container!=""}[5m]))'
+          - refId: B
+            relativeTimeRange: {from: 600, to: 0}
+            datasourceUid: __expr__
+            model: {refId: B, type: reduce, expression: A, reducer: last, datasource: {type: __expr__, uid: __expr__}}
+          - refId: C
+            relativeTimeRange: {from: 600, to: 0}
+            datasourceUid: __expr__
+            model:
+              refId: C
+              type: threshold
+              expression: B
+              datasource: {type: __expr__, uid: __expr__}
+              conditions:
+                - type: query
+                  evaluator: {type: gt, params: [0.5]}
+      - uid: container-memory-near-limit
+        title: Container near memory limit
+        condition: C
+        for: 10m
+        labels: {severity: warning}
+        annotations:
+          summary: 'Container {{ $labels.namespace }}/{{ $labels.pod }}/{{ $labels.container }} above 90% of its memory limit (OOM risk)'
+        noDataState: OK
+        execErrState: Error
+        data:
+          - refId: A
+            relativeTimeRange: {from: 600, to: 0}
+            datasourceUid: VictoriaMetrics
+            model:
+              refId: A
+              instant: true
+              expr: 'max by (namespace, pod, container) (container_memory_working_set_bytes{container!=""}) / max by (namespace, pod, container) (kube_pod_container_resource_limits{resource="memory"} > 0)'
+          - refId: B
+            relativeTimeRange: {from: 600, to: 0}
+            datasourceUid: __expr__
+            model: {refId: B, type: reduce, expression: A, reducer: last, datasource: {type: __expr__, uid: __expr__}}
+          - refId: C
+            relativeTimeRange: {from: 600, to: 0}
+            datasourceUid: __expr__
+            model:
+              refId: C
+              type: threshold
+              expression: B
+              datasource: {type: __expr__, uid: __expr__}
+              conditions:
+                - type: query
+                  evaluator: {type: gt, params: [0.9]}
+      - uid: pod-pending
+        title: Pod stuck Pending
+        condition: C
+        for: 20m
+        labels: {severity: warning}
+        annotations:
+          summary: 'Pod {{ $labels.namespace }}/{{ $labels.pod }} stuck Pending/Unknown for >20m'
+        noDataState: OK
+        execErrState: Error
+        data:
+          - refId: A
+            relativeTimeRange: {from: 600, to: 0}
+            datasourceUid: VictoriaMetrics
+            model:
+              refId: A
+              instant: true
+              expr: 'max by (namespace, pod) (kube_pod_status_phase{phase=~"Pending|Unknown"})'
+          - refId: B
+            relativeTimeRange: {from: 600, to: 0}
+            datasourceUid: __expr__
+            model: {refId: B, type: reduce, expression: A, reducer: last, datasource: {type: __expr__, uid: __expr__}}
+          - refId: C
+            relativeTimeRange: {from: 600, to: 0}
+            datasourceUid: __expr__
+            model:
+              refId: C
+              type: threshold
+              expression: B
+              datasource: {type: __expr__, uid: __expr__}
+              conditions:
+                - type: query
+                  evaluator: {type: gt, params: [0]}
+      # Some (not all) replicas failing readiness. Excludes completed (Job) pods. Full outage is caught
+      # by workload-outages (critical); this is the partial/degraded warning.
+      - uid: pod-not-ready
+        title: Pod not ready
+        condition: C
+        for: 15m
+        labels: {severity: warning}
+        annotations:
+          summary: 'Pod {{ $labels.namespace }}/{{ $labels.pod }} not ready for >15m'
+        noDataState: OK
+        execErrState: Error
+        data:
+          - refId: A
+            relativeTimeRange: {from: 600, to: 0}
+            datasourceUid: VictoriaMetrics
+            model:
+              refId: A
+              instant: true
+              expr: 'max by (namespace, pod) (kube_pod_status_ready{condition="false"} == 1) unless on(namespace, pod) (kube_pod_status_phase{phase="Succeeded"} == 1)'
+          - refId: B
+            relativeTimeRange: {from: 600, to: 0}
+            datasourceUid: __expr__
+            model: {refId: B, type: reduce, expression: A, reducer: last, datasource: {type: __expr__, uid: __expr__}}
+          - refId: C
+            relativeTimeRange: {from: 600, to: 0}
+            datasourceUid: __expr__
+            model:
+              refId: C
+              type: threshold
+              expression: B
+              datasource: {type: __expr__, uid: __expr__}
+              conditions:
+                - type: query
+                  evaluator: {type: gt, params: [0]}
+      - uid: replicaset-degraded
+        title: ReplicaSet missing ready replicas
+        condition: C
+        for: 30m
+        labels: {severity: warning}
+        annotations:
+          summary: 'ReplicaSet {{ $labels.namespace }}/{{ $labels.replicaset }} has fewer ready replicas than desired'
+        noDataState: OK
+        execErrState: Error
+        data:
+          - refId: A
+            relativeTimeRange: {from: 600, to: 0}
+            datasourceUid: VictoriaMetrics
+            model:
+              refId: A
+              instant: true
+              expr: '(kube_replicaset_spec_replicas > 0) and (kube_replicaset_status_ready_replicas < kube_replicaset_spec_replicas)'
+          - refId: B
+            relativeTimeRange: {from: 600, to: 0}
+            datasourceUid: __expr__
+            model: {refId: B, type: reduce, expression: A, reducer: last, datasource: {type: __expr__, uid: __expr__}}
+          - refId: C
+            relativeTimeRange: {from: 600, to: 0}
+            datasourceUid: __expr__
+            model:
+              refId: C
+              type: threshold
+              expression: B
+              datasource: {type: __expr__, uid: __expr__}
+              conditions:
+                - type: query
+                  evaluator: {type: gt, params: [0]}
+      - uid: deployment-degraded
+        title: Deployment degraded (some replicas unavailable)
+        condition: C
+        for: 15m
+        labels: {severity: warning}
+        annotations:
+          summary: 'Deployment {{ $labels.namespace }}/{{ $labels.deployment }} has fewer available replicas than desired'
+        noDataState: OK
+        execErrState: Error
+        data:
+          - refId: A
+            relativeTimeRange: {from: 600, to: 0}
+            datasourceUid: VictoriaMetrics
+            model:
+              refId: A
+              instant: true
+              expr: '(kube_deployment_status_replicas_available > 0) and (kube_deployment_status_replicas_available < kube_deployment_spec_replicas)'
+          - refId: B
+            relativeTimeRange: {from: 600, to: 0}
+            datasourceUid: __expr__
+            model: {refId: B, type: reduce, expression: A, reducer: last, datasource: {type: __expr__, uid: __expr__}}
+          - refId: C
+            relativeTimeRange: {from: 600, to: 0}
+            datasourceUid: __expr__
+            model:
+              refId: C
+              type: threshold
+              expression: B
+              datasource: {type: __expr__, uid: __expr__}
+              conditions:
+                - type: query
+                  evaluator: {type: gt, params: [0]}
+      - uid: deployment-generation-mismatch
+        title: Deployment rollout stuck (generation mismatch)
+        condition: C
+        for: 15m
+        labels: {severity: warning}
+        annotations:
+          summary: 'Deployment {{ $labels.namespace }}/{{ $labels.deployment }} observed generation lags spec (rollout stuck)'
+        noDataState: OK
+        execErrState: Error
+        data:
+          - refId: A
+            relativeTimeRange: {from: 600, to: 0}
+            datasourceUid: VictoriaMetrics
+            model:
+              refId: A
+              instant: true
+              expr: 'kube_deployment_status_observed_generation != bool kube_deployment_metadata_generation'
+          - refId: B
+            relativeTimeRange: {from: 600, to: 0}
+            datasourceUid: __expr__
+            model: {refId: B, type: reduce, expression: A, reducer: last, datasource: {type: __expr__, uid: __expr__}}
+          - refId: C
+            relativeTimeRange: {from: 600, to: 0}
+            datasourceUid: __expr__
+            model:
+              refId: C
+              type: threshold
+              expression: B
+              datasource: {type: __expr__, uid: __expr__}
+              conditions:
+                - type: query
+                  evaluator: {type: gt, params: [0]}
+      # HPA rules are DORMANT until an HPA exists (none today). Standard KSM metric names.
+      - uid: hpa-at-max
+        title: HPA at max replicas
+        condition: C
+        for: 15m
+        labels: {severity: warning}
+        annotations:
+          summary: 'HPA {{ $labels.namespace }}/{{ $labels.horizontalpodautoscaler }} at max replicas — can''t scale further'
+        noDataState: OK
+        execErrState: Error
+        data:
+          - refId: A
+            relativeTimeRange: {from: 600, to: 0}
+            datasourceUid: VictoriaMetrics
+            model:
+              refId: A
+              instant: true
+              expr: 'kube_horizontalpodautoscaler_status_current_replicas / kube_horizontalpodautoscaler_spec_max_replicas'
+          - refId: B
+            relativeTimeRange: {from: 600, to: 0}
+            datasourceUid: __expr__
+            model: {refId: B, type: reduce, expression: A, reducer: last, datasource: {type: __expr__, uid: __expr__}}
+          - refId: C
+            relativeTimeRange: {from: 600, to: 0}
+            datasourceUid: __expr__
+            model:
+              refId: C
+              type: threshold
+              expression: B
+              datasource: {type: __expr__, uid: __expr__}
+              conditions:
+                - type: query
+                  evaluator: {type: gt, params: [0.99]}
+      - uid: hpa-scaling-blocked
+        title: HPA unable to scale
+        condition: C
+        for: 15m
+        labels: {severity: warning}
+        annotations:
+          summary: 'HPA {{ $labels.namespace }}/{{ $labels.horizontalpodautoscaler }} can''t scale (AbleToScale/ScalingActive false)'
+        noDataState: OK
+        execErrState: Error
+        data:
+          - refId: A
+            relativeTimeRange: {from: 600, to: 0}
+            datasourceUid: VictoriaMetrics
+            model:
+              refId: A
+              instant: true
+              expr: 'max by (namespace, horizontalpodautoscaler) (kube_horizontalpodautoscaler_status_condition{condition=~"AbleToScale|ScalingActive", status="false"})'
+          - refId: B
+            relativeTimeRange: {from: 600, to: 0}
+            datasourceUid: __expr__
+            model: {refId: B, type: reduce, expression: A, reducer: last, datasource: {type: __expr__, uid: __expr__}}
+          - refId: C
+            relativeTimeRange: {from: 600, to: 0}
+            datasourceUid: __expr__
+            model:
+              refId: C
+              type: threshold
+              expression: B
+              datasource: {type: __expr__, uid: __expr__}
+              conditions:
+                - type: query
+                  evaluator: {type: gt, params: [0]}
+      - uid: hpa-below-min
+        title: HPA below min replicas
+        condition: C
+        for: 15m
+        labels: {severity: warning}
+        annotations:
+          summary: 'HPA {{ $labels.namespace }}/{{ $labels.horizontalpodautoscaler }} running below its min replicas'
+        noDataState: OK
+        execErrState: Error
+        data:
+          - refId: A
+            relativeTimeRange: {from: 600, to: 0}
+            datasourceUid: VictoriaMetrics
+            model:
+              refId: A
+              instant: true
+              expr: 'kube_horizontalpodautoscaler_spec_min_replicas - kube_horizontalpodautoscaler_status_current_replicas'
+          - refId: B
+            relativeTimeRange: {from: 600, to: 0}
+            datasourceUid: __expr__
+            model: {refId: B, type: reduce, expression: A, reducer: last, datasource: {type: __expr__, uid: __expr__}}
+          - refId: C
+            relativeTimeRange: {from: 600, to: 0}
+            datasourceUid: __expr__
+            model:
+              refId: C
+              type: threshold
+              expression: B
+              datasource: {type: __expr__, uid: __expr__}
+              conditions:
+                - type: query
+                  evaluator: {type: gt, params: [0]}

@@ -1,0 +1,21 @@
+{{- /*
+One ConfigMap per Grafana alerting provisioning file in files/alerts/*.yaml, labelled `grafana_alert` so the
+chart's alerts sidecar (values.yaml grafana.sidecar.alerts) loads them into Grafana's provisioning dir — the
+SAME mechanism the dashboards sidecar uses for `grafana_dashboard` ConfigMaps. The files are read verbatim via
+.Files.Get (NOT templated), so the Grafana `{{ $labels.x }}` / severity templates inside them stay literal —
+no Helm raw-string escaping needed. Keeps values.yaml small and each rule group in its own diffable file.
+See 09_monitoring.md (alerting).
+*/ -}}
+{{- range $path, $_ := .Files.Glob "files/alerts/*.yaml" }}
+---
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: grafana-alert-{{ base $path | trimSuffix ".yaml" }}
+  namespace: {{ $.Release.Namespace }}
+  labels:
+    grafana_alert: "1"
+data:
+  {{ base $path }}: |
+{{ $.Files.Get $path | indent 4 }}
+{{- end }}

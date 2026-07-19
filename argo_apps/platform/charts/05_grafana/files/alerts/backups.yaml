@@ -1,0 +1,291 @@
+apiVersion: 1
+groups:
+  # Off-cluster Redis RDB backups (the single central CronJob `redis-backup` in ns redis-backup, from the
+  # 07_redis_backup app). vmalert is off so VMRules are inert — these live here (the only path that fires)
+  # and key off the CronJob/Job NAME via kube-state-metrics. Job-level, not per-instance: which instance
+  # failed is in the job's stdout (VictoriaLogs). See docs/13_backups.md.
+  - orgId: 1
+    name: backups
+    folder: raspi-cluster
+    interval: 1m
+    rules:
+      - uid: redis-backup-failed
+        title: Redis backup job failed
+        condition: C
+        for: 15m
+        labels: {severity: warning}
+        annotations:
+          summary: 'Redis backup job {{ $labels.namespace }}/{{ $labels.job_name }} failed'
+        noDataState: OK
+        execErrState: Error
+        data:
+          - refId: A
+            relativeTimeRange: {from: 600, to: 0}
+            datasourceUid: VictoriaMetrics
+            model:
+              refId: A
+              instant: true
+              expr: 'max by (namespace, job_name) (kube_job_status_failed{namespace="redis-backup", job_name=~"redis-backup-.+"})'  # kube_job_status_failed (this KSM has no kube_job_failed{condition=...})
+          - refId: B
+            relativeTimeRange: {from: 600, to: 0}
+            datasourceUid: __expr__
+            model: {refId: B, type: reduce, expression: A, reducer: last, datasource: {type: __expr__, uid: __expr__}}
+          - refId: C
+            relativeTimeRange: {from: 600, to: 0}
+            datasourceUid: __expr__
+            model:
+              refId: C
+              type: threshold
+              expression: B
+              datasource: {type: __expr__, uid: __expr__}
+              conditions:
+                - type: query
+                  evaluator: {type: gt, params: [0]}
+      # Staleness: no successful backup recently. `last_successful_time > 0` keeps it quiet before the first
+      # run (absent series => NoData => OK). 129600s = 36h (daily + slack, matching CNPG); raise it if you
+      # set a slower schedule in the 07_redis_backup values. VERIFY kube_cronjob_status_last_successful_time
+      # exists in the running kube-state-metrics at apply time. See docs/13_backups.md.
+      - uid: redis-backup-stale
+        title: Redis backup is stale
+        condition: C
+        for: 30m
+        labels: {severity: warning}
+        annotations:
+          summary: 'Redis backup {{ $labels.namespace }}/{{ $labels.cronjob }} has no success in >36h'
+        noDataState: OK
+        execErrState: Error
+        data:
+          - refId: A
+            relativeTimeRange: {from: 600, to: 0}
+            datasourceUid: VictoriaMetrics
+            model:
+              refId: A
+              instant: true
+              expr: 'time() - max by (namespace, cronjob) (kube_cronjob_status_last_successful_time{namespace="redis-backup", cronjob="redis-backup"} > 0)'
+          - refId: B
+            relativeTimeRange: {from: 600, to: 0}
+            datasourceUid: __expr__
+            model: {refId: B, type: reduce, expression: A, reducer: last, datasource: {type: __expr__, uid: __expr__}}
+          - refId: C
+            relativeTimeRange: {from: 600, to: 0}
+            datasourceUid: __expr__
+            model:
+              refId: C
+              type: threshold
+              expression: B
+              datasource: {type: __expr__, uid: __expr__}
+              conditions:
+                - type: query
+                  evaluator: {type: gt, params: [129600]}
+      # Native Longhorn volume backups (daily/weekly RecurringJobs on the longhorn-r2-retained-with-backups class, 02_longhorn +
+      # 16_longhorn_backup.sh). Longhorn's ServiceMonitor is enabled (02_longhorn metrics.serviceMonitor), so
+      # these scrape via VictoriaMetrics like the redis rules. Per-volume; the volume is in $labels.volume.
+      # See docs/13_backups.md.
+      - uid: longhorn-backup-failed
+        title: Longhorn backup failed
+        condition: C
+        for: 15m
+        labels: {severity: warning}
+        annotations:
+          summary: 'Longhorn backup for volume {{ $labels.volume }} is in Error state'
+        noDataState: OK
+        execErrState: Error
+        data:
+          - refId: A
+            relativeTimeRange: {from: 600, to: 0}
+            datasourceUid: VictoriaMetrics
+            model:
+              refId: A
+              instant: true
+              expr: 'max by (volume) (longhorn_backup_state == 4)'  # 4 = Error (0=New,1=Pending,2=InProgress,3=Completed)
+          - refId: B
+            relativeTimeRange: {from: 600, to: 0}
+            datasourceUid: __expr__
+            model: {refId: B, type: reduce, expression: A, reducer: last, datasource: {type: __expr__, uid: __expr__}}
+          - refId: C
+            relativeTimeRange: {from: 600, to: 0}
+            datasourceUid: __expr__
+            model:
+              refId: C
+              type: threshold
+              expression: B
+              datasource: {type: __expr__, uid: __expr__}
+              conditions:
+                - type: query
+                  evaluator: {type: gt, params: [0]}
+      # Staleness: a backed-up volume hasn't had a successful backup recently — a silently stopped
+      # RecurringJob produces NO Error state, so this is the only signal. 172800s = 48h (daily + slack).
+      # VERIFY the metric name longhorn_volume_last_backup_at exists in the running Longhorn at apply time (the
+      # Longhorn docs list a per-volume "last backup" timestamp but not the exact name); a wrong name => NoData =>
+      # OK (silent, never a false alert), so adjust if it never fires after a known-good backup.
+      - uid: longhorn-backup-stale
+        title: Longhorn backup is stale
+        condition: C
+        for: 30m
+        labels: {severity: warning}
+        annotations:
+          summary: 'Longhorn volume {{ $labels.volume }} has no successful backup in >48h'
+        noDataState: OK
+        execErrState: Error
+        data:
+          - refId: A
+            relativeTimeRange: {from: 600, to: 0}
+            datasourceUid: VictoriaMetrics
+            model:
+              refId: A
+              instant: true
+              expr: 'time() - max by (volume) (longhorn_volume_last_backup_at > 0)'
+          - refId: B
+            relativeTimeRange: {from: 600, to: 0}
+            datasourceUid: __expr__
+            model: {refId: B, type: reduce, expression: A, reducer: last, datasource: {type: __expr__, uid: __expr__}}
+          - refId: C
+            relativeTimeRange: {from: 600, to: 0}
+            datasourceUid: __expr__
+            model:
+              refId: C
+              type: threshold
+              expression: B
+              datasource: {type: __expr__, uid: __expr__}
+              conditions:
+                - type: query
+                  evaluator: {type: gt, params: [172800]}
+      # ---- CNPG + VM/VL backup health -----------------------------------------------------------------
+      # Ported from the former chart PrometheusRules (08_vm_backup + pg-cluster), now DISABLED: vmalert is
+      # off so their converted VMRules never fired — Grafana is the only path. Metric names lifted verbatim
+      # from those rules. See docs/13_backups.md.
+      - uid: vm-backup-failed
+        title: VM/VL backup job failed
+        condition: C
+        for: 15m
+        labels: {severity: warning}
+        annotations:
+          summary: 'VM/VL backup Job {{ $labels.namespace }}/{{ $labels.job_name }} failed'
+        noDataState: OK
+        execErrState: Error
+        data:
+          - refId: A
+            relativeTimeRange: {from: 600, to: 0}
+            datasourceUid: VictoriaMetrics
+            model:
+              refId: A
+              instant: true
+              expr: 'max by (namespace, job_name) (kube_job_status_failed{namespace="monitoring", job_name=~"vm-backup.*"})'  # kube_job_status_failed (this KSM has no kube_job_failed{condition=...})
+          - refId: B
+            relativeTimeRange: {from: 600, to: 0}
+            datasourceUid: __expr__
+            model: {refId: B, type: reduce, expression: A, reducer: last, datasource: {type: __expr__, uid: __expr__}}
+          - refId: C
+            relativeTimeRange: {from: 600, to: 0}
+            datasourceUid: __expr__
+            model:
+              refId: C
+              type: threshold
+              expression: B
+              datasource: {type: __expr__, uid: __expr__}
+              conditions:
+                - type: query
+                  evaluator: {type: gt, params: [0]}
+      # Staleness: no successful run in >36h (129600s; daily + slack). `> 0` guards the metric being
+      # absent/zero before the first success (absent => NoData => OK). Catches a suspended/never-scheduled job.
+      - uid: vm-backup-stale
+        title: VM/VL backup is stale
+        condition: C
+        for: 30m
+        labels: {severity: warning}
+        annotations:
+          summary: 'VM/VL backup {{ $labels.namespace }}/{{ $labels.cronjob }} has no success in >36h'
+        noDataState: OK
+        execErrState: Error
+        data:
+          - refId: A
+            relativeTimeRange: {from: 600, to: 0}
+            datasourceUid: VictoriaMetrics
+            model:
+              refId: A
+              instant: true
+              expr: 'time() - max by (namespace, cronjob) (kube_cronjob_status_last_successful_time{namespace="monitoring", cronjob="vm-backup"} > 0)'
+          - refId: B
+            relativeTimeRange: {from: 600, to: 0}
+            datasourceUid: __expr__
+            model: {refId: B, type: reduce, expression: A, reducer: last, datasource: {type: __expr__, uid: __expr__}}
+          - refId: C
+            relativeTimeRange: {from: 600, to: 0}
+            datasourceUid: __expr__
+            model:
+              refId: C
+              type: threshold
+              expression: B
+              datasource: {type: __expr__, uid: __expr__}
+              conditions:
+                - type: query
+                  evaluator: {type: gt, params: [129600]}
+      # WAL archiving to S3 falling behind/failing (load-bearing: a stalled archiver fills pg_wal -> primary
+      # read-only). `value="ready"` counts not-yet-archived segments; sustained >0 for 15m = not keeping up.
+      # Cluster-wide (dropped the per-instance pod regex the PrometheusRule used). See docs/13_backups.md.
+      - uid: cnpg-wal-archive-failing
+        title: CNPG WAL archiving to S3 failing
+        condition: C
+        for: 15m
+        labels: {severity: critical}
+        annotations:
+          summary: 'CNPG {{ $labels.namespace }}/{{ $labels.pod }}: WAL archiving to S3 is failing'
+        noDataState: OK
+        execErrState: Error
+        data:
+          - refId: A
+            relativeTimeRange: {from: 600, to: 0}
+            datasourceUid: VictoriaMetrics
+            model:
+              refId: A
+              instant: true
+              expr: 'max by (namespace, pod) (cnpg_collector_pg_wal_archive_status{value="ready"})'
+          - refId: B
+            relativeTimeRange: {from: 600, to: 0}
+            datasourceUid: __expr__
+            model: {refId: B, type: reduce, expression: A, reducer: last, datasource: {type: __expr__, uid: __expr__}}
+          - refId: C
+            relativeTimeRange: {from: 600, to: 0}
+            datasourceUid: __expr__
+            model:
+              refId: C
+              type: threshold
+              expression: B
+              datasource: {type: __expr__, uid: __expr__}
+              conditions:
+                - type: query
+                  evaluator: {type: gt, params: [0]}
+      # No recent base backup (>36h). The timestamp metric MAY stay 0 under the barman plugin, so `> 0`
+      # guards it: never populated => won't fire (we lean on the WAL alert then). See docs/13_backups.md.
+      - uid: cnpg-backup-too-old
+        title: CNPG base backup is stale
+        condition: C
+        for: 30m
+        labels: {severity: warning}
+        annotations:
+          summary: 'CNPG {{ $labels.namespace }}/{{ $labels.pod }}: last base backup is >36h old'
+        noDataState: OK
+        execErrState: Error
+        data:
+          - refId: A
+            relativeTimeRange: {from: 600, to: 0}
+            datasourceUid: VictoriaMetrics
+            model:
+              refId: A
+              instant: true
+              expr: 'time() - max by (namespace, pod) (cnpg_collector_last_available_backup_timestamp > 0)'
+          - refId: B
+            relativeTimeRange: {from: 600, to: 0}
+            datasourceUid: __expr__
+            model: {refId: B, type: reduce, expression: A, reducer: last, datasource: {type: __expr__, uid: __expr__}}
+          - refId: C
+            relativeTimeRange: {from: 600, to: 0}
+            datasourceUid: __expr__
+            model:
+              refId: C
+              type: threshold
+              expression: B
+              datasource: {type: __expr__, uid: __expr__}
+              conditions:
+                - type: query
+                  evaluator: {type: gt, params: [129600]}

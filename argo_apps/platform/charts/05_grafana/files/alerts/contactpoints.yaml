@@ -1,0 +1,23 @@
+apiVersion: 1
+contactPoints:
+  - orgId: 1
+    name: ntfy
+    receivers:
+      - uid: ntfy-webhook
+        type: webhook
+        settings:
+          url: http://ntfy.monitoring.svc.cluster.local:8080/   # in-cluster JSON publish (topic is in the body)
+          httpMethod: POST
+          authorization_scheme: Bearer
+          authorization_credentials: ${GF_NTFY_TOKEN}           # sealed write token, env-interpolated; never committed
+          maxAlerts: 0                                          # no cap on alerts bundled per notification
+          payload:
+            # severity -> ntfy priority (critical=5 / warning=4 / else=3) + a matching tag (ntfy renders known tags as emoji).
+            template: |
+              {
+                "topic": "cluster-alerts",
+                "title": "{{ .Status | toUpper }}: {{ index .CommonLabels "alertname" }}",
+                "message": "{{ if index .CommonAnnotations "summary" }}{{ index .CommonAnnotations "summary" }}{{ else }}{{ index .CommonLabels "alertname" }}{{ end }}",
+                "priority": {{ if eq (index .CommonLabels "severity") "critical" }}5{{ else if eq (index .CommonLabels "severity") "warning" }}4{{ else }}3{{ end }},
+                "tags": ["{{ index .CommonLabels "severity" }}"]
+              }

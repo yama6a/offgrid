@@ -75,13 +75,19 @@ the k8s-stack subchart so it versions/syncs/rolls back independently, no feature
   dashboards resolve. The **datasources sidecar is OFF** (provisioned directly); the **dashboards sidecar
   stays ON** (`searchNamespace: ALL`) and ingests the k8s-stack's `grafana_dashboard` ConfigMaps on every
   start.
-- Contact point (an **ntfy webhook** → self-hosted ntfy, `05_ntfy`), notification policy, and alert rule groups:
-  `cluster-health` (node NotReady/pressure, node mem/CPU/disk/inodes, disk-fill-predict, memory committed +
-  cluster overcommit, PVC >85%, target down), `workload-outages` + `workload-anomalies` (the global k8s object
-  alerts — see the severity model below), `storage-tls-health` (cert-manager TLS expiry/ready, Longhorn volume
-  degraded/faulted, PV/PVC errors), `backups` (redis + longhorn + VM/VL + CNPG backup health), `cnpg-health`
-  (connection saturation + physical replication lag), plus a VictoriaLogs error-rate alert. Rules are
-  file-provisioned (survive restart); alert *state* resets on restart (no PVC).
+- **Alerting is NOT inline in `values.yaml`.** The contact point (an **ntfy webhook** → self-hosted ntfy,
+  `05_ntfy`), notification policy, and every rule group each live in their own file under
+  `05_grafana/files/alerts/*.yaml`, shipped as ConfigMaps (`templates/alerts-configmaps.yaml`, label
+  `grafana_alert`) and loaded by the chart's **alerts sidecar** (`sidecar.alerts.enabled`) — the SAME model as
+  dashboards, so `values.yaml` stays small and each group is its own diffable file. The files are read raw via
+  `.Files.Get` (not Helm-templated), so the Grafana `{{ $labels.x }}` / severity templates are plain literals
+  (no `{{`…`}}` escaping). Groups: `cluster-health` (node NotReady/pressure, node mem/CPU/disk/inodes,
+  disk-fill-predict, memory committed + cluster overcommit, PVC >85%, target down), `workload-outages` +
+  `workload-anomalies` (the global k8s object alerts — see the severity model below), `storage-tls-health`
+  (cert-manager TLS expiry/ready, Longhorn volume degraded/faulted, PV/PVC errors), `backups` (redis + longhorn
+  + VM/VL + CNPG backup health), `cnpg-health` (see the CNPG catalog below), plus a VictoriaLogs error-rate
+  alert. Rules survive restart (provisioned); alert *state* resets on restart (no PVC). (Datasources, by
+  contrast, are still provisioned inline in `values.yaml` — the datasources sidecar is OFF.)
 
 ### Alert severity model & the `alert-criticality` label
 
@@ -143,13 +149,20 @@ statically.
   (Memory/Disk/PID), `cluster-memory-overcommit` (can't absorb one node loss), `pvc-nearly-full`, `target-down`.
 - **`storage-tls-health`** (warning): `cert-expiring-soon` (<14d), `cert-not-ready`,
   `longhorn-volume-degraded`/`longhorn-volume-faulted`, `pv-errors`, `pvc-pending`.
+- **`cnpg-health`** (CNPG Postgres): `cnpg-instance-not-ready` (**dynamic severity** — `cnpg_collector_up==0`,
+  the CNPG outage signal, joined to the criticality label like the workload-outages rules), plus warnings:
+  `cnpg-high-connections-*` (saturation vs `max_connections`), `cnpg-replication-lag-*` (physical lag),
+  `cnpg-txid-wraparound-warning/critical` (xid age >300M/>1B — forced-shutdown risk), `cnpg-replication-slot-inactive`
+  (WAL-retention risk), `cnpg-long-running-transaction`, `cnpg-backends-waiting` (lock contention),
+  `cnpg-deadlocks`, `cnpg-manual-switchover-required`, `cnpg-fencing-on`. WAL-archiving + base-backup staleness
+  live in the `backups` group; CPU/mem and disk fall to the generic container + `node-disk-space`
+  (`/var/mnt/localpath`) / `pvc-nearly-full` rules.
 
 **Coverage nuance.** Outage→`critical` is guaranteed for Deployment/StatefulSet/DaemonSet workloads (incl. the
-sample apps and Redis's StatefulSet) and for any crashlooping labeled-critical container (incl. CNPG). A CNPG
-pod that goes *not-ready without crashlooping* pages `warning` via `pod-not-ready` — CNPG has no
-Deployment/StatefulSet the availability rules can see. Promote `pod-not-ready` to dynamic severity if that
-should page `critical`. Likewise the Envoy *Deployment* object isn't labeled (only its pods), so a graceful
-ingress scale-to-zero warns rather than pages.
+sample apps and Redis's StatefulSet), for any crashlooping labeled-critical container (incl. CNPG), and for a
+CNPG instance that is up-but-not-serving (`cnpg-instance-not-ready`, dynamic). A CNPG pod not-ready in other
+ways still pages `warning` via `pod-not-ready`. The Envoy *Deployment* object isn't labeled (only its pods), so
+a graceful ingress scale-to-zero warns rather than pages.
 
 ### No persistence (`persistence.enabled: false`)
 Explicit requirement, safe because Grafana holds no state worth keeping: datasources + curated dashboards

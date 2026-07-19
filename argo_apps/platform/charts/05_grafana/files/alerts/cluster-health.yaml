@@ -1,0 +1,373 @@
+apiVersion: 1
+groups:
+  - orgId: 1
+    name: cluster-health
+    folder: raspi-cluster
+    interval: 1m
+    rules:
+      - uid: node-not-ready
+        title: Node NotReady
+        condition: C
+        for: 5m
+        labels: {severity: critical}
+        annotations:
+          summary: 'Node {{ $labels.node }} is NotReady'
+        noDataState: OK
+        execErrState: Error
+        data:
+          - refId: A
+            relativeTimeRange: {from: 600, to: 0}
+            datasourceUid: VictoriaMetrics
+            model:
+              refId: A
+              instant: true
+              expr: 'max by (node) (kube_node_status_condition{condition="Ready",status="true"} == bool 0)'
+          - refId: B
+            relativeTimeRange: {from: 600, to: 0}
+            datasourceUid: __expr__
+            model: {refId: B, type: reduce, expression: A, reducer: last, datasource: {type: __expr__, uid: __expr__}}
+          - refId: C
+            relativeTimeRange: {from: 600, to: 0}
+            datasourceUid: __expr__
+            model:
+              refId: C
+              type: threshold
+              expression: B
+              datasource: {type: __expr__, uid: __expr__}
+              conditions:
+                - type: query
+                  evaluator: {type: gt, params: [0]}
+      - uid: node-high-memory
+        title: Node high memory usage
+        condition: C
+        for: 10m
+        labels: {severity: warning}
+        annotations:
+          summary: 'Node {{ $labels.instance }} memory usage above 90%'
+        noDataState: OK
+        execErrState: Error
+        data:
+          - refId: A
+            relativeTimeRange: {from: 600, to: 0}
+            datasourceUid: VictoriaMetrics
+            model:
+              refId: A
+              instant: true
+              expr: '100 * (1 - node_memory_MemAvailable_bytes / node_memory_MemTotal_bytes)'
+          - refId: B
+            relativeTimeRange: {from: 600, to: 0}
+            datasourceUid: __expr__
+            model: {refId: B, type: reduce, expression: A, reducer: last, datasource: {type: __expr__, uid: __expr__}}
+          - refId: C
+            relativeTimeRange: {from: 600, to: 0}
+            datasourceUid: __expr__
+            model:
+              refId: C
+              type: threshold
+              expression: B
+              datasource: {type: __expr__, uid: __expr__}
+              conditions:
+                - type: query
+                  evaluator: {type: gt, params: [90]}
+      - uid: node-high-cpu
+        title: Node high CPU saturation
+        condition: C
+        for: 15m
+        labels: {severity: warning}
+        annotations:
+          summary: 'Node {{ $labels.instance }} CPU above 90%'
+        noDataState: OK
+        execErrState: Error
+        data:
+          - refId: A
+            relativeTimeRange: {from: 600, to: 0}
+            datasourceUid: VictoriaMetrics
+            model:
+              refId: A
+              instant: true
+              expr: '100 * (1 - avg by (instance) (rate(node_cpu_seconds_total{mode="idle"}[5m])))'
+          - refId: B
+            relativeTimeRange: {from: 600, to: 0}
+            datasourceUid: __expr__
+            model: {refId: B, type: reduce, expression: A, reducer: last, datasource: {type: __expr__, uid: __expr__}}
+          - refId: C
+            relativeTimeRange: {from: 600, to: 0}
+            datasourceUid: __expr__
+            model:
+              refId: C
+              type: threshold
+              expression: B
+              datasource: {type: __expr__, uid: __expr__}
+              conditions:
+                - type: query
+                  evaluator: {type: gt, params: [90]}
+      # NOTE: the old `pod-crashloop` (warning-always) rule was REMOVED — it's superseded by the
+      # criticality-aware `container-waiting-fatal` in the workload-outages group below (fires critical for
+      # labeled-critical components, warning otherwise). See 09_monitoring.md (alerting severity model).
+      - uid: pvc-nearly-full
+        title: PVC nearly full
+        condition: C
+        for: 10m
+        labels: {severity: warning}
+        annotations:
+          summary: 'PVC {{ $labels.namespace }}/{{ $labels.persistentvolumeclaim }} above 85% used'
+        noDataState: OK
+        execErrState: Error
+        data:
+          - refId: A
+            relativeTimeRange: {from: 600, to: 0}
+            datasourceUid: VictoriaMetrics
+            model:
+              refId: A
+              instant: true
+              expr: '100 * kubelet_volume_stats_used_bytes / kubelet_volume_stats_capacity_bytes'
+          - refId: B
+            relativeTimeRange: {from: 600, to: 0}
+            datasourceUid: __expr__
+            model: {refId: B, type: reduce, expression: A, reducer: last, datasource: {type: __expr__, uid: __expr__}}
+          - refId: C
+            relativeTimeRange: {from: 600, to: 0}
+            datasourceUid: __expr__
+            model:
+              refId: C
+              type: threshold
+              expression: B
+              datasource: {type: __expr__, uid: __expr__}
+              conditions:
+                - type: query
+                  evaluator: {type: gt, params: [85]}
+      - uid: target-down
+        title: Scrape target down
+        condition: C
+        for: 10m
+        labels: {severity: warning}
+        annotations:
+          summary: 'Target {{ $labels.job }} / {{ $labels.instance }} is down'
+        noDataState: OK
+        execErrState: Error
+        data:
+          - refId: A
+            relativeTimeRange: {from: 600, to: 0}
+            datasourceUid: VictoriaMetrics
+            model:
+              refId: A
+              instant: true
+              expr: 'max by (job, instance) (up == bool 0)'
+          - refId: B
+            relativeTimeRange: {from: 600, to: 0}
+            datasourceUid: __expr__
+            model: {refId: B, type: reduce, expression: A, reducer: last, datasource: {type: __expr__, uid: __expr__}}
+          - refId: C
+            relativeTimeRange: {from: 600, to: 0}
+            datasourceUid: __expr__
+            model:
+              refId: C
+              type: threshold
+              expression: B
+              datasource: {type: __expr__, uid: __expr__}
+              conditions:
+                - type: query
+                  evaluator: {type: gt, params: [0]}
+      # ---- node capacity/health (node-exporter + kube-state) — all warning (infra headroom, not workload down)
+      # Real disks only: Talos exposes ~19 tmpfs/rootfs mounts; the xfs mounts are /var, /var/mnt/localpath
+      # (local-path/CNPG), /var/mnt/longhorn. `instance` is the node IP:9100 (node-exporter has no `node` label).
+      - uid: node-disk-space
+        title: Node disk almost full
+        condition: C
+        for: 15m
+        labels: {severity: warning}
+        annotations:
+          summary: 'Disk {{ $labels.mountpoint }} on {{ $labels.instance }} above 85% used'
+        noDataState: OK
+        execErrState: Error
+        data:
+          - refId: A
+            relativeTimeRange: {from: 600, to: 0}
+            datasourceUid: VictoriaMetrics
+            model:
+              refId: A
+              instant: true
+              expr: '100 * (1 - node_filesystem_avail_bytes{fstype=~"ext4|xfs"} / node_filesystem_size_bytes{fstype=~"ext4|xfs"})'
+          - refId: B
+            relativeTimeRange: {from: 600, to: 0}
+            datasourceUid: __expr__
+            model: {refId: B, type: reduce, expression: A, reducer: last, datasource: {type: __expr__, uid: __expr__}}
+          - refId: C
+            relativeTimeRange: {from: 600, to: 0}
+            datasourceUid: __expr__
+            model:
+              refId: C
+              type: threshold
+              expression: B
+              datasource: {type: __expr__, uid: __expr__}
+              conditions:
+                - type: query
+                  evaluator: {type: gt, params: [85]}
+      # Inode exhaustion fills a disk that still has free bytes (many small files) — separate signal.
+      - uid: node-disk-inodes
+        title: Node disk inodes almost exhausted
+        condition: C
+        for: 15m
+        labels: {severity: warning}
+        annotations:
+          summary: 'Inodes on {{ $labels.mountpoint }} / {{ $labels.instance }} above 85% used'
+        noDataState: OK
+        execErrState: Error
+        data:
+          - refId: A
+            relativeTimeRange: {from: 600, to: 0}
+            datasourceUid: VictoriaMetrics
+            model:
+              refId: A
+              instant: true
+              expr: '100 * (1 - node_filesystem_files_free{fstype=~"ext4|xfs"} / node_filesystem_files{fstype=~"ext4|xfs"})'
+          - refId: B
+            relativeTimeRange: {from: 600, to: 0}
+            datasourceUid: __expr__
+            model: {refId: B, type: reduce, expression: A, reducer: last, datasource: {type: __expr__, uid: __expr__}}
+          - refId: C
+            relativeTimeRange: {from: 600, to: 0}
+            datasourceUid: __expr__
+            model:
+              refId: C
+              type: threshold
+              expression: B
+              datasource: {type: __expr__, uid: __expr__}
+              conditions:
+                - type: query
+                  evaluator: {type: gt, params: [85]}
+      # Predictive: fires when a disk (already <50% free) will hit zero within 24h at the last 6h trend.
+      # A yields the predicted free bytes; threshold `lt 0` = will run out. Early warning before disk-full.
+      - uid: node-disk-fill-predict
+        title: Node disk will fill within 24h
+        condition: C
+        for: 30m
+        labels: {severity: warning}
+        annotations:
+          summary: 'Disk {{ $labels.mountpoint }} on {{ $labels.instance }} will fill within 24h at current rate'
+        noDataState: OK
+        execErrState: Error
+        data:
+          - refId: A
+            relativeTimeRange: {from: 21600, to: 0}
+            datasourceUid: VictoriaMetrics
+            model:
+              refId: A
+              instant: true
+              expr: 'predict_linear(node_filesystem_avail_bytes{fstype=~"ext4|xfs"}[6h], 86400) < 0 and (node_filesystem_avail_bytes{fstype=~"ext4|xfs"} / node_filesystem_size_bytes{fstype=~"ext4|xfs"}) < 0.5'
+          - refId: B
+            relativeTimeRange: {from: 21600, to: 0}
+            datasourceUid: __expr__
+            model: {refId: B, type: reduce, expression: A, reducer: last, datasource: {type: __expr__, uid: __expr__}}
+          - refId: C
+            relativeTimeRange: {from: 21600, to: 0}
+            datasourceUid: __expr__
+            model:
+              refId: C
+              type: threshold
+              expression: B
+              datasource: {type: __expr__, uid: __expr__}
+              conditions:
+                - type: query
+                  evaluator: {type: lt, params: [0]}
+      # Memory COMMITTED: sum of pod memory requests / node allocatable. High commit => scheduler can't
+      # place more + eviction risk if actual use spikes. (requests + allocatable both carry `node` here.)
+      - uid: node-memory-committed
+        title: Node memory requests committed >80%
+        condition: C
+        for: 15m
+        labels: {severity: warning}
+        annotations:
+          summary: 'Node {{ $labels.node }} memory requests committed above 80% of allocatable'
+        noDataState: OK
+        execErrState: Error
+        data:
+          - refId: A
+            relativeTimeRange: {from: 600, to: 0}
+            datasourceUid: VictoriaMetrics
+            model:
+              refId: A
+              instant: true
+              expr: '100 * sum by (node) (kube_pod_container_resource_requests{resource="memory"}) / sum by (node) (kube_node_status_allocatable{resource="memory"})'
+          - refId: B
+            relativeTimeRange: {from: 600, to: 0}
+            datasourceUid: __expr__
+            model: {refId: B, type: reduce, expression: A, reducer: last, datasource: {type: __expr__, uid: __expr__}}
+          - refId: C
+            relativeTimeRange: {from: 600, to: 0}
+            datasourceUid: __expr__
+            model:
+              refId: C
+              type: threshold
+              expression: B
+              datasource: {type: __expr__, uid: __expr__}
+              conditions:
+                - type: query
+                  evaluator: {type: gt, params: [80]}
+      # Kubelet-reported node pressure conditions (kernel is squeezing mem/disk/PIDs) — imminent evictions.
+      - uid: node-pressure
+        title: Node under resource pressure
+        condition: C
+        for: 5m
+        labels: {severity: warning}
+        annotations:
+          summary: 'Node {{ $labels.node }} reports {{ $labels.condition }}'
+        noDataState: OK
+        execErrState: Error
+        data:
+          - refId: A
+            relativeTimeRange: {from: 600, to: 0}
+            datasourceUid: VictoriaMetrics
+            model:
+              refId: A
+              instant: true
+              expr: 'max by (node, condition) (kube_node_status_condition{condition=~"MemoryPressure|DiskPressure|PIDPressure", status="true"})'
+          - refId: B
+            relativeTimeRange: {from: 600, to: 0}
+            datasourceUid: __expr__
+            model: {refId: B, type: reduce, expression: A, reducer: last, datasource: {type: __expr__, uid: __expr__}}
+          - refId: C
+            relativeTimeRange: {from: 600, to: 0}
+            datasourceUid: __expr__
+            model:
+              refId: C
+              type: threshold
+              expression: B
+              datasource: {type: __expr__, uid: __expr__}
+              conditions:
+                - type: query
+                  evaluator: {type: gt, params: [0]}
+      # 3-node headroom: total pod memory requests exceed capacity-minus-largest-node => a single node loss
+      # can't be absorbed (survivors can't fit the evacuated pods). Warning: reduce requests or add capacity.
+      - uid: cluster-memory-overcommit
+        title: Cluster can't tolerate one node loss (memory)
+        condition: C
+        for: 15m
+        labels: {severity: warning}
+        annotations:
+          summary: 'Cluster memory requests exceed capacity minus one node — a node loss would not fit'
+        noDataState: OK
+        execErrState: Error
+        data:
+          - refId: A
+            relativeTimeRange: {from: 600, to: 0}
+            datasourceUid: VictoriaMetrics
+            model:
+              refId: A
+              instant: true
+              expr: 'sum(kube_pod_container_resource_requests{resource="memory"}) > (sum(kube_node_status_allocatable{resource="memory"}) - max(kube_node_status_allocatable{resource="memory"}))'
+          - refId: B
+            relativeTimeRange: {from: 600, to: 0}
+            datasourceUid: __expr__
+            model: {refId: B, type: reduce, expression: A, reducer: last, datasource: {type: __expr__, uid: __expr__}}
+          - refId: C
+            relativeTimeRange: {from: 600, to: 0}
+            datasourceUid: __expr__
+            model:
+              refId: C
+              type: threshold
+              expression: B
+              datasource: {type: __expr__, uid: __expr__}
+              conditions:
+                - type: query
+                  evaluator: {type: gt, params: [0]}

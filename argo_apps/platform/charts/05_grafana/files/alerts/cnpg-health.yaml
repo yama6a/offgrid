@@ -1,0 +1,438 @@
+apiVersion: 1
+groups:
+  # CNPG operational health, ported from the upstream cnpg/cluster PrometheusRules (now disabled). Curated to
+  # what fires meaningfully on this 1-2 instance, streaming-only topology: connection saturation + physical
+  # replication lag. Exprs + thresholds lifted verbatim (per-instance pod regex dropped for cluster-wide).
+  # `CNPGClusterOffline` is intentionally NOT ported — the generic `target-down` rule already catches a down
+  # CNPG pod (its scrape target goes down); and the HA / zone-spread / same-node / logical-replication rules
+  # are dropped (need 3+ instances / zone labels / logical replication this cluster doesn't use). See docs/13_backups.md.
+  - orgId: 1
+    name: cnpg-health
+    folder: raspi-cluster
+    interval: 1m
+    rules:
+      - uid: cnpg-high-connections-warning
+        title: CNPG high connection usage
+        condition: C
+        for: 5m
+        labels: {severity: warning}
+        annotations:
+          summary: 'CNPG {{ $labels.namespace }}/{{ $labels.pod }} using >80% of max_connections'
+        noDataState: OK
+        execErrState: Error
+        data:
+          - refId: A
+            relativeTimeRange: {from: 600, to: 0}
+            datasourceUid: VictoriaMetrics
+            model:
+              refId: A
+              instant: true
+              expr: 'sum by (namespace, pod) (cnpg_backends_total) / max by (namespace, pod) (cnpg_pg_settings_setting{name="max_connections"}) * 100'
+          - refId: B
+            relativeTimeRange: {from: 600, to: 0}
+            datasourceUid: __expr__
+            model: {refId: B, type: reduce, expression: A, reducer: last, datasource: {type: __expr__, uid: __expr__}}
+          - refId: C
+            relativeTimeRange: {from: 600, to: 0}
+            datasourceUid: __expr__
+            model:
+              refId: C
+              type: threshold
+              expression: B
+              datasource: {type: __expr__, uid: __expr__}
+              conditions:
+                - type: query
+                  evaluator: {type: gt, params: [80]}
+      - uid: cnpg-high-connections-critical
+        title: CNPG connection usage critical
+        condition: C
+        for: 5m
+        labels: {severity: critical}
+        annotations:
+          summary: 'CNPG {{ $labels.namespace }}/{{ $labels.pod }} using >95% of max_connections'
+        noDataState: OK
+        execErrState: Error
+        data:
+          - refId: A
+            relativeTimeRange: {from: 600, to: 0}
+            datasourceUid: VictoriaMetrics
+            model:
+              refId: A
+              instant: true
+              expr: 'sum by (namespace, pod) (cnpg_backends_total) / max by (namespace, pod) (cnpg_pg_settings_setting{name="max_connections"}) * 100'
+          - refId: B
+            relativeTimeRange: {from: 600, to: 0}
+            datasourceUid: __expr__
+            model: {refId: B, type: reduce, expression: A, reducer: last, datasource: {type: __expr__, uid: __expr__}}
+          - refId: C
+            relativeTimeRange: {from: 600, to: 0}
+            datasourceUid: __expr__
+            model:
+              refId: C
+              type: threshold
+              expression: B
+              datasource: {type: __expr__, uid: __expr__}
+              conditions:
+                - type: query
+                  evaluator: {type: gt, params: [95]}
+      # Physical replication lag (seconds). Only produces series when a standby exists (instances>=2);
+      # absent => NoData => OK at a single instance. > 1s warning, > 15s critical (upstream thresholds).
+      - uid: cnpg-replication-lag-warning
+        title: CNPG physical replication lag
+        condition: C
+        for: 5m
+        labels: {severity: warning}
+        annotations:
+          summary: 'CNPG {{ $labels.namespace }}/{{ $labels.pod }} physical replication lag >1s'
+        noDataState: OK
+        execErrState: Error
+        data:
+          - refId: A
+            relativeTimeRange: {from: 600, to: 0}
+            datasourceUid: VictoriaMetrics
+            model:
+              refId: A
+              instant: true
+              expr: 'max by (namespace, pod) (cnpg_pg_replication_lag)'
+          - refId: B
+            relativeTimeRange: {from: 600, to: 0}
+            datasourceUid: __expr__
+            model: {refId: B, type: reduce, expression: A, reducer: last, datasource: {type: __expr__, uid: __expr__}}
+          - refId: C
+            relativeTimeRange: {from: 600, to: 0}
+            datasourceUid: __expr__
+            model:
+              refId: C
+              type: threshold
+              expression: B
+              datasource: {type: __expr__, uid: __expr__}
+              conditions:
+                - type: query
+                  evaluator: {type: gt, params: [1]}
+      - uid: cnpg-replication-lag-critical
+        title: CNPG physical replication lag critical
+        condition: C
+        for: 5m
+        labels: {severity: critical}
+        annotations:
+          summary: 'CNPG {{ $labels.namespace }}/{{ $labels.pod }} physical replication lag >15s'
+        noDataState: OK
+        execErrState: Error
+        data:
+          - refId: A
+            relativeTimeRange: {from: 600, to: 0}
+            datasourceUid: VictoriaMetrics
+            model:
+              refId: A
+              instant: true
+              expr: 'max by (namespace, pod) (cnpg_pg_replication_lag)'
+          - refId: B
+            relativeTimeRange: {from: 600, to: 0}
+            datasourceUid: __expr__
+            model: {refId: B, type: reduce, expression: A, reducer: last, datasource: {type: __expr__, uid: __expr__}}
+          - refId: C
+            relativeTimeRange: {from: 600, to: 0}
+            datasourceUid: __expr__
+            model:
+              refId: C
+              type: threshold
+              expression: B
+              datasource: {type: __expr__, uid: __expr__}
+              conditions:
+                - type: query
+                  evaluator: {type: gt, params: [15]}
+      # ---- CNPG cluster/instance health (added; metrics verified live). instance-not-ready is the CNPG OUTAGE
+      # signal — dynamic severity via the criticality join (CNPG has no Deployment/StatefulSet the availability
+      # rules see). The rest are Postgres-internal anomalies -> warning (two-level for wraparound, like connections).
+      - uid: cnpg-instance-not-ready
+        title: CNPG instance not ready
+        condition: C
+        for: 2m
+        labels:
+          severity: '{{ if eq $labels.label_alert_criticality "critical" }}critical{{ else }}warning{{ end }}'
+        annotations:
+          summary: 'CNPG {{ $labels.namespace }}/{{ $labels.pod }} is up but not ready (Postgres not serving)'
+        noDataState: OK
+        execErrState: Error
+        data:
+          - refId: A
+            relativeTimeRange: {from: 600, to: 0}
+            datasourceUid: VictoriaMetrics
+            model:
+              refId: A
+              instant: true
+              expr: '(cnpg_collector_up == bool 0) * on(namespace, pod) group_left(label_alert_criticality) kube_pod_labels'
+          - refId: B
+            relativeTimeRange: {from: 600, to: 0}
+            datasourceUid: __expr__
+            model: {refId: B, type: reduce, expression: A, reducer: last, datasource: {type: __expr__, uid: __expr__}}
+          - refId: C
+            relativeTimeRange: {from: 600, to: 0}
+            datasourceUid: __expr__
+            model:
+              refId: C
+              type: threshold
+              expression: B
+              datasource: {type: __expr__, uid: __expr__}
+              conditions:
+                - type: query
+                  evaluator: {type: gt, params: [0]}
+      # Transaction-ID wraparound: autovacuum falling behind -> forced shutdown ~2.1B. Baseline ~50k here.
+      - uid: cnpg-txid-wraparound-warning
+        title: CNPG transaction-ID age high
+        condition: C
+        for: 30m
+        labels: {severity: warning}
+        annotations:
+          summary: 'CNPG {{ $labels.namespace }}/{{ $labels.pod }} db {{ $labels.datname }} xid age >300M (wraparound risk)'
+        noDataState: OK
+        execErrState: Error
+        data:
+          - refId: A
+            relativeTimeRange: {from: 600, to: 0}
+            datasourceUid: VictoriaMetrics
+            model:
+              refId: A
+              instant: true
+              expr: 'max by (namespace, pod, datname) (cnpg_pg_database_xid_age)'
+          - refId: B
+            relativeTimeRange: {from: 600, to: 0}
+            datasourceUid: __expr__
+            model: {refId: B, type: reduce, expression: A, reducer: last, datasource: {type: __expr__, uid: __expr__}}
+          - refId: C
+            relativeTimeRange: {from: 600, to: 0}
+            datasourceUid: __expr__
+            model:
+              refId: C
+              type: threshold
+              expression: B
+              datasource: {type: __expr__, uid: __expr__}
+              conditions:
+                - type: query
+                  evaluator: {type: gt, params: [300000000]}
+      - uid: cnpg-txid-wraparound-critical
+        title: CNPG transaction-ID age critical
+        condition: C
+        for: 15m
+        labels: {severity: critical}
+        annotations:
+          summary: 'CNPG {{ $labels.namespace }}/{{ $labels.pod }} db {{ $labels.datname }} xid age >1B — wraparound shutdown approaching'
+        noDataState: OK
+        execErrState: Error
+        data:
+          - refId: A
+            relativeTimeRange: {from: 600, to: 0}
+            datasourceUid: VictoriaMetrics
+            model:
+              refId: A
+              instant: true
+              expr: 'max by (namespace, pod, datname) (cnpg_pg_database_xid_age)'
+          - refId: B
+            relativeTimeRange: {from: 600, to: 0}
+            datasourceUid: __expr__
+            model: {refId: B, type: reduce, expression: A, reducer: last, datasource: {type: __expr__, uid: __expr__}}
+          - refId: C
+            relativeTimeRange: {from: 600, to: 0}
+            datasourceUid: __expr__
+            model:
+              refId: C
+              type: threshold
+              expression: B
+              datasource: {type: __expr__, uid: __expr__}
+              conditions:
+                - type: query
+                  evaluator: {type: gt, params: [1000000000]}
+      # Inactive physical replication slot retains WAL -> fills pg_wal -> primary goes read-only.
+      - uid: cnpg-replication-slot-inactive
+        title: CNPG replication slot inactive
+        condition: C
+        for: 10m
+        labels: {severity: warning}
+        annotations:
+          summary: 'CNPG {{ $labels.namespace }}/{{ $labels.pod }} physical slot {{ $labels.slot_name }} inactive (WAL retention risk)'
+        noDataState: OK
+        execErrState: Error
+        data:
+          - refId: A
+            relativeTimeRange: {from: 600, to: 0}
+            datasourceUid: VictoriaMetrics
+            model:
+              refId: A
+              instant: true
+              expr: 'max by (namespace, pod, slot_name) (cnpg_pg_replication_slots_active{slot_type="physical"} == bool 0)'
+          - refId: B
+            relativeTimeRange: {from: 600, to: 0}
+            datasourceUid: __expr__
+            model: {refId: B, type: reduce, expression: A, reducer: last, datasource: {type: __expr__, uid: __expr__}}
+          - refId: C
+            relativeTimeRange: {from: 600, to: 0}
+            datasourceUid: __expr__
+            model:
+              refId: C
+              type: threshold
+              expression: B
+              datasource: {type: __expr__, uid: __expr__}
+              conditions:
+                - type: query
+                  evaluator: {type: gt, params: [0]}
+      # Long/idle-in-transaction: holds locks + blocks autovacuum.
+      - uid: cnpg-long-running-transaction
+        title: CNPG long-running transaction
+        condition: C
+        for: 5m
+        labels: {severity: warning}
+        annotations:
+          summary: 'CNPG {{ $labels.namespace }}/{{ $labels.pod }} has a transaction running >5m'
+        noDataState: OK
+        execErrState: Error
+        data:
+          - refId: A
+            relativeTimeRange: {from: 600, to: 0}
+            datasourceUid: VictoriaMetrics
+            model:
+              refId: A
+              instant: true
+              expr: 'max by (namespace, pod) (cnpg_backends_max_tx_duration_seconds)'
+          - refId: B
+            relativeTimeRange: {from: 600, to: 0}
+            datasourceUid: __expr__
+            model: {refId: B, type: reduce, expression: A, reducer: last, datasource: {type: __expr__, uid: __expr__}}
+          - refId: C
+            relativeTimeRange: {from: 600, to: 0}
+            datasourceUid: __expr__
+            model:
+              refId: C
+              type: threshold
+              expression: B
+              datasource: {type: __expr__, uid: __expr__}
+              conditions:
+                - type: query
+                  evaluator: {type: gt, params: [300]}
+      - uid: cnpg-backends-waiting
+        title: CNPG backends waiting on locks
+        condition: C
+        for: 10m
+        labels: {severity: warning}
+        annotations:
+          summary: 'CNPG {{ $labels.namespace }}/{{ $labels.pod }} has backends blocked waiting on locks'
+        noDataState: OK
+        execErrState: Error
+        data:
+          - refId: A
+            relativeTimeRange: {from: 600, to: 0}
+            datasourceUid: VictoriaMetrics
+            model:
+              refId: A
+              instant: true
+              expr: 'max by (namespace, pod) (cnpg_backends_waiting_total)'
+          - refId: B
+            relativeTimeRange: {from: 600, to: 0}
+            datasourceUid: __expr__
+            model: {refId: B, type: reduce, expression: A, reducer: last, datasource: {type: __expr__, uid: __expr__}}
+          - refId: C
+            relativeTimeRange: {from: 600, to: 0}
+            datasourceUid: __expr__
+            model:
+              refId: C
+              type: threshold
+              expression: B
+              datasource: {type: __expr__, uid: __expr__}
+              conditions:
+                - type: query
+                  evaluator: {type: gt, params: [0]}
+      - uid: cnpg-deadlocks
+        title: CNPG deadlocks
+        condition: C
+        for: 2m
+        labels: {severity: warning}
+        annotations:
+          summary: 'CNPG {{ $labels.namespace }}/{{ $labels.pod }} db {{ $labels.datname }}: >5 deadlocks in 10m'
+        noDataState: OK
+        execErrState: Error
+        data:
+          - refId: A
+            relativeTimeRange: {from: 600, to: 0}
+            datasourceUid: VictoriaMetrics
+            model:
+              refId: A
+              instant: true
+              expr: 'sum by (namespace, pod, datname) (increase(cnpg_pg_stat_database_deadlocks[10m]))'
+          - refId: B
+            relativeTimeRange: {from: 600, to: 0}
+            datasourceUid: __expr__
+            model: {refId: B, type: reduce, expression: A, reducer: last, datasource: {type: __expr__, uid: __expr__}}
+          - refId: C
+            relativeTimeRange: {from: 600, to: 0}
+            datasourceUid: __expr__
+            model:
+              refId: C
+              type: threshold
+              expression: B
+              datasource: {type: __expr__, uid: __expr__}
+              conditions:
+                - type: query
+                  evaluator: {type: gt, params: [5]}
+      - uid: cnpg-manual-switchover-required
+        title: CNPG manual switchover required
+        condition: C
+        for: 5m
+        labels: {severity: warning}
+        annotations:
+          summary: 'CNPG {{ $labels.namespace }}/{{ $labels.pod }}: operator flagged a manual switchover'
+        noDataState: OK
+        execErrState: Error
+        data:
+          - refId: A
+            relativeTimeRange: {from: 600, to: 0}
+            datasourceUid: VictoriaMetrics
+            model:
+              refId: A
+              instant: true
+              expr: 'max by (namespace, pod) (cnpg_collector_manual_switchover_required)'
+          - refId: B
+            relativeTimeRange: {from: 600, to: 0}
+            datasourceUid: __expr__
+            model: {refId: B, type: reduce, expression: A, reducer: last, datasource: {type: __expr__, uid: __expr__}}
+          - refId: C
+            relativeTimeRange: {from: 600, to: 0}
+            datasourceUid: __expr__
+            model:
+              refId: C
+              type: threshold
+              expression: B
+              datasource: {type: __expr__, uid: __expr__}
+              conditions:
+                - type: query
+                  evaluator: {type: gt, params: [0]}
+      - uid: cnpg-fencing-on
+        title: CNPG instance fenced
+        condition: C
+        for: 5m
+        labels: {severity: warning}
+        annotations:
+          summary: 'CNPG {{ $labels.namespace }}/{{ $labels.pod }} is fenced (I/O paused)'
+        noDataState: OK
+        execErrState: Error
+        data:
+          - refId: A
+            relativeTimeRange: {from: 600, to: 0}
+            datasourceUid: VictoriaMetrics
+            model:
+              refId: A
+              instant: true
+              expr: 'max by (namespace, pod) (cnpg_collector_fencing_on)'
+          - refId: B
+            relativeTimeRange: {from: 600, to: 0}
+            datasourceUid: __expr__
+            model: {refId: B, type: reduce, expression: A, reducer: last, datasource: {type: __expr__, uid: __expr__}}
+          - refId: C
+            relativeTimeRange: {from: 600, to: 0}
+            datasourceUid: __expr__
+            model:
+              refId: C
+              type: threshold
+              expression: B
+              datasource: {type: __expr__, uid: __expr__}
+              conditions:
+                - type: query
+                  evaluator: {type: gt, params: [0]}
