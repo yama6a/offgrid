@@ -16,7 +16,7 @@
 #   4. 03d_talos_cluster_config.sh  : generate fresh config, apply, bootstrap etcd, write kube/talosconfig
 #   5. 03e_nic_hardening.sh         : NIC hardening (EEE/watchdog)
 #   6. 04_cilium.sh                 : CNI + prometheus-operator CRDs + LB-IPAM/L2 + Hubble
-#   7. 07_gateway.sh                : write LE_EMAIL/BASE_DOMAIN into the gateway chart values (no cluster)
+#   7. 07_gateway.sh                : write LE_EMAIL + Cloudflare zones into the gateway/ingress chart values
 #   8. git add/commit/push          : 05 refuses a dirty argo_apps/ tree; ArgoCD deploys the REMOTE
 #   9. 05_argocd.sh                 : bootstrap ArgoCD; it then delivers the whole platform from git
 #  10. wait sealed-secrets ctrl     : ArgoCD wave-2 app; kubeseal (the re-seal / backup / ntfy-seal steps) needs it up
@@ -149,7 +149,7 @@ run_step "NIC hardening (EEE/watchdog)"            "$STEP_DIR" 03e_nic_hardening
 run_step "CNI + monitoring CRDs + LB/L2 + Hubble" "$STEP_DIR" 04_cilium.sh
 
 # === STEP 7. gateway config from .env (chart values; no cluster) ===
-run_step "propagate LE_EMAIL/BASE_DOMAIN into the gateway chart values" "$STEP_DIR" 07_gateway.sh
+run_step "propagate LE_EMAIL + Cloudflare zones into the gateway/ingress chart values" "$STEP_DIR" 07_gateway.sh
 
 # === STEP 8. commit + push (ArgoCD deploys the REMOTE; 05 refuses a dirty tree) ===
 step "git add + commit + push (config so far: LB range + gateway values)"

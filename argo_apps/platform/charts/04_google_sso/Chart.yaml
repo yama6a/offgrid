@@ -15,5 +15,5 @@ version: 0.1.0                 # this wrapper chart's own version
 
 dependencies:
   - name: ingress
-    version: "0.1.0"          # shared edge library; renders each callback host's Gateway/cert/route/policy
+    version: "*"             # shared edge library; renders each callback host's Gateway/cert/route/policy (file:// dep: version just a constraint, not a selector — see sample_user_manager)
     repository: "file://../../../../lib/helm/ingress"

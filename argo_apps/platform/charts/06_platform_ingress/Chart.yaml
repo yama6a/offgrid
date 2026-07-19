@@ -15,5 +15,5 @@ version: 0.1.0
 
 dependencies:
   - name: ingress
-    version: "0.1.0"                          # the shared library chart; THE single source for the edge templates
+    version: "*"                              # the shared library chart; THE single source for the edge templates (file:// dep: path IS the source, version just a constraint Helm requires — see sample_user_manager)
     repository: "file://../../../../lib/helm/ingress"

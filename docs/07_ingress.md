@@ -119,24 +119,55 @@ Pure GitOps plus one values-propagation helper (no cluster apply):
 - `argo_apps/platform/charts/03_gateway/`: the wrapper chart (the `:80` Gateway + ClusterIssuers).
 - a one-line enablement (`enableGatewayAPI: true`) in
   `argo_apps/platform/charts/02_cert_manager/values.yaml`.
-- `lib/shell/07_gateway.sh`: writes `.env`'s `LE_EMAIL` + `BASE_DOMAIN` into the chart's
-  `values.yaml` (`acme.email` + `baseDomain`) via `yq`, so the shell side and ArgoCD render the same.
-  Non-interactive. Commit the rewritten `values.yaml`.
+- `lib/shell/07_gateway.sh`: writes `.env`'s `LE_EMAIL` into the chart's `values.yaml` (`acme.email`)
+  via `yq`, so the shell side and ArgoCD render the same.
+  Also propagates `CLOUDFLARE_ZONES` (into `acme.cloudflare.zones` here **and** the ingress library's
+  `cloudflareZones`) and, when `CLOUDFLARE_API_TOKEN_SECRET` is set, seals the Cloudflare token into
+  `cert-manager` (see "Cloudflare DNS-01 & wildcards" below). Non-interactive. Commit the rewritten files.
 
-### The `:80` ACME listener only, no wildcard
+### The `:80` ACME listener (HTTP-01 fallback)
 `shared-gateway` owns just the `:80` HTTP listener, no cert, no `:443`. It serves cert-manager's
 HTTP-01 solver routes (the ClusterIssuers point at `shared-gateway` by name) and the future forced
 http->https redirect (a `RequestRedirect` HTTPRoute on this same listener). With no cert refs it's
-Programmed immediately, independent of any app. HTTP-01 means a `:443` listener **per host** (no
-wildcard cert — that would need DNS-01, which we don't have), but those `:443` listeners live on
-the per-host Gateways, not here. Each ingress issues ONE multi-SAN cert covering all its hosts; its
-listeners sit not-Ready until that cert issues (so hosts within an ingress are coupled — a single failing
-SAN blocks them together), but different ingresses are independent, and none blocks the platform's `:80`.
+Programmed immediately, independent of any app. HTTP-01 is now the **fallback** for any domain not on
+Cloudflare (see below): those hosts get a `:443` listener **per host** (HTTP-01 can't do wildcards),
+living on the per-host Gateways, not here. For an HTTP-01 domain each ingress issues ONE multi-SAN cert
+covering all its hosts; its listeners sit not-Ready until that cert issues (so hosts within an ingress
+are coupled — a single failing SAN blocks them together), but different ingresses are independent, and
+none blocks the platform's `:80`.
 
 ### Staging then prod ClusterIssuers
 Both `letsencrypt-staging` and `letsencrypt-prod` ship (cluster-scoped). Always validate a new host
 against staging first (prod's rate limits are tight), then flip that host's `Certificate` issuer to
-prod. The HTTP-01 solver is `gatewayHTTPRoute` with `parentRefs` to `shared-gateway`.
+prod (or, for the shared wildcards, flip `acme.cloudflare.wildcardIssuer`). Each issuer's HTTP-01 solver
+is `gatewayHTTPRoute` with `parentRefs` to `shared-gateway`; when Cloudflare zones are configured each
+issuer ALSO gets a `dns01.cloudflare` solver (below), and cert-manager picks per dnsName.
+
+### Cloudflare DNS-01 & wildcards (per-domain, HTTP-01 fallback)
+We have Cloudflare for only *some* domains, so DNS-01 is **optional and per-domain**. One list drives it:
+`CLOUDFLARE_ZONES` in `.env` (space-separated host tiers on Cloudflare, e.g.
+`"ops.example.com app.example.com example.com"`), gated by `CLOUDFLARE_API_TOKEN_SECRET` (a scoped API
+token, Zone:DNS:Edit + Zone:Read). Empty ⇒ DNS-01 off, HTTP-01 for everything (unchanged). `07_gateway.sh`
+seals the token into `cert-manager` and writes the zones into two places:
+
+- **`03_gateway`** — each ClusterIssuer gets a `dns01.cloudflare` solver scoped `selector.dnsZones: <zones>`
+  *plus* the existing `http01` catch-all. cert-manager picks the most-specific matching solver per dnsName,
+  so names under a Cloudflare zone (incl. wildcards) go DNS-01 and everything else falls to HTTP-01 — no new
+  issuer names, so the per-ingress `issuer:` values and the library's issuer allowlist are untouched.
+  `03_gateway` also mints ONE **shared wildcard `Certificate` per zone** (`*.<zone>` + apex, into
+  `wildcard-<zone-dashed>-tls`, at `acme.cloudflare.wildcardIssuer`) — reusable across every ingress on that
+  tier (e.g. `platform` and `ntfy` both share `wildcard-ops-example-com-tls`).
+- **the ingress library** (`cloudflareZones`) — an ingress whose `domain` is a Cloudflare zone points its
+  listeners at the shared `wildcard-<domain>-tls` and **skips** its own per-ingress `Certificate`; any other
+  domain keeps the per-host multi-SAN HTTP-01 cert. Automatic, per-domain — no per-ingress flag.
+
+Wildcards match one label only, so we mint per tier (`*.ops.<base>`, `*.app.<base>`, `*.<base>`), not a
+single `*.<base>`. cert-manager runs a DNS self-check before validation; it's pointed at public resolvers
+(`dns01RecursiveNameservers` in `02_cert_manager`) so a split-horizon home DNS can't wedge issuance, and its
+NetworkPolicy allows egress `:53`/`:443` to the world for the Cloudflare API + that check. **After changing
+the ingress library you must re-vendor its consumers** (`helm dependency update` per consumer) — `07_gateway.sh`
+prints the exact loop. Once `ntfy` rides the shared `ops` wildcard (prod), its separate-ingress workaround
+(a prod cert off the staging SAN set) is no longer needed and it can fold back into `platform`.
 
 ### Enabling Gateway API in cert-manager
 HTTP-01-via-Gateway needs cert-manager to manage `HTTPRoute`s. Since cert-manager 1.15 this is the
@@ -171,9 +202,12 @@ monolithic cert must keep renewing).
 
 The per-host edge used to be four hand-copied templates in every app chart. It now lives in ONE
 `type: library` chart, `lib/helm/ingress/`, which renders — for a list of `ingresses[]`, each a
-group of subdomains under one `domain` — a Gateway + HTTPRoute + ReferenceGrant per host and ONE multi-SAN
-`Certificate` per ingress (covering all its hosts, into one shared Secret every listener references). It
-renders **no SSO** — Google-SSO is applied centrally per domain by `04_google_sso` (below). The cluster
+group of subdomains under one `domain` — a Gateway + HTTPRoute + ReferenceGrant per host and, for a
+non-Cloudflare domain, ONE multi-SAN `Certificate` per ingress (covering all its hosts, into one shared
+Secret every listener references). For a Cloudflare domain (its `domain` in `cloudflareZones`) it instead
+points the listeners at the shared `wildcard-<domain>-tls` minted by `03_gateway` and emits no per-ingress
+cert (see "Cloudflare DNS-01 & wildcards"). It renders **no SSO** — Google-SSO is applied centrally per
+domain by `04_google_sso` (below). The cluster
 wiring (gateway namespace `gateway`, gateway class `eg`, fallback issuer) is hardcoded in the library, NOT a
 per-consumer value — those are platform invariants, so a consumer's only cert knob is `ingresses[].issuer`.
 Consumers are thin: a `file://` dependency on the library, a one-line template
@@ -192,7 +226,8 @@ Per-host resource names derive from the full host (`argocd.ops.example.com` -> `
 Two tiers under the one base domain: **platform UIs** (`06_platform_ingress`) sit under `*.ops.<base>`,
 **workloads** under `*.app.<base>` (e.g. `grafana.ops.example.com`, `sample-user-manager.app.example.com`).
 Each is still one registrable `domain` from the library's point of view (`ops.example.com` / `app.example.com`),
-so they get separate per-ingress multi-SAN certs; SSO keeps them under a single `example.com` entry (below).
+so without Cloudflare they get separate per-ingress multi-SAN certs; with Cloudflare each tier gets one shared
+`*.<tier>` wildcard reused across its ingresses. SSO keeps them under a single `example.com` entry (below).
 
 ## Google SSO — one policy per domain, per-host allowlists
 

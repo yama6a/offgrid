@@ -33,7 +33,7 @@ spec:
             - { port: "53", protocol: TCP }
     # Certificate/Order/Secret + HTTP-01 HTTPRoutes.
     - toEntities: [kube-apiserver]
-    # Let's Encrypt ACME.
+    # Let's Encrypt ACME + the Cloudflare API (DNS-01 apiToken calls to api.cloudflare.com).
     - toEntities: [world]
       toPorts:
         - ports:
@@ -43,3 +43,10 @@ spec:
       toPorts:
         - ports:
             - { port: "80", protocol: TCP }
+    # DNS-01 propagation self-check: cert-manager queries the recursive nameservers (values:
+    # dns01RecursiveNameservers) directly for the _acme-challenge TXT before asking LE to validate.
+    - toEntities: [world]
+      toPorts:
+        - ports:
+            - { port: "53", protocol: UDP }
+            - { port: "53", protocol: TCP }

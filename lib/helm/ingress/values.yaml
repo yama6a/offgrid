@@ -14,3 +14,9 @@
 #         targetNamespace: argocd      # optional; defaults to the consumer's release namespace
 #         targetPort: 80               # the Service port
 ingresses: []
+
+# Domains served by a shared Cloudflare DNS-01 WILDCARD cert (minted centrally by 03_gateway). An ingress
+# whose `domain` is listed here references the shared `wildcard-<domain-dashed>-tls` Secret and skips its own
+# per-ingress Certificate; any other domain keeps the per-host multi-SAN HTTP-01 cert. Empty = HTTP-01 for all
+# (unchanged). 07_gateway.sh writes this from .env CLOUDFLARE_ZONES (same list it feeds 03_gateway's solver).
+cloudflareZones: []

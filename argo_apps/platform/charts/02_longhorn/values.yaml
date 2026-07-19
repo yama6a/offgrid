@@ -70,5 +70,5 @@ longhorn:
   # left unset: it only ADDS reservations for ~16Mi sidecars, is storage-critical, and takes a fiddly JSON.)
   longhornManager:
     resources:
-      requests: {cpu: 20m, memory: 160Mi}
-      limits: {memory: 192Mi}
+      requests: {cpu: 20m, memory: 190Mi}
+      limits: {memory: 256Mi}

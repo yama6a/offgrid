@@ -4,6 +4,7 @@ ingress library, fronting the shared whoami (templates/callbacks.yaml). The Secu
 (templates/securitypolicy.yaml) attaches to this route + the domain's app routes so one OAuth flow completes
 on this host. See 07_ingress.md.
 */}}
+{{- $zones := (.Values.ingress | default (dict)).cloudflareZones | default (list) -}}
 {{- range $d := .Values.domains }}
 {{- $slug := $d.domain | replace "." "-" -}}
 {{- $ing := dict
@@ -11,5 +12,5 @@ on this host. See 07_ingress.md.
       "domain" $d.domain
       "issuer" $d.issuer
       "hosts" (list (dict "subdomain" $.Values.oidc.authSubdomain "targetService" "gateway-sso-callback" "targetNamespace" $.Values.namespace "targetPort" 80)) -}}
-{{ include "ingress.renderIngress" (dict "ingress" $ing "release" $.Release) }}
+{{ include "ingress.renderIngress" (dict "ingress" $ing "release" $.Release "cloudflareZones" $zones) }}
 {{- end }}

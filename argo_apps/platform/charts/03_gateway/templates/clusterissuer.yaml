@@ -18,6 +18,22 @@ spec:
     privateKeySecretRef:
       name: {{ .name }}-account-key
     solvers:
+      {{- /* DNS-01 first: cert-manager picks the most-specific solver per dnsName, so names under a
+             Cloudflare zone (incl. wildcards) go DNS-01, everything else falls to the http01 catch-all. */}}
+      {{- with $.Values.acme.cloudflare }}
+      {{- if .zones }}
+      - dns01:
+          cloudflare:
+            apiTokenSecretRef:
+              name: {{ .apiTokenSecretName | quote }}
+              key: {{ .apiTokenSecretKey | quote }}
+        selector:
+          dnsZones:
+            {{- range .zones }}
+            - {{ . | quote }}
+            {{- end }}
+      {{- end }}
+      {{- end }}
       - http01:
           gatewayHTTPRoute:
             parentRefs:

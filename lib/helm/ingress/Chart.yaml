@@ -11,4 +11,6 @@ description: >-
 # A library chart pins NO upstream dependency and renders no templates of its own, so there is no
 # Chart.lock here (the CONSUMERS that depend on this one carry the lock).
 type: library
-version: 0.1.0
+# 0.2.0: per-domain Cloudflare DNS-01 wildcard support (cloudflareZones) — CF domains reference the shared
+# wildcard-<domain>-tls Secret + skip their per-ingress Certificate; non-CF domains unchanged (HTTP-01).
+version: 0.2.0

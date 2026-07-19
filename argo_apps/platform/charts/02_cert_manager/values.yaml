@@ -85,3 +85,10 @@ cert-manager:
     apiVersion: controller.config.cert-manager.io/v1alpha1
     kind: ControllerConfiguration
     enableGatewayAPI: true
+
+  # DNS-01 self-check (Cloudflare): before asking Let's Encrypt to validate, cert-manager checks the
+  # _acme-challenge TXT itself. Point it at PUBLIC recursive resolvers (not the pods' /etc/resolv.conf) so a
+  # split-horizon home DNS can't make the record look un-propagated and wedge issuance. Only exercised when a
+  # dns01 solver runs; a no-op for HTTP-01. Egress :53 to world is opened in templates/networkpolicy.yaml.
+  dns01RecursiveNameservers: "1.1.1.1:53,9.9.9.9:53"
+  dns01RecursiveNameserversOnly: true

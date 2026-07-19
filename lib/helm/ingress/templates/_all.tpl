@@ -4,13 +4,14 @@
 {{- define "ingress.renderIngress" -}}
 {{- $ing := .ingress -}}
 {{- $release := .release -}}
+{{- $zones := .cloudflareZones | default (list) -}}
 {{- /* Guard: issuer must be a ClusterIssuer 03_gateway ships, else the cert silently never issues. */}}
 {{- $issuer := $ing.issuer | default (include "ingress.defaultIssuer" .) -}}
 {{- if not (has $issuer (list "letsencrypt-staging" "letsencrypt-prod")) }}
 {{- fail (printf "ingress: ingress %q uses issuer %q, but only letsencrypt-staging / letsencrypt-prod are allowed (the ClusterIssuers 03_gateway ships)" $ing.name $issuer) }}
 {{- end }}
 {{- range $h := $ing.hosts }}
-{{- $ctx := dict "ingress" $ing "host" $h "release" $release }}
+{{- $ctx := dict "ingress" $ing "host" $h "release" $release "cloudflareZones" $zones }}
 ---
 {{ include "ingress.gateway" $ctx }}
 ---
@@ -21,13 +22,18 @@
 {{ include "ingress.referencegrant" $ctx }}
 {{- end }}
 {{- end }}
+{{- /* Cloudflare domains reuse the shared wildcard cert minted centrally by 03_gateway; skip the per-ingress
+       Certificate. Any other domain keeps its own per-host multi-SAN cert (HTTP-01). */}}
+{{- if not (include "ingress.isCloudflare" (dict "ingress" $ing "cloudflareZones" $zones)) }}
 ---
-{{ include "ingress.certificate" (dict "ingress" $ing) }}
+{{ include "ingress.certificate" (dict "ingress" $ing "cloudflareZones" $zones) }}
+{{- end }}
 {{- end -}}
 
 {{/* ingress.render — a consumer's entry point (`{{ include "ingress.render" . }}`): validate +
      render each ingress in the consumer's `ingresses[]`. ctx: `.`. */}}
 {{- define "ingress.render" -}}
+{{- $zones := .Values.ingress.cloudflareZones | default (list) -}}
 {{- range $ing := .Values.ingress.ingresses }}
 {{- /* Guard: every ingress has one domain; hosts are subdomains under it. */}}
 {{- if not $ing.domain }}
@@ -42,6 +48,6 @@
 {{- fail (printf "ingress: ingress %q host subdomain %q looks like a full hostname — give just the subdomain under %q (e.g. \"argocd\"), or \"@\" for the apex" $ing.name $h.subdomain $ing.domain) }}
 {{- end }}
 {{- end }}
-{{ include "ingress.renderIngress" (dict "ingress" $ing "release" $.Release) }}
+{{ include "ingress.renderIngress" (dict "ingress" $ing "release" $.Release "cloudflareZones" $zones) }}
 {{- end }}
 {{- end -}}

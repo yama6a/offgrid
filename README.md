@@ -201,7 +201,7 @@ least:
   Reserve each node IP in your router; keep the VIP and LB pool on the nodes' L2, outside your DHCP range.
     - To reserve your node IPs, connect the PIs to your network and check in your router which MAC addresses the
       connected PIs have. Then reserve the intended IP addresses for those MAC addresses in your router's DHCP settings.
-- **Domains & TLS**: `BASE_DOMAIN`, `LE_EMAIL`, and your Google OAuth app (`GOOGLE_SSO_CLIENT_ID` +
+- **Domains & TLS**: `LE_EMAIL`, and your Google OAuth app (`GOOGLE_SSO_CLIENT_ID` +
   `GOOGLE_SSO_CLIENT_SECRET`). Add each exposed hostname to the allowlists in `argo_apps/platform/charts/04_google_sso`.
 - **Git remote**: `REPO_URL` **must** equal your forked `repoURL` committed across `argo_apps/`. Argo CD reconciles
   the pushed remote, not your working tree, so **commit + push before you expect a sync**.
@@ -277,7 +277,8 @@ Pi 5 Talos image builds on [talos-rpi5/talos-builder](https://github.com/talos-r
 - improve then apply comment rules from claude.md to all yaml and other code files.
 - disaster recovery exercise
 - add something to test in CI so that PRs have at least SOME confidence in not being garbage.
-- optional DNS-01 auth (fallback to HTTP-01 when cloudflare secret not set in .env)
+- proper templates over helm magic and over-populated values files.
+
 - 
 - add alerts for everything!
   - nodes: down, disk full, ram full, ...
@@ -289,4 +290,3 @@ Pi 5 Talos image builds on [talos-rpi5/talos-builder](https://github.com/talos-r
   - rabbitmq
   - all platform apps, if they provide metrics and mearuable health
   - check alerting library for more ideas.
-

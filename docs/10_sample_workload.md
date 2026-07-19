@@ -84,9 +84,11 @@ platform app ([08_storage.md](08_storage.md)); only the cluster moved here, into
 namespace.
 
 ### One-place edit: the whole ingress is a values list
-Per-host HTTP-01 (no wildcard without DNS-01) still means every HTTPS host needs its own `:443` listener,
-but that listener lives on the host's own Gateway (rendered by the `ingress` library), folded onto
-the shared Envoy via `mergeGateways`, not on a shared Gateway in `03_gateway`. Each ingress declares one
+Every HTTPS host needs its own `:443` listener regardless of the challenge type, but that listener lives on
+the host's own Gateway (rendered by the `ingress` library), folded onto the shared Envoy via `mergeGateways`,
+not on a shared Gateway in `03_gateway`. What differs is the cert behind those listeners: HTTP-01 gives a
+per-ingress multi-SAN cert, while a Cloudflare domain (DNS-01) shares one `*.<tier>` wildcard across every
+listener (see [07_ingress.md](07_ingress.md)). Each ingress declares one
 `domain`; adding a host is a single `{ subdomain, targetService, targetPort }` under its `hosts:` (host = `<subdomain>.<domain>`,
 or `subdomain: "@"` for the apex). A different-domain group is a new `ingresses[]` entry with its own
 `domain`. The library renders Gateway + listener + cert + route together (no SSO — that's central in

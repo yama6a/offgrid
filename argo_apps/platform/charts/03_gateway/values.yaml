@@ -21,10 +21,6 @@ gateway:
   # NOTE: the pinned LoadBalancer IP is NOT set here anymore. Under mergeGateways all `eg` Gateways share
   # one LB Service, pinned solely by the EnvoyProxy `lbipam.cilium.io/ips` annotation (01_envoy_gateway
   # values: envoyProxy.loadBalancerIP). A per-Gateway spec.addresses would conflict on that shared Service.
-# Primary domain (informational; 10_gateway/10_gateway.sh writes this AND acme.email here from
-# 10_gateway/config.sh via yq). Hostnames are spelled out explicitly in each app's per-app values
-# because the cluster now serves more than one domain.
-baseDomain: example.com
 acme:
   # ACME registration email (account-level; LE expiry notices go here).
   email: "letsencrypt@example.com"
@@ -35,3 +31,12 @@ acme:
       server: "https://acme-staging-v02.api.letsencrypt.org/directory"
     - name: letsencrypt-prod
       server: "https://acme-v02.api.letsencrypt.org/directory"
+  # Cloudflare DNS-01 (optional, per-domain). 07_gateway.sh writes `zones` from .env CLOUDFLARE_ZONES and
+  # seals the token; empty zones => no dns01 solver + no wildcard certs => HTTP-01 for everything (unchanged).
+  # When non-empty: each issuer above gets a dns01.cloudflare solver scoped to these zones (+ the http01
+  # catch-all stays), and one shared wildcard cert per zone is minted (wildcard-certificates.yaml).
+  cloudflare:
+    zones: []                            # e.g. [ops.example.com, app.example.com, example.com] — the host tiers on Cloudflare
+    apiTokenSecretName: cloudflare-api-token   # SealedSecret in cert-manager ns (sealed by 07_gateway.sh)
+    apiTokenSecretKey: api-token               # data key inside that Secret
+    wildcardIssuer: letsencrypt-staging  # issuer for ALL shared wildcard certs; flip to letsencrypt-prod once issuance is verified (wildcards need DNS-01, staging first dodges prod rate limits)

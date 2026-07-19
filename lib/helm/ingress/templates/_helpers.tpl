@@ -19,9 +19,21 @@
 {{- include "ingress.host" . | replace "." "-" -}}
 {{- end -}}
 
-{{/* The ingress's one shared TLS Secret (its SAN cert fills it, every listener references it). ctx: {ingress}. */}}
+{{/* True (non-empty) iff the ingress's domain is served by a shared Cloudflare wildcard cert (its domain is
+     in the threaded cloudflareZones). ctx needs {ingress, cloudflareZones}. */}}
+{{- define "ingress.isCloudflare" -}}
+{{- if has .ingress.domain (.cloudflareZones | default (list)) -}}true{{- end -}}
+{{- end -}}
+
+{{/* The ingress's shared TLS Secret. Cloudflare domain -> the CENTRAL wildcard-<domain-dashed>-tls (minted by
+     03_gateway, reused by every listener on that tier); otherwise the per-ingress <name>-tls (its own SAN cert
+     fills it). ctx: {ingress, cloudflareZones}. */}}
 {{- define "ingress.tlsSecret" -}}
+{{- if include "ingress.isCloudflare" . -}}
+{{- printf "wildcard-%s-tls" (.ingress.domain | replace "." "-") -}}
+{{- else -}}
 {{- printf "%s-tls" .ingress.name -}}
+{{- end -}}
 {{- end -}}
 
 {{/* ClusterIssuer for the ingress's cert: .ingress.issuer, else the hardcoded default (ingress.defaultIssuer). ctx: {ingress}. */}}

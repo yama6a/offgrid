@@ -64,10 +64,12 @@ source "$ENV_FILE"
 : "${NTFY_PHONE_PASSWORD_SECRET:=}"       # 10 seeds the ntfy 'phone' user (Grafana pushes alerts to ntfy, phone subscribes)
 : "${GOOGLE_SSO_CLIENT_ID:=}"      # 07 writes into the google-sso values
 : "${GOOGLE_SSO_CLIENT_SECRET:=}"  # 07 seals it for Envoy Gateway OIDC
+: "${CLOUDFLARE_API_TOKEN_SECRET:=}"  # 07 seals it into cert-manager for DNS-01 (empty = HTTP-01 only)
 : "${AWS_DEPLOY_ACCESS_KEY_ID:=}"          # 13 runs Terraform with these; empty = skip S3 backups (13/14 no-op)
 : "${AWS_DEPLOY_SECRET_ACCESS_KEY_SECRET:=}"  # 13 Terraform deployer secret (never sealed into the cluster)
 # Not a secret, but defaulted here for the same reason (an older .env missing the key must not trip set -u).
 : "${POLL_SYNC_ENABLED:=false}"    # 08 patches timeout.reconciliation from this (false=300s fallback / true=60s)
+: "${CLOUDFLARE_ZONES:=}"          # 07 writes into the gateway + ingress-lib values (DNS-01 zones; empty = none, HTTP-01 only)
 : "${AWS_REGION:=}"                    # 13 Terraform region + 14 CNPG S3 endpoint region
 : "${S3_BACKUP_BUCKET:=}"              # 13 Terraform bucket name + 14 injects it into pg-cluster values
 : "${S3_BACKUP_TRANSITION_DAYS:=30}"   # 13 lifecycle: Glacier-IR transition age
