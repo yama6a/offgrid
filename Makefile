@@ -165,6 +165,10 @@ talosctl: ## Run dockerized talosctl with args, e.g. `make talosctl get members`
 print-kubeconfig: ## Print the 03d kubeconfig export line (eval it to point your kubectl at the cluster).
 	@bash -c 'source lib/shell/common.sh && echo "export KUBECONFIG=$$CLUSTER_DIR/kubeconfig"'
 
+.PHONY: view-credentials
+view-credentials: ## Print login URLs + credentials (RabbitMQ, ntfy phone) and the SSO-only UI URLs.
+	bash lib/shell/view_credentials.sh
+
 .PHONY: krr
 krr: ## Rightsizing: dockerized KRR vs vmsingle (port-forward); prints request->recommended per workload (table).
 	bash lib/shell/krr.sh
