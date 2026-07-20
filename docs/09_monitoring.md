@@ -85,7 +85,8 @@ the k8s-stack subchart so it versions/syncs/rolls back independently, no feature
   disk-fill-predict, memory committed + cluster overcommit, PVC >85%, target down), `workload-outages` +
   `workload-anomalies` (the global k8s object alerts — see the severity model below), `storage-tls-health`
   (cert-manager TLS expiry/ready, Longhorn volume degraded/faulted, PV/PVC errors), `backups` (redis + longhorn
-  + VM/VL + CNPG backup health), `cnpg-health` (see the CNPG catalog below), plus a VictoriaLogs error-rate
+  + VM/VL + CNPG backup health), `cnpg-health`, `rabbitmq-cluster` + `rabbitmq-queues`, `redis-health`,
+  `longhorn-health` (see the per-service catalog below), plus a VictoriaLogs error-rate
   alert. Rules survive restart (provisioned); alert *state* resets on restart (no PVC). (Datasources, by
   contrast, are still provisioned inline in `values.yaml` — the datasources sidecar is OFF.)
 
@@ -147,8 +148,14 @@ statically.
   `node-disk-space`/`node-disk-inodes` (>85%), `node-disk-fill-predict` (fills within 24h), `node-high-memory`
   (>90%), `node-memory-committed` (requests >80% allocatable), `node-high-cpu`, `node-pressure`
   (Memory/Disk/PID), `cluster-memory-overcommit` (can't absorb one node loss), `pvc-nearly-full`, `target-down`.
-- **`storage-tls-health`** (warning): `cert-expiring-soon` (<14d), `cert-not-ready`,
-  `longhorn-volume-degraded`/`longhorn-volume-faulted`, `pv-errors`, `pvc-pending`.
+- **`storage-tls-health`** (warning): `cert-expiring-soon` (<14d), `cert-not-ready`, `pv-errors`, `pvc-pending`.
+- **`longhorn-health`** (distributed storage): `longhorn-manager-down` (critical, dead-man — metrics absent),
+  `longhorn-node-down` (warning — Longhorn node NotReady; the hard k8s node loss is `node-not-ready`),
+  `longhorn-disk-unschedulable`, `longhorn-node-storage-high` (>85%), `longhorn-volume-degraded` (warning) /
+  `longhorn-volume-faulted` (**critical** — 0 healthy replicas), `longhorn-volume-near-full` (>90%). NOTE:
+  `longhorn_volume_robustness` is **state-labelled** here (`{state="degraded|faulted|..."}=1`), not a numeric
+  0–3 gauge — the degraded/faulted rules were moved here from `storage-tls-health` and fixed (the old
+  `== 2`/`== 3` never matched). Backup health stays in `backups` (`longhorn-backup-failed`/`-stale`).
 - **`cnpg-health`** (CNPG Postgres): `cnpg-instance-not-ready` (**dynamic severity** — `cnpg_collector_up==0`,
   the CNPG outage signal, joined to the criticality label like the workload-outages rules), plus warnings:
   `cnpg-high-connections-*` (saturation vs `max_connections`), `cnpg-replication-lag-*` (physical lag),
@@ -157,6 +164,18 @@ statically.
   `cnpg-deadlocks`, `cnpg-manual-switchover-required`, `cnpg-fencing-on`. WAL-archiving + base-backup staleness
   live in the `backups` group; CPU/mem and disk fall to the generic container + `node-disk-space`
   (`/var/mnt/localpath`) / `pvc-nearly-full` rules.
+- **`rabbitmq-cluster`** (shared broker, static severity): `rabbitmq-cluster-down` / `rabbitmq-quorum-at-risk`
+  (critical, <2 nodes) / `rabbitmq-node-down` (warning, <3), `rabbitmq-memory-alarm` / `rabbitmq-disk-alarm`
+  (critical — the broker has already blocked publishers), `rabbitmq-disk-low` (early warning). Metrics come
+  from the broker PodMonitor added by `03_rabbitmq` (scrapes `:15692` `/metrics`).
+- **`rabbitmq-queues`** (per-queue, from the broker's `/metrics/detailed`): `rabbitmq-queue-no-consumer`,
+  `rabbitmq-queue-backlog`/`rabbitmq-queue-unacked` (>100), `rabbitmq-dlq-not-empty` (a DLQ holds messages —
+  names the failing flow), `rabbitmq-dead-letter-rate` (cluster-wide dead-lettering). DLQs are excluded from
+  the consumer/backlog rules.
+- **`redis-health`** (per-instance redis-exporter): `redis-down` (**dynamic severity** — `redis_up==0` joined
+  to the criticality label, like `cnpg-instance-not-ready`), `redis-memory-high`/`redis-memory-critical`
+  (%-of-maxmemory; noeviction → writes fail near 100%), `redis-rejected-connections`/`redis-connections-high`
+  (maxclients), `redis-rdb-save-failing`/`redis-aof-write-failing` (persistence), `redis-fragmentation-high`.
 
 **Coverage nuance.** Outage→`critical` is guaranteed for Deployment/StatefulSet/DaemonSet workloads (incl. the
 sample apps and Redis's StatefulSet), for any crashlooping labeled-critical container (incl. CNPG), and for a

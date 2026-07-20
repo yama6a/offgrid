@@ -15,7 +15,10 @@ Regex metachars (`.` in the auto queue names) are escaped so a name matches only
 {{- $user := $cfg.user | default .Release.Name -}}
 {{- $vhost := $cfg.vhost | default "apps" -}}
 {{- $cluster := $cfg.cluster | default dict -}}
-{{- $ctx := dict "user" $user "vhost" $vhost "clusterName" ($cluster.name | default "rabbitmq") "clusterNs" ($cluster.namespace | default "rabbitmq") "ns" .Release.Namespace -}}
+{{- /* Dead-letter (DLQ) config: default ON; `default` can't be used (it swallows an explicit false), so key-check. */ -}}
+{{- $deadLetter := true -}}{{- if hasKey $cfg "deadLetter" }}{{- $deadLetter = $cfg.deadLetter -}}{{- end -}}
+{{- $deliveryLimit := $cfg.deliveryLimit | default 5 -}}
+{{- $ctx := dict "user" $user "vhost" $vhost "clusterName" ($cluster.name | default "rabbitmq") "clusterNs" ($cluster.namespace | default "rabbitmq") "ns" .Release.Namespace "deadLetter" $deadLetter "deliveryLimit" $deliveryLimit -}}
 {{- $writeSet := list -}}
 {{- $readSet := list -}}
 ---
@@ -33,18 +36,24 @@ Regex metachars (`.` in the auto queue names) are escaped so a name matches only
 ---
 {{ include "rabbitmq-topology.exchange" (dict "ctx" $ctx "name" $c.name "type" "direct") }}
 ---
-{{ include "rabbitmq-topology.queue" (dict "ctx" $ctx "name" $c.name) }}
+{{ include "rabbitmq-topology.queue" (dict "ctx" $ctx "name" $c.name "dlx" (ternary (printf "%s.dlx" $c.name) "" $ctx.deadLetter) "deliveryLimit" $ctx.deliveryLimit) }}
 ---
 {{ include "rabbitmq-topology.binding" (dict "ctx" $ctx "source" $c.name "destination" $c.name "routingKey" ($c.routingKey | default $c.name)) }}
+{{- if $ctx.deadLetter }}
+{{ include "rabbitmq-topology.deadletter" (dict "ctx" $ctx "queue" $c.name) }}
+{{- end }}
 {{- $readSet = append $readSet $c.name }}
 {{- end }}
 {{- range $s := ($cfg.subscribeEvents | default list) }}
 {{- if not $s.exchange }}{{ fail "rabbitmq-topology: every subscribeEvents entry needs an exchange (the event topic to subscribe to; its owner declares it)" }}{{ end }}
 {{- $qname := printf "%s.%s" $user $s.exchange }}
 ---
-{{ include "rabbitmq-topology.queue" (dict "ctx" $ctx "name" $qname) }}
+{{ include "rabbitmq-topology.queue" (dict "ctx" $ctx "name" $qname "dlx" (ternary (printf "%s.dlx" $qname) "" $ctx.deadLetter) "deliveryLimit" $ctx.deliveryLimit) }}
 ---
 {{ include "rabbitmq-topology.binding" (dict "ctx" $ctx "source" $s.exchange "destination" $qname "routingKey" ($s.routingKey | default "#")) }}
+{{- if $ctx.deadLetter }}
+{{ include "rabbitmq-topology.deadletter" (dict "ctx" $ctx "queue" $qname) }}
+{{- end }}
 {{- $readSet = append $readSet $qname }}
 {{- end }}
 {{- range $x := ($cfg.sendCommands | default list) }}

@@ -175,6 +175,20 @@ one node down stalls writes); 1 has no HA. The operator recommends odd counts. T
 `quorum` (`default_queue_type = quorum` in `additionalConfig`), and the topology chart sets `spec.type: quorum`
 explicitly on every queue — classic mirrored queues are gone in RabbitMQ 4.x.
 
+### Dead-letter queues (DLQ)
+Every **consumer** queue a workload owns (each `consumeCommands` + `subscribeEvents` queue) gets a companion
+dead-letter exchange `<queue>.dlx` (fanout) + queue `<queue>.dlq` (quorum), and the source queue is declared
+with `x-dead-letter-exchange: <queue>.dlx` + `x-delivery-limit: 5` (`rabbitmq-topology`'s `deadLetter` /
+`deliveryLimit` knobs, default on). So a **poison message** — one a consumer repeatedly fails to process — is
+routed to its DLQ after 5 delivery attempts instead of being silently dropped (`at-most-once`, RabbitMQ's
+default strategy). DLQs are **holding queues**: nothing consumes them; you alert on their depth
+(`rabbitmq-dlq-not-empty`, see [09_monitoring.md](09_monitoring.md)) and drain/replay by hand. The DLX/DLQ are
+admin-operator-declared like the rest of the topology, so the **app user gets no extra permission** (the broker
+dead-letters internally; the app never publishes to the DLX or consumes the DLQ). Rendered by
+`templates/_deadletter.tpl`; the DLQ itself carries no `x-dead-letter-exchange` (no loop). Set `deadLetter:
+false` to opt a workload out. **Because queue arguments are immutable (see Caveats), turning this on for a queue
+that already exists requires deleting that queue once so the operator redeclares it with the args.**
+
 ### Storage: node-local, disposable (not Longhorn)
 Per-broker volumes on the node-local `local-path-ephemeral` class, **not** Longhorn. Quorum queues already
 replicate every message across the 3 brokers (Raft) and fsync locally, so HA and durability live in the app;
@@ -263,8 +277,11 @@ Checks (`export KUBECONFIG=secrets/kubeconfig`):
   generated credentials, AND real publish/consume are all validated — tail the three deployments' logs to
   watch the loop, and note `users.deleted` reaches no consumer (topic routing) while every audit message
   reaches both subscribers (fanout).
-- **A queue's properties are immutable once declared.** Changing a queue's `type`/`durable` means deleting and
-  re-creating the `Queue` CR (the operator won't mutate a live queue). Plan queue names up front.
+- **A queue's properties are immutable once declared.** Changing a queue's `type`/`durable`/`arguments` means
+  deleting and re-creating the `Queue` CR (the operator won't mutate a live queue). Plan queue names up front.
+  This is why **enabling the DLQ pattern (above) on queues that already exist needs a one-time delete** of the
+  affected queues (they're recreated with the dead-letter arguments) — e.g. delete them in the management UI,
+  or delete + re-sync the `Queue` CRs; the sample-workload queues are empty so nothing is lost.
 - **Editing the generated credentials Secret does nothing.** The operator doesn't watch it; to rotate, add a
   label/annotation to the `User` CR to force reconciliation (or re-create it).
 - **Never emit empty `Permission` fields (they cause permanent OutOfSync).** RabbitMQ treats a missing

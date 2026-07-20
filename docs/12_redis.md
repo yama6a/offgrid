@@ -251,6 +251,14 @@ operator-created Service (`app: <name>, redis_setup_type: standalone, role: stan
 VM operator auto-converts it to a `VMServiceScrape` and vmagent discovers it cluster-wide (`selectAllByDefault`), so
 it wires into VictoriaMetrics with no extra config (CRDs exist from wave 0). See [09_monitoring.md](09_monitoring.md).
 
+Those `redis_*` metrics feed the **`redis-health`** Grafana alert group (`05_grafana/files/alerts/redis-health.yaml`):
+`redis-down` (dynamic severity — `critical` for an `alertCritical` instance, warning otherwise), memory
+vs `maxmemory` (warning >90% / critical >98% — noeviction means writes *fail* near the cap, they don't evict),
+rejected/near-`maxclients` connections, RDB/AOF last-save failures, and fragmentation. This is separate from the
+two backup-*job* alerts (`redis-backup-failed`/`-stale`) in the `backups` group. A crashlooping/down instance is
+*also* caught by the platform `container-waiting-fatal` / `statefulset-not-available` outage rules (same
+`alert-criticality` label). See [09_monitoring.md](09_monitoring.md).
+
 **arm64 exporter caveat.** The OpsTree `redis` chart's default exporter tag (`quay.io/opstree/redis-exporter`)
 is **amd64-only** and will not run on the Pi 5. The `redis-instance` chart pins a recent multi-arch tag instead;
 verify arm64 (quay v2 manifest-list API) before bumping. The redis + operator images are multi-arch.

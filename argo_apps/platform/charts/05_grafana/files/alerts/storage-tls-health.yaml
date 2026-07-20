@@ -72,71 +72,9 @@ groups:
               conditions:
                 - type: query
                   evaluator: {type: gt, params: [0]}
-      # Longhorn robustness: 0=unknown 1=healthy 2=degraded 3=faulted.
-      - uid: longhorn-volume-degraded
-        title: Longhorn volume degraded
-        condition: C
-        for: 10m
-        labels: {severity: warning}
-        annotations:
-          summary: 'Longhorn volume {{ $labels.volume }} (pvc {{ $labels.pvc }}) is degraded'
-        noDataState: OK
-        execErrState: Error
-        data:
-          - refId: A
-            relativeTimeRange: {from: 600, to: 0}
-            datasourceUid: VictoriaMetrics
-            model:
-              refId: A
-              instant: true
-              expr: 'longhorn_volume_robustness == 2'
-          - refId: B
-            relativeTimeRange: {from: 600, to: 0}
-            datasourceUid: __expr__
-            model: {refId: B, type: reduce, expression: A, reducer: last, datasource: {type: __expr__, uid: __expr__}}
-          - refId: C
-            relativeTimeRange: {from: 600, to: 0}
-            datasourceUid: __expr__
-            model:
-              refId: C
-              type: threshold
-              expression: B
-              datasource: {type: __expr__, uid: __expr__}
-              conditions:
-                - type: query
-                  evaluator: {type: gt, params: [0]}
-      - uid: longhorn-volume-faulted
-        title: Longhorn volume faulted
-        condition: C
-        for: 1m
-        labels: {severity: warning}
-        annotations:
-          summary: 'Longhorn volume {{ $labels.volume }} (pvc {{ $labels.pvc }}) is FAULTED (data at risk)'
-        noDataState: OK
-        execErrState: Error
-        data:
-          - refId: A
-            relativeTimeRange: {from: 600, to: 0}
-            datasourceUid: VictoriaMetrics
-            model:
-              refId: A
-              instant: true
-              expr: 'longhorn_volume_robustness == 3'
-          - refId: B
-            relativeTimeRange: {from: 600, to: 0}
-            datasourceUid: __expr__
-            model: {refId: B, type: reduce, expression: A, reducer: last, datasource: {type: __expr__, uid: __expr__}}
-          - refId: C
-            relativeTimeRange: {from: 600, to: 0}
-            datasourceUid: __expr__
-            model:
-              refId: C
-              type: threshold
-              expression: B
-              datasource: {type: __expr__, uid: __expr__}
-              conditions:
-                - type: query
-                  evaluator: {type: gt, params: [0]}
+      # NOTE: longhorn-volume-degraded / -faulted MOVED to files/alerts/longhorn-health.yaml (all Longhorn health
+      # in one group) — and FIXED there: longhorn_volume_robustness is state-labelled on this version, so the old
+      # `== 2`/`== 3` never matched. See 09_monitoring.md.
       - uid: pv-errors
         title: PersistentVolume in error state
         condition: C

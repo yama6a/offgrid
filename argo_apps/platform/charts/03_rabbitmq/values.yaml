@@ -96,3 +96,14 @@ storage:
 # The one shared vhost every workload's users/exchanges/queues live in (kept separate from the default `/`,
 # which stays admin-only). The rabbitmq-topology chart defaults `vhost` to this name — keep them in sync.
 vhost: apps
+
+# ---- broker metrics scrape ----
+# The broker exposes Prometheus on :15692 (the `-management` image; the netpol already allows vmagent). This
+# renders a PodMonitor (templates/podmonitor.yaml; VM operator -> VMPodScrape) that scrapes EACH broker pod on
+# TWO endpoints: /metrics (aggregated node/cluster health) and /metrics/detailed (per-queue depth + consumer
+# count — the aggregated endpoint has NO `queue` label, so the queue/DLQ alerts need the detailed one). Scraped
+# per-pod, NOT via the LB `rabbitmq` Service: detailed per-queue metrics are only reported by the node hosting
+# each queue's leader. Without this the broker's rabbitmq_* metrics never reach VictoriaMetrics. See 09_monitoring.md.
+metrics:
+  podMonitor:
+    enabled: true

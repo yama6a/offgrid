@@ -18,6 +18,18 @@ vhost: apps
 # name at render time. The operator generates its credentials into Secret `<user>-user-credentials`.
 user: ""
 
+# ---- Dead-letter (DLQ) ----
+# Every CONSUMER queue this workload owns (each consumeCommands + subscribeEvents queue) gets a companion
+# dead-letter exchange `<queue>.dlx` (fanout) + queue `<queue>.dlq` (quorum), and the source queue is declared
+# with x-dead-letter-exchange + x-delivery-limit: after `deliveryLimit` failed redeliveries a poison message is
+# routed to its DLQ instead of being silently dropped (at-most-once — the RabbitMQ default). DLQs are holding
+# queues, nothing consumes them; you alert on their depth (see the rabbitmq-dlq-not-empty alert / 09_monitoring.md)
+# and drain/replay by hand. Set `deadLetter: false` to opt a workload out.
+# NOTE: queue arguments are IMMUTABLE in RabbitMQ — turning this on for an EXISTING queue needs that queue
+# recreated (delete it once; the operator redeclares it with the args). See 11_messaging.md.
+deadLetter: true
+deliveryLimit: 5
+
 # ---- EVENT topics this workload OWNS + publishes to (1 publisher : N consumers) ----
 # Each entry declares an Exchange this workload owns and grants this workload write on it. Consumers of these
 # events declare their own queues via `subscribeEvents` (below), each readable only by their own user.

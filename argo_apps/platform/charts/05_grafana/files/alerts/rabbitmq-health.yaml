@@ -1,0 +1,374 @@
+apiVersion: 1
+groups:
+  # RabbitMQ broker (node/cluster) health — from the aggregated /metrics endpoint (03_rabbitmq PodMonitor).
+  # Static severities: the broker is shared critical-platform infra, not a per-workload criticality-labelled thing.
+  # memory/disk *alarms* mean the broker has ALREADY blocked publishers -> critical. See 09_monitoring.md.
+  - orgId: 1
+    name: rabbitmq-cluster
+    folder: raspi-cluster
+    interval: 1m
+    rules:
+      - uid: rabbitmq-cluster-down
+        title: RabbitMQ cluster down
+        condition: C
+        for: 5m
+        labels: {severity: critical}
+        annotations:
+          summary: 'RabbitMQ broker has no reachable nodes (metrics absent)'
+        noDataState: OK
+        execErrState: Error
+        data:
+          - refId: A
+            relativeTimeRange: {from: 600, to: 0}
+            datasourceUid: VictoriaMetrics
+            model:
+              refId: A
+              instant: true
+              expr: 'absent(rabbitmq_identity_info)'
+          - refId: B
+            relativeTimeRange: {from: 600, to: 0}
+            datasourceUid: __expr__
+            model: {refId: B, type: reduce, expression: A, reducer: last, datasource: {type: __expr__, uid: __expr__}}
+          - refId: C
+            relativeTimeRange: {from: 600, to: 0}
+            datasourceUid: __expr__
+            model:
+              refId: C
+              type: threshold
+              expression: B
+              datasource: {type: __expr__, uid: __expr__}
+              conditions:
+                - type: query
+                  evaluator: {type: gt, params: [0]}
+      - uid: rabbitmq-quorum-at-risk
+        title: RabbitMQ quorum at risk
+        condition: C
+        for: 2m
+        labels: {severity: critical}
+        annotations:
+          summary: 'RabbitMQ has fewer than 2 nodes up — quorum queues lose their majority'
+        noDataState: OK
+        execErrState: Error
+        data:
+          - refId: A
+            relativeTimeRange: {from: 600, to: 0}
+            datasourceUid: VictoriaMetrics
+            model:
+              refId: A
+              instant: true
+              expr: 'count(rabbitmq_identity_info)'
+          - refId: B
+            relativeTimeRange: {from: 600, to: 0}
+            datasourceUid: __expr__
+            model: {refId: B, type: reduce, expression: A, reducer: last, datasource: {type: __expr__, uid: __expr__}}
+          - refId: C
+            relativeTimeRange: {from: 600, to: 0}
+            datasourceUid: __expr__
+            model:
+              refId: C
+              type: threshold
+              expression: B
+              datasource: {type: __expr__, uid: __expr__}
+              conditions:
+                - type: query
+                  evaluator: {type: lt, params: [2]}
+      - uid: rabbitmq-node-down
+        title: RabbitMQ node down
+        condition: C
+        for: 5m
+        labels: {severity: warning}
+        annotations:
+          summary: 'RabbitMQ has fewer than 3 nodes up (a broker node is down)'
+        noDataState: OK
+        execErrState: Error
+        data:
+          - refId: A
+            relativeTimeRange: {from: 600, to: 0}
+            datasourceUid: VictoriaMetrics
+            model:
+              refId: A
+              instant: true
+              expr: 'count(rabbitmq_identity_info)'
+          - refId: B
+            relativeTimeRange: {from: 600, to: 0}
+            datasourceUid: __expr__
+            model: {refId: B, type: reduce, expression: A, reducer: last, datasource: {type: __expr__, uid: __expr__}}
+          - refId: C
+            relativeTimeRange: {from: 600, to: 0}
+            datasourceUid: __expr__
+            model:
+              refId: C
+              type: threshold
+              expression: B
+              datasource: {type: __expr__, uid: __expr__}
+              conditions:
+                - type: query
+                  evaluator: {type: lt, params: [3]}
+      - uid: rabbitmq-memory-alarm
+        title: RabbitMQ memory alarm (publishers blocked)
+        condition: C
+        for: 1m
+        labels: {severity: critical}
+        annotations:
+          summary: 'RabbitMQ memory high-watermark alarm active on a node — publishers are blocked'
+        noDataState: OK
+        execErrState: Error
+        data:
+          - refId: A
+            relativeTimeRange: {from: 600, to: 0}
+            datasourceUid: VictoriaMetrics
+            model:
+              refId: A
+              instant: true
+              expr: 'max(rabbitmq_alarms_memory_used_watermark)'
+          - refId: B
+            relativeTimeRange: {from: 600, to: 0}
+            datasourceUid: __expr__
+            model: {refId: B, type: reduce, expression: A, reducer: last, datasource: {type: __expr__, uid: __expr__}}
+          - refId: C
+            relativeTimeRange: {from: 600, to: 0}
+            datasourceUid: __expr__
+            model:
+              refId: C
+              type: threshold
+              expression: B
+              datasource: {type: __expr__, uid: __expr__}
+              conditions:
+                - type: query
+                  evaluator: {type: gt, params: [0]}
+      - uid: rabbitmq-disk-alarm
+        title: RabbitMQ disk alarm (publishers blocked)
+        condition: C
+        for: 1m
+        labels: {severity: critical}
+        annotations:
+          summary: 'RabbitMQ free-disk alarm active on a node — publishers are blocked'
+        noDataState: OK
+        execErrState: Error
+        data:
+          - refId: A
+            relativeTimeRange: {from: 600, to: 0}
+            datasourceUid: VictoriaMetrics
+            model:
+              refId: A
+              instant: true
+              expr: 'max(rabbitmq_alarms_free_disk_space_watermark)'
+          - refId: B
+            relativeTimeRange: {from: 600, to: 0}
+            datasourceUid: __expr__
+            model: {refId: B, type: reduce, expression: A, reducer: last, datasource: {type: __expr__, uid: __expr__}}
+          - refId: C
+            relativeTimeRange: {from: 600, to: 0}
+            datasourceUid: __expr__
+            model:
+              refId: C
+              type: threshold
+              expression: B
+              datasource: {type: __expr__, uid: __expr__}
+              conditions:
+                - type: query
+                  evaluator: {type: gt, params: [0]}
+      # Early warning before the disk alarm blocks publishers: lowest node's free disk < 2x the alarm limit.
+      - uid: rabbitmq-disk-low
+        title: RabbitMQ free disk low
+        condition: C
+        for: 10m
+        labels: {severity: warning}
+        annotations:
+          summary: 'RabbitMQ free disk on a node is approaching the alarm watermark'
+        noDataState: OK
+        execErrState: Error
+        data:
+          - refId: A
+            relativeTimeRange: {from: 600, to: 0}
+            datasourceUid: VictoriaMetrics
+            model:
+              refId: A
+              instant: true
+              expr: 'min(rabbitmq_disk_space_available_bytes) < bool (min(rabbitmq_disk_space_available_limit_bytes) * 2)'
+          - refId: B
+            relativeTimeRange: {from: 600, to: 0}
+            datasourceUid: __expr__
+            model: {refId: B, type: reduce, expression: A, reducer: last, datasource: {type: __expr__, uid: __expr__}}
+          - refId: C
+            relativeTimeRange: {from: 600, to: 0}
+            datasourceUid: __expr__
+            model:
+              refId: C
+              type: threshold
+              expression: B
+              datasource: {type: __expr__, uid: __expr__}
+              conditions:
+                - type: query
+                  evaluator: {type: gt, params: [0]}
+  # Per-queue health — from /metrics/detailed (rabbitmq_detailed_queue_*). DLQs (queue name ~ ".dlq") are
+  # excluded from the consumer/backlog rules (they're intentionally unconsumed holding queues). Backlog/unacked
+  # thresholds (100) are homelab defaults — tune to real traffic. See 09_monitoring.md.
+  - orgId: 1
+    name: rabbitmq-queues
+    folder: raspi-cluster
+    interval: 1m
+    rules:
+      - uid: rabbitmq-queue-no-consumer
+        title: RabbitMQ queue has no consumer
+        condition: C
+        for: 5m
+        labels: {severity: warning}
+        annotations:
+          summary: 'RabbitMQ queue {{ $labels.queue }} (vhost {{ $labels.vhost }}) has no consumers — messages will pile up silently'
+        noDataState: OK
+        execErrState: Error
+        data:
+          - refId: A
+            relativeTimeRange: {from: 600, to: 0}
+            datasourceUid: VictoriaMetrics
+            model:
+              refId: A
+              instant: true
+              expr: 'rabbitmq_detailed_queue_consumers{queue!~".+\\.dlq"} == bool 0'
+          - refId: B
+            relativeTimeRange: {from: 600, to: 0}
+            datasourceUid: __expr__
+            model: {refId: B, type: reduce, expression: A, reducer: last, datasource: {type: __expr__, uid: __expr__}}
+          - refId: C
+            relativeTimeRange: {from: 600, to: 0}
+            datasourceUid: __expr__
+            model:
+              refId: C
+              type: threshold
+              expression: B
+              datasource: {type: __expr__, uid: __expr__}
+              conditions:
+                - type: query
+                  evaluator: {type: gt, params: [0]}
+      - uid: rabbitmq-queue-backlog
+        title: RabbitMQ queue backlog
+        condition: C
+        for: 10m
+        labels: {severity: warning}
+        annotations:
+          summary: 'RabbitMQ queue {{ $labels.queue }} has >100 ready messages (consumers falling behind)'
+        noDataState: OK
+        execErrState: Error
+        data:
+          - refId: A
+            relativeTimeRange: {from: 600, to: 0}
+            datasourceUid: VictoriaMetrics
+            model:
+              refId: A
+              instant: true
+              expr: 'rabbitmq_detailed_queue_messages_ready{queue!~".+\\.dlq"}'
+          - refId: B
+            relativeTimeRange: {from: 600, to: 0}
+            datasourceUid: __expr__
+            model: {refId: B, type: reduce, expression: A, reducer: last, datasource: {type: __expr__, uid: __expr__}}
+          - refId: C
+            relativeTimeRange: {from: 600, to: 0}
+            datasourceUid: __expr__
+            model:
+              refId: C
+              type: threshold
+              expression: B
+              datasource: {type: __expr__, uid: __expr__}
+              conditions:
+                - type: query
+                  evaluator: {type: gt, params: [100]}
+      - uid: rabbitmq-queue-unacked
+        title: RabbitMQ queue unacked backlog
+        condition: C
+        for: 10m
+        labels: {severity: warning}
+        annotations:
+          summary: 'RabbitMQ queue {{ $labels.queue }} has >100 unacked messages (consumers accepting but not acking)'
+        noDataState: OK
+        execErrState: Error
+        data:
+          - refId: A
+            relativeTimeRange: {from: 600, to: 0}
+            datasourceUid: VictoriaMetrics
+            model:
+              refId: A
+              instant: true
+              expr: 'rabbitmq_detailed_queue_messages_unacked{queue!~".+\\.dlq"}'
+          - refId: B
+            relativeTimeRange: {from: 600, to: 0}
+            datasourceUid: __expr__
+            model: {refId: B, type: reduce, expression: A, reducer: last, datasource: {type: __expr__, uid: __expr__}}
+          - refId: C
+            relativeTimeRange: {from: 600, to: 0}
+            datasourceUid: __expr__
+            model:
+              refId: C
+              type: threshold
+              expression: B
+              datasource: {type: __expr__, uid: __expr__}
+              conditions:
+                - type: query
+                  evaluator: {type: gt, params: [100]}
+      # A DLQ holding any message = poison/undeliverable messages captured; investigate + replay/drop.
+      - uid: rabbitmq-dlq-not-empty
+        title: RabbitMQ DLQ not empty
+        condition: C
+        for: 5m
+        labels: {severity: warning}
+        annotations:
+          summary: 'RabbitMQ dead-letter queue {{ $labels.queue }} has messages — a flow is failing'
+        noDataState: OK
+        execErrState: Error
+        data:
+          - refId: A
+            relativeTimeRange: {from: 600, to: 0}
+            datasourceUid: VictoriaMetrics
+            model:
+              refId: A
+              instant: true
+              expr: 'rabbitmq_detailed_queue_messages{queue=~".+\\.dlq"}'
+          - refId: B
+            relativeTimeRange: {from: 600, to: 0}
+            datasourceUid: __expr__
+            model: {refId: B, type: reduce, expression: A, reducer: last, datasource: {type: __expr__, uid: __expr__}}
+          - refId: C
+            relativeTimeRange: {from: 600, to: 0}
+            datasourceUid: __expr__
+            model:
+              refId: C
+              type: threshold
+              expression: B
+              datasource: {type: __expr__, uid: __expr__}
+              conditions:
+                - type: query
+                  evaluator: {type: gt, params: [0]}
+      # Cluster-wide "messages are being dead-lettered" (delivery-limit exceeded) — catches drops even after a
+      # DLQ is drained, and dead-lettering on queues without a DLX. Complements rabbitmq-dlq-not-empty.
+      - uid: rabbitmq-dead-letter-rate
+        title: RabbitMQ dead-lettering messages
+        condition: C
+        for: 10m
+        labels: {severity: warning}
+        annotations:
+          summary: 'RabbitMQ is dead-lettering messages (delivery-limit exceeded) — consumers are failing repeatedly'
+        noDataState: OK
+        execErrState: Error
+        data:
+          - refId: A
+            relativeTimeRange: {from: 600, to: 0}
+            datasourceUid: VictoriaMetrics
+            model:
+              refId: A
+              instant: true
+              expr: 'sum(rate(rabbitmq_global_messages_dead_lettered_delivery_limit_total[10m]))'
+          - refId: B
+            relativeTimeRange: {from: 600, to: 0}
+            datasourceUid: __expr__
+            model: {refId: B, type: reduce, expression: A, reducer: last, datasource: {type: __expr__, uid: __expr__}}
+          - refId: C
+            relativeTimeRange: {from: 600, to: 0}
+            datasourceUid: __expr__
+            model:
+              refId: C
+              type: threshold
+              expression: B
+              datasource: {type: __expr__, uid: __expr__}
+              conditions:
+                - type: query
+                  evaluator: {type: gt, params: [0]}

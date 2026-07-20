@@ -1,0 +1,244 @@
+apiVersion: 1
+groups:
+  # Longhorn distributed-storage health (longhorn-manager metrics; 02_longhorn serviceMonitor). Static
+  # severities — Longhorn is shared critical-platform storage. NOTE: longhorn_volume_robustness on this version
+  # is a per-STATE metric ({state="healthy|degraded|faulted|unknown"} = 1 for the current state), NOT a numeric
+  # 0-3 gauge — hence the `{state="..."}` selectors (the old `== 2`/`== 3` rules never matched). See 09_monitoring.md.
+  - orgId: 1
+    name: longhorn-health
+    folder: raspi-cluster
+    interval: 1m
+    rules:
+      # Dead-man's switch: if the longhorn-manager feed stops, every rule below silently goes NoData->OK.
+      - uid: longhorn-manager-down
+        title: Longhorn manager metrics absent
+        condition: C
+        for: 5m
+        labels: {severity: critical}
+        annotations:
+          summary: 'Longhorn is not reporting metrics (manager down or unscraped) — storage health is blind'
+        noDataState: OK
+        execErrState: Error
+        data:
+          - refId: A
+            relativeTimeRange: {from: 600, to: 0}
+            datasourceUid: VictoriaMetrics
+            model:
+              refId: A
+              instant: true
+              expr: 'absent(longhorn_node_count_total)'
+          - refId: B
+            relativeTimeRange: {from: 600, to: 0}
+            datasourceUid: __expr__
+            model: {refId: B, type: reduce, expression: A, reducer: last, datasource: {type: __expr__, uid: __expr__}}
+          - refId: C
+            relativeTimeRange: {from: 600, to: 0}
+            datasourceUid: __expr__
+            model:
+              refId: C
+              type: threshold
+              expression: B
+              datasource: {type: __expr__, uid: __expr__}
+              conditions:
+                - type: query
+                  evaluator: {type: gt, params: [0]}
+      # Longhorn node NotReady (disk mount / kernel modules / multipathd) — warning: the platform node-not-ready
+      # (critical) covers a hard k8s node loss; volume impact surfaces via longhorn-volume-degraded.
+      - uid: longhorn-node-down
+        title: Longhorn node not ready
+        condition: C
+        for: 5m
+        labels: {severity: warning}
+        annotations:
+          summary: 'Longhorn node {{ $labels.node }} is not ready'
+        noDataState: OK
+        execErrState: Error
+        data:
+          - refId: A
+            relativeTimeRange: {from: 600, to: 0}
+            datasourceUid: VictoriaMetrics
+            model:
+              refId: A
+              instant: true
+              expr: 'max by (node) (longhorn_node_status{condition="ready"}) == bool 0'
+          - refId: B
+            relativeTimeRange: {from: 600, to: 0}
+            datasourceUid: __expr__
+            model: {refId: B, type: reduce, expression: A, reducer: last, datasource: {type: __expr__, uid: __expr__}}
+          - refId: C
+            relativeTimeRange: {from: 600, to: 0}
+            datasourceUid: __expr__
+            model:
+              refId: C
+              type: threshold
+              expression: B
+              datasource: {type: __expr__, uid: __expr__}
+              conditions:
+                - type: query
+                  evaluator: {type: gt, params: [0]}
+      # A disk that can't accept new replicas -> future provisioning + post-node-loss rebuilds fail.
+      - uid: longhorn-disk-unschedulable
+        title: Longhorn disk unschedulable
+        condition: C
+        for: 10m
+        labels: {severity: warning}
+        annotations:
+          summary: 'Longhorn disk {{ $labels.disk }} on node {{ $labels.node }} is unschedulable (no room for new replicas)'
+        noDataState: OK
+        execErrState: Error
+        data:
+          - refId: A
+            relativeTimeRange: {from: 600, to: 0}
+            datasourceUid: VictoriaMetrics
+            model:
+              refId: A
+              instant: true
+              expr: 'max by (node, disk) (longhorn_disk_status{condition="schedulable"}) == bool 0'
+          - refId: B
+            relativeTimeRange: {from: 600, to: 0}
+            datasourceUid: __expr__
+            model: {refId: B, type: reduce, expression: A, reducer: last, datasource: {type: __expr__, uid: __expr__}}
+          - refId: C
+            relativeTimeRange: {from: 600, to: 0}
+            datasourceUid: __expr__
+            model:
+              refId: C
+              type: threshold
+              expression: B
+              datasource: {type: __expr__, uid: __expr__}
+              conditions:
+                - type: query
+                  evaluator: {type: gt, params: [0]}
+      # Longhorn's own storage accounting (ties to storageMinimalAvailablePercentage: 15). A full disk blocks
+      # replica rebuild after a node loss. Complements node-disk-space on the raw /var/mnt/longhorn partition.
+      - uid: longhorn-node-storage-high
+        title: Longhorn node storage high
+        condition: C
+        for: 10m
+        labels: {severity: warning}
+        annotations:
+          summary: 'Longhorn storage on node {{ $labels.node }} above 85% used'
+        noDataState: OK
+        execErrState: Error
+        data:
+          - refId: A
+            relativeTimeRange: {from: 600, to: 0}
+            datasourceUid: VictoriaMetrics
+            model:
+              refId: A
+              instant: true
+              expr: '100 * longhorn_node_storage_usage_bytes / longhorn_node_storage_capacity_bytes'
+          - refId: B
+            relativeTimeRange: {from: 600, to: 0}
+            datasourceUid: __expr__
+            model: {refId: B, type: reduce, expression: A, reducer: last, datasource: {type: __expr__, uid: __expr__}}
+          - refId: C
+            relativeTimeRange: {from: 600, to: 0}
+            datasourceUid: __expr__
+            model:
+              refId: C
+              type: threshold
+              expression: B
+              datasource: {type: __expr__, uid: __expr__}
+              conditions:
+                - type: query
+                  evaluator: {type: gt, params: [85]}
+      # Degraded = fewer healthy replicas than desired (still available). state-labelled metric (see group note).
+      - uid: longhorn-volume-degraded
+        title: Longhorn volume degraded
+        condition: C
+        for: 10m
+        labels: {severity: warning}
+        annotations:
+          summary: 'Longhorn volume {{ $labels.volume }} (pvc {{ $labels.pvc_namespace }}/{{ $labels.pvc }}) is degraded'
+        noDataState: OK
+        execErrState: Error
+        data:
+          - refId: A
+            relativeTimeRange: {from: 600, to: 0}
+            datasourceUid: VictoriaMetrics
+            model:
+              refId: A
+              instant: true
+              expr: 'max by (pvc_namespace, pvc, volume) (longhorn_volume_robustness{state="degraded"})'
+          - refId: B
+            relativeTimeRange: {from: 600, to: 0}
+            datasourceUid: __expr__
+            model: {refId: B, type: reduce, expression: A, reducer: last, datasource: {type: __expr__, uid: __expr__}}
+          - refId: C
+            relativeTimeRange: {from: 600, to: 0}
+            datasourceUid: __expr__
+            model:
+              refId: C
+              type: threshold
+              expression: B
+              datasource: {type: __expr__, uid: __expr__}
+              conditions:
+                - type: query
+                  evaluator: {type: gt, params: [0]}
+      # Faulted = zero healthy replicas = data at risk -> critical (bumped from the old broken warning rule).
+      - uid: longhorn-volume-faulted
+        title: Longhorn volume faulted
+        condition: C
+        for: 2m
+        labels: {severity: critical}
+        annotations:
+          summary: 'Longhorn volume {{ $labels.volume }} (pvc {{ $labels.pvc_namespace }}/{{ $labels.pvc }}) is FAULTED (no healthy replicas, data at risk)'
+        noDataState: OK
+        execErrState: Error
+        data:
+          - refId: A
+            relativeTimeRange: {from: 600, to: 0}
+            datasourceUid: VictoriaMetrics
+            model:
+              refId: A
+              instant: true
+              expr: 'max by (pvc_namespace, pvc, volume) (longhorn_volume_robustness{state="faulted"})'
+          - refId: B
+            relativeTimeRange: {from: 600, to: 0}
+            datasourceUid: __expr__
+            model: {refId: B, type: reduce, expression: A, reducer: last, datasource: {type: __expr__, uid: __expr__}}
+          - refId: C
+            relativeTimeRange: {from: 600, to: 0}
+            datasourceUid: __expr__
+            model:
+              refId: C
+              type: threshold
+              expression: B
+              datasource: {type: __expr__, uid: __expr__}
+              conditions:
+                - type: query
+                  evaluator: {type: gt, params: [0]}
+      # Volume approaching its provisioned capacity (writes fail when full).
+      - uid: longhorn-volume-near-full
+        title: Longhorn volume near full
+        condition: C
+        for: 10m
+        labels: {severity: warning}
+        annotations:
+          summary: 'Longhorn volume {{ $labels.volume }} (pvc {{ $labels.pvc_namespace }}/{{ $labels.pvc }}) above 90% of capacity'
+        noDataState: OK
+        execErrState: Error
+        data:
+          - refId: A
+            relativeTimeRange: {from: 600, to: 0}
+            datasourceUid: VictoriaMetrics
+            model:
+              refId: A
+              instant: true
+              expr: '100 * longhorn_volume_actual_size_bytes / longhorn_volume_capacity_bytes'
+          - refId: B
+            relativeTimeRange: {from: 600, to: 0}
+            datasourceUid: __expr__
+            model: {refId: B, type: reduce, expression: A, reducer: last, datasource: {type: __expr__, uid: __expr__}}
+          - refId: C
+            relativeTimeRange: {from: 600, to: 0}
+            datasourceUid: __expr__
+            model:
+              refId: C
+              type: threshold
+              expression: B
+              datasource: {type: __expr__, uid: __expr__}
+              conditions:
+                - type: query
+                  evaluator: {type: gt, params: [90]}

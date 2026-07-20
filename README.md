@@ -281,12 +281,5 @@ Pi 5 Talos image builds on [talos-rpi5/talos-builder](https://github.com/talos-r
 
 - 
 - add alerts for everything!
-  - nodes: down, disk full, ram full, ...
-  - k8s deployments: not ready, crashlooping, not enough replicas, 
-  - k8s pods consistently more resources than requested, has cpu limit set (shouldn't), reached 80% of mem limit, oom killed,
-  - cnpg
-  - redis
-  - longhorn
-  - rabbitmq
   - all platform apps, if they provide metrics and mearuable health
   - check alerting library for more ideas.

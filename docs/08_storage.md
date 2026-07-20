@@ -78,6 +78,11 @@ Longhorn needs privileged Pod Security (Talos enforces `baseline` by default), s
 `managedNamespaceMetadata`. It uses `ServerSideApply` because its CRDs blow the client-side
 last-applied-annotation limit.
 
+`metrics.serviceMonitor.enabled: true` feeds `longhorn_*` to the monitoring stack, driving the `longhorn-health`
+Grafana alerts (manager-down, node NotReady, disk-unschedulable, node-storage >85%, volume degraded/faulted,
+volume near-full) — the storage layer's alerting. See [09_monitoring.md](09_monitoring.md); backup-health alerts
+are in [13_backups.md](13_backups.md).
+
 **Verify:**
 
 ```bash
