@@ -58,8 +58,10 @@ each is, and the constraints that matter:
 - **Kubernetes** (`KUBERNETES_VERSION`) — the pin `03d` passes to `gen config` and `03g` upgrades to. Ceiling =
   the Talos release's own k8s default; raise it only after bumping Talos.
 - **pkgs** (`PKG_VERSION`, `siderolabs/pkgs`) — ships a stock arm64 kernel config (already 4K pages).
-- **Kernel** (`KERNEL_REF`, `raspberrypi/linux` on the current rpi kernel line) — the kernel line is the whole point:
-  it carries the RP1 patches step 04 needs to disable EEE on the NIC.
+- **Kernel** (`KERNEL_REF`, `raspberrypi/linux` `rpi-6.18.y` branch HEAD, pinned as a commit SHA) — the kernel line
+  is the whole point: it carries the RP1 patches step 04 needs to disable EEE on the NIC. Pinned as a SHA, not a
+  `stable_YYYYMMDD` tag, because those tags jump kernel lines (mid-2026 `stable_20260715` was 6.12.95, not 6.18);
+  renovate tracks the branch via git-refs and `03a` hard-fails early if the fetched source isn't 6.18.
 - **Overlay** (`SBCOVERLAY_VERSION`, `talos-rpi5/sbc-raspberrypi5`@`main`) — u-boot + rpi firmware + the Pi 5 boot
   chain; ported to the pinned Talos machinery at build time.
 - **Extensions** (`ISCSI_EXT`, `UTIL_EXT`) — digest-pinned system extensions from the Image Factory.

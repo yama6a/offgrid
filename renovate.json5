@@ -75,6 +75,19 @@
       packageNameTemplate: "https://github.com/talos-rpi5/sbc-raspberrypi5",
       datasourceTemplate: "git-refs",
     },
+    {
+      // raspberrypi/linux kernel pin. Its stable_YYYYMMDD tags track whichever branch is current-stable and DO
+      // jump kernel lines (stable_20260715 landed on rpi-6.12.y = 6.12.95), so we track the rpi-6.18.y BRANCH
+      // HEAD as a commit SHA instead — Renovate can never pick a non-6.18 tag. Same shape as the overlay pin above.
+      customType: "regex",
+      description: "kernel pin: raspberrypi/linux rpi-6.18.y HEAD",
+      managerFilePatterns: ["/^versions\\.env$/"],
+      matchStrings: ["KERNEL_REF=\"(?<currentDigest>[a-f0-9]{40})\""],
+      currentValueTemplate: "rpi-6.18.y",
+      depNameTemplate: "raspberrypi/linux",
+      packageNameTemplate: "https://github.com/raspberrypi/linux",
+      datasourceTemplate: "git-refs",
+    },
   ],
 
   packageRules: [
@@ -105,13 +118,6 @@
       description: "kubernetes tags are v-prefixed",
       matchPackageNames: ["kubernetes/kubernetes"],
       extractVersion: "^v(?<version>.+)$",
-    },
-    {
-      // raspberrypi/linux tags this line as stable_YYYYMMDD (not semver); order them by date and ignore the
-      // repo's other tag shapes. Best-effort — verify the picked tag really is on the rpi-6.18.y line.
-      description: "kernel stable_ tag versioning",
-      matchPackageNames: ["raspberrypi/linux"],
-      versioning: "regex:^stable_(?<major>\\d{4})(?<minor>\\d{2})(?<patch>\\d{2})$",
     },
     {
       // local-path-provisioner ships as VENDORED upstream manifests keyed to values.image.tag — a bump must be

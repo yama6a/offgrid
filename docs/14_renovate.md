@@ -83,3 +83,7 @@ Two things ride in the combined PR that need care before merging:
   (per that chart's README), not a line edit.
 - **VictoriaMetrics charts are grouped**; the CRD chart's app version must match its operator, a human check on
   the grouped PR. See [09_monitoring.md].
+- **The kernel is pinned to a branch-HEAD SHA, not a tag.** raspberrypi/linux `stable_YYYYMMDD` tags jump kernel
+  lines (mid-2026 they moved from `rpi-6.18.y` to `rpi-6.12.y` = 6.12.95), so `KERNEL_REF` tracks the `rpi-6.18.y`
+  branch HEAD via a `git-refs` custom manager (like `SBCOVERLAY_VERSION`); a tag-based manager would silently cross
+  onto the 6.12 line. `03a` reads the fetched tree's `Makefile` and hard-fails if it isn't 6.18.

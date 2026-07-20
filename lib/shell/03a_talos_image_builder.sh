@@ -103,7 +103,12 @@ say "REBASE 1, kernel source -> raspberrypi/linux ${KERNEL_REF} (served locally)
 # once and serve it from a local HTTP server so bldr fetches the exact bytes we hashed.
 SRCDIR="${BUILD_DIR}/srcserve"; mkdir -p "$SRCDIR"
 curl -fL --retry 3 -o "$SRCDIR/linux.tar.gz" \
-  "https://github.com/raspberrypi/linux/archive/refs/tags/${KERNEL_REF}.tar.gz"
+  "https://github.com/raspberrypi/linux/archive/${KERNEL_REF}.tar.gz"   # /archive/<ref>: tag | branch | SHA
+# fail fast: refuse a wrong kernel line BEFORE the multi-minute build. rpi stable_ tags jump branches, so
+# KERNEL_REF tracks rpi-6.18.y (a SHA); assert the archive's own Makefile says 6.18 (top dir is linux-${KERNEL_REF}).
+KMAJMIN=$(tar -xzOf "$SRCDIR/linux.tar.gz" "linux-${KERNEL_REF}/Makefile" 2>/dev/null \
+  | awk -F' *= *' '/^VERSION/{v=$2} /^PATCHLEVEL/{p=$2} END{print v"."p}')
+[ "$KMAJMIN" = "6.18" ] || die "kernel source ${KERNEL_REF} is ${KMAJMIN:-unknown}.x, not 6.18 (KERNEL_REF must track rpi-6.18.y)"
 KSHA256=$(shasum -a 256 "$SRCDIR/linux.tar.gz" | awk '{print $1}')
 KSHA512=$(shasum -a 512 "$SRCDIR/linux.tar.gz" | awk '{print $1}')
 docker rm -f "$SRCSERVER_NAME" >/dev/null 2>&1 || true
