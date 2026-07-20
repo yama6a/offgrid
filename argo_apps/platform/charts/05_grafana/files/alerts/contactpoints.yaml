@@ -17,19 +17,21 @@ contactPoints:
             # `.CommonAnnotations` — the latter is empty whenever grouped alerts differ. Paired with policies.yaml
             # `group_by: ['...']` each notification is a single resource, so `index .Alerts 0` is that resource;
             # the range over .Alerts is a belt-and-braces fallback if several ever bundle.
-            # Built as a dict + `data.ToJSON` (Grafana ≥11.2 gomplate funcs) so it JSON-escapes the multi-line
+            # Built as a dict + `data.ToJSON` (Grafana ≥12.0 gomplate funcs) so it JSON-escapes the multi-line
             # bullet `description` and any quotes for us — hand-writing the JSON string would break on the newlines.
-            # severity -> ntfy priority (critical=5 / warning=4 / else=3) + a matching tag.
+            # NOTE the `$$` on the Go-template vars: Grafana env-expands contact-point SETTINGS at provision time
+            # (that's how ${GF_NTFY_TOKEN} resolves), so a bare `$sev` gets eaten as an env var — `$$sev` escapes
+            # to a literal `$sev`. severity -> ntfy priority (critical=5 / warning=4 / else=3) + a matching tag.
             template: |
-              {{- $sev := index .CommonLabels "severity" -}}
-              {{- $prio := 3 -}}
-              {{- if eq $sev "critical" }}{{ $prio = 5 }}{{ else if eq $sev "warning" }}{{ $prio = 4 }}{{ end -}}
-              {{- $msg := "" -}}
-              {{- range .Alerts }}{{ $msg = printf "%s%s" $msg .Annotations.description }}{{ end -}}
+              {{- $$sev := index .CommonLabels "severity" -}}
+              {{- $$prio := 3 -}}
+              {{- if eq $$sev "critical" }}{{ $$prio = 5 }}{{ else if eq $$sev "warning" }}{{ $$prio = 4 }}{{ end -}}
+              {{- $$msg := "" -}}
+              {{- range .Alerts }}{{ $$msg = printf "%s%s" $$msg .Annotations.description }}{{ end -}}
               {{ coll.Dict
                    "topic" "cluster-alerts"
                    "title" (printf "%s: %s" (.Status | toUpper) (index .Alerts 0).Annotations.summary)
-                   "message" $msg
-                   "priority" $prio
-                   "tags" (coll.Slice $sev)
+                   "message" $$msg
+                   "priority" $$prio
+                   "tags" (coll.Slice $$sev)
                  | data.ToJSON }}
