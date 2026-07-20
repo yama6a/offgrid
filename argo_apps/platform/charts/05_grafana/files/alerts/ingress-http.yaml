@@ -1,0 +1,175 @@
+apiVersion: 1
+groups:
+  # Ingress HTTP health, PER ROUTE. Envoy's upstream cluster stats are labelled
+  # envoy_cluster_name="httproute/<gw-ns>/<route>/rule/N" — one cluster per HTTPRoute rule, i.e. per instance of
+  # the ingress lib chart — so grouping by envoy_cluster_name gives per-route alerts (filtered to httproute/.+ to
+  # skip Envoy's internal clusters: eg / xds_cluster / prometheus_stats / *_googleapis). Metrics come from the
+  # 01_envoy_gateway proxy PodMonitor; metric names verified against the live /stats/prometheus. Static severity.
+  # Small request-volume floor (>0.05 rq/s over 5m) keeps error-ratio rules quiet on trivial traffic. Latency is
+  # envoy_cluster_upstream_rq_time in MILLISECONDS. See 09_monitoring.md / 07_ingress.md.
+  - orgId: 1
+    name: ingress-http
+    folder: raspi-cluster
+    interval: 1m
+    rules:
+      - uid: ingress-5xx-high
+        title: Ingress route 5xx rate high
+        condition: C
+        for: 5m
+        labels: {severity: warning}
+        annotations:
+          summary: 'Ingress route {{ $labels.envoy_cluster_name }} is returning >2% 5xx'
+        noDataState: OK
+        execErrState: Error
+        data:
+          - refId: A
+            relativeTimeRange: {from: 600, to: 0}
+            datasourceUid: VictoriaMetrics
+            model:
+              refId: A
+              instant: true
+              expr: '100 * sum by (envoy_cluster_name) (rate(envoy_cluster_upstream_rq_xx{envoy_response_code_class="5", envoy_cluster_name=~"httproute/.+"}[5m])) / sum by (envoy_cluster_name) (rate(envoy_cluster_upstream_rq_total{envoy_cluster_name=~"httproute/.+"}[5m])) and sum by (envoy_cluster_name) (rate(envoy_cluster_upstream_rq_total{envoy_cluster_name=~"httproute/.+"}[5m])) > 0.05'
+          - refId: B
+            relativeTimeRange: {from: 600, to: 0}
+            datasourceUid: __expr__
+            model: {refId: B, type: reduce, expression: A, reducer: last, datasource: {type: __expr__, uid: __expr__}}
+          - refId: C
+            relativeTimeRange: {from: 600, to: 0}
+            datasourceUid: __expr__
+            model:
+              refId: C
+              type: threshold
+              expression: B
+              datasource: {type: __expr__, uid: __expr__}
+              conditions:
+                - type: query
+                  evaluator: {type: gt, params: [2]}
+      - uid: ingress-4xx-high
+        title: Ingress route 4xx rate high
+        condition: C
+        for: 10m
+        labels: {severity: warning}
+        annotations:
+          summary: 'Ingress route {{ $labels.envoy_cluster_name }} is returning >25% 4xx'
+        noDataState: OK
+        execErrState: Error
+        data:
+          - refId: A
+            relativeTimeRange: {from: 600, to: 0}
+            datasourceUid: VictoriaMetrics
+            model:
+              refId: A
+              instant: true
+              expr: '100 * sum by (envoy_cluster_name) (rate(envoy_cluster_upstream_rq_xx{envoy_response_code_class="4", envoy_cluster_name=~"httproute/.+"}[5m])) / sum by (envoy_cluster_name) (rate(envoy_cluster_upstream_rq_total{envoy_cluster_name=~"httproute/.+"}[5m])) and sum by (envoy_cluster_name) (rate(envoy_cluster_upstream_rq_total{envoy_cluster_name=~"httproute/.+"}[5m])) > 0.05'
+          - refId: B
+            relativeTimeRange: {from: 600, to: 0}
+            datasourceUid: __expr__
+            model: {refId: B, type: reduce, expression: A, reducer: last, datasource: {type: __expr__, uid: __expr__}}
+          - refId: C
+            relativeTimeRange: {from: 600, to: 0}
+            datasourceUid: __expr__
+            model:
+              refId: C
+              type: threshold
+              expression: B
+              datasource: {type: __expr__, uid: __expr__}
+              conditions:
+                - type: query
+                  evaluator: {type: gt, params: [25]}
+      - uid: ingress-latency-p95-high
+        title: Ingress route p95 latency high
+        condition: C
+        for: 10m
+        labels: {severity: warning}
+        annotations:
+          summary: 'Ingress route {{ $labels.envoy_cluster_name }} p95 upstream latency above 2s'
+        noDataState: OK
+        execErrState: Error
+        data:
+          - refId: A
+            relativeTimeRange: {from: 600, to: 0}
+            datasourceUid: VictoriaMetrics
+            model:
+              refId: A
+              instant: true
+              expr: 'histogram_quantile(0.95, sum by (le, envoy_cluster_name) (rate(envoy_cluster_upstream_rq_time_bucket{envoy_cluster_name=~"httproute/.+"}[5m])))'
+          - refId: B
+            relativeTimeRange: {from: 600, to: 0}
+            datasourceUid: __expr__
+            model: {refId: B, type: reduce, expression: A, reducer: last, datasource: {type: __expr__, uid: __expr__}}
+          - refId: C
+            relativeTimeRange: {from: 600, to: 0}
+            datasourceUid: __expr__
+            model:
+              refId: C
+              type: threshold
+              expression: B
+              datasource: {type: __expr__, uid: __expr__}
+              conditions:
+                - type: query
+                  evaluator: {type: gt, params: [2000]}
+      # 503-cause: a route whose backend has zero healthy hosts (all endpoints down / failing health checks).
+      - uid: ingress-no-healthy-upstream
+        title: Ingress route has no healthy upstream
+        condition: C
+        for: 5m
+        labels: {severity: critical}
+        annotations:
+          summary: 'Ingress route {{ $labels.envoy_cluster_name }} has no healthy upstream hosts'
+        noDataState: OK
+        execErrState: Error
+        data:
+          - refId: A
+            relativeTimeRange: {from: 600, to: 0}
+            datasourceUid: VictoriaMetrics
+            model:
+              refId: A
+              instant: true
+              expr: 'sum by (envoy_cluster_name) (envoy_cluster_membership_healthy{envoy_cluster_name=~"httproute/.+"}) == bool 0 and sum by (envoy_cluster_name) (envoy_cluster_membership_total{envoy_cluster_name=~"httproute/.+"}) > 0'
+          - refId: B
+            relativeTimeRange: {from: 600, to: 0}
+            datasourceUid: __expr__
+            model: {refId: B, type: reduce, expression: A, reducer: last, datasource: {type: __expr__, uid: __expr__}}
+          - refId: C
+            relativeTimeRange: {from: 600, to: 0}
+            datasourceUid: __expr__
+            model:
+              refId: C
+              type: threshold
+              expression: B
+              datasource: {type: __expr__, uid: __expr__}
+              conditions:
+                - type: query
+                  evaluator: {type: gt, params: [0]}
+      - uid: ingress-upstream-connect-failures
+        title: Ingress route upstream connection failures
+        condition: C
+        for: 10m
+        labels: {severity: warning}
+        annotations:
+          summary: 'Ingress route {{ $labels.envoy_cluster_name }} has upstream connection failures'
+        noDataState: OK
+        execErrState: Error
+        data:
+          - refId: A
+            relativeTimeRange: {from: 600, to: 0}
+            datasourceUid: VictoriaMetrics
+            model:
+              refId: A
+              instant: true
+              expr: 'sum by (envoy_cluster_name) (rate(envoy_cluster_upstream_cx_connect_fail{envoy_cluster_name=~"httproute/.+"}[5m]))'
+          - refId: B
+            relativeTimeRange: {from: 600, to: 0}
+            datasourceUid: __expr__
+            model: {refId: B, type: reduce, expression: A, reducer: last, datasource: {type: __expr__, uid: __expr__}}
+          - refId: C
+            relativeTimeRange: {from: 600, to: 0}
+            datasourceUid: __expr__
+            model:
+              refId: C
+              type: threshold
+              expression: B
+              datasource: {type: __expr__, uid: __expr__}
+              conditions:
+                - type: query
+                  evaluator: {type: gt, params: [0]}

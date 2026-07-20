@@ -276,6 +276,7 @@ Pi 5 Talos image builds on [talos-rpi5/talos-builder](https://github.com/talos-r
 - read and shorten all md files.
 - improve then apply comment rules from claude.md to all yaml and other code files.
 - disaster recovery exercise
+- add missing ciliumNetworkPolicy for everything that should have one but that doesn't have one yet. 
 - add something to test in CI so that PRs have at least SOME confidence in not being garbage.
 - proper templates over helm magic and over-populated values files.
 

@@ -44,6 +44,13 @@ envoyProxy:
                 app.kubernetes.io/managed-by: envoy-gateway
             topologyKey: kubernetes.io/hostname
 
+  # Scrape the data-plane proxy pods' Prometheus stats (:19001 `/stats/prometheus`, served by default) via a
+  # PodMonitor (templates/podmonitor.yaml; VM operator -> VMPodScrape). Feeds the per-route `ingress-http` alerts
+  # (05_grafana). Envoy's default cluster stats already carry `envoy_cluster_name="httproute/<ns>/<route>/rule/N"`,
+  # so those alerts are per-HTTPRoute with no extra telemetry config. See 09_monitoring.md / 07_ingress.md.
+  podMonitor:
+    enabled: true
+
 # Everything under `gateway-helm:` is passed to the upstream gateway-helm subchart (key == dep name).
 gateway-helm:
   # Quiet the envoy-gateway CONTROLLER's xDS reconcile INFO logs (this is the control plane, not the

@@ -69,6 +69,14 @@ an orphan still holds it, delete it so LB-IPAM reassigns, e.g.
 - `kubectl -n envoy-gateway-system get pods` -> controller Running; a data-plane `envoy-*` pod
   appears once a Gateway is programmed, its Service EXTERNAL-IP `192.168.100.10`.
 
+### Proxy metrics & per-route HTTP alerts
+The merged proxy serves Prometheus stats on `:19001/stats/prometheus` (on by default — no EnvoyProxy
+`telemetry` config needed). A PodMonitor (`01_envoy_gateway/templates/podmonitor.yaml`, `metrics.podMonitor` knob;
+VM operator → VMPodScrape) scrapes it so `envoy_*` reaches VictoriaMetrics. Envoy's upstream-cluster stats are
+labelled `envoy_cluster_name="httproute/<gw-ns>/<route>/rule/N"` — one cluster per HTTPRoute rule (i.e. per
+ingress-chart instance) — so the `ingress-http` Grafana alerts (5xx/4xx rate, p95 latency, no-healthy-upstream,
+connect failures) are **per route** with no extra config. See [09_monitoring.md](09_monitoring.md).
+
 ## cert-manager
 
 The controller that issues and renews the X.509 certs behind the `:443` listeners, ultimately Let's

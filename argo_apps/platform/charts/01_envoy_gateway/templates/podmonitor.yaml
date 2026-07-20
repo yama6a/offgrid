@@ -1,0 +1,27 @@
+{{- /*
+Scrape the merged data-plane Envoy proxy pods' Prometheus stats (port `metrics`, :19001, path
+`/stats/prometheus` — served by default; no EnvoyProxy telemetry config needed). The VM operator converts this
+PodMonitor to a VMPodScrape; vmagent discovers it cluster-wide. Provides envoy_cluster_upstream_rq_* /
+_rq_time_bucket / membership_* labelled by envoy_cluster_name (= httproute/<gw-ns>/<route>/rule/N), which the
+per-route `ingress-http` alerts (05_grafana) group on. See 09_monitoring.md / 07_ingress.md.
+*/ -}}
+{{- if .Values.envoyProxy.podMonitor.enabled }}
+apiVersion: monitoring.coreos.com/v1
+kind: PodMonitor
+metadata:
+  name: envoy-proxy
+  namespace: {{ .Release.Namespace }}
+  labels:
+    app.kubernetes.io/name: envoy
+    app.kubernetes.io/component: proxy
+spec:
+  selector:
+    matchLabels:
+      app.kubernetes.io/name: envoy
+      app.kubernetes.io/component: proxy
+      app.kubernetes.io/managed-by: envoy-gateway   # the merged data-plane proxy pods only
+  podMetricsEndpoints:
+    - port: metrics                 # :19001 (the proxy's stats listener)
+      path: /stats/prometheus
+      interval: 30s
+{{- end }}

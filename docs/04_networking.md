@@ -85,7 +85,8 @@ Hubble (flow visibility) is on in the chart values: `hubble.enabled`, `relay`, a
   reach vmagent like every other platform scrape (see [09_monitoring.md](09_monitoring.md)).
   `hubble.metrics.dashboards.enabled: true` makes the Cilium chart emit its official Hubble dashboards as
   `grafana_dashboard`-labelled ConfigMaps into `kube-system`; the Grafana sidecar (`searchNamespace: ALL`)
-  imports them with no extra wiring.
+  imports them with no extra wiring. Those same scraped `cilium_*` metrics also drive the `cilium-health`
+  Grafana alert group (agent-down, BPF-map pressure, unreachable nodes); see [09_monitoring.md](09_monitoring.md).
 - **UI.** The `hubble-ui` Service is exposed as `hubble.<domain>` by the platform-ingress app (wave 6) and
   gated by Google SSO — a plain cross-namespace edge into `kube-system`, added to the same `hosts` list and
   `04_google_sso` allowlist as the other platform UIs (see [07_ingress.md](07_ingress.md)). Before it was

@@ -1,0 +1,108 @@
+apiVersion: 1
+groups:
+  # Self-monitoring of the observability stack ("who watches the watchmen"). If vmagent/vmsingle/VL silently
+  # fail, every OTHER alert goes NoData->OK and you're blind. Static severity. The PVCs themselves are also
+  # covered by pvc-nearly-full; these catch the VM/VL-specific failure modes. See 09_monitoring.md.
+  - orgId: 1
+    name: monitoring-health
+    folder: raspi-cluster
+    interval: 1m
+    rules:
+      # vmsingle refuses writes when free disk drops to its reserved limit -> metrics data loss. 3x headroom.
+      - uid: vmsingle-near-read-only
+        title: VictoriaMetrics near read-only (low disk)
+        condition: C
+        for: 10m
+        labels: {severity: critical}
+        annotations:
+          summary: 'vmsingle free disk is approaching the reserved limit — it will stop accepting metrics'
+        noDataState: OK
+        execErrState: Error
+        data:
+          - refId: A
+            relativeTimeRange: {from: 600, to: 0}
+            datasourceUid: VictoriaMetrics
+            model:
+              refId: A
+              instant: true
+              expr: 'vm_free_disk_space_bytes < vm_free_disk_space_limit_bytes * 3'
+          - refId: B
+            relativeTimeRange: {from: 600, to: 0}
+            datasourceUid: __expr__
+            model: {refId: B, type: reduce, expression: A, reducer: last, datasource: {type: __expr__, uid: __expr__}}
+          - refId: C
+            relativeTimeRange: {from: 600, to: 0}
+            datasourceUid: __expr__
+            model:
+              refId: C
+              type: threshold
+              expression: B
+              datasource: {type: __expr__, uid: __expr__}
+              conditions:
+                - type: query
+                  evaluator: {type: gt, params: [0]}
+      # vmagent dropping samples on remote-write to vmsingle = metrics loss (persistent queue full / vmsingle rejecting).
+      - uid: vmagent-dropping-samples
+        title: vmagent dropping samples
+        condition: C
+        for: 10m
+        labels: {severity: warning}
+        annotations:
+          summary: 'vmagent is dropping samples on remote-write — metrics are being lost'
+        noDataState: OK
+        execErrState: Error
+        data:
+          - refId: A
+            relativeTimeRange: {from: 600, to: 0}
+            datasourceUid: VictoriaMetrics
+            model:
+              refId: A
+              instant: true
+              expr: 'sum(rate(vmagent_remotewrite_packets_dropped_total[5m]))'
+          - refId: B
+            relativeTimeRange: {from: 600, to: 0}
+            datasourceUid: __expr__
+            model: {refId: B, type: reduce, expression: A, reducer: last, datasource: {type: __expr__, uid: __expr__}}
+          - refId: C
+            relativeTimeRange: {from: 600, to: 0}
+            datasourceUid: __expr__
+            model:
+              refId: C
+              type: threshold
+              expression: B
+              datasource: {type: __expr__, uid: __expr__}
+              conditions:
+                - type: query
+                  evaluator: {type: gt, params: [0]}
+      - uid: victorialogs-errors
+        title: VictoriaLogs internal errors
+        condition: C
+        for: 10m
+        labels: {severity: warning}
+        annotations:
+          summary: 'VictoriaLogs is reporting internal errors (ingestion/storage)'
+        noDataState: OK
+        execErrState: Error
+        data:
+          - refId: A
+            relativeTimeRange: {from: 600, to: 0}
+            datasourceUid: VictoriaMetrics
+            model:
+              refId: A
+              instant: true
+              expr: 'sum(rate(vl_errors_total[5m]))'
+          - refId: B
+            relativeTimeRange: {from: 600, to: 0}
+            datasourceUid: __expr__
+            model: {refId: B, type: reduce, expression: A, reducer: last, datasource: {type: __expr__, uid: __expr__}}
+          - refId: C
+            relativeTimeRange: {from: 600, to: 0}
+            datasourceUid: __expr__
+            model:
+              refId: C
+              type: threshold
+              expression: B
+              datasource: {type: __expr__, uid: __expr__}
+              conditions:
+                - type: query
+                  evaluator: {type: gt, params: [0]}

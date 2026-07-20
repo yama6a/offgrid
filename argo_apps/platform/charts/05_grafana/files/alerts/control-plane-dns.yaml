@@ -1,0 +1,114 @@
+apiVersion: 1
+groups:
+  # Kubernetes control plane. Static severity. apiserver/kubelet being DOWN is already covered by target-down;
+  # the value-add here is the apiserver server-error RATE. NOTE: kube-scheduler / kube-controller-manager are
+  # NOT scraped on this cluster (the Talos machine-config metrics bind isn't landing → no `up` for them), so
+  # they get no alerts — enable those scrapes first if you want them. See 09_monitoring.md. (etcd intentionally
+  # excluded.)
+  - orgId: 1
+    name: control-plane
+    folder: raspi-cluster
+    interval: 1m
+    rules:
+      - uid: apiserver-error-rate-high
+        title: API server 5xx error rate high
+        condition: C
+        for: 10m
+        labels: {severity: critical}
+        annotations:
+          summary: 'kube-apiserver is returning >5% 5xx responses'
+        noDataState: OK
+        execErrState: Error
+        data:
+          - refId: A
+            relativeTimeRange: {from: 600, to: 0}
+            datasourceUid: VictoriaMetrics
+            model:
+              refId: A
+              instant: true
+              expr: 'sum(rate(apiserver_request_total{code=~"5.."}[5m])) / sum(rate(apiserver_request_total[5m]))'
+          - refId: B
+            relativeTimeRange: {from: 600, to: 0}
+            datasourceUid: __expr__
+            model: {refId: B, type: reduce, expression: A, reducer: last, datasource: {type: __expr__, uid: __expr__}}
+          - refId: C
+            relativeTimeRange: {from: 600, to: 0}
+            datasourceUid: __expr__
+            model:
+              refId: C
+              type: threshold
+              expression: B
+              datasource: {type: __expr__, uid: __expr__}
+              conditions:
+                - type: query
+                  evaluator: {type: gt, params: [0.05]}
+  # CoreDNS — DNS underpins ~everything; failures look like widespread breakage.
+  - orgId: 1
+    name: dns
+    folder: raspi-cluster
+    interval: 1m
+    rules:
+      - uid: coredns-down
+        title: CoreDNS replica down
+        condition: C
+        for: 5m
+        labels: {severity: warning}
+        annotations:
+          summary: 'Fewer than 2 CoreDNS replicas are up'
+        noDataState: OK
+        execErrState: Error
+        data:
+          - refId: A
+            relativeTimeRange: {from: 600, to: 0}
+            datasourceUid: VictoriaMetrics
+            model:
+              refId: A
+              instant: true
+              expr: 'count(up{job="core-dns"} == 1)'
+          - refId: B
+            relativeTimeRange: {from: 600, to: 0}
+            datasourceUid: __expr__
+            model: {refId: B, type: reduce, expression: A, reducer: last, datasource: {type: __expr__, uid: __expr__}}
+          - refId: C
+            relativeTimeRange: {from: 600, to: 0}
+            datasourceUid: __expr__
+            model:
+              refId: C
+              type: threshold
+              expression: B
+              datasource: {type: __expr__, uid: __expr__}
+              conditions:
+                - type: query
+                  evaluator: {type: lt, params: [2]}
+      - uid: coredns-serverfail-rate
+        title: CoreDNS SERVFAIL rate high
+        condition: C
+        for: 10m
+        labels: {severity: warning}
+        annotations:
+          summary: 'CoreDNS is returning >2% SERVFAIL responses'
+        noDataState: OK
+        execErrState: Error
+        data:
+          - refId: A
+            relativeTimeRange: {from: 600, to: 0}
+            datasourceUid: VictoriaMetrics
+            model:
+              refId: A
+              instant: true
+              expr: 'sum(rate(coredns_dns_responses_total{rcode="SERVFAIL"}[5m])) / sum(rate(coredns_dns_responses_total[5m]))'
+          - refId: B
+            relativeTimeRange: {from: 600, to: 0}
+            datasourceUid: __expr__
+            model: {refId: B, type: reduce, expression: A, reducer: last, datasource: {type: __expr__, uid: __expr__}}
+          - refId: C
+            relativeTimeRange: {from: 600, to: 0}
+            datasourceUid: __expr__
+            model:
+              refId: C
+              type: threshold
+              expression: B
+              datasource: {type: __expr__, uid: __expr__}
+              conditions:
+                - type: query
+                  evaluator: {type: gt, params: [0.02]}

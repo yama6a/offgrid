@@ -1,0 +1,76 @@
+apiVersion: 1
+groups:
+  # ArgoCD application health (argocd_app_info from the application-controller). Static severity. A Degraded or
+  # stuck-OutOfSync app means GitOps isn't converging — nothing else self-heals if the delivery engine is stuck.
+  # The controller/repo-server/redis being down is already covered by target-down on the argocd-* jobs.
+  - orgId: 1
+    name: argocd-health
+    folder: raspi-cluster
+    interval: 1m
+    rules:
+      - uid: argocd-app-unhealthy
+        title: ArgoCD application unhealthy
+        condition: C
+        for: 15m
+        labels: {severity: warning}
+        annotations:
+          summary: 'ArgoCD app {{ $labels.name }} is {{ $labels.health_status }}'
+        noDataState: OK
+        execErrState: Error
+        data:
+          - refId: A
+            relativeTimeRange: {from: 600, to: 0}
+            datasourceUid: VictoriaMetrics
+            model:
+              refId: A
+              instant: true
+              expr: 'max by (name, dest_namespace, health_status) (argocd_app_info{health_status=~"Degraded|Missing|Unknown"})'
+          - refId: B
+            relativeTimeRange: {from: 600, to: 0}
+            datasourceUid: __expr__
+            model: {refId: B, type: reduce, expression: A, reducer: last, datasource: {type: __expr__, uid: __expr__}}
+          - refId: C
+            relativeTimeRange: {from: 600, to: 0}
+            datasourceUid: __expr__
+            model:
+              refId: C
+              type: threshold
+              expression: B
+              datasource: {type: __expr__, uid: __expr__}
+              conditions:
+                - type: query
+                  evaluator: {type: gt, params: [0]}
+      # Sustained OutOfSync: auto-sync + unbounded retry should converge quickly, so 30m OutOfSync = genuinely
+      # stuck (bad manifest, failed hook, missing dependency) and needs a human.
+      - uid: argocd-app-out-of-sync
+        title: ArgoCD application stuck OutOfSync
+        condition: C
+        for: 30m
+        labels: {severity: warning}
+        annotations:
+          summary: 'ArgoCD app {{ $labels.name }} has been OutOfSync for >30m'
+        noDataState: OK
+        execErrState: Error
+        data:
+          - refId: A
+            relativeTimeRange: {from: 600, to: 0}
+            datasourceUid: VictoriaMetrics
+            model:
+              refId: A
+              instant: true
+              expr: 'max by (name, dest_namespace) (argocd_app_info{sync_status="OutOfSync"})'
+          - refId: B
+            relativeTimeRange: {from: 600, to: 0}
+            datasourceUid: __expr__
+            model: {refId: B, type: reduce, expression: A, reducer: last, datasource: {type: __expr__, uid: __expr__}}
+          - refId: C
+            relativeTimeRange: {from: 600, to: 0}
+            datasourceUid: __expr__
+            model:
+              refId: C
+              type: threshold
+              expression: B
+              datasource: {type: __expr__, uid: __expr__}
+              conditions:
+                - type: query
+                  evaluator: {type: gt, params: [0]}

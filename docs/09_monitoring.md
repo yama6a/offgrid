@@ -86,7 +86,8 @@ the k8s-stack subchart so it versions/syncs/rolls back independently, no feature
   `workload-anomalies` (the global k8s object alerts — see the severity model below), `storage-tls-health`
   (cert-manager TLS expiry/ready, Longhorn volume degraded/faulted, PV/PVC errors), `backups` (redis + longhorn
   + VM/VL + CNPG backup health), `cnpg-health`, `rabbitmq-cluster` + `rabbitmq-queues`, `redis-health`,
-  `longhorn-health` (see the per-service catalog below), plus a VictoriaLogs error-rate
+  `longhorn-health`, `argocd-health`, `cilium-health`, `control-plane` + `dns`, `monitoring-health`,
+  `ingress-http` (see the per-service catalog below), plus a VictoriaLogs error-rate
   alert. Rules survive restart (provisioned); alert *state* resets on restart (no PVC). (Datasources, by
   contrast, are still provisioned inline in `values.yaml` — the datasources sidecar is OFF.)
 
@@ -156,6 +157,24 @@ statically.
   `longhorn_volume_robustness` is **state-labelled** here (`{state="degraded|faulted|..."}=1`), not a numeric
   0–3 gauge — the degraded/faulted rules were moved here from `storage-tls-health` and fixed (the old
   `== 2`/`== 3` never matched). Backup health stays in `backups` (`longhorn-backup-failed`/`-stale`).
+- **`argocd-health`** (GitOps engine): `argocd-app-unhealthy` (Degraded/Missing 15m), `argocd-app-out-of-sync`
+  (stuck OutOfSync 30m). Component-process down → `target-down` on the `argocd-*` jobs.
+- **`cilium-health`** (CNI): `cilium-agent-down` (<3 agents), `cilium-bpf-map-pressure` (>80%),
+  `cilium-unreachable-nodes`. Agent-down is warning (a hard node loss is `node-not-ready` critical).
+- **`control-plane` + `dns`**: `apiserver-error-rate-high` (critical, >5% 5xx), `coredns-down` (<2 replicas),
+  `coredns-serverfail-rate` (>2%). apiserver/kubelet *down* → `target-down`. **kube-scheduler /
+  kube-controller-manager are NOT scraped** (Talos machine-config metrics bind not landing) → no alerts for
+  them yet; enable those scrapes first.
+- **`monitoring-health`** (self-monitoring): `vmsingle-near-read-only` (critical — free disk near the reserved
+  limit → write refusal), `vmagent-dropping-samples`, `victorialogs-errors`. The observability stack watching
+  itself so a silent failure doesn't blind every other alert.
+- **`ingress-http`** (Envoy, PER ROUTE — grouped by `envoy_cluster_name` = `httproute/<gw-ns>/<route>/rule/N`,
+  one per ingress-chart instance): `ingress-5xx-high` (>2%), `ingress-4xx-high` (>25%),
+  `ingress-latency-p95-high` (>2s), `ingress-no-healthy-upstream` (critical — 503 cause),
+  `ingress-upstream-connect-failures`. Fed by the Envoy proxy PodMonitor added in `01_envoy_gateway`
+  (`:19001/stats/prometheus`, on by default — the previous gap was no scrape, not disabled telemetry). Error
+  rules carry a small request-volume floor. Per-*virtual-host* (downstream) stats would need
+  `enableVirtualHostStats` on the EnvoyProxy — left off; the per-cluster (upstream) stats already give per-route.
 - **`cnpg-health`** (CNPG Postgres): `cnpg-instance-not-ready` (**dynamic severity** — `cnpg_collector_up==0`,
   the CNPG outage signal, joined to the criticality label like the workload-outages rules), plus warnings:
   `cnpg-high-connections-*` (saturation vs `max_connections`), `cnpg-replication-lag-*` (physical lag),

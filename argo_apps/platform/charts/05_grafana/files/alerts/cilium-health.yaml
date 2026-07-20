@@ -1,0 +1,109 @@
+apiVersion: 1
+groups:
+  # Cilium / CNI health. Static severity. Agent-down is warning (a hard node loss already pages node-not-ready
+  # critical; this is the CNI-specific angle: agent gone while the node is up = that node's pods lose networking).
+  # BPF-map pressure and unreachable-nodes are Cilium-only signals with no other coverage. Raw drop-count and
+  # policy-import-errors are omitted (policy-denies are normal drops; the import-errors metric isn't emitted here).
+  - orgId: 1
+    name: cilium-health
+    folder: raspi-cluster
+    interval: 1m
+    rules:
+      - uid: cilium-agent-down
+        title: Cilium agent down
+        condition: C
+        for: 5m
+        labels: {severity: warning}
+        annotations:
+          summary: 'Fewer than 3 Cilium agents are up — a node has lost its CNI dataplane'
+        noDataState: OK
+        execErrState: Error
+        data:
+          - refId: A
+            relativeTimeRange: {from: 600, to: 0}
+            datasourceUid: VictoriaMetrics
+            model:
+              refId: A
+              instant: true
+              expr: 'count(up{job="cilium-agent"} == 1)'
+          - refId: B
+            relativeTimeRange: {from: 600, to: 0}
+            datasourceUid: __expr__
+            model: {refId: B, type: reduce, expression: A, reducer: last, datasource: {type: __expr__, uid: __expr__}}
+          - refId: C
+            relativeTimeRange: {from: 600, to: 0}
+            datasourceUid: __expr__
+            model:
+              refId: C
+              type: threshold
+              expression: B
+              datasource: {type: __expr__, uid: __expr__}
+              conditions:
+                - type: query
+                  evaluator: {type: lt, params: [3]}
+      # A BPF map filling up -> new endpoints / policies / connections start failing. >80% = act before it wedges.
+      - uid: cilium-bpf-map-pressure
+        title: Cilium BPF map pressure high
+        condition: C
+        for: 10m
+        labels: {severity: warning}
+        annotations:
+          summary: 'Cilium BPF map {{ $labels.map_name }} above 80% full'
+        noDataState: OK
+        execErrState: Error
+        data:
+          - refId: A
+            relativeTimeRange: {from: 600, to: 0}
+            datasourceUid: VictoriaMetrics
+            model:
+              refId: A
+              instant: true
+              expr: 'max by (map_name) (cilium_bpf_map_pressure)'
+          - refId: B
+            relativeTimeRange: {from: 600, to: 0}
+            datasourceUid: __expr__
+            model: {refId: B, type: reduce, expression: A, reducer: last, datasource: {type: __expr__, uid: __expr__}}
+          - refId: C
+            relativeTimeRange: {from: 600, to: 0}
+            datasourceUid: __expr__
+            model:
+              refId: C
+              type: threshold
+              expression: B
+              datasource: {type: __expr__, uid: __expr__}
+              conditions:
+                - type: query
+                  evaluator: {type: gt, params: [0.8]}
+      # An agent can't reach peer nodes -> cross-node pod traffic / service routing breaks between them.
+      - uid: cilium-unreachable-nodes
+        title: Cilium unreachable nodes
+        condition: C
+        for: 5m
+        labels: {severity: warning}
+        annotations:
+          summary: 'A Cilium agent reports unreachable peer nodes (cross-node networking degraded)'
+        noDataState: OK
+        execErrState: Error
+        data:
+          - refId: A
+            relativeTimeRange: {from: 600, to: 0}
+            datasourceUid: VictoriaMetrics
+            model:
+              refId: A
+              instant: true
+              expr: 'max(cilium_unreachable_nodes)'
+          - refId: B
+            relativeTimeRange: {from: 600, to: 0}
+            datasourceUid: __expr__
+            model: {refId: B, type: reduce, expression: A, reducer: last, datasource: {type: __expr__, uid: __expr__}}
+          - refId: C
+            relativeTimeRange: {from: 600, to: 0}
+            datasourceUid: __expr__
+            model:
+              refId: C
+              type: threshold
+              expression: B
+              datasource: {type: __expr__, uid: __expr__}
+              conditions:
+                - type: query
+                  evaluator: {type: gt, params: [0]}
