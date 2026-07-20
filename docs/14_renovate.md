@@ -24,9 +24,10 @@ load-bearing (a bug fixed in X, a minimum version, a deprecation, a must-match c
 ## Running it
 
 Self-hosted GitHub Action on a weekly cron + `workflow_dispatch`. **One-time setup:** create a PAT (fine-grained:
-this repo, Contents + Pull requests + Workflows read-write; or classic `repo` + `workflow`) and add it as the [repo
+this repo, Contents + Pull requests + Workflows + Issues read-write; or classic `repo` + `workflow`) and add it as the [repo
 secret](https://github.com/yama6a/offgrid/settings/secrets/actions/new) `RENOVATE_TOKEN`. The built-in
-`GITHUB_TOKEN` can't open PRs that re-trigger workflows and lacks scope, so the dedicated PAT is required. First run:
+`GITHUB_TOKEN` can't open PRs that re-trigger workflows and lacks scope, so the dedicated PAT is required. Issues
+read-write is what lets Renovate create + maintain the dependency-dashboard issue. First run:
 trigger the workflow manually — it populates the dependency-dashboard issue and opens the initial PRs.
 
 ## PR grouping and merge posture
