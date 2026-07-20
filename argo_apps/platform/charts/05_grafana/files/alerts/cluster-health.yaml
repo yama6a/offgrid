@@ -12,6 +12,10 @@ groups:
         labels: {severity: critical}
         annotations:
           summary: 'Node {{ $labels.node }} is NotReady'
+          description: |
+            • kubelet not reporting Ready — pods on {{ $labels.node }} may be evicted/unschedulable
+            • kubectl describe node {{ $labels.node }} → check Conditions + kubelet
+            • Talos node: talosctl -n <ip> dmesg / talosctl -n <ip> health
         noDataState: OK
         execErrState: Error
         data:
@@ -44,6 +48,10 @@ groups:
         labels: {severity: warning}
         annotations:
           summary: 'Node {{ $labels.instance }} memory usage above 90%'
+          description: |
+            • node RAM >90% used — OOM/eviction risk on {{ $labels.instance }}
+            • kubectl top nodes ; kubectl top pods -A --sort-by=memory
+            • shed or right-size the biggest pods, or reduce scheduled load
         noDataState: OK
         execErrState: Error
         data:
@@ -76,6 +84,10 @@ groups:
         labels: {severity: warning}
         annotations:
           summary: 'Node {{ $labels.instance }} CPU above 90%'
+          description: |
+            • sustained CPU saturation on {{ $labels.instance }} — throttling / slow scheduling
+            • kubectl top nodes ; kubectl top pods -A --sort-by=cpu
+            • add CPU limits to the hog, or spread the load across nodes
         noDataState: OK
         execErrState: Error
         data:
@@ -111,6 +123,10 @@ groups:
         labels: {severity: warning}
         annotations:
           summary: 'PVC {{ $labels.namespace }}/{{ $labels.persistentvolumeclaim }} above 85% used'
+          description: |
+            • volume {{ $labels.namespace }}/{{ $labels.persistentvolumeclaim }} >85% full — writes fail at 100%
+            • kubectl -n {{ $labels.namespace }} get pvc {{ $labels.persistentvolumeclaim }}
+            • grow the PVC (Longhorn supports expansion) or clear data on the volume
         noDataState: OK
         execErrState: Error
         data:
@@ -143,6 +159,10 @@ groups:
         labels: {severity: warning}
         annotations:
           summary: 'Target {{ $labels.job }} / {{ $labels.instance }} is down'
+          description: |
+            • scrape target {{ $labels.job }} / {{ $labels.instance }} unreachable — metrics gap or app down
+            • kubectl get pods -A -o wide | grep <app> ; check the ServiceMonitor/endpoint
+            • verify the exporter port is up and CiliumNetworkPolicy allows the scrape
         noDataState: OK
         execErrState: Error
         data:
@@ -178,6 +198,10 @@ groups:
         labels: {severity: warning}
         annotations:
           summary: 'Disk {{ $labels.mountpoint }} on {{ $labels.instance }} above 85% used'
+          description: |
+            • filesystem {{ $labels.mountpoint }} on {{ $labels.instance }} >85% full
+            • talosctl -n {{ $labels.instance }} df ; check /var/mnt/longhorn + localpath usage
+            • prune images/logs or expand the underlying disk
         noDataState: OK
         execErrState: Error
         data:
@@ -211,6 +235,10 @@ groups:
         labels: {severity: warning}
         annotations:
           summary: 'Inodes on {{ $labels.mountpoint }} / {{ $labels.instance }} above 85% used'
+          description: |
+            • inodes on {{ $labels.mountpoint }} ({{ $labels.instance }}) >85% — many small files, bytes may still be free
+            • talosctl -n {{ $labels.instance }} df -i ; find the dir with the file explosion
+            • delete stale small files (caches, tmp, old logs)
         noDataState: OK
         execErrState: Error
         data:
@@ -245,6 +273,10 @@ groups:
         labels: {severity: warning}
         annotations:
           summary: 'Disk {{ $labels.mountpoint }} on {{ $labels.instance }} will fill within 24h at current rate'
+          description: |
+            • predictive: {{ $labels.mountpoint }} on {{ $labels.instance }} trends to 0 free within 24h
+            • find the writer: talosctl -n {{ $labels.instance }} df ; du on the mount
+            • act before full — prune/rotate data or expand the disk
         noDataState: OK
         execErrState: Error
         data:
@@ -279,6 +311,10 @@ groups:
         labels: {severity: warning}
         annotations:
           summary: 'Node {{ $labels.node }} memory requests committed above 80% of allocatable'
+          description: |
+            • pod memory requests on {{ $labels.node }} >80% of allocatable — little room to schedule more
+            • kubectl describe node {{ $labels.node }} → Allocated resources
+            • lower over-sized requests or rebalance pods across nodes
         noDataState: OK
         execErrState: Error
         data:
@@ -312,6 +348,10 @@ groups:
         labels: {severity: warning}
         annotations:
           summary: 'Node {{ $labels.node }} reports {{ $labels.condition }}'
+          description: |
+            • kubelet signals {{ $labels.condition }} on {{ $labels.node }} — evictions imminent
+            • kubectl describe node {{ $labels.node }} → Conditions + recent events
+            • relieve the pressured resource (mem/disk/PIDs) fast
         noDataState: OK
         execErrState: Error
         data:
@@ -346,6 +386,10 @@ groups:
         labels: {severity: warning}
         annotations:
           summary: 'Cluster memory requests exceed capacity minus one node — a node loss would not fit'
+          description: |
+            • no N-1 headroom: losing one of the 3 Pis can't reschedule its pods
+            • kubectl top nodes ; kubectl describe nodes | grep -A5 Allocated
+            • trim memory requests or add capacity to restore single-node tolerance
         noDataState: OK
         execErrState: Error
         data:

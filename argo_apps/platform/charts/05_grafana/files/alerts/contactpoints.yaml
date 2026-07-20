@@ -12,12 +12,24 @@ contactPoints:
           authorization_credentials: ${GF_NTFY_TOKEN}           # sealed write token, env-interpolated; never committed
           maxAlerts: 0                                          # no cap on alerts bundled per notification
           payload:
-            # severity -> ntfy priority (critical=5 / warning=4 / else=3) + a matching tag (ntfy renders known tags as emoji).
+            # title = the firing alert's `summary` (resource-first, names the faulty resource); message = its
+            # `description` (short what's-wrong + how-to-fix bullets). Reads per-alert `.Annotations`, NOT
+            # `.CommonAnnotations` — the latter is empty whenever grouped alerts differ. Paired with policies.yaml
+            # `group_by: ['...']` each notification is a single resource, so `index .Alerts 0` is that resource;
+            # the range over .Alerts is a belt-and-braces fallback if several ever bundle.
+            # Built as a dict + `data.ToJSON` (Grafana ≥11.2 gomplate funcs) so it JSON-escapes the multi-line
+            # bullet `description` and any quotes for us — hand-writing the JSON string would break on the newlines.
+            # severity -> ntfy priority (critical=5 / warning=4 / else=3) + a matching tag.
             template: |
-              {
-                "topic": "cluster-alerts",
-                "title": "{{ .Status | toUpper }}: {{ index .CommonLabels "alertname" }}",
-                "message": "{{ if index .CommonAnnotations "summary" }}{{ index .CommonAnnotations "summary" }}{{ else }}{{ index .CommonLabels "alertname" }}{{ end }}",
-                "priority": {{ if eq (index .CommonLabels "severity") "critical" }}5{{ else if eq (index .CommonLabels "severity") "warning" }}4{{ else }}3{{ end }},
-                "tags": ["{{ index .CommonLabels "severity" }}"]
-              }
+              {{- $sev := index .CommonLabels "severity" -}}
+              {{- $prio := 3 -}}
+              {{- if eq $sev "critical" }}{{ $prio = 5 }}{{ else if eq $sev "warning" }}{{ $prio = 4 }}{{ end -}}
+              {{- $msg := "" -}}
+              {{- range .Alerts }}{{ $msg = printf "%s%s" $msg .Annotations.description }}{{ end -}}
+              {{ coll.Dict
+                   "topic" "cluster-alerts"
+                   "title" (printf "%s: %s" (.Status | toUpper) (index .Alerts 0).Annotations.summary)
+                   "message" $msg
+                   "priority" $prio
+                   "tags" (coll.Slice $sev)
+                 | data.ToJSON }}

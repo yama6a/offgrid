@@ -16,6 +16,10 @@ groups:
         labels: {severity: critical}
         annotations:
           summary: 'vmsingle free disk is approaching the reserved limit — it will stop accepting metrics'
+          description: |
+            • vmsingle free disk near its reserved limit — it will go read-only and drop metrics
+            • check: kubectl -n monitoring get pvc; df on the vmsingle volume
+            • grow the vmsingle PVC or lower retention
         noDataState: OK
         execErrState: Error
         data:
@@ -49,6 +53,10 @@ groups:
         labels: {severity: warning}
         annotations:
           summary: 'vmagent is dropping samples on remote-write — metrics are being lost'
+          description: |
+            • vmagent dropping remote-write samples — usually vmsingle rejecting or queue full
+            • check: kubectl -n monitoring logs deploy/vmagent
+            • verify vmsingle health + free disk
         noDataState: OK
         execErrState: Error
         data:
@@ -81,6 +89,10 @@ groups:
         labels: {severity: warning}
         annotations:
           summary: 'VictoriaLogs is reporting internal errors (ingestion/storage)'
+          description: |
+            • VictoriaLogs hitting internal errors on ingestion/storage
+            • check: kubectl -n monitoring logs deploy/victoria-logs
+            • verify its PVC has free space + is writable
         noDataState: OK
         execErrState: Error
         data:

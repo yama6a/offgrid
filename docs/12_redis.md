@@ -107,6 +107,12 @@ nodes are flaky, so even a cache should survive a node loss), differing only in 
   RDB/AOF rewrite is copied) plus non-dataset overhead (client/AOF buffers, jemalloc fragmentation), so the kernel
   doesn't OOM-kill the pod. Eviction stays the Redis default `noeviction`: at the cap, writes FAIL rather than
   silently dropping data.
+- **Active defrag ON (both modes).** jemalloc never returns freed memory to the allocator, so a high-churn
+  workload (the cache RPUSHes per-UUID audit entries with a 1h TTL — constant allocate/free) leaves `used_memory_rss`
+  inflated and `mem_fragmentation_ratio` climbing. `activedefrag yes` (in `configmap.yaml`, now rendered for every
+  instance) lets Redis compact live. The upstream trigger defaults never fire on a Pi-sized instance
+  (`active-defrag-ignore-bytes 100mb` ≫ a ~77Mi maxmemory), so we lower them: `ignore-bytes 16mb` +
+  `threshold-lower 15%`.
 
 **Size the disk against memory, not the dataset.** `noeviction` lets the keyspace grow to `maxmemory` (≈80% of the
 mem limit), and that whole dataset is persisted (RDB ~1× + AOF up to ~2× during a rewrite), so budget the PVC at
@@ -254,7 +260,11 @@ it wires into VictoriaMetrics with no extra config (CRDs exist from wave 0). See
 Those `redis_*` metrics feed the **`redis-health`** Grafana alert group (`05_grafana/files/alerts/redis-health.yaml`):
 `redis-down` (dynamic severity — `critical` for an `alertCritical` instance, warning otherwise), memory
 vs `maxmemory` (warning >90% / critical >98% — noeviction means writes *fail* near the cap, they don't evict),
-rejected/near-`maxclients` connections, RDB/AOF last-save failures, and fragmentation. This is separate from the
+rejected/near-`maxclients` connections, RDB/AOF last-save failures, and fragmentation. The fragmentation rule is
+gated on the instance being **>50% full** (`redis_memory_used_bytes / redis_memory_max_bytes > 0.5`): on a
+near-empty tiny instance the fixed RSS floor (code pages, jemalloc arenas, buffers) dwarfs the dataset and inflates
+`mem_fragmentation_ratio` past 1.5 with no real fragmentation — the fill floor drops that false positive and scales
+to any instance size. This is separate from the
 two backup-*job* alerts (`redis-backup-failed`/`-stale`) in the `backups` group. A crashlooping/down instance is
 *also* caught by the platform `container-waiting-fatal` / `statefulset-not-available` outage rules (same
 `alert-criticality` label). See [09_monitoring.md](09_monitoring.md).

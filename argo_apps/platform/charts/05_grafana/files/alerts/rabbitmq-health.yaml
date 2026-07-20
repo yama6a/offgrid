@@ -15,6 +15,10 @@ groups:
         labels: {severity: critical}
         annotations:
           summary: 'RabbitMQ broker has no reachable nodes (metrics absent)'
+          description: |
+            • no RabbitMQ node is reporting metrics — the broker is down or unreachable
+            • check the cluster: kubectl -n rabbitmq get rabbitmqcluster,pods
+            • inspect pod events/logs: kubectl -n rabbitmq describe pod <pod>; kubectl -n rabbitmq logs <pod>
         noDataState: OK
         execErrState: Error
         data:
@@ -47,6 +51,10 @@ groups:
         labels: {severity: critical}
         annotations:
           summary: 'RabbitMQ has fewer than 2 nodes up — quorum queues lose their majority'
+          description: |
+            • fewer than 2 broker nodes reporting — quorum queues have lost majority and go read-only
+            • check node/pod state: kubectl -n rabbitmq get rabbitmqcluster,pods -o wide
+            • recover the down pod(s); check its PVC + node scheduling before doing anything drastic
         noDataState: OK
         execErrState: Error
         data:
@@ -79,6 +87,10 @@ groups:
         labels: {severity: warning}
         annotations:
           summary: 'RabbitMQ has fewer than 3 nodes up (a broker node is down)'
+          description: |
+            • a broker node is missing — cluster is running degraded (still has quorum at 2)
+            • check which pod is down: kubectl -n rabbitmq get pods -o wide
+            • inspect the pod's events/logs and its PVC/node; restore full replica count
         noDataState: OK
         execErrState: Error
         data:
@@ -111,6 +123,10 @@ groups:
         labels: {severity: critical}
         annotations:
           summary: 'RabbitMQ memory high-watermark alarm active on a node — publishers are blocked'
+          description: |
+            • a node crossed the memory high-watermark — RabbitMQ has ALREADY blocked all publishers
+            • usual cause: an unconsumed/backlogged queue growing in memory (see the queue backlog/no-consumer alerts)
+            • drain the backlog (restart/scale consumers) or raise memory; check: kubectl -n rabbitmq logs <pod> | grep -i memory
         noDataState: OK
         execErrState: Error
         data:
@@ -143,6 +159,10 @@ groups:
         labels: {severity: critical}
         annotations:
           summary: 'RabbitMQ free-disk alarm active on a node — publishers are blocked'
+          description: |
+            • a node's free disk dropped below the limit — RabbitMQ has ALREADY blocked all publishers
+            • free disk on the node's PVC: drain queue backlog or expand the RabbitMQ PVC
+            • check the underlying Longhorn volume isn't full (see the storage alerts)
         noDataState: OK
         execErrState: Error
         data:
@@ -176,6 +196,10 @@ groups:
         labels: {severity: warning}
         annotations:
           summary: 'RabbitMQ free disk on a node is approaching the alarm watermark'
+          description: |
+            • lowest node's free disk is under 2x the alarm limit — early warning before publishers get blocked
+            • free space or expand the RabbitMQ PVC before it trips the disk alarm
+            • check the backing Longhorn volume usage (see the storage alerts)
         noDataState: OK
         execErrState: Error
         data:
@@ -216,6 +240,10 @@ groups:
         labels: {severity: warning}
         annotations:
           summary: 'RabbitMQ queue {{ $labels.queue }} (vhost {{ $labels.vhost }}) has no consumers — messages will pile up silently'
+          description: |
+            • queue {{ $labels.queue }} (vhost {{ $labels.vhost }}) has zero consumers — messages accumulate until memory/disk alarms
+            • usual cause: the consuming workload is down or crash-looping — check its pods
+            • confirm the consumer's connection: RabbitMQ mgmt UI, or kubectl -n rabbitmq exec <pod> -- rabbitmqctl list_consumers
         noDataState: OK
         execErrState: Error
         data:
@@ -248,6 +276,10 @@ groups:
         labels: {severity: warning}
         annotations:
           summary: 'RabbitMQ queue {{ $labels.queue }} has >100 ready messages (consumers falling behind)'
+          description: |
+            • queue {{ $labels.queue }} has >100 ready (undelivered) messages — consumers can't keep up with publishers
+            • check consumer health/count; scale consumers up if the load is real
+            • if it's a spike, watch it drain; threshold 100 is a homelab default — tune to real traffic
         noDataState: OK
         execErrState: Error
         data:
@@ -280,6 +312,10 @@ groups:
         labels: {severity: warning}
         annotations:
           summary: 'RabbitMQ queue {{ $labels.queue }} has >100 unacked messages (consumers accepting but not acking)'
+          description: |
+            • queue {{ $labels.queue }} has >100 unacked messages — consumers took them but never ack/nack
+            • usual cause: consumer stuck mid-processing, prefetch too high, or ack logic bug
+            • check consumer logs for stuck processing; a consumer restart requeues the unacked
         noDataState: OK
         execErrState: Error
         data:
@@ -313,6 +349,10 @@ groups:
         labels: {severity: warning}
         annotations:
           summary: 'RabbitMQ dead-letter queue {{ $labels.queue }} has messages — a flow is failing'
+          description: |
+            • DLQ {{ $labels.queue }} holds dead-lettered messages — a flow rejected/expired them
+            • inspect the messages (mgmt UI Get messages) to find the failing consumer + cause
+            • fix the consumer, then replay or drop the DLQ contents
         noDataState: OK
         execErrState: Error
         data:
@@ -347,6 +387,10 @@ groups:
         labels: {severity: warning}
         annotations:
           summary: 'RabbitMQ is dead-lettering messages (delivery-limit exceeded) — consumers are failing repeatedly'
+          description: |
+            • messages are being dead-lettered cluster-wide — a consumer keeps nacking past the delivery limit
+            • catches drops even with no DLQ or after a DLQ is drained; find the offending queue in the mgmt UI
+            • fix the consumer's processing error (bad payload, downstream failure) so messages stop redelivering
         noDataState: OK
         execErrState: Error
         data:

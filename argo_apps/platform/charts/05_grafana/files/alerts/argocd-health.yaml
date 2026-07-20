@@ -15,6 +15,10 @@ groups:
         labels: {severity: warning}
         annotations:
           summary: 'ArgoCD app {{ $labels.name }} is {{ $labels.health_status }}'
+          description: |
+            • ArgoCD app {{ $labels.name }} is {{ $labels.health_status }} — GitOps not converging
+            • check: argocd app get {{ $labels.name }} (or the ArgoCD UI)
+            • inspect the failing resource's events/logs
         noDataState: OK
         execErrState: Error
         data:
@@ -49,6 +53,10 @@ groups:
         labels: {severity: warning}
         annotations:
           summary: 'ArgoCD app {{ $labels.name }} has been OutOfSync for >30m'
+          description: |
+            • ArgoCD app {{ $labels.name }} stuck OutOfSync >30m — auto-sync not converging
+            • usually a bad manifest, failed hook, or missing dependency
+            • check: argocd app get {{ $labels.name }}; review its sync result
         noDataState: OK
         execErrState: Error
         data:

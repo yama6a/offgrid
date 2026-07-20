@@ -17,6 +17,10 @@ groups:
         labels: {severity: critical}
         annotations:
           summary: 'kube-apiserver is returning >5% 5xx responses'
+          description: |
+            • kube-apiserver serving >5% 5xx — API calls, controllers, kubectl failing
+            • check: kubectl get --raw /healthz?verbose
+            • inspect the apiserver static-pod logs on the control-plane nodes
         noDataState: OK
         execErrState: Error
         data:
@@ -55,6 +59,10 @@ groups:
         labels: {severity: warning}
         annotations:
           summary: 'Fewer than 2 CoreDNS replicas are up'
+          description: |
+            • fewer than 2 CoreDNS replicas up — cluster DNS resolution at risk
+            • check: kubectl -n kube-system get pods -l k8s-app=kube-dns
+            • logs: kubectl -n kube-system logs -l k8s-app=kube-dns
         noDataState: OK
         execErrState: Error
         data:
@@ -87,6 +95,10 @@ groups:
         labels: {severity: warning}
         annotations:
           summary: 'CoreDNS is returning >2% SERVFAIL responses'
+          description: |
+            • CoreDNS returning >2% SERVFAIL — lookups failing cluster-wide
+            • check: kubectl -n kube-system logs -l k8s-app=kube-dns
+            • verify upstream resolvers + NetworkPolicy reaching CoreDNS
         noDataState: OK
         execErrState: Error
         data:

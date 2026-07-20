@@ -91,6 +91,22 @@ the k8s-stack subchart so it versions/syncs/rolls back independently, no feature
   alert. Rules survive restart (provisioned); alert *state* resets on restart (no PVC). (Datasources, by
   contrast, are still provisioned inline in `values.yaml` — the datasources sidecar is OFF.)
 
+### Alert content convention (title & description)
+
+Every rule carries exactly two annotations, and the ntfy payload maps them straight to the push:
+
+- **`summary`** → the notification **title**. Resource-FIRST, one line, what's wrong. Lead with the faulty
+  object (`Redis {{ $labels.namespace }}/{{ $labels.pod }} …`, `Longhorn volume {{ $labels.volume }} …`). A
+  genuinely cluster-scoped alert (API server 5xx, CoreDNS down, Cilium agent count) names the subsystem instead.
+- **`description`** → the notification **message**. SHORT `•` bullets, half-sentences: what's wrong + how to
+  fix (a real `kubectl`/`redis-cli`/`cnpg` diagnosis command where it helps). Actionable and brief — no prose.
+
+Two wiring choices make the resource actually arrive on the phone (a nameless "fragmentation high" alert was the
+bug that prompted this): `policies.yaml` uses **`group_by: ['...']`** (group by all labels → one notification per
+faulty resource), and `contactpoints.yaml` reads **per-alert `.Annotations`** (`(index .Alerts 0).Annotations.summary`
+/ `.description`), NOT `.CommonAnnotations` — the latter silently empties whenever two grouped alerts differ, which
+is exactly when you most need the name. Add both annotations to every new rule.
+
 ### Alert severity model & the `alert-criticality` label
 
 Alerts carry exactly two severities — **`critical`** and **`warning`** (never `info`) — mapped by the ntfy
@@ -219,6 +235,9 @@ Alerts go to your phone via self-hosted **ntfy** (`05_ntfy`), not email. Grafana
 to the in-cluster ntfy Service on the `cluster-alerts` topic; the Android app subscribes over the public edge
 `ntfy.ops.example.com` (`06_platform_ingress`, on `letsencrypt-prod` — the app validates TLS — and deliberately
 **not** behind Google SSO, since the mobile app can't do human OAuth; ntfy's own deny-all + token/user auth is the gate).
+
+The webhook payload maps the firing alert's `summary` → push **title** and `description` → push **message** (see
+"Alert content convention" above); priority/tag come from `severity` (critical=5 / warning=4).
 
 ntfy is a private, deny-all instance with no declarative user config, so `lib/shell/10_ntfy_auth.sh` (`make
 configure-ntfy-auth`, run post-boot once the pod is up) seeds two users on `cluster-alerts` — `phone` (read-only,

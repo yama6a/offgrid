@@ -31,10 +31,10 @@ spec:
             severity: critical
           annotations:
             summary: "CNPG {{ $c }}: WAL archiving to S3 is failing"
-            description: >-
-              WAL segments are accumulating in archive_status/ready on {{ "{{ $labels.pod }}" }} and are not
-              being archived to S3. RPO is degrading and pg_wal will grow until the volume fills and the
-              primary goes read-only. Check the barman-cloud sidecar logs and the S3 creds/bucket.
+            description: |-
+              • WAL segments piling up in archive_status/ready on {{ "{{ $labels.pod }}" }} — not archiving to S3
+              • RPO degrading; pg_wal grows until the volume fills and the primary goes read-only
+              • check: barman-cloud sidecar logs + S3 creds/bucket
         # No recent successful base backup. The `cnpg_collector_last_available_backup_timestamp` metric is
         # deprecated and MAY stay 0 under the plugin (only guaranteed for the native path) — so we
         # guard with `> 0`: if it's never populated the alert simply won't fire (we lean on the WAL alert +
@@ -50,7 +50,8 @@ spec:
             severity: warning
           annotations:
             summary: "CNPG {{ $c }}: last base backup is >36h old"
-            description: >-
-              The most recent successful base backup for {{ $c }} completed more than 36 hours ago (daily
-              schedule expected). Check the latest Backup object and the barman-cloud sidecar on the standby.
+            description: |-
+              • last successful base backup for {{ $c }} completed >36h ago (daily schedule expected)
+              • check the latest Backup object
+              • inspect the barman-cloud sidecar on the standby
 {{- end }}

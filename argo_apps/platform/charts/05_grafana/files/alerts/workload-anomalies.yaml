@@ -14,6 +14,10 @@ groups:
         labels: {severity: warning}
         annotations:
           summary: 'Container {{ $labels.namespace }}/{{ $labels.pod }}/{{ $labels.container }} was OOMKilled'
+          description: |
+            • container hit its memory limit and the kernel killed it
+            • events: kubectl -n {{ $labels.namespace }} describe pod {{ $labels.pod }}
+            • raise limits (values.yaml) or fix the leak; check container_memory_working_set_bytes vs limit
         noDataState: OK
         execErrState: Error
         data:
@@ -46,6 +50,10 @@ groups:
         labels: {severity: warning}
         annotations:
           summary: 'Container {{ $labels.namespace }}/{{ $labels.pod }}/{{ $labels.container }} restarted >5 times in the last hour'
+          description: |
+            • container keeps dying and restarting — crash, failed probe, or OOM
+            • logs: kubectl -n {{ $labels.namespace }} logs {{ $labels.pod }} -c {{ $labels.container }} --previous
+            • events: kubectl -n {{ $labels.namespace }} describe pod {{ $labels.pod }}
         noDataState: OK
         execErrState: Error
         data:
@@ -78,6 +86,10 @@ groups:
         labels: {severity: warning}
         annotations:
           summary: 'Container {{ $labels.namespace }}/{{ $labels.pod }}/{{ $labels.container }} CPU throttled >50% of the time'
+          description: |
+            • container wants more CPU than its limit allows — latency/slowdowns likely
+            • check current limit: kubectl -n {{ $labels.namespace }} describe pod {{ $labels.pod }}
+            • raise cpu limit in values.yaml, or accept if the workload is bursty/non-latency-sensitive
         noDataState: OK
         execErrState: Error
         data:
@@ -110,6 +122,10 @@ groups:
         labels: {severity: warning}
         annotations:
           summary: 'Container {{ $labels.namespace }}/{{ $labels.pod }}/{{ $labels.container }} above 90% of its memory limit (OOM risk)'
+          description: |
+            • working set near the memory limit — an OOMKill is imminent
+            • inspect: kubectl -n {{ $labels.namespace }} describe pod {{ $labels.pod }}
+            • raise the memory limit in values.yaml or find the leak before it gets killed
         noDataState: OK
         execErrState: Error
         data:
@@ -142,6 +158,10 @@ groups:
         labels: {severity: warning}
         annotations:
           summary: 'Pod {{ $labels.namespace }}/{{ $labels.pod }} stuck Pending/Unknown for >20m'
+          description: |
+            • pod can't schedule — no node fits (cpu/mem), unbound PVC, or node NotReady
+            • events: kubectl -n {{ $labels.namespace }} describe pod {{ $labels.pod }}
+            • check node capacity: kubectl get nodes; and PVCs: kubectl -n {{ $labels.namespace }} get pvc
         noDataState: OK
         execErrState: Error
         data:
@@ -176,6 +196,10 @@ groups:
         labels: {severity: warning}
         annotations:
           summary: 'Pod {{ $labels.namespace }}/{{ $labels.pod }} not ready for >15m'
+          description: |
+            • pod running but failing its readiness probe — taken out of Service endpoints
+            • events + probe config: kubectl -n {{ $labels.namespace }} describe pod {{ $labels.pod }}
+            • logs: kubectl -n {{ $labels.namespace }} logs {{ $labels.pod }}
         noDataState: OK
         execErrState: Error
         data:
@@ -208,6 +232,10 @@ groups:
         labels: {severity: warning}
         annotations:
           summary: 'ReplicaSet {{ $labels.namespace }}/{{ $labels.replicaset }} has fewer ready replicas than desired'
+          description: |
+            • some replicas never became ready — likely crashing or failing probes
+            • inspect: kubectl -n {{ $labels.namespace }} describe rs {{ $labels.replicaset }}
+            • check the pods it owns: kubectl -n {{ $labels.namespace }} get pods
         noDataState: OK
         execErrState: Error
         data:
@@ -240,6 +268,10 @@ groups:
         labels: {severity: warning}
         annotations:
           summary: 'Deployment {{ $labels.namespace }}/{{ $labels.deployment }} has fewer available replicas than desired'
+          description: |
+            • running but degraded — some replicas unavailable (partial capacity)
+            • status: kubectl -n {{ $labels.namespace }} rollout status deploy/{{ $labels.deployment }}
+            • inspect pods: kubectl -n {{ $labels.namespace }} describe deploy {{ $labels.deployment }}
         noDataState: OK
         execErrState: Error
         data:
@@ -272,6 +304,10 @@ groups:
         labels: {severity: warning}
         annotations:
           summary: 'Deployment {{ $labels.namespace }}/{{ $labels.deployment }} observed generation lags spec (rollout stuck)'
+          description: |
+            • controller hasn't observed the latest spec — rollout wedged or controller lagging
+            • status: kubectl -n {{ $labels.namespace }} rollout status deploy/{{ $labels.deployment }}
+            • inspect conditions: kubectl -n {{ $labels.namespace }} describe deploy {{ $labels.deployment }}
         noDataState: OK
         execErrState: Error
         data:
@@ -305,6 +341,10 @@ groups:
         labels: {severity: warning}
         annotations:
           summary: 'HPA {{ $labels.namespace }}/{{ $labels.horizontalpodautoscaler }} at max replicas — can''t scale further'
+          description: |
+            • autoscaler pinned at maxReplicas — no headroom left for more load
+            • inspect: kubectl -n {{ $labels.namespace }} describe hpa {{ $labels.horizontalpodautoscaler }}
+            • raise maxReplicas in values.yaml if the sustained load is legitimate
         noDataState: OK
         execErrState: Error
         data:
@@ -337,6 +377,10 @@ groups:
         labels: {severity: warning}
         annotations:
           summary: 'HPA {{ $labels.namespace }}/{{ $labels.horizontalpodautoscaler }} can''t scale (AbleToScale/ScalingActive false)'
+          description: |
+            • HPA blocked — usually missing metrics (no metrics-server / ServiceMonitor) or bad scaleTargetRef
+            • conditions: kubectl -n {{ $labels.namespace }} describe hpa {{ $labels.horizontalpodautoscaler }}
+            • verify the metrics source is reporting for the target
         noDataState: OK
         execErrState: Error
         data:
@@ -369,6 +413,10 @@ groups:
         labels: {severity: warning}
         annotations:
           summary: 'HPA {{ $labels.namespace }}/{{ $labels.horizontalpodautoscaler }} running below its min replicas'
+          description: |
+            • current replicas under minReplicas — controller can't hold the floor
+            • conditions: kubectl -n {{ $labels.namespace }} describe hpa {{ $labels.horizontalpodautoscaler }}
+            • check the target's pods aren't stuck Pending/unschedulable
         noDataState: OK
         execErrState: Error
         data:

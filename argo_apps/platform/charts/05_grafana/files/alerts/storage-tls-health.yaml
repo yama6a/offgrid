@@ -14,6 +14,10 @@ groups:
         labels: {severity: warning}
         annotations:
           summary: 'Certificate {{ $labels.exported_namespace }}/{{ $labels.name }} expires in <14d'
+          description: |
+            • cert {{ $labels.exported_namespace }}/{{ $labels.name }} is within 14d of expiry (or already expired) — renewal is stalling
+            • inspect: kubectl -n {{ $labels.exported_namespace }} describe certificate {{ $labels.name }}
+            • check the Issuer/ACME order + challenge: kubectl -n {{ $labels.exported_namespace }} get certificaterequest,order,challenge
         noDataState: OK
         execErrState: Error
         data:
@@ -47,6 +51,10 @@ groups:
         labels: {severity: warning}
         annotations:
           summary: 'Certificate {{ $labels.exported_namespace }}/{{ $labels.name }} is not Ready'
+          description: |
+            • cert {{ $labels.exported_namespace }}/{{ $labels.name }} is not Ready — issuance/renewal failed
+            • inspect: kubectl -n {{ $labels.exported_namespace }} describe certificate {{ $labels.name }}
+            • trace the ACME order/challenge: kubectl -n {{ $labels.exported_namespace }} get certificaterequest,order,challenge; check the Issuer is Ready
         noDataState: OK
         execErrState: Error
         data:
@@ -82,6 +90,10 @@ groups:
         labels: {severity: warning}
         annotations:
           summary: 'PersistentVolume {{ $labels.persistentvolume }} is {{ $labels.phase }}'
+          description: |
+            • PV {{ $labels.persistentvolume }} is in phase {{ $labels.phase }} (Failed/Pending) — its backing volume isn't usable
+            • inspect: kubectl describe pv {{ $labels.persistentvolume }}
+            • for Longhorn-backed PVs check the volume health: kubectl -n longhorn-system get volumes.longhorn.io
         noDataState: OK
         execErrState: Error
         data:
@@ -114,6 +126,10 @@ groups:
         labels: {severity: warning}
         annotations:
           summary: 'PVC {{ $labels.namespace }}/{{ $labels.persistentvolumeclaim }} is {{ $labels.phase }}'
+          description: |
+            • PVC {{ $labels.namespace }}/{{ $labels.persistentvolumeclaim }} is {{ $labels.phase }} (Pending/Lost) — not bound to a volume
+            • inspect: kubectl -n {{ $labels.namespace }} describe pvc {{ $labels.persistentvolumeclaim }}
+            • check the StorageClass/provisioner + Longhorn schedulable disk capacity (see the Longhorn alerts)
         noDataState: OK
         execErrState: Error
         data:

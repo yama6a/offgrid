@@ -47,13 +47,11 @@ spec:
     image: "quay.io/opstree/redis-exporter:v1.84.0"
     imagePullPolicy: IfNotPresent
   redisConfig:
-    {{- if .Values.persistence }}
-    # Persistent mode: templates/configmap.yaml sets `appendonly yes` + `appendfsync everysec`, so the instance
-    # replays its append-only log on restart (at most ~1s of writes lost on a hard crash, not the whole window
-    # back to the last RDB snapshot). AOF + RDB both land on the PVC (operator sets dir=/data). Ephemeral mode
-    # (persistence=false) skips this entirely — RDB only, less write overhead.
+    # Extra redis.conf overlay (templates/configmap.yaml): active defrag for every instance, plus `appendonly yes`
+    # + `appendfsync everysec` in persistent mode (AOF replay on restart, ~1s max loss on a hard crash, vs the
+    # whole window back to the last RDB snapshot). AOF + RDB land on the PVC (operator sets dir=/data). Ephemeral
+    # mode skips the AOF lines — RDB only, less write overhead. ConfigMap always exists, so this is unconditional.
     additionalRedisConfig: {{ .Values.name }}-ext-config
-    {{- end }}
     # maxmemory = 80% of the container memory limit (operator computes the byte value at reconcile), so Redis
     # can't OOM its own cgroup. BOTH modes (OOM protection, unrelated to persistence). Requires
     # resources.limits.memory. Eviction stays the Redis default (noeviction): at the cap, writes fail.

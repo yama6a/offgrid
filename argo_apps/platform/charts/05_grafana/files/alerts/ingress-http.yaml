@@ -19,6 +19,10 @@ groups:
         labels: {severity: warning}
         annotations:
           summary: 'Ingress route {{ $labels.envoy_cluster_name }} is returning >2% 5xx'
+          description: |
+            • backend returning 5xx — app errors or upstream unhealthy (cluster name = httproute/<gw-ns>/<route>/rule/N)
+            • find the backend Service/pods behind that HTTPRoute and check their logs
+            • pods: kubectl get pods -A | grep <backend>; logs: kubectl -n <ns> logs <pod>
         noDataState: OK
         execErrState: Error
         data:
@@ -51,6 +55,10 @@ groups:
         labels: {severity: warning}
         annotations:
           summary: 'Ingress route {{ $labels.envoy_cluster_name }} is returning >25% 4xx'
+          description: |
+            • high client-error rate — often 401/403 from SSO, or 404 from a route/path mismatch
+            • cluster name = httproute/<gw-ns>/<route>/rule/N; check that HTTPRoute's matches + the google-sso allowlist
+            • inspect: kubectl get httproute -A; kubectl -n gateway get securitypolicy
         noDataState: OK
         execErrState: Error
         data:
@@ -83,6 +91,10 @@ groups:
         labels: {severity: warning}
         annotations:
           summary: 'Ingress route {{ $labels.envoy_cluster_name }} p95 upstream latency above 2s'
+          description: |
+            • backend slow to respond — overloaded, CPU-throttled, or waiting on a dependency (DB/Redis)
+            • cluster name = httproute/<gw-ns>/<route>/rule/N; find the backend pods and check load/throttling
+            • pods: kubectl -n <ns> top pod; logs: kubectl -n <ns> logs <pod>
         noDataState: OK
         execErrState: Error
         data:
@@ -116,6 +128,10 @@ groups:
         labels: {severity: critical}
         annotations:
           summary: 'Ingress route {{ $labels.envoy_cluster_name }} has no healthy upstream hosts'
+          description: |
+            • outage — every backend endpoint is down/unhealthy, clients get 503
+            • cluster name = httproute/<gw-ns>/<route>/rule/N; check the backend Service has ready endpoints
+            • endpoints: kubectl -n <ns> get endpoints <svc>; pods: kubectl -n <ns> get pods
         noDataState: OK
         execErrState: Error
         data:
@@ -148,6 +164,10 @@ groups:
         labels: {severity: warning}
         annotations:
           summary: 'Ingress route {{ $labels.envoy_cluster_name }} has upstream connection failures'
+          description: |
+            • Envoy can't open connections to the backend — pods restarting, port mismatch, or NetworkPolicy block
+            • cluster name = httproute/<gw-ns>/<route>/rule/N; verify Service port matches the container port
+            • check: kubectl -n <ns> get endpoints <svc>; kubectl -n <ns> get ciliumnetworkpolicy
         noDataState: OK
         execErrState: Error
         data:

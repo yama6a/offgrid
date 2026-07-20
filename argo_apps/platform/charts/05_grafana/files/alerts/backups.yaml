@@ -16,6 +16,10 @@ groups:
         labels: {severity: warning}
         annotations:
           summary: 'Redis backup job {{ $labels.namespace }}/{{ $labels.job_name }} failed'
+          description: |
+            • redis backup Job {{ $labels.namespace }}/{{ $labels.job_name }} failed
+            • which instance failed is in the job stdout
+            • check: kubectl -n {{ $labels.namespace }} logs job/{{ $labels.job_name }}
         noDataState: OK
         execErrState: Error
         data:
@@ -52,6 +56,10 @@ groups:
         labels: {severity: warning}
         annotations:
           summary: 'Redis backup {{ $labels.namespace }}/{{ $labels.cronjob }} has no success in >36h'
+          description: |
+            • no successful redis backup in >36h for {{ $labels.namespace }}/{{ $labels.cronjob }}
+            • CronJob may be suspended or never scheduling
+            • check: kubectl -n {{ $labels.namespace }} get cronjob {{ $labels.cronjob }}
         noDataState: OK
         execErrState: Error
         data:
@@ -88,6 +96,10 @@ groups:
         labels: {severity: warning}
         annotations:
           summary: 'Longhorn backup for volume {{ $labels.volume }} is in Error state'
+          description: |
+            • Longhorn backup for volume {{ $labels.volume }} is in Error state
+            • check the volume's backups in the Longhorn UI
+            • verify the S3 backup target creds + connectivity
         noDataState: OK
         execErrState: Error
         data:
@@ -125,6 +137,10 @@ groups:
         labels: {severity: warning}
         annotations:
           summary: 'Longhorn volume {{ $labels.volume }} has no successful backup in >48h'
+          description: |
+            • volume {{ $labels.volume }} has no successful backup in >48h — RecurringJob may have stopped
+            • a stopped RecurringJob emits no Error, so this is the only signal
+            • check the Longhorn RecurringJob schedule + backup target
         noDataState: OK
         execErrState: Error
         data:
@@ -161,6 +177,10 @@ groups:
         labels: {severity: warning}
         annotations:
           summary: 'VM/VL backup Job {{ $labels.namespace }}/{{ $labels.job_name }} failed'
+          description: |
+            • VM/VL backup Job {{ $labels.namespace }}/{{ $labels.job_name }} failed
+            • check: kubectl -n {{ $labels.namespace }} logs job/{{ $labels.job_name }}
+            • verify the S3 target creds + bucket
         noDataState: OK
         execErrState: Error
         data:
@@ -195,6 +215,10 @@ groups:
         labels: {severity: warning}
         annotations:
           summary: 'VM/VL backup {{ $labels.namespace }}/{{ $labels.cronjob }} has no success in >36h'
+          description: |
+            • no successful VM/VL backup in >36h for {{ $labels.namespace }}/{{ $labels.cronjob }}
+            • CronJob may be suspended or never scheduling
+            • check: kubectl -n {{ $labels.namespace }} get cronjob {{ $labels.cronjob }}
         noDataState: OK
         execErrState: Error
         data:
@@ -230,6 +254,10 @@ groups:
         labels: {severity: critical}
         annotations:
           summary: 'CNPG {{ $labels.namespace }}/{{ $labels.pod }}: WAL archiving to S3 is failing'
+          description: |
+            • WAL segments piling up on {{ $labels.namespace }}/{{ $labels.pod }} — not archiving to S3
+            • pg_wal grows until the volume fills and the primary goes read-only
+            • check the barman-cloud sidecar logs + S3 creds/bucket
         noDataState: OK
         execErrState: Error
         data:
@@ -264,6 +292,10 @@ groups:
         labels: {severity: warning}
         annotations:
           summary: 'CNPG {{ $labels.namespace }}/{{ $labels.pod }}: last base backup is >36h old'
+          description: |
+            • last CNPG base backup for {{ $labels.namespace }}/{{ $labels.pod }} is >36h old
+            • check: kubectl -n {{ $labels.namespace }} get backup
+            • inspect the barman-cloud sidecar on the standby
         noDataState: OK
         execErrState: Error
         data:

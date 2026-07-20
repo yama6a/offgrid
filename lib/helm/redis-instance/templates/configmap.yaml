@@ -1,15 +1,20 @@
 {{- /*
-Extra redis.conf for DURABILITY (AOF) — rendered ONLY in persistent mode (persistence: true). The OpsTree operator
-mounts this ConfigMap — referenced by the CR's spec.redisConfig.additionalRedisConfig — and includes
-`redis-additional.conf` on top of its generated base config. The key name (`redis-additional.conf`) is fixed by
-the operator.
+Extra redis.conf, mounted on top of the operator's generated base config. The OpsTree operator mounts this
+ConfigMap — referenced by the CR's spec.redisConfig.additionalRedisConfig — and includes `redis-additional.conf`
+(the key name is fixed by the operator). Always rendered (both persistence modes) so every instance gets the
+defrag block; the AOF lines are added only in persistent mode.
 
-`appendonly yes` turns on the append-only log so the instance replays every write since the last rewrite on
-restart — at most ~1s of writes lost on a hard crash (`appendfsync everysec`), instead of the whole window back to
-the last RDB snapshot. AOF (and RDB) land on the PVC (the operator sets `dir=/data`). An ephemeral instance
-(persistence: false) doesn't render this and runs RDB-only. See docs/12_redis.md.
+Active defrag: jemalloc doesn't return freed memory to the allocator, so a high-churn workload (e.g. the cache's
+RPUSH-per-UUID with a 1h TTL) leaves used_memory_rss inflated and mem_fragmentation_ratio climbing. `activedefrag
+yes` lets Redis compact live. Upstream triggers never fire on a Pi-sized instance (default ignore-bytes 100mb ≫
+a ~77Mi maxmemory), so we lower them: ignore-bytes 16mb + threshold-lower 15%. (Redis conf takes no trailing
+inline comments — a `#` after a value is parsed as arguments — so the rationale stays here, not on the line.)
+See docs/12_redis.md.
+
+`appendonly yes` (persistent only) replays every write since the last rewrite on restart — at most ~1s lost on a
+hard crash (`appendfsync everysec`), vs the whole window back to the last RDB snapshot. AOF (and RDB) land on the
+PVC (operator sets dir=/data). Ephemeral (persistence: false) runs RDB-only.
 */ -}}
-{{- if .Values.persistence }}
 apiVersion: v1
 kind: ConfigMap
 metadata:
@@ -20,6 +25,10 @@ metadata:
     app.kubernetes.io/component: redis
 data:
   redis-additional.conf: |
+    activedefrag yes
+    active-defrag-ignore-bytes 16mb
+    active-defrag-threshold-lower 15
+    {{- if .Values.persistence }}
     appendonly yes
     appendfsync everysec
-{{- end }}
+    {{- end }}

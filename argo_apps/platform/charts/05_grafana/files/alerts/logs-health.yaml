@@ -12,6 +12,10 @@ groups:
         labels: {severity: warning}
         annotations:
           summary: 'More than 100 error logs in the last 5m across the cluster'
+          description: |
+            • >100 error logs in 5m cluster-wide — something is failing loudly
+            • open VictoriaLogs (vlogs) filtered on level:error to find the source
+            • drill into the noisiest namespace/pod
         noDataState: OK
         execErrState: Error
         data:

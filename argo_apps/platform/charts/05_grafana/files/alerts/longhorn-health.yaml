@@ -17,6 +17,10 @@ groups:
         labels: {severity: critical}
         annotations:
           summary: 'Longhorn is not reporting metrics (manager down or unscraped) — storage health is blind'
+          description: |
+            • longhorn-manager metrics feed is gone — every Longhorn alert below is silently blind
+            • check pods: kubectl -n longhorn-system get pods -l app=longhorn-manager
+            • check the ServiceMonitor scrape target in the VMAgent/Prometheus targets page
         noDataState: OK
         execErrState: Error
         data:
@@ -51,6 +55,10 @@ groups:
         labels: {severity: warning}
         annotations:
           summary: 'Longhorn node {{ $labels.node }} is not ready'
+          description: |
+            • node {{ $labels.node }} can't host replicas — disk mount, kernel modules, or multipathd likely
+            • inspect: kubectl -n longhorn-system get nodes.longhorn.io {{ $labels.node }} -o yaml
+            • verify the /var/mnt/longhorn mount + iscsi/multipathd on that node
         noDataState: OK
         execErrState: Error
         data:
@@ -84,6 +92,10 @@ groups:
         labels: {severity: warning}
         annotations:
           summary: 'Longhorn disk {{ $labels.disk }} on node {{ $labels.node }} is unschedulable (no room for new replicas)'
+          description: |
+            • disk {{ $labels.disk }} on {{ $labels.node }} can't take new replicas — new provisioning + rebuilds will fail
+            • usual cause: disk full or over storage-reserved; check the Longhorn UI Node page
+            • free space or raise the disk's storage-reserved: kubectl -n longhorn-system get nodes.longhorn.io {{ $labels.node }} -o yaml
         noDataState: OK
         execErrState: Error
         data:
@@ -118,6 +130,10 @@ groups:
         labels: {severity: warning}
         annotations:
           summary: 'Longhorn storage on node {{ $labels.node }} above 85% used'
+          description: |
+            • node {{ $labels.node }} Longhorn storage >85% — a full disk blocks replica rebuild after a node loss
+            • check per-disk usage in the Longhorn UI Node page or nodes.longhorn.io {{ $labels.node }}
+            • free volumes/snapshots, or add disk capacity on that node
         noDataState: OK
         execErrState: Error
         data:
@@ -151,6 +167,11 @@ groups:
         labels: {severity: warning}
         annotations:
           summary: 'Longhorn volume {{ $labels.volume }} (pvc {{ $labels.pvc_namespace }}/{{ $labels.pvc }}) is degraded'
+          description: |
+            • volume {{ $labels.volume }} ({{ $labels.pvc_namespace }}/{{ $labels.pvc }}) has fewer healthy replicas than desired — still available, but redundancy is reduced
+            • inspect: kubectl -n longhorn-system get volumes.longhorn.io {{ $labels.volume }} -o yaml
+            • check the Longhorn UI Volume page for the failed replica + its node/disk health
+            • usually self-heals once a schedulable disk is available; watch it rebuild
         noDataState: OK
         execErrState: Error
         data:
@@ -184,6 +205,11 @@ groups:
         labels: {severity: critical}
         annotations:
           summary: 'Longhorn volume {{ $labels.volume }} (pvc {{ $labels.pvc_namespace }}/{{ $labels.pvc }}) is FAULTED (no healthy replicas, data at risk)'
+          description: |
+            • volume {{ $labels.volume }} ({{ $labels.pvc_namespace }}/{{ $labels.pvc }}) has ZERO healthy replicas — I/O is failing, data at risk
+            • inspect now: kubectl -n longhorn-system get volumes.longhorn.io {{ $labels.volume }} -o yaml
+            • check every replica's node/disk in the Longhorn UI; bring a node back to recover, do NOT delete replicas
+            • if unrecoverable, restore from backup/snapshot
         noDataState: OK
         execErrState: Error
         data:
@@ -217,6 +243,10 @@ groups:
         labels: {severity: warning}
         annotations:
           summary: 'Longhorn volume {{ $labels.volume }} (pvc {{ $labels.pvc_namespace }}/{{ $labels.pvc }}) above 90% of capacity'
+          description: |
+            • volume {{ $labels.volume }} ({{ $labels.pvc_namespace }}/{{ $labels.pvc }}) is >90% full — writes fail once it hits 100%
+            • check actual usage from inside the consumer pod: kubectl -n {{ $labels.pvc_namespace }} exec ... -- df -h
+            • free data or expand the PVC (Longhorn supports online expansion): edit the PVC's spec.resources.requests.storage
         noDataState: OK
         execErrState: Error
         data:

@@ -16,6 +16,10 @@ groups:
         labels: {severity: warning}
         annotations:
           summary: 'Fewer than 3 Cilium agents are up — a node has lost its CNI dataplane'
+          description: |
+            • a node's cilium-agent is down — its pods lose networking
+            • check: kubectl -n kube-system get pods -l k8s-app=cilium -o wide
+            • logs: kubectl -n kube-system logs ds/cilium
         noDataState: OK
         execErrState: Error
         data:
@@ -49,6 +53,10 @@ groups:
         labels: {severity: warning}
         annotations:
           summary: 'Cilium BPF map {{ $labels.map_name }} above 80% full'
+          description: |
+            • BPF map {{ $labels.map_name }} >80% full — new endpoints/policies/conns start failing
+            • check: kubectl -n kube-system exec ds/cilium -- cilium bpf metrics list
+            • needs larger map sizing or fewer endpoints/policies
         noDataState: OK
         execErrState: Error
         data:
@@ -82,6 +90,10 @@ groups:
         labels: {severity: warning}
         annotations:
           summary: 'A Cilium agent reports unreachable peer nodes (cross-node networking degraded)'
+          description: |
+            • a cilium-agent can't reach peer nodes — cross-node pod/service traffic breaks
+            • check: kubectl -n kube-system exec ds/cilium -- cilium status --verbose
+            • verify node health + tunnels between nodes
         noDataState: OK
         execErrState: Error
         data:

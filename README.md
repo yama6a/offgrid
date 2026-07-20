@@ -278,9 +278,4 @@ Pi 5 Talos image builds on [talos-rpi5/talos-builder](https://github.com/talos-r
 - disaster recovery exercise
 - add missing ciliumNetworkPolicy for everything that should have one but that doesn't have one yet. 
 - add something to test in CI so that PRs have at least SOME confidence in not being garbage.
-- proper templates over helm magic and over-populated values files.
-
-- 
-- add alerts for everything!
-  - all platform apps, if they provide metrics and mearuable health
-  - check alerting library for more ideas.
+- go over ALL external helm charts, and check the possible values for each, and see if any of them are worth setting in our wrapper charts.

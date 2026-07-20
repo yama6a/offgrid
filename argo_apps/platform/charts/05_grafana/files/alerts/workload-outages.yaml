@@ -23,6 +23,11 @@ groups:
           severity: '{{ if eq $labels.label_alert_criticality "critical" }}critical{{ else }}warning{{ end }}'
         annotations:
           summary: 'Deployment {{ $labels.namespace }}/{{ $labels.deployment }} has no available replicas'
+          description: |
+            • full outage — zero replicas available, the Deployment is serving nothing
+            • status: kubectl -n {{ $labels.namespace }} rollout status deploy/{{ $labels.deployment }}
+            • events + pods: kubectl -n {{ $labels.namespace }} describe deploy {{ $labels.deployment }}
+            • logs: kubectl -n {{ $labels.namespace }} logs deploy/{{ $labels.deployment }}
         noDataState: OK
         execErrState: Error
         data:
@@ -56,6 +61,11 @@ groups:
           severity: '{{ if eq $labels.label_alert_criticality "critical" }}critical{{ else }}warning{{ end }}'
         annotations:
           summary: 'StatefulSet {{ $labels.namespace }}/{{ $labels.statefulset }} has no ready replicas'
+          description: |
+            • full outage — zero ready replicas (check storage/PVC before assuming a crash)
+            • events + pods: kubectl -n {{ $labels.namespace }} describe statefulset {{ $labels.statefulset }}
+            • PVCs: kubectl -n {{ $labels.namespace }} get pvc
+            • logs: kubectl -n {{ $labels.namespace }} logs statefulset/{{ $labels.statefulset }}
         noDataState: OK
         execErrState: Error
         data:
@@ -89,6 +99,11 @@ groups:
           severity: '{{ if eq $labels.label_alert_criticality "critical" }}critical{{ else }}warning{{ end }}'
         annotations:
           summary: 'DaemonSet {{ $labels.namespace }}/{{ $labels.daemonset }} has no available pods'
+          description: |
+            • full outage — no pods available on any scheduled node
+            • events + pods: kubectl -n {{ $labels.namespace }} describe daemonset {{ $labels.daemonset }}
+            • check node readiness/taints: kubectl get nodes
+            • logs: kubectl -n {{ $labels.namespace }} logs daemonset/{{ $labels.daemonset }}
         noDataState: OK
         execErrState: Error
         data:
@@ -125,6 +140,11 @@ groups:
           severity: '{{ if eq $labels.label_alert_criticality "critical" }}critical{{ else }}warning{{ end }}'
         annotations:
           summary: 'Container {{ $labels.namespace }}/{{ $labels.pod }}/{{ $labels.container }} stuck: {{ $labels.reason }}'
+          description: |
+            • container can't start — {{ $labels.reason }} (crashloop, bad image, or bad config)
+            • events: kubectl -n {{ $labels.namespace }} describe pod {{ $labels.pod }}
+            • crashloop → logs: kubectl -n {{ $labels.namespace }} logs {{ $labels.pod }} -c {{ $labels.container }} --previous
+            • image/config → verify image tag + referenced ConfigMap/Secret exist
         noDataState: OK
         execErrState: Error
         data:
