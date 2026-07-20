@@ -98,8 +98,8 @@ This is the teaching payoff: **direct** (`create-user-command`) point-to-point; 
 signup binds only `users.created`, so `users.deleted` — which the manager still publishes — reaches no queue
 and is dropped by the broker; **fanout** (`user-audit-logger`) broadcast to two independent subscribers
 (signup + audit-logger), each with its OWN `<user>.user-audit-logger` queue, so neither can read the other's.
-`cluster.{name,namespace}` and `vhost` are library defaults (`rabbitmq`/`rabbitmq`/`apps`) a workload rarely
-touches.
+The broker (`rabbitmq`/`rabbitmq`) and `vhost` (`apps`) are platform invariants hardcoded in the library — same
+for every workload, not configurable; setting `cluster`/`vhost` is rejected at render.
 
 ### Why there is no permission escape hatch (apps never create topology)
 

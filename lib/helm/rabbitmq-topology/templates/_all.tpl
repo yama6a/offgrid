@@ -12,13 +12,14 @@ Regex metachars (`.` in the auto queue names) are escaped so a name matches only
 */}}
 {{- define "rabbitmq-topology.render" -}}
 {{- $cfg := index .Values "rabbitmq-topology" -}}
+{{- /* Broker + vhost are platform invariants (03_rabbitmq_cluster: cluster `rabbitmq`/ns `rabbitmq`, vhost `apps`),
+       identical for every consumer -> hardcoded, not a value. Reject an override so a stray key can't silently drift. */ -}}
+{{- if or (hasKey $cfg "cluster") (hasKey $cfg "vhost") }}{{ fail "rabbitmq-topology: `cluster`/`vhost` are fixed platform invariants (broker `rabbitmq`/ns `rabbitmq`, vhost `apps`), not configurable; remove them" }}{{ end }}
 {{- $user := $cfg.user | default .Release.Name -}}
-{{- $vhost := $cfg.vhost | default "apps" -}}
-{{- $cluster := $cfg.cluster | default dict -}}
 {{- /* Dead-letter (DLQ) config: default ON; `default` can't be used (it swallows an explicit false), so key-check. */ -}}
 {{- $deadLetter := true -}}{{- if hasKey $cfg "deadLetter" }}{{- $deadLetter = $cfg.deadLetter -}}{{- end -}}
 {{- $deliveryLimit := $cfg.deliveryLimit | default 5 -}}
-{{- $ctx := dict "user" $user "vhost" $vhost "clusterName" ($cluster.name | default "rabbitmq") "clusterNs" ($cluster.namespace | default "rabbitmq") "ns" .Release.Namespace "deadLetter" $deadLetter "deliveryLimit" $deliveryLimit -}}
+{{- $ctx := dict "user" $user "vhost" "apps" "clusterName" "rabbitmq" "clusterNs" "rabbitmq" "ns" .Release.Namespace "deadLetter" $deadLetter "deliveryLimit" $deliveryLimit -}}
 {{- $writeSet := list -}}
 {{- $readSet := list -}}
 ---
