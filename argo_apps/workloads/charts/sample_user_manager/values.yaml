@@ -103,6 +103,9 @@ analyticsdb:
       # can never evict this pod. It's single/non-HA and unused by the binary, so drop the PDB: the pod is
       # evictable, node reboots, data on local-path Retain survives + it re-attaches on the same node.
       enablePDB: false
+      # No replica to switch over to on a 1-instance cluster, so update the primary in place. (CNPG falls back
+      # to restart here anyway; set explicitly to match the default switchover being wrong for single-instance.)
+      primaryUpdateMethod: restart
       resources:
         requests:
           cpu: 100m

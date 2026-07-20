@@ -1,0 +1,14 @@
+apiVersion: v2
+name: priorityclass
+description: >-
+  The shared `platform-critical` PriorityClass every platform control-plane component references so it
+  isn't the first pod evicted under memory pressure on the 8GB Pi 5 nodes. The built-in
+  system-cluster-critical / system-node-critical classes are admission-restricted to kube-system, so
+  components in their OWN namespaces (cert-manager, sealed-secrets, cnpg, vm-operator, envoy-gateway,
+  the CNPG primaries, ...) can't use them — this cluster-scoped class fills that gap. Cilium (kube-system)
+  still uses the built-ins directly.
+
+  DELIBERATE DEVIATION from the usual wrapper-chart pattern: pins no upstream and renders a single
+  committed manifest, so like 03_argocd_webhook_secret it ships no Chart.lock and no vendored charts/*.tgz.
+type: application
+version: 0.1.0                 # this wrapper chart's own version

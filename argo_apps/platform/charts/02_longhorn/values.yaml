@@ -25,6 +25,21 @@ longhorn:
     # replica. The NICs on this cluster are flaky, so node loss is a real, recurring case. See
     # 15_monitoring.md (failover).
     nodeDownPodDeletionPolicy: delete-statefulset-pod
+    # /var/mnt/longhorn is a DEDICATED XFS volume carved out for Longhorn alone, so don't reserve ~1/3 of it
+    # "for the OS" (default 30%). storageMinimalAvailablePercentage:15 above already gives runtime headroom.
+    storageReservedPercentageForDefaultDisk: 5
+    # Serialize replica rebuilds per node (default 5): when a flaky node returns, 5 parallel rebuilds saturate
+    # the single NVMe + flaky NIC during the exact recovery window. Trades rebuild speed for stability.
+    concurrentReplicaRebuildPerNodeLimit: 1
+    # Wait longer before replenishing a lost replica (default 600s): flaky NICs often flap a node back within
+    # minutes, so reuse its existing replica data instead of a full cross-network rebuild.
+    replicaReplenishmentWaitInterval: 1800
+    # Auto-reclaim stale replica data left by node flaps (default off) so it doesn't silently eat the NVMe.
+    # Only touches replica DATA, and skips failed/unknown nodes so a still-recovering node isn't nuked.
+    orphanResourceAutoDeletion: "replica-data"
+    # Trim per-instance-manager CPU reservation from the 12% default (~480m on a 4-core Pi) to free scheduling
+    # headroom; kept non-trivial to protect volume I/O. (v2 is inert here — v2DataEngine off — but keep the shape.)
+    guaranteedInstanceManagerCPU: '{"v1":"8","v2":"8"}'
   # Off-cluster S3 backup target for OPT-IN volumes (the longhorn-r2-retained-with-backups class -> templates/storageclasses.yaml).
   # 16_longhorn_backup.sh fills these from .env/terraform when AWS creds are present; empty here = backups OFF (the
   # committed default). Longhorn owns retention via the RecurringJob `retain` counts (the S3 longhorn/ prefix is
@@ -63,3 +78,7 @@ longhorn:
     resources:
       requests: {cpu: 20m, memory: 190Mi}
       limits: {memory: 256Mi}
+  # The UI is a non-critical read-mostly dashboard; the chart runs 2 replicas by default (anti-affinity pins
+  # them to separate nodes) — wasted footprint on a 3-node 8GB cluster. One is plenty.
+  longhornUI:
+    replicas: 1

@@ -16,6 +16,20 @@ cert-manager:
     # Issuer and Order CR down with them. `keep` leaves the CRDs in place on uninstall/prune.
     keep: true
 
+  # High priority for all three components (controller/webhook/cainjector): an evicted webhook fails ALL
+  # Certificate/Issuer/CertificateRequest admission cluster-wide until it reschedules. Own ns => our class.
+  global:
+    priorityClassName: platform-critical
+
+  # GC the issued TLS Secret when its Certificate is removed (default false leaves it orphaned). In this
+  # GitOps repo Certificates are declared in charts + pruned on removal, so this leaves no dangling secrets.
+  enableCertificateOwnerRef: true
+
+  # Drop the post-install/upgrade Helm-hook Job (an extra arm64 image pull + PostSync Job every sync). Its
+  # "webhook reachable" gate is redundant here: ArgoCD's unbounded retry already converges that ordering.
+  startupapicheck:
+    enabled: false
+
   # Expose controller metrics (default on) + create the ServiceMonitor so Prometheus scrapes
   # cert-manager. NOTE the lowercase `servicemonitor` key, cert-manager spells it differently from
   # most charts. CRDs exist from wave 0, before this wave-2 app. See 15_monitoring.md.

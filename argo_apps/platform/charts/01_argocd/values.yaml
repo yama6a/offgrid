@@ -35,6 +35,18 @@ argo-cd:
     enabled: false # no notifications controller yet, drop the pod
   redis-ha:
     enabled: false # single redis (the default); it's only a cache, self-heals on restart
+  # The bundled redis cache: the ONE argo component the wrapper hadn't sized or scraped. Bound it + wire
+  # metrics so it matches the posture of controller/repoServer/server/applicationSet above.
+  redis:
+    resources:
+      requests: {cpu: 100m, memory: 64Mi} # was BestEffort (no requests) — first to misbehave under Pi memory pressure
+      limits: {memory: 128Mi}
+    exporter:
+      enabled: true # redis-exporter sidecar (oliver006, multi-arch/arm64) — cache mem/evictions/hit-rate
+    metrics:
+      enabled: true
+      serviceMonitor:
+        enabled: true # vmagent selectAllByDefault scrapes it; closes the lone monitoring blind spot
   # --- UI/API served plain HTTP so `kubectl port-forward` is simple (no ingress/LB yet) -------
   # Flip to false (and front it with a Gateway/LoadBalancer) when the UI gets real ingress.
   configs:
@@ -88,6 +100,10 @@ argo-cd:
       # 300s fallback, see timeout.reconciliation above), not from watch-event churn (Longhorn/Node/VM-scrapes
       # were <5%). With the poll relaxed + webhook-driven sync, watch-event churn is what's left, so this rule still earns its keep.
       resource.ignoreResourceUpdatesEnabled: "true"
+      # Track managed resources by annotation, not the default label. The label is capped at 63 chars and
+      # collides with app-owned argocd.argoproj.io/instance labels; annotation tracking is the modern-
+      # recommended, collision-free method (more robust pruning). Safe to set on this cluster.
+      application.resourceTrackingMethod: annotation
       # NB: intentionally NO argoproj.io_Application health check. Waves are advisory creation-ordering only,
       # not health gates; children converge via unbounded syncPolicy.retry (see any app manifest). See 05_gitops.md.
     # RBAC: give every request (i.e. the anonymous user above) full admin. No per-user roles — there are no

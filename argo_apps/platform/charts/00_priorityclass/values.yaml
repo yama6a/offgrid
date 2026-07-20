@@ -1,0 +1,18 @@
+# Values for the 00_priorityclass wrapper chart. SINGLE SOURCE OF TRUTH, ArgoCD (and any local
+# `helm template`) consume this. First-party chart (no upstream dependency); renders one PriorityClass
+# (templates/priorityclass.yaml). See docs/09_monitoring.md (eviction / criticality).
+
+# The shared class name platform components set as `priorityClassName`. Changing it means changing every
+# consumer's priorityClassName too — treat as stable.
+name: platform-critical
+
+# Priority value. Above normal workloads (0) so platform infra preempts them under pressure, but BELOW the
+# built-in system-cluster-critical (2000000000) / system-node-critical (2000001000) so kube-system + the CNI
+# always outrank it.
+value: 1000000000
+
+# Never the cluster-wide default (that would silently bump EVERY pod that omits priorityClassName).
+globalDefault: false
+
+# Shown by `kubectl describe priorityclass`; explains what it's for.
+description: "Platform control-plane components (protected from eviction ahead of user workloads)."

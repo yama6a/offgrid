@@ -14,6 +14,16 @@ grafana:
   persistence:
     enabled: false
 
+  # With persistence off the data dir is an emptyDir and the pod already sets fsGroup 472, so the root busybox
+  # chown init-container is redundant — drop it (one fewer init container + image pull, faster arm64 startup).
+  initChownData:
+    enabled: false
+
+  # Self-scrape Grafana's own /metrics via a ServiceMonitor (VM operator -> VMServiceScrape; vmagent
+  # selectAllByDefault picks it up) — dashboard render times + alert-rule eval latency, the lone blind spot.
+  serviceMonitor:
+    enabled: true
+
   # Pinned so the chart stops generating a random admin-password each render (churns checksum/secret,
   # rolls the pod every sync). Value irrelevant, login is disabled.
   adminUser: admin
@@ -30,6 +40,17 @@ grafana:
     # envoy gateway, which stays at INFO on purpose.
     log:
       level: warn
+    # Kill Grafana's phone-home at the source (the log.level:warn above only silences the log line): no usage
+    # reporting, no version-update check. Offline-ish homelab with no in-UI upgrade path anyway.
+    analytics:
+      reporting_enabled: false
+      check_for_updates: false
+    # No outbound calls on UI load for a single-admin SSO-gated dashboard: drop the grafana.com news feed and
+    # gravatar.com avatar fetches (faster first paint, less egress).
+    news:
+      news_feed_enabled: false
+    security:
+      disable_gravatar: true
     server:
       domain: grafana.ops.example.com
       root_url: https://grafana.ops.example.com

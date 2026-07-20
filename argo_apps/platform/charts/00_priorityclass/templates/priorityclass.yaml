@@ -1,0 +1,7 @@
+apiVersion: scheduling.k8s.io/v1
+kind: PriorityClass
+metadata:
+  name: {{ .Values.name }}
+value: {{ .Values.value | int64 }}
+globalDefault: {{ .Values.globalDefault }}
+description: {{ .Values.description | quote }}

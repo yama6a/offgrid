@@ -7,14 +7,24 @@ cilium:
   # reported (Hubble verdict AUDIT, `cilium monitor --type policy-verdict`) but the packet is STILL FORWARDED.
   # NOTHING is enforced anywhere while this is true; it's a rollout/iteration safety net, not a steady state.
   # Renders `policy-audit-mode: "true"` into cilium-config. Set back to false (or remove) to re-enforce.
-  # NOTE: agents read this at startup — after changing it, roll the cilium DaemonSet to apply.
+  # NOTE: agents read this at startup — after changing it, roll the cilium DaemonSet to apply (rollOutCiliumPods below now automates that).
   policyAuditMode: true
+  # Auto-roll the agent DaemonSet when cilium-config changes (default false). Without it a GitOps config edit
+  # (e.g. policyAuditMode above) has NO effect until a human rolls the DaemonSet by hand — closes that gap.
+  rollOutCiliumPods: true
+  # CNI must survive node memory pressure: losing the agent breaks pod networking on that node. Built-in class
+  # is allowed here (cilium runs in kube-system).
+  priorityClassName: system-node-critical
   # Talos on Raspberry Pi 5.
   ipam:
     mode: kubernetes
   kubeProxyReplacement: true
   k8sServiceHost: localhost # Talos KubePrism
   k8sServicePort: 7445
+  # eBPF-native egress masquerade (default off): moves masquerading off iptables into the datapath, the natural
+  # pairing with full kubeProxyReplacement above. Supported by the rpi-6.18 kernel this image builds.
+  bpf:
+    masquerade: true
   encryption:
     enabled: true
     type: wireguard # transparent node-to-node encryption
@@ -36,6 +46,10 @@ cilium:
     serviceMonitor:
       enabled: true
   operator:
+    rollOutPods: true # roll the operator too on cilium-config change (pairs with rollOutCiliumPods above)
+    priorityClassName: system-cluster-critical # protect the operator from eviction (kube-system => built-in allowed)
+    podDisruptionBudget:
+      enabled: true # 2 replicas: keep LB-IPAM/L2 leader through Talos node reboots (chart default maxUnavailable:1)
     prometheus:
       enabled: true
       serviceMonitor:

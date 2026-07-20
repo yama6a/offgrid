@@ -25,7 +25,7 @@ victoria-metrics-k8s-stack:
         # 60s halves sample volume vs 30s for negligible loss at homelab cardinality (vmagent also 60s).
         dedup.minScrapeInterval: 60s
       storage:
-        storageClassName: longhorn-r2-retained   # Retain r2 (02_longhorn): survives an accidental delete; add vmbackup for total-loss coverage
+        storageClassName: longhorn-r2-retained   # Retain r2 (02_longhorn): survives an accidental delete; total-loss coverage is the daily S3 export CronJob (platform app 08_vm_backup)
         accessModes: ["ReadWriteOnce"]
         resources:
           requests:
@@ -54,6 +54,19 @@ victoria-metrics-k8s-stack:
       # serviceMonitorSelectorNilUsesHelmValues:false behaviour.
       selectAllByDefault: true
       scrapeInterval: 60s
+      # Persist vmagent's remote-write buffer on a PVC instead of the default emptyDir. The vmsingle failover
+      # design (30s unreachable/not-ready tolerations + Longhorn RWO reattach, ~1-2 min) leans on vmagent
+      # buffering scrapes during the gap — but an emptyDir buffer is lost if vmagent itself restarts/reschedules
+      # inside that window. statefulMode keeps the queue across the exact node-loss event it's built for.
+      statefulMode: true
+      statefulStorage:
+        volumeClaimTemplate:
+          spec:
+            storageClassName: longhorn-r2-retained   # small buffer PVC; Retain r2 like the other monitoring stores
+            accessModes: ["ReadWriteOnce"]
+            resources:
+              requests:
+                storage: 2Gi
       externalLabels:
         cluster: raspi-cluster
       extraArgs:

@@ -18,6 +18,22 @@ redis-operator:
     # redis-instance ServiceMonitor); this just keeps the endpoint live for a future PodMonitor. See 12_redis.md.
     metrics:
       enabled: true
+    # Default is Always -> re-pulls the immutable quay.io tag on every (re)start on a bandwidth-limited cluster.
+    # A Chart.yaml bump changes the tag and still forces a fresh pull, so IfNotPresent loses nothing.
+    imagePullPolicy: IfNotPresent
+
+  # Enforce the non-root posture on Talos (image already runs as uid 1000, but nothing asserts it). These are
+  # top-level keys (the chart's pod/container security contexts), NOT under redisOperator. readOnlyRootFilesystem
+  # left off (unverified the controller has no scratch writes).
+  podSecurityContext:
+    runAsNonRoot: true
+  securityContext:
+    runAsNonRoot: true
+    allowPrivilegeEscalation: false
+    capabilities:
+      drop: ["ALL"]
+    seccompProfile:
+      type: RuntimeDefault
 
   # Modest footprint for the single controller pod on the Pi 5s (trimmed from the chart's 500m/500Mi default);
   # it only reconciles CRs — the real work lives in the redis pods (the workloads). Fully specified (not just

@@ -19,6 +19,17 @@ sealed-secrets:
   logFormat: json         # text | json
   logInfoStdout: true
 
+  # Protect the singleton controller from eviction: while it's gone NO SealedSecret can be unsealed, blocking
+  # any secret-creating deploy. Own ns => our class (not the kube-system-only built-ins). See 00_priorityclass.
+  priorityClassName: platform-critical
+
+  # Drop the "proxier" RBAC role: the chart binds it to system:authenticated (upstream flags this as broad).
+  # We never proxy the SealedSecret API through the kube-apiserver, so shrink the attack surface.
+  rbac:
+    serviceProxier:
+      create: false
+      bind: false
+
   # Modest footprint for a 3x 8GB Pi 5 cluster, the controller is light (decrypt-on-admission).
   resources:
     requests: { cpu: 10m, memory: 32Mi }
@@ -28,4 +39,8 @@ sealed-secrets:
   # CRDs exist from wave 0, before this wave-2 app. See 15_monitoring.md.
   metrics:
     serviceMonitor:
+      enabled: true
+    # Ship the bundled `SealedSecretsControllerNotReady` alert: a down/unsynced controller silently blocks ALL
+    # secret decryption — exactly the failure worth paging. VM operator converts PrometheusRule -> VMRule.
+    prometheusRule:
       enabled: true

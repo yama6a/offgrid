@@ -28,6 +28,18 @@ cloudnative-pg:
   # so this wires into VictoriaMetrics with no extra config. CRDs exist from wave 0. See 09_monitoring.md.
   monitoring:
     podMonitorEnabled: true
+    # Ship the official CNPG operator Grafana dashboard as a `grafana_dashboard` ConfigMap; the 05_grafana
+    # sidecar (searchNamespace: ALL) auto-loads it, and we already scrape the operator PodMonitor. Free dashboard.
+    grafanaDashboard:
+      create: true
+
+  # Single replica: use Recreate so an image bump doesn't briefly run two operator pods (~2x the 96Mi limit)
+  # on a memory-tight node (RollingUpdate's 25% maxSurge rounds up to 1 surge pod).
+  updateStrategy:
+    type: Recreate
+
+  # Protect the operator from eviction under node memory pressure (own ns => our class, not kube-system built-in).
+  priorityClassName: platform-critical
 
   # Modest footprint for the single controller pod on the Pi 5s, it only reconciles, the DB work
   # lives in the Postgres pods (the sample_workload workload).

@@ -278,4 +278,7 @@ Pi 5 Talos image builds on [talos-rpi5/talos-builder](https://github.com/talos-r
 - disaster recovery exercise
 - add missing ciliumNetworkPolicy for everything that should have one but that doesn't have one yet. 
 - add something to test in CI so that PRs have at least SOME confidence in not being garbage.
+- remove revisionHistoryLimit on everything. we don't use it cause we always roll forward (e.g. with git reverts if needed)
+- remove all prometheus and vmalerts alerting rules.
+
 - go over ALL external helm charts, and check the possible values for each, and see if any of them are worth setting in our wrapper charts.

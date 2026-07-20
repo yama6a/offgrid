@@ -13,10 +13,16 @@
 # the subchart's CRDs are registered; ArgoCD applies CRDs before CRs and selfHeal converges once the operator boots.
 
 rabbitmq-cluster-operator:
-  # Self-sign the Messaging Topology Operator's admission-webhook cert instead of using cert-manager. Keeps this
-  # app free of a cross-wave dependency on cert-manager (which also lands at wave 2); the operator manages its
-  # own webhook CA. Flip to true only if you want cert-manager to own the cert.
-  useCertManager: false
+  # cert-manager owns + AUTO-ROTATES the topology-operator's webhook serving cert and injects the caBundle into
+  # the ValidatingWebhookConfiguration (via a cert-manager.io/inject-ca-from annotation). This FIXES a real bug
+  # in the self-signed path (useCertManager:false): that path mints the cert with Helm genSignedCert at TEMPLATE
+  # time, so ArgoCD re-rendered a fresh cert every reconcile -> the webhook Secret + caBundle were perpetually
+  # OutOfSync and topology CR writes (Queue/Exchange/Binding/User/Permission/Vhost, failurePolicy:Fail) could be
+  # transiently rejected. TRADE-OFF (deliberate): adds a cross-wave dep on cert-manager — cert-manager + its
+  # Issuer/Certificate CRDs are wave 2, this app is wave 3. Waves are advisory (no health gate), so on a cold
+  # boot the Certificate may briefly sit pending until cert-manager reconciles; the app self-converges via its
+  # unbounded syncPolicy.retry (the repo's standard model). See 11_messaging.md.
+  useCertManager: true
 
   # The RabbitMQ Cluster Operator: watches all namespaces so it can reconcile the RabbitmqCluster in `rabbitmq`
   # and (via topology-allowed-namespaces on the CR) topology objects in every workload namespace.

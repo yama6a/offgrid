@@ -42,6 +42,23 @@ victoria-metrics-operator:
     requests: {cpu: 10m, memory: 64Mi}
     limits: {memory: 96Mi}
 
+  # Soft GC ceiling just under the 96Mi hard limit above: the Go runtime is otherwise blind to the cgroup cap
+  # and only GCs on heap growth, so a transient spike during BULK prometheus->VM conversion (the converter's
+  # whole job) can blow past 96Mi and OOMKill the very component driving the migration. GOMEMLIMIT makes GC
+  # aggressive as it nears the ceiling. Cheap insurance for a Go binary in a tight limit.
+  env:
+    - name: GOMEMLIMIT
+      value: "90MiB"
+
+  # Protect the operator from eviction under node memory pressure (its own ns, not kube-system => our class).
+  priorityClassName: platform-critical
+
+  # Scrape the operator's OWN /metrics via a VMServiceScrape (vm:true), so converter/reconcile failures are
+  # visible — the converter is central to the monitoring migration. vmagent selectAllByDefault picks it up.
+  serviceMonitor:
+    enabled: true
+    vm: true
+
   # Leader-elected (one active + standby). If replicaCount is ever raised, keep the standby off the active's
   # node. PREFERRED + hostname: bare Pi nodes have no zone label, and soft so a scale-up never wedges as
   # Pending on the 3-node cluster. No-op at the default single replica.

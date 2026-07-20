@@ -26,7 +26,19 @@ vlsingle:
 victoria-logs-collector:
   # Tail all container logs on every node, remote-write to the VLSingle service above.
   remoteWrite:
+      # Cap the on-disk send buffer (default: uncapped). VLSingle is in-cluster on these same 3 nodes, so if it
+      # goes down the buffer could otherwise grow until it fills the node's /var/lib and takes the node with it;
+      # capped, the collector drops oldest logs instead. (Homelab: dropping logs during a store outage is fine.)
     - url: http://vlsingle-victoria-logs.monitoring.svc:9428
+      maxDiskUsagePerURL: 2G
+
+  collector:
+    # Drop the collector's OWN logs before reading them (applied pre-read => saves CPU + hostPath I/O + store
+    # space, and stops a self-ingestion feedback loop). %{HOSTNAME} is substituted per-pod by the chart.
+    excludeFilter: "kubernetes.pod_name:=%{HOSTNAME}"
+    # Don't stamp every log line with all pod labels (default true): needless stream/field cardinality in the
+    # small 30Gi/60d store. Labels stay available to excludeFilter above regardless.
+    includePodLabels: false
 
   # DaemonSet must land on all 3 nodes. All-control-plane cluster, so tolerate everything rather than a
   # control-plane nodeSelector (a node-role.kubernetes.io/control-plane:DoesNotExist selector would match
