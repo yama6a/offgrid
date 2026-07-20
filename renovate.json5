@@ -76,16 +76,17 @@
       datasourceTemplate: "git-refs",
     },
     {
-      // raspberrypi/linux kernel pin. Its stable_YYYYMMDD tags track whichever branch is current-stable and DO
-      // jump kernel lines (stable_20260715 landed on rpi-6.12.y = 6.12.95), so we track the rpi-6.18.y BRANCH
-      // HEAD as a commit SHA instead — Renovate can never pick a non-6.18 tag. Same shape as the overlay pin above.
+      // Kernel pin — tracked INDIRECTLY via raspberrypi/FIRMWARE, not the linux repo. The linux repo's stable_
+      // tags are best-effort and jump kernel lines (stable_20260715 was 6.12.95), and rpi-6.18.y HEAD is
+      // bleeding-edge. firmware 'stable' HEAD is the RPi-OS-blessed release pointer; 03a derefs its
+      // extra/git_hash to the exact tested 6.18 kernel commit. Moves at RPi release cadence (~monthly).
       customType: "regex",
-      description: "kernel pin: raspberrypi/linux rpi-6.18.y HEAD",
+      description: "kernel pin: raspberrypi/firmware stable HEAD (03a derefs extra/git_hash)",
       managerFilePatterns: ["/^versions\\.env$/"],
-      matchStrings: ["KERNEL_REF=\"(?<currentDigest>[a-f0-9]{40})\""],
-      currentValueTemplate: "rpi-6.18.y",
-      depNameTemplate: "raspberrypi/linux",
-      packageNameTemplate: "https://github.com/raspberrypi/linux",
+      matchStrings: ["FIRMWARE_REF=\"(?<currentDigest>[a-f0-9]{40})\""],
+      currentValueTemplate: "stable",
+      depNameTemplate: "raspberrypi/firmware",
+      packageNameTemplate: "https://github.com/raspberrypi/firmware",
       datasourceTemplate: "git-refs",
     },
   ],

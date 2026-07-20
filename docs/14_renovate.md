@@ -83,7 +83,8 @@ Two things ride in the combined PR that need care before merging:
   (per that chart's README), not a line edit.
 - **VictoriaMetrics charts are grouped**; the CRD chart's app version must match its operator, a human check on
   the grouped PR. See [09_monitoring.md].
-- **The kernel is pinned to a branch-HEAD SHA, not a tag.** raspberrypi/linux `stable_YYYYMMDD` tags jump kernel
-  lines (mid-2026 they moved from `rpi-6.18.y` to `rpi-6.12.y` = 6.12.95), so `KERNEL_REF` tracks the `rpi-6.18.y`
-  branch HEAD via a `git-refs` custom manager (like `SBCOVERLAY_VERSION`); a tag-based manager would silently cross
-  onto the 6.12 line. `03a` reads the fetched tree's `Makefile` and hard-fails if it isn't 6.18.
+- **The kernel is pinned via `raspberrypi/firmware`, not the linux repo.** The linux repo's `stable_YYYYMMDD` tags
+  are best-effort and jump kernel lines (mid-2026 `stable_20260715` was 6.12.95, off the 6.18 line), so a tag-based
+  manager is unsafe. Instead `FIRMWARE_REF` tracks the firmware `stable` branch HEAD via a `git-refs` custom manager
+  (like `SBCOVERLAY_VERSION`) — the RPi-OS-blessed release pointer, ~monthly cadence — and `03a` dereferences its
+  `extra/git_hash` to the exact tested 6.18 kernel commit, hard-failing if the resolved kernel isn't 6.18.

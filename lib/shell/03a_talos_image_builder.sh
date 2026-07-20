@@ -97,18 +97,23 @@ git -C "$CHK/sbc-raspberrypi5" checkout -q "$SBCOVERLAY_VERSION" || die "could n
 # pkgs ships a stock arm64 config (already 4K). We point the kernel source
 # at raspberrypi/linux (for the RP1/BCM2712 drivers that are fork-only) and add a
 # small fragment, reconciled with olddefconfig under the real clang toolchain.
-say "REBASE 1, kernel source -> raspberrypi/linux ${KERNEL_REF} (served locally), + Pi5 config fragment"
+# Resolve the kernel commit from the pinned firmware/stable pointer: extra/git_hash names the exact
+# raspberrypi/linux commit RPi built + tested for this Raspberry Pi OS release. Fetch just that one file
+# (raw URL — never clone the multi-GB firmware repo). `|| true` so set -e doesn't swallow the friendly die.
+KERNEL_REF=$(curl -fsSL --retry 3 "https://raw.githubusercontent.com/raspberrypi/firmware/${FIRMWARE_REF}/extra/git_hash" 2>/dev/null | tr -d '[:space:]' || true)
+[[ "$KERNEL_REF" =~ ^[0-9a-f]{40}$ ]] || die "could not resolve kernel commit from firmware/${FIRMWARE_REF} extra/git_hash (got '${KERNEL_REF}')"
+say "REBASE 1, kernel source -> raspberrypi/linux ${KERNEL_REF} (firmware/stable ${FIRMWARE_REF:0:12}, served locally) + Pi5 fragment"
 # GitHub's /archive/ tarballs are NOT byte-stable (different CDN nodes serve different
 # gzip), so the sha bldr downloads can differ from one we hash on the host. Download
 # once and serve it from a local HTTP server so bldr fetches the exact bytes we hashed.
 SRCDIR="${BUILD_DIR}/srcserve"; mkdir -p "$SRCDIR"
 curl -fL --retry 3 -o "$SRCDIR/linux.tar.gz" \
   "https://github.com/raspberrypi/linux/archive/${KERNEL_REF}.tar.gz"   # /archive/<ref>: tag | branch | SHA
-# fail fast: refuse a wrong kernel line BEFORE the multi-minute build. rpi stable_ tags jump branches, so
-# KERNEL_REF tracks rpi-6.18.y (a SHA); assert the archive's own Makefile says 6.18 (top dir is linux-${KERNEL_REF}).
+# fail fast: refuse a wrong kernel line BEFORE the multi-minute build. Assert the fetched tree's own Makefile
+# says 6.18 (guards a bad git_hash or a firmware line change). Archive top dir is linux-${KERNEL_REF}.
 KMAJMIN=$(tar -xzOf "$SRCDIR/linux.tar.gz" "linux-${KERNEL_REF}/Makefile" 2>/dev/null \
   | awk -F' *= *' '/^VERSION/{v=$2} /^PATCHLEVEL/{p=$2} END{print v"."p}')
-[ "$KMAJMIN" = "6.18" ] || die "kernel source ${KERNEL_REF} is ${KMAJMIN:-unknown}.x, not 6.18 (KERNEL_REF must track rpi-6.18.y)"
+[ "$KMAJMIN" = "6.18" ] || die "resolved kernel ${KERNEL_REF} is ${KMAJMIN:-unknown}.x, not 6.18 (firmware/stable moved off the 6.18 line?)"
 KSHA256=$(shasum -a 256 "$SRCDIR/linux.tar.gz" | awk '{print $1}')
 KSHA512=$(shasum -a 512 "$SRCDIR/linux.tar.gz" | awk '{print $1}')
 docker rm -f "$SRCSERVER_NAME" >/dev/null 2>&1 || true
