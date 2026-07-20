@@ -143,6 +143,30 @@ atomic A/B over the network without needing manua reflashing. For that, bump the
 `talosctl upgrade --image "$INSTALLER_REF"` one node at a time. This is re-run-safe (an already-upgraded node is a
 no-op). The nodes pull the installer using the `read:packages` auth `03d` baked into their machine config in `03d`.
 
+**Draining during the upgrade (why `03f` cordons/drains itself).** Talos's upgrade sequence cordons the node and
+drains it (honoring the eviction API / PodDisruptionBudgets) before the reboot. On this cluster that drain used to
+*hang* — three pods it can't gracefully evict, each for a different reason:
+
+- **CNPG single-instance DB** (`analyticsdb`, `instances: 1`): the operator's PDB is `minAvailable: 1`, so with one
+  instance *any* eviction violates it — a hard block unrelated to storage. Fixed by `enablePDB: false` on that Cluster
+  (see its comment in `argo_apps/workloads/charts/sample_user_manager/values.yaml`); `maindb` (2 instances) is left
+  alone — it switches over and its PDB permits the eviction.
+- **Longhorn `instance-manager`**: Longhorn's PDB blocks the drain only while the node holds a volume's **last healthy
+  replica** — i.e. when a volume is already `degraded` (common here, the NICs are flaky, so a replica is often down).
+- **RabbitMQ broker** (`rabbitmq-server-0`): no PDB and no finalizer — just slow to terminate (quorum preStop) and
+  unable to reschedule (hard one-per-node anti-affinity on 3 nodes + node-local storage), so Talos's bounded drain
+  times out waiting for it.
+
+None of these pods can *relocate* (node-local storage / a per-node storage engine / hard anti-affinity), so a graceful
+drain can only kill them; they come back on the same node after the reboot. So `03f` takes the drain into its own hands
+(native `kubectl`): per node it (1) waits for all Longhorn volumes to be `healthy` — never reboot a node that might
+hold a volume's last replica, and this also waits out the previous node's post-reboot replica resync; (2) cordons +
+does a bounded graceful drain, then force-deletes any straggler so the node can always reboot. Talos's own in-upgrade
+drain then finds an empty node and completes instantly. We deliberately **leave `nodeDrainPolicy` at its Longhorn
+default** — `block-for-eviction` (evict/rebuild replicas off the node first) needs a spare node and is slow, exactly
+what times out on a 3-node / replica-2 layout; the volume-health gate is the lighter, self-correcting equivalent
+(Longhorn auto-rebuilds a degraded volume onto the spare node on its own while we wait).
+
 **Upgrading Kubernetes (separate from the OS).** The Talos OS version and the Kubernetes version upgrade independently.
 `03g_k8s_upgrade.sh` updates the k8s control plane (`talosctl upgrade-k8s --to "$KUBERNETES_VERSION"`). So bump *only*
 `KUBERNETES_VERSION` in `versions.env`, and then run `03g`. `KUBERNETES_VERSION` can't exceed the pinned Talos release's default

@@ -99,6 +99,10 @@ analyticsdb:
     type: postgresql
     cluster:
       instances: 1
+      # single-instance PDB is minAvailable:1 => blocks EVERY eviction, so a Talos node drain (03f upgrade)
+      # can never evict this pod. It's single/non-HA and unused by the binary, so drop the PDB: the pod is
+      # evictable, node reboots, data on local-path Retain survives + it re-attaches on the same node.
+      enablePDB: false
       resources:
         requests:
           cpu: 100m
