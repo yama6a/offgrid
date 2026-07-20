@@ -30,7 +30,7 @@ ingress:
   ingresses:
     - name: sample-user-manager
       domain: app.example.com          # workloads live under the *.app.<base> tier (platform UIs use *.ops.<base>). See 07_ingress.md.
-      issuer: letsencrypt-staging      # todo: letsencrypt-prod once tested
+      issuer: letsencrypt-prod
       # targetNamespace omitted => the chart's release namespace (sample-user-manager).
       hosts:
         - subdomain: sample-user-manager       # open control (not in google-sso)

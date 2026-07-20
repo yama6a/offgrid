@@ -26,7 +26,7 @@ oidc:
 # its allowlist. To protect a host: add it here (its route is created by whatever chart owns the ingress).
 domains:
   - domain: example.com
-    issuer: letsencrypt-staging   # callback cert issuer (letsencrypt-staging | letsencrypt-prod)
+    issuer: letsencrypt-prod   # callback cert issuer (letsencrypt-staging | letsencrypt-prod)
     hosts:
       # Platform UIs (06_platform_ingress) live under the *.ops.<domain> tier; the workload
       # (sample_user_manager) under *.app.<domain>. All still share this one example.com domain entry:
