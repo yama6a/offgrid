@@ -86,6 +86,15 @@ What it does:
 7. raw image
 8. runs offline validation
 
+**No build cache — every run starts clean.** Before building, `03a` destroys and recreates the buildx builder
+(`talos-bx`) and the local registry (`talos-registry`). buildkit's content cache and the registry's image store
+both persist across runs and reuse images by mutable tags that don't encode the kernel — which let a prior build's
+kernel/installer/imager layers silently bleed into a new one (a self-inconsistent image: correct kernel source, but
+a stale installer/UKI `.uname` label). Wiping them each run makes that impossible, at the cost of a full rebuild
+every time (the kernel recompile is the long pole). Correctness over speed — these builds are rare and manual.
+(The `.cache/<BUILD_KEY>/` dir is NOT this kind of cache: it's the build-output staging `03b` reads, and its
+checkouts/kernel-source are re-cloned/re-downloaded each run, so it can't carry staleness.)
+
 Prerequisites (the script checks all of these, with the `brew` fix for each):
 
 - GNU make >= 4 (`brew install make` -> use `gmake`). MacOS ships make 3.81, which the kres Makefiles refuse to run.

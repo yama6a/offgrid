@@ -58,19 +58,24 @@ docker info >/dev/null 2>&1 || die "docker not responding (start Rancher/Docker 
 export PATH="/opt/homebrew/opt/make/libexec/gnubin:${PATH}"   # so make / $(MAKE) == gmake 4.x
 mkdir -p "$BUILD_DIR" "$OUT_DIR"
 
-# === 1. local registry + mergeop-capable builder =============================
+# === 1. local registry + mergeop-capable builder (ALWAYS FRESH, no cache) ====
 # siderolabs `bldr` uses BuildKit mergeop, which the dockerd-embedded builder
 # (Rancher's default) refuses. A standalone docker-container builder supports it.
+# NO BUILD CACHE: buildkit's content cache (in the builder) and the registry's image store both persist across
+# runs and get reused via mutable tags that don't encode the kernel -> a prior build's kernel/installer/imager
+# layers can silently bleed into this one (a self-inconsistent image). So DESTROY + recreate both every run:
+# correctness over speed (the kernel recompiles each time). See docs/03 "No build cache".
+say "wiping any prior build registry + builder (no-cache: every run builds clean)"
+docker rm -f "$REGISTRY_NAME" >/dev/null 2>&1 || true
+docker buildx rm "$BUILDER_NAME" >/dev/null 2>&1 || true
+
 say "local registry on ${REGISTRY_HOST}"
-docker ps --format '{{.Names}}' | grep -qx "$REGISTRY_NAME" || \
-  docker run -d --restart=unless-stopped -p "127.0.0.1:${REGISTRY_PORT}:5000" --name "$REGISTRY_NAME" "$REGISTRY_IMAGE" >/dev/null
+docker run -d --restart=unless-stopped -p "127.0.0.1:${REGISTRY_PORT}:5000" --name "$REGISTRY_NAME" "$REGISTRY_IMAGE" >/dev/null
 
 say "mergeop-capable buildx builder ${BUILDER_NAME}"
-if ! docker buildx inspect "$BUILDER_NAME" >/dev/null 2>&1; then
-  cfg="$(mktemp)"; printf '[registry."%s"]\n  http = true\n  insecure = true\n' "$REGISTRY_HOST" > "$cfg"
-  docker buildx create --name "$BUILDER_NAME" --driver docker-container \
-    --driver-opt network=host --buildkitd-config "$cfg" >/dev/null
-fi
+cfg="$(mktemp)"; printf '[registry."%s"]\n  http = true\n  insecure = true\n' "$REGISTRY_HOST" > "$cfg"
+docker buildx create --name "$BUILDER_NAME" --driver docker-container \
+  --driver-opt network=host --buildkitd-config "$cfg" >/dev/null
 docker buildx use "$BUILDER_NAME"
 docker buildx inspect --bootstrap "$BUILDER_NAME" >/dev/null
 
