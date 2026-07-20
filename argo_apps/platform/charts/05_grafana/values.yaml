@@ -40,7 +40,11 @@ grafana:
       org_name: Main Org.
       org_role: Admin                # everyone who clears the SSO allowlist gets full admin
     auth.basic:
-      enabled: false                 # no basic-auth path either
+      # ON so the alerts/dashboards sidecars can authenticate their provisioning-reload POST (the
+      # /api/admin/provisioning/*/reload endpoint is Basic-Auth-ONLY; with it off the sidecar's reload 403s and
+      # provisioning silently only ever applied on a pod restart). Not an external hole: the SSO edge gates all
+      # browser traffic and only the in-cluster sidecar uses the admin creds. Login form stays off (SSO is the front door).
+      enabled: true
 
   # GF_NTFY_TOKEN <- the sealed grafana-ntfy Secret (key `token`), referenced (env-interpolated) by the ntfy
   # webhook contact point below as ${GF_NTFY_TOKEN}, so the write token never lands in git. The Secret is
