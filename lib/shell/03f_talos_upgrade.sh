@@ -44,9 +44,10 @@ HEALTH_TIMEOUT=1800   # secs to wait per node for reboot + installer pull + rejo
                       # image over your home link, so keep this generous; matches talosctl's own default)
 # Pre-drain (this script cordons+drains each node BEFORE talosctl upgrade, so Talos's own in-upgrade drain
 # finds an empty node and can't hang on a PDB or a slow-terminating pod). See 03_operating_system.md.
-VOLUME_HEALTH_TIMEOUT=1800  # secs: wait for ALL Longhorn volumes healthy before draining a node (a degraded
-                            # volume = the node may hold its last replica; also waits out the prev node's
-                            # post-reboot resync). Longhorn auto-rebuilds onto the spare node while we wait.
+REPLICATION_HEALTH_TIMEOUT=1800  # secs: before draining EACH node, wait until every replicated store is healthy
+                                 # + in sync (Longhorn volumes, CNPG clusters, RabbitMQ) so taking a node down
+                                 # can't drop a volume's last replica or an un-caught-up DB standby. Also waits
+                                 # out the PREVIOUS node's post-reboot resync. Abort if exceeded (fix + re-run).
 GRACEFUL_DRAIN_TIMEOUT=120  # secs: bounded polite drain (honors eviction) before escalating to force
 FORCE_GRACE=20              # secs: grace-period on the force-delete of stragglers (let rabbit flush; 0=now)
 # -----------------------------------------------------------------------------
@@ -63,19 +64,51 @@ node_for_ip() {
     | awk -v ip="$1" '$2==ip{print $1; exit}'
 }
 
-# wait_volumes_healthy -> block until no Longhorn volume is degraded/faulted, or die after VOLUME_HEALTH_TIMEOUT.
-# Rebooting a node that holds a volume's LAST healthy replica loses that data; a `degraded` volume is exactly
-# when that risk exists. Detached volumes report `unknown` (fine). Re-running resumes once Longhorn rebuilds.
-wait_volumes_healthy() {
-  local deadline unhealthy
-  deadline=$(( $(date +%s) + VOLUME_HEALTH_TIMEOUT ))
-  while :; do
-    unhealthy="$(kubectl -n longhorn-system get volumes.longhorn.io \
-      -o jsonpath='{range .items[?(@.status.robustness=="degraded")]}{.metadata.name}{"\n"}{end}{range .items[?(@.status.robustness=="faulted")]}{.metadata.name}{"\n"}{end}' \
-      2>/dev/null | grep -c . || true)"
-    [ "${unhealthy:-0}" -eq 0 ] && return 0
-    [ "$(date +%s)" -ge "$deadline" ] && die "Longhorn still has ${unhealthy} degraded/faulted volume(s) after ${VOLUME_HEALTH_TIMEOUT}s; not draining (would risk a last-replica reboot). Fix storage, then re-run (idempotent)."
-    printf '.'; sleep 15
+# Each _*_unready below ECHOES the not-yet-in-sync items (space-separated), empty when all good. A missing
+# CRD / absent subsystem => kubectl errors to /dev/null => empty => treated as healthy (nothing to protect).
+
+# Longhorn: volumes whose robustness is degraded/faulted. `healthy` IS Longhorn's all-replicas-in-sync signal
+# (it drops to `degraded` during a rebuild); detached volumes report `unknown` (fine). A degraded volume is
+# exactly when a node might hold its LAST healthy replica -> don't reboot into that.
+_longhorn_unready() {
+  kubectl -n longhorn-system get volumes.longhorn.io \
+    -o jsonpath='{range .items[?(@.status.robustness=="degraded")]}{.metadata.name}{" "}{end}{range .items[?(@.status.robustness=="faulted")]}{.metadata.name}{" "}{end}' \
+    2>/dev/null
+}
+
+# CNPG: a cluster is in sync only when phase=="Cluster in healthy state", readyInstances==spec.instances (the
+# streaming standby is up + caught up), and currentPrimary==targetPrimary (no switchover/failover mid-flight).
+_cnpg_unready() {
+  kubectl get clusters.postgresql.cnpg.io -A \
+    -o jsonpath='{range .items[*]}{.metadata.namespace}/{.metadata.name}{"|"}{.spec.instances}{"|"}{.status.readyInstances}{"|"}{.status.phase}{"|"}{.status.currentPrimary}{"|"}{.status.targetPrimary}{"\n"}{end}' \
+    2>/dev/null \
+  | awk -F'|' 'NF>=4 && ( $3 != $2 || $4 != "Cluster in healthy state" || ($6 != "" && $5 != $6) ) { printf "%s ", $1 }'
+}
+
+# RabbitMQ: all broker replicas ready (quorum queues have full membership) + cluster available. Deliberately
+# ignores the NoWarnings condition (benign, e.g. mem request!=limit) — gating on it would hang forever.
+_rabbitmq_unready() {
+  kubectl get rabbitmqclusters.rabbitmq.com -A \
+    -o jsonpath='{range .items[*]}{.metadata.namespace}/{.metadata.name}{"|"}{range .status.conditions[*]}{.type}={.status};{end}{"\n"}{end}' \
+    2>/dev/null \
+  | awk -F'|' 'NF>=2 && !( $2 ~ /AllReplicasReady=True;/ && $2 ~ /ClusterAvailable=True;/ ) { printf "%s ", $1 }'
+}
+
+# wait_replication_healthy -> block until Longhorn + CNPG + RabbitMQ are all healthy/in-sync, or die after
+# REPLICATION_HEALTH_TIMEOUT naming the stragglers. Run before draining EACH node so the previous node's
+# post-reboot resync (replica rebuild / standby catch-up / broker rejoin) has fully settled first.
+wait_replication_healthy() {
+  local what fn deadline pending pair
+  for pair in "Longhorn volumes:_longhorn_unready" "CNPG clusters:_cnpg_unready" "RabbitMQ:_rabbitmq_unready"; do
+    what="${pair%%:*}"; fn="${pair##*:}"
+    printf '  waiting for %s healthy + in sync' "$what"
+    deadline=$(( $(date +%s) + REPLICATION_HEALTH_TIMEOUT ))
+    while :; do
+      pending="$("$fn")"
+      [ -z "${pending// }" ] && { printf ' ok\n'; break; }
+      [ "$(date +%s)" -ge "$deadline" ] && die "${what} not healthy/in-sync after ${REPLICATION_HEALTH_TIMEOUT}s: ${pending}. Fix, then re-run (idempotent, skips done nodes)."
+      printf '.'; sleep 15
+    done
   done
 }
 
@@ -119,10 +152,10 @@ for ip in "${IPS[@]}"; do
   node="$(node_for_ip "$ip")"
   [ -n "$node" ] || die "no k8s node has InternalIP ${ip} (is the cluster up / .env CLUSTER_NODES right?)"
 
-  # Gate on Longhorn health BEFORE cordoning (an abort here leaves no stray cordon): never drain a node
-  # while a volume is degraded — that's when this node might hold its last healthy replica.
-  say "waiting for all Longhorn volumes healthy before draining ${node} (${ip})"
-  wait_volumes_healthy
+  # Gate on replication health BEFORE cordoning (an abort here leaves no stray cordon): never take a node
+  # down while any replicated store is degraded / a standby is catching up / a broker is rejoining.
+  say "checking replicated stores are healthy + in sync before draining ${node} (${ip})"
+  wait_replication_healthy
 
   # Pre-drain ourselves so Talos's own in-upgrade drain is a fast no-op (can't hang on a PDB / slow pod).
   say "draining ${node}"

@@ -168,13 +168,36 @@ drains it (honoring the eviction API / PodDisruptionBudgets) before the reboot. 
 
 None of these pods can *relocate* (node-local storage / a per-node storage engine / hard anti-affinity), so a graceful
 drain can only kill them; they come back on the same node after the reboot. So `03f` takes the drain into its own hands
-(native `kubectl`): per node it (1) waits for all Longhorn volumes to be `healthy` — never reboot a node that might
-hold a volume's last replica, and this also waits out the previous node's post-reboot replica resync; (2) cordons +
-does a bounded graceful drain, then force-deletes any straggler so the node can always reboot. Talos's own in-upgrade
-drain then finds an empty node and completes instantly. We deliberately **leave `nodeDrainPolicy` at its Longhorn
+(native `kubectl`): per node it (1) waits until every **replicated store** is healthy + in sync (see below); (2) cordons
++ does a bounded graceful drain, then force-deletes any straggler so the node can always reboot. Talos's own in-upgrade
+drain then finds an empty node and completes instantly. We deliberately **leave Longhorn's `nodeDrainPolicy` at its
 default** — `block-for-eviction` (evict/rebuild replicas off the node first) needs a spare node and is slow, exactly
-what times out on a 3-node / replica-2 layout; the volume-health gate is the lighter, self-correcting equivalent
-(Longhorn auto-rebuilds a degraded volume onto the spare node on its own while we wait).
+what times out on a 3-node / replica-2 layout; the health gate is the lighter, self-correcting equivalent (Longhorn
+auto-rebuilds a degraded volume onto the spare node on its own while we wait).
+
+**The replication-health gate (run before draining *each* node).** A node reboot is a replication event for every
+replicated store that has data on it, so before taking a node down `03f` blocks until they're all healthy *and* in
+sync — which, crucially, also waits out the PREVIOUS node's post-reboot resync before we touch the next one. Gated:
+
+- **Longhorn volumes** — no volume `degraded`/`faulted`. `healthy` *is* Longhorn's all-replicas-in-sync signal (it
+  drops to `degraded` while a replica rebuilds), so this both avoids a last-replica reboot and waits for rebuilds.
+- **CNPG clusters** — `phase == "Cluster in healthy state"`, `readyInstances == spec.instances` (the streaming
+  standby is up + caught up), and `currentPrimary == targetPrimary` (no switchover/failover mid-flight). So we never
+  reboot the node hosting a primary while its standby is still catching up (`maindb` is 2 instances on node-local
+  storage — the standby must be current before we can safely switch over to it).
+- **RabbitMQ** — `AllReplicasReady` + `ClusterAvailable` (all three brokers up, so quorum queues have full membership
+  before we take one down). The `NoWarnings` condition is intentionally ignored — it's `False` for a benign reason
+  (memory request≠limit) and would block forever.
+- **etcd** — not in this gate: `talosctl upgrade` already refuses to reboot if it would break etcd quorum, and the
+  existing `talosctl health` gate between nodes covers full quorum restore.
+- **Redis** — nothing to gate: the `redis-instance` wrapper is a single standalone instance (no replication), its
+  data lives on Longhorn (covered above), and it simply restarts after the reboot.
+
+A store that isn't installed (its CRD absent) is treated as healthy, so the gate is a no-op where it doesn't apply.
+Each check waits up to `REPLICATION_HEALTH_TIMEOUT`; on timeout `03f` aborts naming the laggards (fix, then re-run —
+idempotent, done nodes are no-ops) rather than reboot into a degraded store. (Caveat: CNPG "in sync" here means the
+standby is *ready/streaming*, not zero-lag; the operator does a controlled switchover on drain, which needs a
+caught-up standby — `readyInstances` is the practical proxy, we don't query `pg_stat_replication` lag.)
 
 **Upgrading Kubernetes (separate from the OS).** The Talos OS version and the Kubernetes version upgrade independently.
 `03g_k8s_upgrade.sh` updates the k8s control plane (`talosctl upgrade-k8s --to "$KUBERNETES_VERSION"`). So bump *only*
