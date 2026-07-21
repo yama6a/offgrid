@@ -38,7 +38,7 @@ set -uo pipefail
 
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 source "${SCRIPT_DIR}/common.sh"   # say/die/warn/ok + CLUSTER_DIR + CLUSTER_NODES from .env + REPO_ROOT
-cd "$REPO_ROOT"                     # run from the repo root (git ops)
+cd "$REPO_ROOT" || exit 1           # run from the repo root (git ops); set -e is off, so guard cd
 
 # ---- knobs ------------------------------------------------------------------
 STEP=0; STEP_TOTAL=11                           # shared step counter (common.sh step/run_step); bump TOTAL if you add/remove a step

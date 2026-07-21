@@ -19,9 +19,11 @@
   prHourlyLimit: 0, // no hourly throttle
   dependencyDashboardTitle: "Renovate dependency dashboard",
 
-  // Automerge via Renovate ITSELF, not GitHub's native auto-merge (which needs a branch-protection gate we
-  // don't have). Renovate merges the PR through the API once it's mergeable; with no CI checks that is ~2h
-  // after creation, on a SUBSEQUENT run — which is why the GHA cron runs every 3h, not weekly.
+  // Automerge via Renovate ITSELF, not GitHub's native auto-merge. Renovate merges the PR through the API
+  // once it's mergeable — which NOW means after the required CI checks pass (.github/workflows/ci.yaml):
+  // Renovate waits on a PR's checks by default, and branch protection enforces them on the API merge too. So
+  // the combined PR merges on a SUBSEQUENT run once CI is green (~2h+ after creation) — which is why the GHA
+  // cron runs every 3h, not weekly. (platformAutomerge stays false: keep Renovate's own API merge.)
   platformAutomerge: false,
 
   // helmv3 auto-discovers every Chart.yaml. Refresh the committed vendored subchart tarballs + Chart.lock
@@ -83,7 +85,7 @@
   packageRules: [
     {
       // ONE combined, AUTO-MERGED PR for every NON-major update (minor + patch + digest + pin + lockfile).
-      // Renovate self-merges it once mergeable (~2h after creation, no CI gate). WARNING: this reaches the live
+      // Renovate self-merges it once mergeable, now GATED on the required CI checks (green before merge; ~2h+ after creation). WARNING: a merged bump still reaches the live
       // cluster unattended via ArgoCD self-heal — including Cilium (which can cut the cluster off its own
       // network) and any local-path tag bump (which really needs a manual re-vendor, see below); it also bumps
       // the Talos/kernel versions.env recipe, which a merge does NOT apply (that needs a manual rebuild — 03a). Accepted

@@ -1,8 +1,10 @@
 # 14 — Renovate (automatic dependency updates)
 
 Renovate opens PRs to bump every pinned dependency in the repo. Config: [`/renovate.json5`](../renovate.json5).
-Runner: [`.github/workflows/renovate.yaml`](../.github/workflows/renovate.yaml) — the repo's ONLY CI, it exists
-solely to run Renovate (nothing here builds or tests the cluster).
+Runner: [`.github/workflows/renovate.yaml`](../.github/workflows/renovate.yaml) — dedicated to running Renovate.
+Separately, [`.github/workflows/ci.yaml`](../.github/workflows/ci.yaml) validates every PR (shellcheck +
+`helm dependency build`/lint/template + kubeconform + renovate-config-validator + yamllint/actionlint) and now
+**gates this automerge** — see "How the automerge works" below.
 
 ## Why Renovate, not Dependabot
 
@@ -37,18 +39,39 @@ trigger the workflow manually — it populates the dependency-dashboard issue an
 - **Each major update is its own PR**, left for manual review — a breaking bump is never bundled or automerged.
   The one exception: the **VictoriaMetrics** charts keep their majors together (the CRDs must match the operator).
 
-### How the automerge works (no CI, no GitHub auto-merge)
+### How the automerge works (CI-gated, Renovate-driven merge)
 
-GitHub's native auto-merge needs a branch-protection gate (a required check or review) to queue against, and
-this repo has none. So we set `platformAutomerge: false` and let **Renovate merge the PR through the API
-itself** — no CI, no branch protection needed. Renovate merges only when a PR is mergeable, which (with no
-checks) is ~2h after creation and on a **subsequent run**, one merge per run. That two-pass timing is why the
-workflow cron runs **every 3 hours** rather than weekly — a weekly cron would leave an auto-mergeable PR sitting
-for a week. A manual `workflow_dispatch` also completes a pending merge on demand.
+We keep `platformAutomerge: false` and let **Renovate merge the PR through the API itself** (not GitHub's
+native auto-merge). Renovate merges only when a PR is mergeable — which now means **after the required CI
+checks ([`ci.yaml`](../.github/workflows/ci.yaml)) pass**: Renovate waits on a PR's status checks by default,
+and `main`'s branch protection enforces them on the API merge too. So the combined PR merges on a **subsequent
+run once CI is green** (~2h+ after creation), one merge per run. That two-pass timing is why the workflow cron
+runs **every 3 hours** rather than weekly — a weekly cron would leave a green, auto-mergeable PR sitting for a
+week. A manual `workflow_dispatch` also completes a pending merge on demand.
+
+Branch protection on `main` requires the CI **checks, not reviews** — a required review would deadlock Renovate
+(it can't approve its own PR) — and leaves `enforce_admins` off so a break-glass fix can still land. One-time
+setup, run once after `ci.yaml` has run on `main` at least once (so the check contexts exist):
+
+```bash
+gh api -X PUT repos/yama6a/offgrid/branches/main/protection \
+  -H "Accept: application/vnd.github+json" --input - <<'JSON'
+{
+  "required_status_checks": { "strict": true, "checks": [
+    {"context": "shell"}, {"context": "helm"}, {"context": "yaml"}, {"context": "renovate-config"}
+  ]},
+  "enforce_admins": false,
+  "required_pull_request_reviews": null,
+  "restrictions": null
+}
+JSON
+```
 
 ### The risk (and how to dial it back)
 
-Merging reaches the live cluster: ArgoCD syncs it, and most apps run `selfHeal`. Auto-merging the combined PR
+CI now blocks a bump that fails to render or produces invalid manifests — but a bump that renders cleanly yet
+misbehaves at runtime (a Cilium regression, a bad default) is NOT caught by static checks. Merging still
+reaches the live cluster: ArgoCD syncs it, and most apps run `selfHeal`. Auto-merging the combined PR
 therefore applies everything in it **unattended**, including:
 
 - **Cilium** — the one app that can cut the cluster (and Argo) off its own network. See [04_networking.md] /

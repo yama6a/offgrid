@@ -1,0 +1,20 @@
+# yamllint config for CI (.github/workflows/ci.yaml, job `yaml`). Relaxed on purpose: this repo's YAML is
+# k8s/helm manifests + ArgoCD Applications, not prose, so noisy stylistic rules are off — we only want real
+# syntax/structure errors.
+extends: relaxed
+rules:
+  line-length: disable          # long renovate/annotation/URL lines are fine
+  truthy: disable               # k8s/helm on/off/yes styling is not an error here
+  colons: disable               # values.yaml is column-aligned (key:   value) on purpose
+  empty-lines: disable          # section/trailing blank lines are stylistic, not errors
+  comments:
+    min-spaces-from-content: 1  # inline `# why` comments sit one space off (repo house style)
+
+# Skipped trees (one gitignore-style pattern per line; `#` is NOT a comment inside this block scalar):
+#   .cache/       gitignored build scratch (>100 GB)
+#   secrets/      gitignored off-repo credential symlink
+#   **/templates/ Helm templates are Go-templated, NOT valid YAML
+ignore: |
+  .cache/
+  secrets/
+  **/templates/

@@ -310,7 +310,7 @@ victoria-metrics-k8s-stack:
         namespaceSelector:
           matchNames: []
   # Scrape the apiserver but DROP its big histograms (request/response/watch/flowcontrol/admission *_bucket)
-  #, the top cardinality hogs, and we don't run the apiserver latency SLOs. Keep apiserver_request_total.
+  # the top cardinality hogs, and we don't run the apiserver latency SLOs. Keep apiserver_request_total.
   # Also drop `etcd_request_duration_seconds_bucket` here: it's the apiserver's CLIENT-side etcd latency
   # histogram (exported by THIS job, not by etcd, ~30k series, by far the biggest hog). _count/_sum stay.
   kubeApiServer:

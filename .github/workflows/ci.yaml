@@ -1,0 +1,111 @@
+# PR validation for this repo — static checks only (no cluster). This repo is Bash + Helm wrapper charts +
+# ArgoCD Applications + a Renovate config, so "CI" = does the Bash lint, do the charts resolve their locks +
+# render, are the rendered manifests valid k8s, is renovate.json5 parseable. Four parallel jobs; each job
+# name is a branch-protection required-check context (see docs/14_renovate.md). Repo is public -> free
+# minutes; still kept fast (~2-3 min) + auto-cancelling. The Renovate workflow is separate (renovate.yaml).
+name: CI
+
+on:
+  pull_request:
+    branches: [main] # the ask: gate everything merging into main (human PRs AND Renovate's automerge)
+  push:
+    branches: [main] # so the required-check contexts exist for branch protection + main stays verified
+  workflow_dispatch: {}
+
+concurrency: # a newer push cancels the stale run — faster feedback, fewer wasted minutes
+  group: ci-${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: true
+
+permissions:
+  contents: read # checkout only; no check needs write
+
+jobs:
+  shell:
+    name: shell
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@9c091bb21b7c1c1d1991bb908d89e4e9dddfe3e0 # v7.0.0
+      - name: shellcheck # preinstalled on ubuntu-latest, no setup needed
+        # -S warning: fail on warning+error only. The repo's `&& ok || bad` PASS/FAIL idiom, intentional
+        # word-splitting, literal single-quotes, etc. are all info-level house style — not garbage.
+        # -e SC1091: don't follow sourced files (.env is gitignored/absent in CI; the common.sh source path
+        # is dynamic). -e SC2034: common.sh's shared constants + the orchestrators' STEP globals are consumed
+        # by SOURCING scripts, so shellcheck (which can't follow them) wrongly flags them unused. Every script
+        # has a bash shebang, so the non-executable ones lint too.
+        run: shellcheck -S warning -e SC1091,SC2034 lib/shell/*.sh
+
+  yaml:
+    name: yaml
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@9c091bb21b7c1c1d1991bb908d89e4e9dddfe3e0 # v7.0.0
+      - name: yamllint # pipx is preinstalled on ubuntu-latest
+        run: pipx run yamllint -c .yamllint.yml .
+      - name: actionlint # lints the workflow files themselves (+ shellchecks their run: blocks)
+        run: |
+          curl -fsSL https://github.com/rhysd/actionlint/releases/download/v1.7.7/actionlint_1.7.7_linux_amd64.tar.gz \
+            | tar xz actionlint
+          ./actionlint -color
+
+  renovate-config:
+    name: renovate-config
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@9c091bb21b7c1c1d1991bb908d89e4e9dddfe3e0 # v7.0.0
+      - name: validate renovate.json5 # a broken config silently halts ALL dependency updates
+        run: npx --yes --package renovate -- renovate-config-validator --strict renovate.json5
+
+  helm:
+    name: helm
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@9c091bb21b7c1c1d1991bb908d89e4e9dddfe3e0 # v7.0.0
+      - uses: azure/setup-helm@1a275c3b69536ee54be43f2070a358922e12c8d4 # v4.3.1
+        with:
+          version: v3.18.3 # pinned = deterministic gate (matches the maintainer's local helm)
+      - name: install kubeconform
+        run: |
+          curl -fsSL https://github.com/yannh/kubeconform/releases/download/v0.6.7/kubeconform-linux-amd64.tar.gz \
+            | tar xz kubeconform && sudo mv kubeconform /usr/local/bin/
+      - name: add upstream helm repos
+        # helm dependency build needs classic (https) repos registered locally, exactly like ArgoCD's
+        # repo-server does; OCI (oci://) deps need none. Derive them from every Chart.yaml, dedupe, add.
+        run: |
+          find argo_apps lib/helm -name Chart.yaml -print0 \
+            | xargs -0 grep -hoE 'repository:[[:space:]]*"?https://[^" ]+' \
+            | sed -E 's/repository:[[:space:]]*"?//' | sort -u | while read -r url; do
+                helm repo add "r$(printf '%s' "$url" | cksum | cut -d' ' -f1)" "$url" >/dev/null 2>&1 || true
+              done
+      - name: helm dependency build
+        # Reproduces ArgoCD repo-server: rebuilds charts/ from the COMMITTED Chart.lock. Catches a missing
+        # or stale lock (the #1 breakage in CLAUDE.md) across every chart with dependencies (incl. lib/helm).
+        run: |
+          fail=0
+          while read -r c; do
+            grep -q '^dependencies:' "$c" || continue
+            dir="$(dirname "$c")"; echo "::group::dep-build $dir"
+            helm dependency build "$dir" || { echo "::error::dependency build failed: $dir"; fail=1; }
+            echo "::endgroup::"
+          done < <(find argo_apps lib/helm -name Chart.yaml)
+          exit $fail
+      - name: helm lint + template + kubeconform
+        # Only the ArgoCD-delivered wrappers under argo_apps/**/charts/*/ (each ships complete values). The
+        # lib/helm/ shared charts are validated transitively as their dependencies. kubeconform: valid k8s +
+        # known CRDs; -ignore-missing-schemas skips CRDs absent from the catalog rather than failing.
+        # --api-versions monitoring.coreos.com/v1: ArgoCD's repo-server injects the target cluster's
+        # api-versions into `helm template`; cilium guards its ServiceMonitor behind that CRD, so a bare
+        # template fails without it. Passing it here keeps CI faithful to what ArgoCD renders.
+        run: |
+          fail=0
+          schema='https://raw.githubusercontent.com/datreeio/CRDs-catalog/main/{{.Group}}/{{.ResourceKind}}_{{.ResourceAPIVersion}}.json'
+          while read -r c; do
+            dir="$(dirname "$c")"; echo "::group::$dir"
+            helm lint "$dir" || { echo "::error::helm lint failed: $dir"; fail=1; }
+            if ! helm template "$dir" --api-versions monitoring.coreos.com/v1 \
+                 | kubeconform -ignore-missing-schemas -summary \
+                     -schema-location default -schema-location "$schema"; then
+              echo "::error::template/kubeconform failed: $dir"; fail=1
+            fi
+            echo "::endgroup::"
+          done < <(find argo_apps -path '*/charts/*/Chart.yaml' -not -path '*/charts/*/charts/*')
+          exit $fail
