@@ -1,0 +1,44 @@
+# POD-SCOPED default-deny for the OpsTree redis-operator (reconciles standalone Redis CRs cluster-wide). Listing
+# ingress AND egress makes the operator endpoints deny-by-default each way; allow only what it needs. Minimal
+# surface by design: metrics :8080 is live but NO PodMonitor ships (values), so vmagent doesn't scrape it -> no
+# metrics ingress; the admission webhook is OFF (values redisOperator.webhook:false) -> no apiserver->webhook
+# ingress. Fixed platform selectors (CoreDNS, kube-apiserver) are cluster constants, hardcoded. Audit-first
+# rollout like every netpol here (Cilium PolicyAuditMode + `hubble observe --verdict DROPPED,AUDIT`, then
+# enforce). Ports: 8081 health probe, 6379 Redis, 53 DNS. See 04_networking.md / 12_redis.md.
+apiVersion: cilium.io/v2
+kind: CiliumNetworkPolicy
+metadata:
+  name: redis-operator
+  namespace: {{ .Release.Namespace }}
+spec:
+  endpointSelector:
+    matchLabels:
+      name: redis-operator          # the operator POD's label (its Deployment selector); NOT app.kubernetes.io/name (that's only on the Deployment object, so it would select zero pods)
+  ingress:
+    # (a) Kubelet /healthz + /readyz probes hit :8081 from the node. (No metrics scrape, no webhook — see header.)
+    - fromEntities: [host, remote-node]
+      toPorts:
+        - ports:
+            - { port: "8081", protocol: TCP }
+  egress:
+    # (b) DNS (CoreDNS).
+    - toEndpoints:
+        - matchLabels:
+            k8s:io.kubernetes.pod.namespace: kube-system
+            k8s-app: kube-dns
+      toPorts:
+        - ports:
+            - { port: "53", protocol: UDP }
+            - { port: "53", protocol: TCP }
+    # (c) Watches Redis CRs / manages the StatefulSets + Services via the API server.
+    - toEntities: [kube-apiserver]
+    # (d) Reconciles/health-checks each managed Redis over :6379. Instances live in WORKLOAD namespaces, so this
+    # must cross namespaces: port-scoped :6379 to ANY namespace (matchExpressions ns Exists) — NOT the empty {}
+    # selector, which in Cilium means "same namespace only". Broad-on-:6379 mirrors the redis-backup egress
+    # rationale (avoid depending on the operator's per-instance pod label). See 12_redis.md.
+    - toEndpoints:
+        - matchExpressions:
+            - { key: k8s:io.kubernetes.pod.namespace, operator: Exists }
+      toPorts:
+        - ports:
+            - { port: "6379", protocol: TCP }

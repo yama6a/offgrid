@@ -233,6 +233,15 @@ Egress: DNS, the API server entity, and peers. **Roll out audit-first** like eve
 [10_sample_workload.md](10_sample_workload.md)): `PolicyAuditMode` on the broker + `hubble observe --verdict
 DROPPED,AUDIT` while the cluster forms + a client connects + the UI loads, then enforce.
 
+The two **operators** in this namespace carry their OWN pod-scoped `CiliumNetworkPolicy`s
+(`networkpolicy-cluster-operator.yaml` / `networkpolicy-topology-operator.yaml`) — the broker policy is
+pod-scoped and doesn't cover them. Each allows only its real surface: the metrics scrape (cluster-operator only;
+the topology operator's metrics are TLS-off here so nothing scrapes it), the admission webhook (topology operator
+only), the kubelet health probe, DNS, the API server, and — for the topology operator — the broker management API
+`15672`. The subchart's own bundled vanilla `NetworkPolicy`s are DISABLED (`…networkPolicy.enabled: false` in
+values): they default to allow-all-egress, and Cilium UNIONs them with our CNPs, which would blow the default-deny
+open (the same reason argocd pins `global.networkPolicy.create: false`). See [04_networking.md](04_networking.md).
+
 ### Management UI
 Exposed exactly like the other platform UIs (argocd/grafana/vmui): a `rabbitmq` host on the platform ingress
 (`06_platform_ingress`, wave 6) → the broker's `15672` service, gated centrally by `04_google_sso` (wave 4).

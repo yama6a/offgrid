@@ -1,0 +1,53 @@
+# POD-SCOPED default-deny for the RabbitMQ Messaging Topology Operator (reconciles Queue/Exchange/Binding/User/
+# Permission/Vhost CRs by calling the broker's HTTP management API). Not covered by the broker's own pod-scoped
+# policy. Selected by the operator's component label (release-independent).
+#
+# The upstream subchart ships a vanilla allow-all-egress NetworkPolicy for it too; we DISABLE it in values
+# (msgTopologyOperator.networkPolicy.enabled:false) so it can't union-open this CNP under Cilium (same reason
+# argocd pins global.networkPolicy.create:false — see 05_gitops.md).
+#
+# Audit-first rollout like every netpol here (Cilium PolicyAuditMode + `hubble observe --verdict DROPPED,AUDIT`,
+# then enforce). Ports: 9443 admission webhook, 8081 health probe, 15672 broker management, 53 DNS. Metrics are
+# OFF (values) so there is no vmagent scrape. See 04_networking.md / 11_messaging.md.
+apiVersion: cilium.io/v2
+kind: CiliumNetworkPolicy
+metadata:
+  name: messaging-topology-operator
+  namespace: {{ .Release.Namespace }}
+spec:
+  endpointSelector:
+    matchLabels:
+      app.kubernetes.io/component: messaging-topology-operator
+      app.kubernetes.io/part-of: rabbitmq
+  ingress:
+    # (a) kube-apiserver calls the validating admission webhook :9443 (cert-manager-managed cert, values useCertManager).
+    - fromEntities: [kube-apiserver]
+      toPorts:
+        - ports:
+            - { port: "9443", protocol: TCP }
+    # (b) Kubelet /healthz + /readyz probes hit :8081 from the node.
+    - fromEntities: [host, remote-node]
+      toPorts:
+        - ports:
+            - { port: "8081", protocol: TCP }
+  egress:
+    # (c) DNS (CoreDNS).
+    - toEndpoints:
+        - matchLabels:
+            k8s:io.kubernetes.pod.namespace: kube-system
+            k8s-app: kube-dns
+      toPorts:
+        - ports:
+            - { port: "53", protocol: UDP }
+            - { port: "53", protocol: TCP }
+    # (d) Watches the topology CRs (all namespaces) + reports status via the API server.
+    - toEntities: [kube-apiserver]
+    # (e) Declares topology over the broker's HTTP management API :15672. The single shared broker is in THIS
+    # namespace (rabbitmq), so a plain same-namespace selector; the broker's ingress rule (c) already admits
+    # :15672 from any pod in this namespace.
+    - toEndpoints:
+        - matchLabels:
+            app.kubernetes.io/name: rabbitmq
+      toPorts:
+        - ports:
+            - { port: "15672", protocol: TCP }

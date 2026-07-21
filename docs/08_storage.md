@@ -206,7 +206,10 @@ in [local-path-provisioner](#local-path-provisioner) above.
 
 **Values worth calling out.** Operator (`cloudnative-pg:`): `crds.create: true` (safe — the cluster is only
 created after the platform is Healthy), `monitoring.podMonitorEnabled: true`, modest `resources` (it only
-reconciles). Cluster — most of the following is pre-baked in the `pg-cluster` wrapper's `values.yaml`; the
+reconciles). The operator pod carries its own pod-scoped `CiliumNetworkPolicy`
+(`02_cnpg_operator/templates/networkpolicy.yaml`): in — vmagent metrics `:8080`, apiserver webhook `:9443`,
+kubelet probe; out — DNS, apiserver, each instance's instance-manager `:8000` (cross-namespace via
+`matchExpressions` ns-Exists), and the barman-cloud plugin `:9090`. See [04_networking.md](04_networking.md). Cluster — most of the following is pre-baked in the `pg-cluster` wrapper's `values.yaml`; the
 workload only overrides the ⭐ **set-per-workload** ones (in `sample_workload/values.yaml` under
 `pg-cluster.cluster.cluster.*`):
 

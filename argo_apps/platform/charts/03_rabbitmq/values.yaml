@@ -42,6 +42,11 @@ rabbitmq-cluster-operator:
     metrics:
       podMonitor:
         enabled: true
+    # Ship OUR own tight CiliumNetworkPolicy (templates/networkpolicy-cluster-operator.yaml), not the subchart's
+    # bundled vanilla NetworkPolicy — its default is allow-all-egress, which Cilium UNIONs with our CNP and would
+    # blow the default-deny wide open (same reason argocd pins global.networkPolicy.create:false). See 04_networking.md.
+    networkPolicy:
+      enabled: false
 
   # The Messaging Topology Operator: reconciles the Queue/Exchange/Binding/User/Permission/Vhost CRs.
   msgTopologyOperator:
@@ -59,6 +64,11 @@ rabbitmq-cluster-operator:
         value: "1m"
     # metrics left off: the topology-operator's metrics endpoint requires TLS, which the plaintext
     # vmagent scrape can't consume without extra config — not worth it for the homelab.
+    # Ship OUR own tight CiliumNetworkPolicy (templates/networkpolicy-topology-operator.yaml), not the subchart's
+    # bundled allow-all-egress NetworkPolicy (Cilium would UNION it with our CNP and blow the default-deny open —
+    # same reason argocd pins global.networkPolicy.create:false). See 04_networking.md.
+    networkPolicy:
+      enabled: false
 
 # ---- The single shared broker (rendered by templates/, this chart's OWN resources, NOT the operator subchart) ----
 

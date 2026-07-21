@@ -1,0 +1,66 @@
+# POD-SCOPED default-deny for the CloudNativePG operator (reconciles every Postgres Cluster cluster-wide with
+# broad RBAC + serves the admission webhooks — a high-value control-plane pod). Listing ingress AND egress makes
+# the operator endpoints deny-by-default each way. NOT namespace-wide: cnpg-system also holds the barman-cloud
+# plugin (its own policy). Fixed platform selectors (vmagent, CoreDNS, kube-apiserver, the CNPG instance label,
+# the barman plugin) are cluster constants, hardcoded. Audit-first rollout like every netpol here (Cilium
+# PolicyAuditMode + `hubble observe --verdict DROPPED,AUDIT`, then enforce). Ports: 8080 metrics, 9443
+# webhook-server (also the liveness/readiness probe port), 8000 instance-manager, 9090 barman plugin, 53 DNS.
+# See 04_networking.md / 08_storage.md.
+apiVersion: cilium.io/v2
+kind: CiliumNetworkPolicy
+metadata:
+  name: cnpg-operator
+  namespace: {{ .Release.Namespace }}
+spec:
+  endpointSelector:
+    matchLabels:
+      app.kubernetes.io/name: cloudnative-pg
+  ingress:
+    # (a) vmagent scrapes the controller /metrics :8080 (PodMonitor on — values monitoring.podMonitorEnabled).
+    - fromEndpoints:
+        - matchLabels:
+            k8s:io.kubernetes.pod.namespace: monitoring
+            app.kubernetes.io/name: vmagent
+      toPorts:
+        - ports:
+            - { port: "8080", protocol: TCP }
+    # (b) kube-apiserver calls the mutating/validating admission webhooks (cnpg-webhook-service :443 -> pod :9443).
+    - fromEntities: [kube-apiserver]
+      toPorts:
+        - ports:
+            - { port: "9443", protocol: TCP }
+    # (c) Kubelet liveness/readiness/startup probes hit the webhook-server port :9443 from the node.
+    - fromEntities: [host, remote-node]
+      toPorts:
+        - ports:
+            - { port: "9443", protocol: TCP }
+  egress:
+    # (d) DNS (CoreDNS).
+    - toEndpoints:
+        - matchLabels:
+            k8s:io.kubernetes.pod.namespace: kube-system
+            k8s-app: kube-dns
+      toPorts:
+        - ports:
+            - { port: "53", protocol: UDP }
+            - { port: "53", protocol: TCP }
+    # (e) Reconciles Cluster/Backup/ScheduledBackup/... via the API server.
+    - toEntities: [kube-apiserver]
+    # (f) The instance-manager API :8000 on every Postgres instance it manages (status/pgctl, failover). Instances
+    # live in WORKLOAD namespaces, so this must cross namespaces: match the podRole label in ANY namespace
+    # (matchExpressions ns Exists) — Cilium defaults an omitted namespace label to the policy's own ns.
+    - toEndpoints:
+        - matchLabels:
+            cnpg.io/podRole: instance
+          matchExpressions:
+            - { key: k8s:io.kubernetes.pod.namespace, operator: Exists }
+      toPorts:
+        - ports:
+            - { port: "8000", protocol: TCP }
+    # (g) The barman-cloud CNPG-I plugin over gRPC :9090 (same namespace, cnpg-system).
+    - toEndpoints:
+        - matchLabels:
+            app: barman-cloud
+      toPorts:
+        - ports:
+            - { port: "9090", protocol: TCP }

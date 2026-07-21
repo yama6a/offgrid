@@ -229,6 +229,10 @@ regenerable audit logs with a 1h TTL, "just start fresh on a new instance" is of
 **Redis runs without `requirepass` by default.** Access is enforced entirely at the network layer by each instance's
 default-deny `CiliumNetworkPolicy`: only the owning workload's pods (`allowedClients`) may open `:6379`,
 plus the operator (reconcile) and vmagent (metrics). Instances are ClusterIP-only and never exposed via ingress.
+The **operator** pod itself also carries its own default-deny `CiliumNetworkPolicy`
+(`03_redis_operator/templates/networkpolicy.yaml`): kubelet health probe in; DNS + API server + egress to any
+managed Redis on `:6379` (cross-namespace via `matchExpressions` ns-Exists — the empty `{}` selector is
+same-namespace-only in Cilium) out. See [04_networking.md](04_networking.md).
 
 Why not a password? The repo's [secrets bright line](06_secrets.md) is: never commit cluster-mintable secrets —
 Sealed Secrets are for externally-sourced, human-supplied credentials (e.g. the OAuth client secret). A Redis password is

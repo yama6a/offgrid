@@ -1,0 +1,50 @@
+# POD-SCOPED default-deny for the Barman Cloud plugin — the CNPG-I gRPC coordinator in cnpg-system that drives
+# WAL archiving + base backups of EVERY Postgres cluster to S3, and holds the S3 client mTLS identity. Listing
+# ingress AND egress makes the barman-cloud endpoints deny-by-default each way; allow only what it needs. NOT
+# namespace-wide: cnpg-system also holds the cnpg-operator (its own policy). Fixed platform selectors are
+# cluster constants, hardcoded. Audit-first rollout like every netpol here (Cilium PolicyAuditMode + `hubble
+# observe --verdict DROPPED,AUDIT` while a backup/restore runs, then enforce). See 04_networking.md / 13_backups.md.
+#
+# The CNPG instance SIDECAR does its S3 work itself + talks to its instance-manager over the pod's localhost — it
+# does NOT dial this central Service, so there is deliberately no instance->:9090 ingress rule (audit-first will
+# surface it if that ever changes). Ports: 9090 gRPC plugin (mTLS), 443 S3, 53 DNS.
+apiVersion: cilium.io/v2
+kind: CiliumNetworkPolicy
+metadata:
+  name: barman-cloud
+  namespace: {{ .Release.Namespace }}
+spec:
+  endpointSelector:
+    matchLabels:
+      app: barman-cloud
+  ingress:
+    # (a) The CNPG operator drives the plugin over gRPC :9090 (same namespace, cnpg-system).
+    - fromEndpoints:
+        - matchLabels:
+            app.kubernetes.io/name: cloudnative-pg
+      toPorts:
+        - ports:
+            - { port: "9090", protocol: TCP }
+    # (b) Kubelet TCP readiness probe hits :9090 from the node.
+    - fromEntities: [host, remote-node]
+      toPorts:
+        - ports:
+            - { port: "9090", protocol: TCP }
+  egress:
+    # (c) DNS (CoreDNS).
+    - toEndpoints:
+        - matchLabels:
+            k8s:io.kubernetes.pod.namespace: kube-system
+            k8s-app: kube-dns
+      toPorts:
+        - ports:
+            - { port: "53", protocol: UDP }
+            - { port: "53", protocol: TCP }
+    # (d) The API server — watches ObjectStore/Backup CRs, writes Secrets/RBAC, leader-election leases.
+    - toEntities: [kube-apiserver]
+    # (e) S3 over HTTPS — the operator-mode plugin reads the backup catalog (recovery-window status). Broad
+    # `world:443` like the pg-cluster S3 rule; confirm/trim audit-first (may be sidecar-only). See 13_backups.md.
+    - toEntities: [world]
+      toPorts:
+        - ports:
+            - { port: "443", protocol: TCP }

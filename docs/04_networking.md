@@ -100,20 +100,37 @@ policy-verdict visibility (`hubble observe --verdict DROPPED`). Two places carry
 
 - **Workloads** — the `sample-workload` (app + its CNPG Postgres); see [10_sample_workload.md](10_sample_workload.md)
   for the app/DB policies and the reusable DB policy baked into the `pg-cluster` wrapper.
-- **Platform (Tier 1 + 2)** — the secret-holders `sealed-secrets` / `cert-manager` / `argocd` (namespace-wide
-  default-deny) and the monitoring data stores `vmsingle` / `vlsingle` / `grafana` (pod-scoped, since `vmagent`
-  shares the `monitoring` namespace and scrapes the whole cluster, so it must stay unrestricted). Each is a
-  full, explicit `CiliumNetworkPolicy` written out in that chart's `templates/networkpolicy.yaml` — no shared
-  library or render abstraction; the policy reads as the resource it is. External egress (argocd→GitHub,
-  cert-manager→ACME, grafana→plugin download) is `toEntities: [world]` on the specific port, not `toFQDNs` — no DNS-proxy
-  dependency. Peer selectors (CoreDNS `k8s-app: kube-dns`, vmagent, the Envoy edge, the stores) are repeated
-  verbatim across the manifests; if a platform component is relabeled, grep and update each.
+- **Platform** — each a full, explicit `CiliumNetworkPolicy` in that chart's `templates/networkpolicy.yaml`
+  (no shared library or render abstraction; the policy reads as the resource it is), in three groups:
+  - **Secret-holders**, namespace-wide default-deny (`endpointSelector: {}`): `sealed-secrets` / `cert-manager` / `argocd`.
+  - **Data stores / services**, pod-scoped (their namespace also holds an unrestricted scraper): the monitoring
+    stores `vmsingle` / `vlsingle` / `grafana` (`vmagent` shares `monitoring` and scrapes the whole cluster, so
+    it must stay unrestricted), `ntfy`, the RabbitMQ broker, and the egress-only backup CronJobs `redis-backup` / `vm-backup`.
+  - **Operators + the backup plugin**, pod-scoped — added so no pod-running component is left implicitly
+    default-allow: `cnpg-operator`, `redis-operator`, the RabbitMQ `cluster-operator` + `messaging-topology-operator`,
+    and the `barman-cloud` CNPG-I plugin (the S3 backup coordinator, which holds the S3 client mTLS identity).
+    Each allows only its real surface — the metrics scrape where a PodMonitor exists, the admission webhook where
+    enabled, the kubelet health probe, DNS, the API server, and egress to the specific pods it manages.
+
+  External egress (argocd→GitHub, cert-manager→ACME, grafana→plugin download, barman→S3) is `toEntities: [world]`
+  on the specific port, not `toFQDNs` — no DNS-proxy dependency. Peer selectors (CoreDNS `k8s-app: kube-dns`,
+  vmagent, the Envoy edge, the stores) are repeated verbatim across the manifests; if a platform component is
+  relabeled, grep and update each. Two Cilium subtleties to know: (1) a `fromEndpoints`/`toEndpoints` selector
+  that OMITS the namespace label matches the policy's OWN namespace only — to reach a managed pod in another
+  namespace (cnpg-operator→instances, redis-operator→redis) use `matchExpressions: [{key:
+  k8s:io.kubernetes.pod.namespace, operator: Exists}]`, NOT the empty `{}` selector (also same-namespace); (2)
+  the RabbitMQ operator subchart ships bundled vanilla `NetworkPolicy`s defaulting to allow-all-egress — Cilium
+  UNIONs those with our CNP and would blow the default-deny open, so we pin `…networkPolicy.enabled: false`
+  (the same move as argocd's `global.networkPolicy.create: false`; see [05_gitops.md](05_gitops.md) / [11_messaging.md](11_messaging.md)).
 
   **Deliberately NOT policed** (documented so it's a decision, not an omission): the Envoy data-plane
-  (`mergeGateways` → egress fans out to every backend), `vmagent` (scrapes everything), `metrics-server` and
-  `nic-keeper` (kube-system / host-network), `longhorn` (node-to-node replication mesh), `vm-operator` /
+  (`mergeGateways` → egress fans out to every backend) AND its Gateway controller (same namespace, on the ingress
+  critical path), `vmagent` + the VictoriaLogs collector (scrape everything), `metrics-server` and `nic-keeper`
+  (kube-system / host-network), `longhorn` (node-to-node replication mesh), `vm-operator` /
   `local-path-provisioner` (tiny apiserver-only surface), and `03_gateway` / `google-sso` (no or thin pods).
   `kube-system` and Cilium itself are left alone — policing them risks cutting the cluster off its own network.
+  (The workload-stack operators above were once in this bucket for the same "tiny surface" reason; they were
+  promoted to policed so the exclusion list is now infra-only.)
 
 Rollout is audit-first: with Cilium's global `policyAuditMode` on (see `00_cilium`), every policy stages as
 log-only (`hubble observe --verdict AUDIT`) until validated, then enforced by turning audit off.

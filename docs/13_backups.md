@@ -74,6 +74,12 @@ That's why the WAL-archive alert below is `critical`.
   `cnpg/<clusterName>/{wals,base}/` — no collisions, one shared bucket + one sealed creds Secret per namespace.
   Redis reuses the same bucket + writer under `redis/<namespace>/<instance>/`, but with ONE sealed
   `redis-backup-s3` in a single namespace (its backup runs centrally — see "Redis RDB backups").
+- **The plugin is network-policed.** The `barman-cloud` plugin Deployment (cnpg-system) carries its own
+  pod-scoped `CiliumNetworkPolicy` (`03_barman_cloud_plugin/templates/networkpolicy.yaml`): ingress `:9090` (the
+  CNPG-I gRPC, from the cnpg-operator) + the kubelet TCP probe; egress DNS + the API server + S3 (`world:443`,
+  for backup-catalog/recovery-window reads). The instance SIDECAR does its own S3 upload (allowed by the
+  `pg-cluster` netpol) and talks to its instance-manager over localhost — it does NOT dial this central Service,
+  so there's deliberately no instance→`:9090` rule. See [04_networking.md](04_networking.md).
 
 ## Terraform (`terraform/`)
 
