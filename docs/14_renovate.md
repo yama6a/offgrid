@@ -83,8 +83,8 @@ Two things ride in the combined PR that need care before merging:
   (per that chart's README), not a line edit.
 - **VictoriaMetrics charts are grouped**; the CRD chart's app version must match its operator, a human check on
   the grouped PR. See [09_monitoring.md].
-- **The kernel is pinned via `raspberrypi/firmware`, not the linux repo.** The linux repo's `stable_YYYYMMDD` tags
-  are best-effort and jump kernel lines (mid-2026 `stable_20260715` was 6.12.95, off the 6.18 line), so a tag-based
-  manager is unsafe. Instead `FIRMWARE_REF` tracks the firmware `stable` branch HEAD via a `git-refs` custom manager
-  (like `SBCOVERLAY_VERSION`) — the RPi-OS-blessed release pointer, ~monthly cadence — and `03a` dereferences its
-  `extra/git_hash` to the exact tested 6.18 kernel commit, hard-failing if the resolved kernel isn't 6.18.
+- **The kernel isn't a Renovate dependency — it's derived from Talos.** raspberrypi/linux has no per-version tags,
+  and its `stable_YYYYMMDD` tags jump kernel lines (mid-2026 `stable_20260715` was 6.12.95), so there's nothing safe
+  to track. Instead `03a` reads the kernel version Talos expects (`DefaultKernelVersion`) at build time and resolves
+  the exact `raspberrypi/linux` commit via `raspberrypi/firmware`'s `extra/git_hash`. So bumping `TALOS_VERSION`
+  carries the kernel with it — no separate pin or manager. See [03_operating_system.md].

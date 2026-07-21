@@ -75,20 +75,9 @@
       packageNameTemplate: "https://github.com/talos-rpi5/sbc-raspberrypi5",
       datasourceTemplate: "git-refs",
     },
-    {
-      // Kernel pin — tracked INDIRECTLY via raspberrypi/FIRMWARE, not the linux repo. The linux repo's stable_
-      // tags are best-effort and jump kernel lines (stable_20260715 was 6.12.95), and rpi-6.18.y HEAD is
-      // bleeding-edge. firmware 'stable' HEAD is the RPi-OS-blessed release pointer; 03a derefs its
-      // extra/git_hash to the exact tested 6.18 kernel commit. Moves at RPi release cadence (~monthly).
-      customType: "regex",
-      description: "kernel pin: raspberrypi/firmware stable HEAD (03a derefs extra/git_hash)",
-      managerFilePatterns: ["/^versions\\.env$/"],
-      matchStrings: ["FIRMWARE_REF=\"(?<currentDigest>[a-f0-9]{40})\""],
-      currentValueTemplate: "stable",
-      depNameTemplate: "raspberrypi/firmware",
-      packageNameTemplate: "https://github.com/raspberrypi/firmware",
-      datasourceTemplate: "git-refs",
-    },
+    // NB: no kernel manager. The kernel isn't pinned — 03a derives the raspberrypi/linux commit from the version
+    // Talos expects (machinery DefaultKernelVersion) at build time. Bumping TALOS_VERSION (handled by the annotated
+    // scalar manager above) carries the kernel with it. See docs/03 "The kernel version must match Talos".
   ],
 
   packageRules: [

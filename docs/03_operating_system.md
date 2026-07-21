@@ -58,12 +58,11 @@ each is, and the constraints that matter:
 - **Kubernetes** (`KUBERNETES_VERSION`) — the pin `03d` passes to `gen config` and `03g` upgrades to. Ceiling =
   the Talos release's own k8s default; raise it only after bumping Talos.
 - **pkgs** (`PKG_VERSION`, `siderolabs/pkgs`) — ships a stock arm64 kernel config (already 4K pages).
-- **Kernel** (`FIRMWARE_REF`, `raspberrypi/firmware` `stable` branch HEAD) — the kernel line is the whole point:
-  it carries the RP1 patches step 04 needs to disable EEE on the NIC. We pin the *firmware* `stable` pointer, not
-  the kernel repo directly: its `extra/git_hash` names the exact `raspberrypi/linux` commit RPi built + tested for
-  Raspberry Pi OS (a 6.18.x), which `03a` dereferences at build time. This avoids the linux repo's `stable_` tags
-  (best-effort, and they jump kernel lines — mid-2026 `stable_20260715` was 6.12.95) and the bleeding-edge
-  `rpi-6.18.y` tip. Renovate tracks it via git-refs (~monthly); `03a` hard-fails if the resolved kernel isn't 6.18.
+- **Kernel** (no pin — *derived from `TALOS_VERSION`*) — the kernel line is the whole point: it carries the RP1
+  patches step 04 needs to disable EEE on the NIC. There is deliberately no kernel version to pin: `03a` reads the
+  version Talos expects (`DefaultKernelVersion`) from the pinned Talos and resolves the exact `raspberrypi/linux`
+  commit at build time — via `raspberrypi/firmware`'s `extra/git_hash` (see "The kernel version must match Talos"
+  below). So the kernel follows `TALOS_VERSION` by construction, and that's the only knob Renovate manages for it.
 - **Overlay** (`SBCOVERLAY_VERSION`, `talos-rpi5/sbc-raspberrypi5`@`main`) — u-boot + rpi firmware + the Pi 5 boot
   chain; ported to the pinned Talos machinery at build time.
 - **Extensions** (`ISCSI_EXT`, `UTIL_EXT`) — digest-pinned system extensions from the Image Factory.
@@ -86,14 +85,29 @@ What it does:
 7. raw image
 8. runs offline validation
 
-**No build cache — every run starts clean.** Before building, `03a` destroys and recreates the buildx builder
-(`talos-bx`) and the local registry (`talos-registry`). buildkit's content cache and the registry's image store
-both persist across runs and reuse images by mutable tags that don't encode the kernel — which let a prior build's
-kernel/installer/imager layers silently bleed into a new one (a self-inconsistent image: correct kernel source, but
-a stale installer/UKI `.uname` label). Wiping them each run makes that impossible, at the cost of a full rebuild
-every time (the kernel recompile is the long pole). Correctness over speed — these builds are rare and manual.
-(The `.cache/<BUILD_KEY>/` dir is NOT this kind of cache: it's the build-output staging `03b` reads, and its
-checkouts/kernel-source are re-cloned/re-downloaded each run, so it can't carry staleness.)
+**The kernel version must match Talos.** Talos hardcodes the kernel version it expects (`DefaultKernelVersion` in
+`pkg/machinery/constants`), and the imager stamps THAT onto the UKI's `.uname` regardless of the kernel we actually
+compile — so if they differ, the image ships mislabeled (the running kernel is real and correct, but the UKI, and
+anything reading it like `kubectl`/`talosctl`, reports Talos's version). We avoid that by *deriving* the kernel from
+Talos rather than pinning it: in REBASE 1, `03a` reads `DefaultKernelVersion` from the pinned Talos, finds the exact
+`raspberrypi/linux` commit for that version, and builds it — so it matches by construction. It resolves the commit
+by scanning `raspberrypi/firmware` (whose `extra/git_hash` at each ref = the linux commit that ref's kernel was
+built from): first the channel HEADs (`master`/`stable`/`next`/`oldstable` — `master` usually matches), then, as a
+failsafe, `master`'s `extra/git_hash` *history* (a dense index of every recent 6.18.x). The offline validation
+re-checks the built kernel against the UKI label at the end.
+
+**If kernel resolution fails** (`03a` found no firmware ref carrying the version Talos wants — a very old Talos
+rebuild, or a patch RPi skipped): inspect by hand, then either wait for a firmware channel to ship that version or
+align `TALOS_VERSION`. Channel HEADs, and (for older versions) master's `git_hash` history:
+
+    for b in master stable next oldstable; do
+      h=$(curl -fsSL "https://raw.githubusercontent.com/raspberrypi/firmware/$b/extra/git_hash" | tr -d '[:space:]')
+      v=$(curl -fsSL "https://raw.githubusercontent.com/raspberrypi/linux/$h/Makefile" \
+            | awk -F' = ' '/^VERSION/{a=$2}/^PATCHLEVEL/{p=$2}/^SUBLEVEL/{c=$2} END{print a"."p"."c}')
+      echo "$b -> $v ($h)"
+    done
+    # older versions: the linux commit == the git_hash at each historical master commit that changed it:
+    #   gh api "repos/raspberrypi/firmware/commits?path=extra/git_hash&sha=master" --jq '.[].sha'
 
 Prerequisites (the script checks all of these, with the `brew` fix for each):
 

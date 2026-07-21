@@ -58,24 +58,19 @@ docker info >/dev/null 2>&1 || die "docker not responding (start Rancher/Docker 
 export PATH="/opt/homebrew/opt/make/libexec/gnubin:${PATH}"   # so make / $(MAKE) == gmake 4.x
 mkdir -p "$BUILD_DIR" "$OUT_DIR"
 
-# === 1. local registry + mergeop-capable builder (ALWAYS FRESH, no cache) ====
+# === 1. local registry + mergeop-capable builder =============================
 # siderolabs `bldr` uses BuildKit mergeop, which the dockerd-embedded builder
 # (Rancher's default) refuses. A standalone docker-container builder supports it.
-# NO BUILD CACHE: buildkit's content cache (in the builder) and the registry's image store both persist across
-# runs and get reused via mutable tags that don't encode the kernel -> a prior build's kernel/installer/imager
-# layers can silently bleed into this one (a self-inconsistent image). So DESTROY + recreate both every run:
-# correctness over speed (the kernel recompiles each time). See docs/03 "No build cache".
-say "wiping any prior build registry + builder (no-cache: every run builds clean)"
-docker rm -f "$REGISTRY_NAME" >/dev/null 2>&1 || true
-docker buildx rm "$BUILDER_NAME" >/dev/null 2>&1 || true
-
 say "local registry on ${REGISTRY_HOST}"
-docker run -d --restart=unless-stopped -p "127.0.0.1:${REGISTRY_PORT}:5000" --name "$REGISTRY_NAME" "$REGISTRY_IMAGE" >/dev/null
+docker ps --format '{{.Names}}' | grep -qx "$REGISTRY_NAME" || \
+  docker run -d --restart=unless-stopped -p "127.0.0.1:${REGISTRY_PORT}:5000" --name "$REGISTRY_NAME" "$REGISTRY_IMAGE" >/dev/null
 
 say "mergeop-capable buildx builder ${BUILDER_NAME}"
-cfg="$(mktemp)"; printf '[registry."%s"]\n  http = true\n  insecure = true\n' "$REGISTRY_HOST" > "$cfg"
-docker buildx create --name "$BUILDER_NAME" --driver docker-container \
-  --driver-opt network=host --buildkitd-config "$cfg" >/dev/null
+if ! docker buildx inspect "$BUILDER_NAME" >/dev/null 2>&1; then
+  cfg="$(mktemp)"; printf '[registry."%s"]\n  http = true\n  insecure = true\n' "$REGISTRY_HOST" > "$cfg"
+  docker buildx create --name "$BUILDER_NAME" --driver docker-container \
+    --driver-opt network=host --buildkitd-config "$cfg" >/dev/null
+fi
 docker buildx use "$BUILDER_NAME"
 docker buildx inspect --bootstrap "$BUILDER_NAME" >/dev/null
 
@@ -102,23 +97,46 @@ git -C "$CHK/sbc-raspberrypi5" checkout -q "$SBCOVERLAY_VERSION" || die "could n
 # pkgs ships a stock arm64 config (already 4K). We point the kernel source
 # at raspberrypi/linux (for the RP1/BCM2712 drivers that are fork-only) and add a
 # small fragment, reconciled with olddefconfig under the real clang toolchain.
-# Resolve the kernel commit from the pinned firmware/stable pointer: extra/git_hash names the exact
-# raspberrypi/linux commit RPi built + tested for this Raspberry Pi OS release. Fetch just that one file
-# (raw URL — never clone the multi-GB firmware repo). `|| true` so set -e doesn't swallow the friendly die.
-KERNEL_REF=$(curl -fsSL --retry 3 "https://raw.githubusercontent.com/raspberrypi/firmware/${FIRMWARE_REF}/extra/git_hash" 2>/dev/null | tr -d '[:space:]' || true)
-[[ "$KERNEL_REF" =~ ^[0-9a-f]{40}$ ]] || die "could not resolve kernel commit from firmware/${FIRMWARE_REF} extra/git_hash (got '${KERNEL_REF}')"
-say "REBASE 1, kernel source -> raspberrypi/linux ${KERNEL_REF} (firmware/stable ${FIRMWARE_REF:0:12}, served locally) + Pi5 fragment"
+# Derive the kernel from Talos: it hardcodes the version it expects (machinery DefaultKernelVersion) and the imager
+# stamps THAT onto the UKI .uname regardless of what we compile — so we build exactly that version. raspberrypi/linux
+# has no per-version tags + rebased branches, so we map version->commit via raspberrypi/FIRMWARE: each firmware ref's
+# extra/git_hash names the exact linux commit its kernel was built from. No kernel pin — TALOS_VERSION is the only
+# knob. curl+jq only (no gh); never clones the multi-GB firmware repo.
+WANT=$(grep -oE 'DefaultKernelVersion = "[0-9]+\.[0-9]+\.[0-9]+' "$CHK/talos/pkg/machinery/constants/constants.go" 2>/dev/null | grep -oE '[0-9]+\.[0-9]+\.[0-9]+')
+[ -n "$WANT" ] || die "could not read DefaultKernelVersion from the talos ${TALOS_VERSION} checkout (constants.go moved?)"
+# firmware-ref -> "<linux-commit><TAB><version>" (empty/rc1 on failure)
+_fw_kver() {
+  local h
+  h=$(curl -fsSL --retry 3 "https://raw.githubusercontent.com/raspberrypi/firmware/$1/extra/git_hash" 2>/dev/null | tr -d '[:space:]')
+  [[ "$h" =~ ^[0-9a-f]{40}$ ]] || return 1
+  printf '%s\t%s' "$h" "$(curl -fsSL --retry 3 "https://raw.githubusercontent.com/raspberrypi/linux/$h/Makefile" 2>/dev/null | awk -F' *= *' '/^VERSION/{v=$2}/^PATCHLEVEL/{p=$2}/^SUBLEVEL/{s=$2} END{print v"."p"."s}')"
+}
+KERNEL_REF=""; KSRC=""
+# fast path: the 4 firmware channel HEADs (master is RPi's current rpi-update kernel, usually == what Talos wants)
+for _b in master stable next oldstable; do
+  _o=$(_fw_kver "$_b" || true)
+  if [ -n "$_o" ] && [ "${_o##*$'\t'}" = "$WANT" ]; then KERNEL_REF="${_o%%$'\t'*}"; KSRC="firmware/$_b"; break; fi
+done
+# failsafe: walk master's extra/git_hash history (a dense version index — every recent 6.18.x, newest first) for WANT
+if [ -z "$KERNEL_REF" ]; then
+  for _c in $(curl -fsSL --retry 3 "https://api.github.com/repos/raspberrypi/firmware/commits?path=extra/git_hash&sha=master&per_page=100" 2>/dev/null | jq -r '.[].sha' 2>/dev/null); do
+    _o=$(_fw_kver "$_c" || true)
+    if [ -n "$_o" ] && [ "${_o##*$'\t'}" = "$WANT" ]; then KERNEL_REF="${_o%%$'\t'*}"; KSRC="firmware master@${_c:0:10}"; break; fi
+  done
+fi
+[[ "$KERNEL_REF" =~ ^[0-9a-f]{40}$ ]] || die "no raspberrypi/firmware ref provides linux ${WANT} (what Talos ${TALOS_VERSION} expects) — checked channels master/stable/next/oldstable + master's recent history. Resolve by hand (see docs/03 'If kernel resolution fails'), then wait for a firmware channel to ship ${WANT} or align TALOS_VERSION."
+say "REBASE 1, kernel source -> raspberrypi/linux ${KERNEL_REF} (${WANT}, from ${KSRC}, served locally) + Pi5 fragment"
 # GitHub's /archive/ tarballs are NOT byte-stable (different CDN nodes serve different
 # gzip), so the sha bldr downloads can differ from one we hash on the host. Download
 # once and serve it from a local HTTP server so bldr fetches the exact bytes we hashed.
 SRCDIR="${BUILD_DIR}/srcserve"; mkdir -p "$SRCDIR"
 curl -fL --retry 3 -o "$SRCDIR/linux.tar.gz" \
-  "https://github.com/raspberrypi/linux/archive/${KERNEL_REF}.tar.gz"   # /archive/<ref>: tag | branch | SHA
-# fail fast: refuse a wrong kernel line BEFORE the multi-minute build. Assert the fetched tree's own Makefile
-# says 6.18 (guards a bad git_hash or a firmware line change). Archive top dir is linux-${KERNEL_REF}.
-KMAJMIN=$(tar -xzOf "$SRCDIR/linux.tar.gz" "linux-${KERNEL_REF}/Makefile" 2>/dev/null \
-  | awk -F' *= *' '/^VERSION/{v=$2} /^PATCHLEVEL/{p=$2} END{print v"."p}')
-[ "$KMAJMIN" = "6.18" ] || die "resolved kernel ${KERNEL_REF} is ${KMAJMIN:-unknown}.x, not 6.18 (firmware/stable moved off the 6.18 line?)"
+  "https://github.com/raspberrypi/linux/archive/${KERNEL_REF}.tar.gz"   # /archive/<sha>
+# sanity: the fetched tree's own Makefile version MUST equal WANT (guards a resolver bug). Archive top dir is linux-<sha>.
+SRCVER=$(tar -xzOf "$SRCDIR/linux.tar.gz" "linux-${KERNEL_REF}/Makefile" 2>/dev/null \
+  | awk -F' *= *' '/^VERSION/{v=$2} /^PATCHLEVEL/{p=$2} /^SUBLEVEL/{s=$2} END{print v"."p"."s}')
+[ "$SRCVER" = "$WANT" ] || die "resolved kernel ${KERNEL_REF} is ${SRCVER:-unknown}, expected ${WANT} (Talos ${TALOS_VERSION}) — resolver bug?"
+echo "   kernel ${SRCVER} matches Talos ${TALOS_VERSION} expectation (via ${KSRC})"
 KSHA256=$(shasum -a 256 "$SRCDIR/linux.tar.gz" | awk '{print $1}')
 KSHA512=$(shasum -a 512 "$SRCDIR/linux.tar.gz" | awk '{print $1}')
 docker rm -f "$SRCSERVER_NAME" >/dev/null 2>&1 || true
@@ -275,8 +293,10 @@ docker run --rm --privileged -e IMAGE_NAME="$IMAGE_NAME" -v "$OUT_DIR:/work" -v 
   exit $fail
 ' || die "raw image validation failed"
 
-# 9b. kernel version + baked extensions, from the installer UKI
-docker run --rm -v "$UKI_DIR:/w" "$ALPINE_IMAGE" sh -c '
+# 9b. kernel version + baked extensions, from the installer UKI. The UKI .uname LABEL is stamped by the imager
+#     from Talos's DefaultKernelVersion, NOT from our kernel — so cross-check it against KVER, the ACTUAL kernel
+#     we built (REBASE 2, from the kernel image's module dir). A mismatch = mislabeled image -> hard fail.
+docker run --rm -e KVER="$KVER" -v "$UKI_DIR:/w" "$ALPINE_IMAGE" sh -c '
   apk add -q python3 xz zstd >/dev/null 2>&1
   python3 - <<PY
 import struct
@@ -290,6 +310,8 @@ for s in (".uname",".initrd"):
 PY
   uname=$(cat /tmp/.uname)
   case "$uname" in 6.18.*) echo "PASS  kernel $uname";; *) echo "FAIL  kernel $uname"; exit 1;; esac
+  [ "$uname" = "$KVER" ] && echo "PASS  UKI label matches built kernel ($KVER)" \
+    || { echo "FAIL  UKI .uname ($uname) != built kernel ($KVER) — image mislabeled (kernel vs Talos DefaultKernelVersion drift)"; exit 1; }
   ext=$( (zstd -dc /tmp/.initrd 2>/dev/null; xz -dc /tmp/.initrd 2>/dev/null) | strings | grep -ioE "iscsi-tools|util-linux-tools" | sort -u )
   echo "$ext" | grep -qx iscsi-tools && echo "PASS  extension iscsi-tools" || { echo "FAIL  iscsi-tools"; exit 1; }
   echo "$ext" | grep -qx util-linux-tools && echo "PASS  extension util-linux-tools" || { echo "FAIL  util-linux-tools"; exit 1; }

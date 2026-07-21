@@ -100,7 +100,7 @@ MACHINERY_VERSION="${TALOS_VERSION}"            # overlay rebuilt against this (
 TALOSCTL_VERSION="${TALOS_VERSION}"             # talosctl container (talosctl() below; boot-verify)
 # Build-cache key + dirs (shared: 03a builder writes, 03b flasher reads). Keyed by the pinned inputs so
 # 03a/03b resolve the SAME paths: change any version/ref/tag and the build lands in a fresh .cache/<key>.
-BUILD_KEY="${TALOS_VERSION}-${FIRMWARE_REF}-$(printf '%s' \
+BUILD_KEY="${TALOS_VERSION}-$(printf '%s' \
   "${BUILDER_VERSION}|${PKG_VERSION}|${SBCOVERLAY_VERSION}|${MACHINERY_VERSION}|${ISCSI_EXT}|${UTIL_EXT}" \
   | shasum -a 256 | cut -c1-8)"
 BUILD_DIR="${REPO_ROOT}/.cache/${BUILD_KEY}"   # build scratch + output (gitignored; repo-root .cache/)
