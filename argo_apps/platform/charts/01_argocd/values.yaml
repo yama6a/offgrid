@@ -12,6 +12,9 @@ argo-cd:
   # component's labelSelector automatically. Singletons (controller, redis) satisfy it trivially.
   # maxSkew 1 + DoNotSchedule over 3 nodes => the 2 replicas land on 2 distinct nodes.
   global:
+    # Roll-forward only, no rollback: 0 keeps NO ReplicaSet history for server/repo-server/appset/redis;
+    # the controller StatefulSet needs its own 0 too (Helm `default` treats 0 as empty). See 05_gitops.md.
+    revisionHistoryLimit: 0
     # Chart 10.0.0 flipped networkPolicy.create false->true. Opt back out: the argocd namespace's policy is
     # our own default-deny CiliumNetworkPolicy (templates/networkpolicy.yaml). The chart's server NP is
     # `ingress: - {}` (allow-all) and Cilium UNIONs it in -> would blow open the default-deny. Cilium is THE
@@ -116,6 +119,7 @@ argo-cd:
   # --- the reconciler: singleton StatefulSet, self-heals on restart --------------------------
   controller:
     replicas: 1
+    revisionHistoryLimit: 0  # StatefulSet ignores global's 0 (Helm `default`), so zero it here too. See 05_gitops.md.
     metrics:
       enabled: true
       serviceMonitor:

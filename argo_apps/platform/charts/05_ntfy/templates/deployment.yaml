@@ -10,6 +10,7 @@ metadata:
     app.kubernetes.io/name: ntfy
 spec:
   replicas: 1
+  revisionHistoryLimit: 0  # roll-forward only; no old ReplicaSets kept (05_gitops.md)
   strategy:
     type: Recreate            # RWO PVC: the old pod must release the volume before the new one mounts it
   selector:

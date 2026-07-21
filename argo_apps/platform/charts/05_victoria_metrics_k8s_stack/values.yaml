@@ -19,6 +19,7 @@ victoria-metrics-k8s-stack:
   vmsingle:
     enabled: true
     spec:
+      revisionHistoryLimitCount: 0    # roll-forward only; no old ReplicaSets on the VMSingle Deployment (05_gitops.md)
       retentionPeriod: "180d"        # 180 days of metrics. Bump together with the PVC size below.
       replicaCount: 1
       extraArgs:
@@ -49,6 +50,7 @@ victoria-metrics-k8s-stack:
   vmagent:
     enabled: true
     spec:
+      revisionHistoryLimitCount: 0    # roll-forward only; no old ReplicaSets on the VMAgent Deployment (05_gitops.md)
       # Discover ALL VMServiceScrape/VMPodScrape/VMProbe across every namespace, regardless of labels,      # so the per-component scrapes (cilium, argocd, cert-manager, longhorn, sealed-secrets) AND the
       # operator-converted ServiceMonitors are all picked up. This mirrors the old
       # serviceMonitorSelectorNilUsesHelmValues:false behaviour.
@@ -203,6 +205,7 @@ victoria-metrics-k8s-stack:
     # Enabled at cutover, together with the removal of kube-prometheus-stack (whose node-exporter freed
     # hostPort 9100). DaemonSet lands on all 3 nodes via the tolerations below. See 09_monitoring.md.
     enabled: true
+    revisionHistoryLimit: 0  # roll-forward only; no old ControllerRevisions kept (05_gitops.md)
     # DaemonSet must land on all 3 nodes. All-control-plane cluster, so tolerate everything rather than a
     # control-plane nodeSelector (a node-role.kubernetes.io/control-plane:DoesNotExist selector would match
     # ZERO nodes here).
@@ -214,6 +217,7 @@ victoria-metrics-k8s-stack:
 
   kube-state-metrics:
     enabled: true
+    revisionHistoryLimit: 0  # roll-forward only; no old ReplicaSets kept (05_gitops.md)
     # Expose the `alert-criticality` workload label as `label_alert_criticality` on the kube_<obj>_labels
     # metrics, so the outage-class Grafana alert rules (05_grafana) can group_left it in and raise `critical`
     # only for labeled-critical components. Modern KSM emits NO kube_*_labels at all without an allowlist, so

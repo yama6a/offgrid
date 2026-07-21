@@ -9,6 +9,7 @@ metadata:
   labels:
     app.kubernetes.io/name: nic-keeper
 spec:
+  revisionHistoryLimit: 0  # roll-forward only; no old ControllerRevisions kept (05_gitops.md)
   selector:
     matchLabels:
       app.kubernetes.io/name: nic-keeper

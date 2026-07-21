@@ -20,6 +20,9 @@ cert-manager:
   # Certificate/Issuer/CertificateRequest admission cluster-wide until it reschedules. Own ns => our class.
   global:
     priorityClassName: platform-critical
+    # Roll-forward only; no old ReplicaSets. v1.21.0 applies this to all 3 Deployments (controller, webhook,
+    # cainjector). See 05_gitops.md.
+    revisionHistoryLimit: 0
 
   # GC the issued TLS Secret when its Certificate is removed (default false leaves it orphaned). In this
   # GitOps repo Certificates are declared in charts + pruned on removal, so this leaves no dangling secrets.

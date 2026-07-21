@@ -30,6 +30,7 @@ metadata:
     argocd.argoproj.io/compare-options: ServerSideDiff=true
 spec:
   project: default
+  revisionHistoryLimit: 0  # roll-forward only; no Argo rollback history (05_gitops.md)
   source:
     repoURL: https://github.com/yama6a/offgrid
     targetRevision: HEAD

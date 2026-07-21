@@ -173,6 +173,36 @@ The 2-replica components carry `global.topologySpreadConstraints` (`maxSkew 1`, 
   is an option later (see [Exposure](#exposure-the-argocd-ui-behind-google-sso) below); flip `server.insecure` to
   `false` and front it with TLS if you ever terminate TLS at ArgoCD instead of the Gateway.
 
+## Roll-forward only: `revisionHistoryLimit: 0` everywhere
+
+Recovery here is always **roll-forward** — a git revert re-synced by Argo — never `argocd app rollback` or
+`kubectl rollout undo`. So the retained revision history every resource keeps by default (10 Argo
+`status.history` entries; 10 old ReplicaSets/ControllerRevisions per workload) is pure dead weight: orphaned
+ReplicaSets pile up and Argo carries rollback state nobody uses. We disable it by setting
+`revisionHistoryLimit: 0` in three layers:
+
+1. **Every `Application`** (`argo_apps/root.yaml`, `roots/*.yaml`, `platform/apps/**`, `workloads/apps/**`) sets
+   `spec.revisionHistoryLimit: 0` — no Argo rollback history.
+2. **Every first-party workload** we template sets it on the workload `spec` — the 3 sample-app Deployments,
+   `05_ntfy`, `02_local_path_provisioner`, `04_google_sso` callbacks (Deployments), and `02_nic_keeper`
+   (DaemonSet → `ControllerRevision` history).
+3. **Upstream charts** set it via their values knob where one exists: `01_argocd` (`global.` **and**
+   `controller.` — the controller StatefulSet ignores global's `0` because Helm's `default` treats `0` as
+   empty), `02_cert_manager` (`global.` — v1.21.0 applies it to all 3 Deployments), `02_metrics_server`,
+   `03_rabbitmq` (both operators), `05_grafana`, and `05_victoria_metrics_k8s_stack` (VMSingle + VMAgent CRs via
+   `spec.revisionHistoryLimitCount` — note the different field name — plus the `kube-state-metrics` +
+   `prometheus-node-exporter` subcharts).
+
+**Documented exceptions (no silent caps).** The repo is pure-Helm (no kustomize/postRenderer), and adding one
+just to force this would break the clean wrapper pattern, so these workloads stay at the k8s default of 10:
+
+- **No `revisionHistoryLimit` value at all:** cilium, envoy-gateway (gateway-helm), victoria-metrics-operator,
+  cloudnative-pg, longhorn, redis-operator, victoria-logs-collector.
+- **Knob exists but `0` is silently dropped** (template guards with `{{- if … }}`, and `0` is falsy in Helm):
+  **sealed-secrets** — any non-zero value works, `0` does not.
+- **Vendored verbatim:** the `03_barman_cloud_plugin` plugin Deployment lives in a re-`curl`ed upstream
+  manifest marked *DO NOT EDIT BY HAND* — a hand-edit would be erased on the next re-vendor, so it's left alone.
+
 ## Git auth
 
 This repo is public, so ArgoCD clones it anonymously over HTTPS, no credential needed by default. Anonymous

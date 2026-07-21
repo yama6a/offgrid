@@ -12,6 +12,7 @@ metadata:
     alert-criticality: critical   # app workload down -> `critical` (deployment/container outage rules). See docs/09_monitoring.md.
 spec:
   replicas: {{ .Values.app.replicas }}
+  revisionHistoryLimit: 0  # roll-forward only; no old ReplicaSets kept (05_gitops.md)
   selector:
     matchLabels:
       app: {{ .Values.app.name }}

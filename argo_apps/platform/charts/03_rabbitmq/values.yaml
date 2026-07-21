@@ -28,6 +28,7 @@ rabbitmq-cluster-operator:
   # and (via topology-allowed-namespaces on the CR) topology objects in every workload namespace.
   clusterOperator:
     replicaCount: 1
+    revisionHistoryLimit: 0  # roll-forward only; no old ReplicaSets kept (05_gitops.md)
     # Modest footprint for a controller pod on the Pi 5s — it only reconciles; the broker work lives in the
     # RabbitmqCluster pods. Tunable later via the repo's krr workflow.
     resources:
@@ -46,6 +47,7 @@ rabbitmq-cluster-operator:
   msgTopologyOperator:
     enabled: true
     replicaCount: 1
+    revisionHistoryLimit: 0  # roll-forward only; no old ReplicaSets kept (05_gitops.md)
     resources:
       requests:
         cpu: 10m

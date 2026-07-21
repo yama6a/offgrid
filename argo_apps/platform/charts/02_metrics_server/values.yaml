@@ -23,6 +23,7 @@ metrics-server:
 
   # Single replica is plenty for `kubectl top` + HPA on 3 nodes; modest footprint for the Pi 5s.
   replicas: 1
+  revisionHistoryLimit: 0  # roll-forward only; no old ReplicaSets kept (05_gitops.md)
   resources:
     requests:
       cpu: 50m

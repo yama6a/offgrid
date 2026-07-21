@@ -7,6 +7,7 @@
 # Grafana also OWNS alerting (no Alertmanager, no vmalert): datasources, contact point, notification
 # policy and alert rules are all provisioned here as code.
 grafana:
+  revisionHistoryLimit: 0  # roll-forward only; no old ReplicaSets kept. persistence off => Deployment, so it applies (05_gitops.md)
   # No persistent storage (explicit request). Ephemeral pod, the datasources, dashboards and alert rules
   # are all re-provisioned on every start (from these values + the k8s-stack's emitted dashboard
   # ConfigMaps). TRADE-OFF: alert *state* (firing history, silences) and any UI-created dashboards reset
