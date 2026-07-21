@@ -27,7 +27,7 @@ set -euo pipefail
 SVC="vmsingle-victoria-metrics-k8s-stack"   # the VMSingle PromQL API service in $MONITORING_NS
 PORT=8428                                    # vmsingle's port; same on both sides of the forward
 # renovate: datasource=docker
-KRR_IMAGE="us-central1-docker.pkg.dev/genuine-flight-317411/devel/krr:v1.28.0"  # hoisted here so renovate tracks the pin
+KRR_IMAGE="us-central1-docker.pkg.dev/genuine-flight-317411/devel/krr:v1.29.0"  # hoisted here so renovate tracks the pin
 
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 source "${SCRIPT_DIR}/common.sh"             # common.sh is a sibling in lib/shell/

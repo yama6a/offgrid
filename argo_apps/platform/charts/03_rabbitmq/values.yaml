@@ -85,7 +85,7 @@ replicas: 3
 # Pinned RabbitMQ server image. `-management` bundles the management plugin (the 15672 UI); `-alpine` is the
 # small variant (kind to the Pis). Multi-arch incl. arm64. Track the server line the operator subchart
 # is built/tested against; bump deliberately.
-image: rabbitmq:4.3.2-management-alpine
+image: rabbitmq:4.3.3-management-alpine
 
 # Per-instance requests/limits. RabbitMQ sizes its memory high-watermark off the memory LIMIT, so the limit
 # is the real knob — 1Gi gives ~400Mi of working set before back-pressure, ample for homelab messaging on the

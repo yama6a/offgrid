@@ -22,7 +22,7 @@ jobs:
     name: shell
     runs-on: ubuntu-latest
     steps:
-      - uses: actions/checkout@9c091bb21b7c1c1d1991bb908d89e4e9dddfe3e0 # v7.0.0
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
       - name: shellcheck # preinstalled on ubuntu-latest, no setup needed
         # -S warning: fail on warning+error only. The repo's `&& ok || bad` PASS/FAIL idiom, intentional
         # word-splitting, literal single-quotes, etc. are all info-level house style — not garbage.
@@ -36,7 +36,7 @@ jobs:
     name: yaml
     runs-on: ubuntu-latest
     steps:
-      - uses: actions/checkout@9c091bb21b7c1c1d1991bb908d89e4e9dddfe3e0 # v7.0.0
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
       - name: yamllint # pipx is preinstalled on ubuntu-latest
         run: pipx run yamllint -c .yamllint.yml .
       - name: actionlint # lints the workflow files themselves (+ shellchecks their run: blocks)
@@ -49,7 +49,7 @@ jobs:
     name: renovate-config
     runs-on: ubuntu-latest
     steps:
-      - uses: actions/checkout@9c091bb21b7c1c1d1991bb908d89e4e9dddfe3e0 # v7.0.0
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
       - name: validate renovate.json5 # a broken config silently halts ALL dependency updates
         run: npx --yes --package renovate -- renovate-config-validator --strict renovate.json5
 
@@ -57,10 +57,10 @@ jobs:
     name: helm
     runs-on: ubuntu-latest
     steps:
-      - uses: actions/checkout@9c091bb21b7c1c1d1991bb908d89e4e9dddfe3e0 # v7.0.0
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
       - uses: azure/setup-helm@1a275c3b69536ee54be43f2070a358922e12c8d4 # v4.3.1
         with:
-          version: v3.18.3 # pinned = deterministic gate (matches the maintainer's local helm)
+          version: v3.21.3 # pinned = deterministic gate (matches the maintainer's local helm)
       - name: install kubeconform
         run: |
           curl -fsSL https://github.com/yannh/kubeconform/releases/download/v0.6.7/kubeconform-linux-amd64.tar.gz \

@@ -5,7 +5,7 @@
 
 # ntfy server (binwiederhier/ntfy), multi-arch incl. arm64 (resolves to arm64 on the Pi 5). Digest-pinned to a
 # manifest LIST; Renovate's helm-values manager keeps tag+digest fresh (same style as 02_nic_keeper's image).
-image: "binwiederhier/ntfy:v2.26.0@sha256:a6d335064ae927c4dbef118e1fa39656b3d2e01472b2a82af5915d5cebfe815f"
+image: "binwiederhier/ntfy:v2.26.3@sha256:081b53dbb20674fcfe05fdb4eb8af9036a2645ef979543d16f7f80803af467b1"
 
 # Public base URL — MUST match the ntfy host in 06_platform_ingress (the Android app + correct links need it).
 baseUrl: "https://ntfy.ops.example.com"

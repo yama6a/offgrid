@@ -33,7 +33,7 @@ REDIS_TPL="${REPO_ROOT}/lib/helm/redis-instance/templates/redis.yaml"  # single 
 SEED_NS="redis-backup"                                            # the seed runs where the sealed creds live
 SECRET_NAME="redis-backup-s3"                                     # the sealed writer creds in SEED_NS
 # renovate: datasource=docker
-AWSCLI_IMAGE="public.ecr.aws/aws-cli/aws-cli:2.36.2"             # the seed's S3-download initContainer
+AWSCLI_IMAGE="public.ecr.aws/aws-cli/aws-cli:2.36.5"             # the seed's S3-download initContainer
 
 NS=""; INSTANCE=""; TARGET="latest"; DO_APPLY="false"
 while [ $# -gt 0 ]; do
