@@ -151,10 +151,14 @@ victoria-metrics-k8s-stack:
   grafana:
     enabled: false               # standalone Grafana is its own app (05_grafana).
 
-  # Default ALERTING/RECORDING rules are VMRules that only vmalert evaluates; with vmalert off they would
-  # be inert. Grafana alerts query raw metrics instead (recording-rule expressions inlined where needed).
+  # Chart 0.86.2 ships the default ALERTING+RECORDING rules via its sync-job (managed-by=sync-job, NOT
+  # ArgoCD-tracked, so prune won't clean leftovers). `enabled: false` stops it emitting ANY of them.
+  # NOTE the key: 0.86.2 RENAMED `defaultRules.create` -> `defaultRules.enabled`; the old key is silently
+  # ignored, so on a chart bump re-check this stays false (a stray `true` repopulates ~148 inert VMRules).
+  # Grafana owns alerting (05_grafana); recording rules are pointless here too — vmalert is off so nothing
+  # evaluates them, and no dashboard/alert queries recorded series. See 09_monitoring.md.
   defaultRules:
-    create: false
+    enabled: false
 
   # Curated default dashboards, emitted as ConfigMaps labelled `grafana_dashboard` (the sync-job reads
   # grafana.sidecar.dashboards.label, default `grafana_dashboard`) so the standalone Grafana sidecar

@@ -26,10 +26,27 @@ converter stamps ArgoCD-ignore annotations on its output
 (`operator.prometheus_converter_add_argocd_ignore_annotations: true`) so ArgoCD never fights or prunes
 operator-created objects.
 
-### Grafana owns alerting
+### Grafana owns alerting (and the cluster carries NO rule CRs)
 `vmalert` and `vmalertmanager` are OFF; Grafana provisions the contact point + notification policy + alert
-rules as code (see below). No Alertmanager. Dropping vmalert means the stack's default recording/alerting
-VMRules are not created (`defaultRules.create: false`); Grafana alert expressions are inlined PromQL.
+rules as code (see below). No Alertmanager. Grafana alert expressions are inlined PromQL.
+
+Because nothing evaluates rule CRs with vmalert off (VMSingle does not; only vmalert would), the **invariant
+is that no `PrometheusRule`/`VMRule` exists on the cluster** — every one would be inert dead weight. So the
+stack's bundled default rules are disabled at the source, and we also drop the **recording** rules: nothing
+evaluates them (so they'd produce no series anyway) and no dashboard/alert here queries a recorded series
+(the kube-mixin dashboards that would are pruned; the kept dashboards use raw metrics).
+
+> **Chart-key gotcha (re-check on every vm-k8s-stack bump).** In chart **0.86.2** the master toggle is
+> `defaultRules.enabled: false` — the OLD `defaultRules.create` key was renamed and is now **silently
+> ignored**. 0.86.2 also delivers rules via a **sync-job** (objects labelled
+> `app.kubernetes.io/managed-by: sync-job`, NOT ArgoCD-tracked, so prune won't clean leftovers). A stray
+> `enabled: true` (or a future rename) repopulates ~148 inert alerts unnoticed. After any bump, confirm
+> `kubectl get vmrule -A` is empty.
+
+Other charts follow the same rule: their bundled alerts are kept OFF (e.g. `02_sealed_secrets`
+`metrics.prometheusRule.enabled: false`, `lib/helm/pg-cluster` `...monitoring.prometheusRule.enabled:
+false`), and the coverage lives as a Grafana rule instead (sealed-secrets → the `sealed-secrets-health`
+group; CNPG WAL/backup → the `backups` group).
 
 ### Talos control-plane scrapes (outside ArgoCD)
 kube-controller-manager (:10257), kube-scheduler (:10259) (both https, self-signed → `insecureSkipVerify`)
@@ -87,7 +104,8 @@ the k8s-stack subchart so it versions/syncs/rolls back independently, no feature
   (cert-manager TLS expiry/ready, Longhorn volume degraded/faulted, PV/PVC errors), `backups` (redis + longhorn
   + VM/VL + CNPG backup health), `cnpg-health`, `rabbitmq-cluster` + `rabbitmq-queues`, `redis-health`,
   `longhorn-health`, `argocd-health`, `cilium-health`, `control-plane` + `dns`, `monitoring-health`,
-  `ingress-http` (see the per-service catalog below), plus a VictoriaLogs error-rate
+  `sealed-secrets-health` (controller not Synced → decryption blocked), `ingress-http` (see the per-service
+  catalog below), plus a VictoriaLogs error-rate
   alert. Rules survive restart (provisioned); alert *state* resets on restart (no PVC). (Datasources, by
   contrast, are still provisioned inline in `values.yaml` — the datasources sidecar is OFF.)
 
@@ -184,6 +202,10 @@ statically.
 - **`monitoring-health`** (self-monitoring): `vmsingle-near-read-only` (critical — free disk near the reserved
   limit → write refusal), `vmagent-dropping-samples`, `victorialogs-errors`. The observability stack watching
   itself so a silent failure doesn't blind every other alert.
+- **`sealed-secrets-health`**: `sealed-secrets-not-ready` (**critical**, static — `sealed_secrets_controller_condition_info
+  != 1` for 10m). A down/unsynced controller blocks ALL SealedSecret decryption cluster-wide, so it's a
+  static-critical infra alert (like `longhorn-manager-down`). Replaces the chart's bundled PrometheusRule
+  (inert with vmalert off).
 - **`ingress-http`** (Envoy, PER ROUTE — grouped by `envoy_cluster_name` = `httproute/<gw-ns>/<route>/rule/N`,
   one per ingress-chart instance): `ingress-5xx-high` (>2%), `ingress-4xx-high` (>25%),
   `ingress-latency-p95-high` (>2s), `ingress-no-healthy-upstream` (critical — 503 cause),

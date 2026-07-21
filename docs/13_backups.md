@@ -417,8 +417,8 @@ matching `spec.imageName` (not wired — all clusters here are `postgresql`).
 A **rebuild** (`DANGEROUS_rebuild_cluster.sh`) is a deliberate FULL fresh start: it wipes local-path **and**
 empties the S3 bucket (`13 wipe`, keeping the bucket + IAM). Wiping the backups is not incidental — it's
 required for correctness. The rebuilt, same-named clusters would otherwise inherit the old backup path, and
-Barman refuses to mix a new Postgres systemID into an existing server's data (it would `CNPGWALArchiveFailing`
-forever). Emptying the bucket lets the fresh clusters start a clean backup history.
+Barman refuses to mix a new Postgres systemID into an existing server's data (the `cnpg-wal-archive-failing`
+alert would fire forever). Emptying the bucket lets the fresh clusters start a clean backup history.
 
 **So a rebuild DISCARDS your backups.** If you want the old data, restore it BEFORE rebuilding — or don't
 rebuild. To recover specific data without a rebuild, use `make restore-cnpg` against the live bucket.
@@ -442,7 +442,7 @@ that destroy so the bucket survives the rebuild.)
 5. **Restore drill:** `make restore-cnpg` → target `latest` into a throwaway name → it reaches Healthy from S3
    and serves data. Repeat with a PITR `targetTime`.
 6. **Alerts:** confirm the metric name/label against `/metrics`; break archiving (e.g. revoke the IAM key
-   briefly) → `CNPGWALArchiveFailing` fires; restore → it clears.
+   briefly) → the `cnpg-wal-archive-failing` Grafana alert fires; restore → it clears.
 
 ## ArgoCD + the ObjectStore Helm hook (PATCHED — do not un-patch)
 

@@ -39,8 +39,9 @@ sealed-secrets:
   # CRDs exist from wave 0, before this wave-2 app. See 15_monitoring.md.
   metrics:
     serviceMonitor:
-      enabled: true
-    # Ship the bundled `SealedSecretsControllerNotReady` alert: a down/unsynced controller silently blocks ALL
-    # secret decryption — exactly the failure worth paging. VM operator converts PrometheusRule -> VMRule.
+      enabled: true       # keep scraping seal/unseal + condition metrics into VM (the Grafana alert needs them)
+    # OFF: vmalert is disabled, so the bundled PrometheusRule would convert to an inert VMRule that never fires.
+    # Controller-down coverage (blocks ALL secret decryption) lives in the Grafana `sealed-secrets-health` alert
+    # (05_grafana/files/alerts). See 09_monitoring.md.
     prometheusRule:
-      enabled: true
+      enabled: false
