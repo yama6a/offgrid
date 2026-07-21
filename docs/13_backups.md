@@ -465,3 +465,9 @@ hand-**patched** vendored `charts/cluster-*.tgz`, which Renovate's `helmUpdateSu
 re-vendor pristine (clobbering the patch) on any `cnpg/cluster` bump. Rendering the CR ourselves removes the
 vendored tarball entirely, so there is nothing to patch and nothing for Renovate to clobber. See
 `lib/helm/pg-cluster/templates/objectstore.yaml`.
+
+Upstreamed as <https://github.com/cloudnative-pg/charts/issues/964> (proposing a `backups.objectStore.helmHook`
+opt-out + an ObjectStore-only annotations knob). If/when that lands, `pg-cluster` can go back to wrapping the
+official `cnpg/cluster` chart (`helmHook: false` + `sync-wave` annotation) instead of rendering the CRs by hand
+— but only if the transitive-dep-behind-`file://` vendoring problem is also acceptable then; otherwise keep
+rendering directly. Revisit when the issue is resolved.
