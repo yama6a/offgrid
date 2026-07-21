@@ -10,7 +10,7 @@ Deployment/Service/RBAC, and its cert-manager Issuer + Certificates.
 ## Bump the pinned version
 
 ```sh
-VER=v0.13.0   # <- set the new release tag
+VER=vX.Y.Z   # <- the new release tag (github releases); current pin is appVersion in Chart.yaml
 {
   printf '# Vendored VERBATIM from the plugin-barman-cloud %s release — DO NOT EDIT BY HAND.\n' "$VER"
   printf '# Source: https://github.com/cloudnative-pg/plugin-barman-cloud/releases/download/%s/manifest.yaml\n' "$VER"
@@ -19,5 +19,5 @@ VER=v0.13.0   # <- set the new release tag
 } > templates/plugin-barman-cloud.yaml
 ```
 
-Then set `appVersion` in `Chart.yaml` to the same tag, commit + push. Requires CNPG ≥ 1.26 (we run 1.29.x)
-and cert-manager (platform wave 2), which is why this app is wave 3.
+Then set `appVersion` in `Chart.yaml` to the same tag, commit + push. Requires CNPG ≥ 1.26 and cert-manager
+(platform wave 2), which is why this app is wave 3.

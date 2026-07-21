@@ -278,5 +278,4 @@ Pi 5 Talos image builds on [talos-rpi5/talos-builder](https://github.com/talos-r
 - read and shorten all md files.
 - improve then apply comment rules from claude.md to all yaml and other code files.
 - disaster recovery exercise
-- don't put versions into markdown or comments. We don't want to have to update those every time we bump a version. Instead, reference the versions.env file. also document this in the claude.md
 - 

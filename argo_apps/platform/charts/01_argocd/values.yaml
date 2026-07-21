@@ -15,10 +15,9 @@ argo-cd:
     # Roll-forward only, no rollback: 0 keeps NO ReplicaSet history for server/repo-server/appset/redis;
     # the controller StatefulSet needs its own 0 too (Helm `default` treats 0 as empty). See 05_gitops.md.
     revisionHistoryLimit: 0
-    # Chart 10.0.0 flipped networkPolicy.create false->true. Opt back out: the argocd namespace's policy is
-    # our own default-deny CiliumNetworkPolicy (templates/networkpolicy.yaml). The chart's server NP is
-    # `ingress: - {}` (allow-all) and Cilium UNIONs it in -> would blow open the default-deny. Cilium is THE
-    # policy engine here (repo convention). See 04_networking.md / 05_gitops.md.
+    # Off: chart defaults this true, emitting a vanilla allow-all server NetworkPolicy (`ingress: - {}`) that
+    # Cilium UNIONs into our own default-deny CiliumNetworkPolicy (templates/networkpolicy.yaml) -> blows it
+    # open. Cilium is THE policy engine here (repo convention). See 04_networking.md / 05_gitops.md.
     networkPolicy:
       create: false
     # ArgoCD is ~90% of all cluster log volume at INFO, the controller's per-app reconcile churn

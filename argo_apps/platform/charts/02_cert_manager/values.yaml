@@ -92,12 +92,11 @@ cert-manager:
                   app.kubernetes.io/component: cainjector
               topologyKey: kubernetes.io/hostname
 
-  # HTTP-01 solving through the Cilium Gateway API. NOTE: since cert-manager 1.15 this is NOT a
-  # feature gate any more, the old `ExperimentalGatewayAPISupport` gate is gone. It's enabled via
-  # the controller's file config below. The one ordering requirement is that the Gateway API CRDs
-  # exist before the controller starts; they do (Cilium vendors them at wave 0, before this wave-2
-  # app), so a fresh rollout picks them up. The matching Gateway + Let's Encrypt ClusterIssuers live
-  # in the 03_gateway chart (wave 3). See 10_gateway.md.
+  # HTTP-01 solving through the Cilium Gateway API — enabled via the controller's file config below (it's
+  # NOT a feature gate). The one ordering requirement is that the Gateway API CRDs exist before the
+  # controller starts; they do (Cilium vendors them at wave 0, before this wave-2 app), so a fresh rollout
+  # picks them up. The matching Gateway + Let's Encrypt ClusterIssuers live in the 03_gateway chart
+  # (wave 3). See 10_gateway.md.
   config:
     apiVersion: controller.config.cert-manager.io/v1alpha1
     kind: ControllerConfiguration

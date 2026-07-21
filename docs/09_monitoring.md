@@ -36,12 +36,11 @@ stack's bundled default rules are disabled at the source, and we also drop the *
 evaluates them (so they'd produce no series anyway) and no dashboard/alert here queries a recorded series
 (the kube-mixin dashboards that would are pruned; the kept dashboards use raw metrics).
 
-> **Chart-key gotcha (re-check on every vm-k8s-stack bump).** In chart **0.86.2** the master toggle is
-> `defaultRules.enabled: false` — the OLD `defaultRules.create` key was renamed and is now **silently
-> ignored**. 0.86.2 also delivers rules via a **sync-job** (objects labelled
-> `app.kubernetes.io/managed-by: sync-job`, NOT ArgoCD-tracked, so prune won't clean leftovers). A stray
-> `enabled: true` (or a future rename) repopulates ~148 inert alerts unnoticed. After any bump, confirm
-> `kubectl get vmrule -A` is empty.
+> **Chart-key gotcha (re-check on every vm-k8s-stack bump).** The master toggle is
+> `defaultRules.enabled: false` — the OLD `defaultRules.create` key is **silently ignored**. The chart also
+> delivers rules via a **sync-job** (objects labelled `app.kubernetes.io/managed-by: sync-job`, NOT
+> ArgoCD-tracked, so prune won't clean leftovers). A stray `enabled: true` (or a future rename) repopulates
+> ~148 inert alerts unnoticed. After any bump, confirm `kubectl get vmrule -A` is empty.
 
 Other charts follow the same rule: their bundled alerts are kept OFF (e.g. `02_sealed_secrets`
 `metrics.prometheusRule.enabled: false`; `lib/helm/pg-cluster` renders its CNPG CRs directly and simply emits

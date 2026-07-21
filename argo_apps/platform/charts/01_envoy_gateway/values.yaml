@@ -83,7 +83,7 @@ gateway-helm:
                   matchLabels:
                     control-plane: envoy-gateway
                 topologyKey: kubernetes.io/hostname
-  # Zone-aware-LB injector webhook (default ON in the 1.8 line): OFF. It injects topology.kubernetes.io/zone
+  # Zone-aware-LB injector webhook (chart default ON): OFF. It injects topology.kubernetes.io/zone
   # into proxy pods for zone-aware routing, but bare Pi nodes have NO zone label (we spread by hostname) and we
   # don't use zoneAware traffic policies — so it's just a webhook round-trip + cert plumbing for nothing.
   topologyInjector:

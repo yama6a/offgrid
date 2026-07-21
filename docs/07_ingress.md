@@ -182,9 +182,9 @@ prints the exact loop. Once `ntfy` rides the shared `ops` wildcard (prod), its s
 (a prod cert off the staging SAN set) is no longer needed and it can fold back into `platform`.
 
 ### Enabling Gateway API in cert-manager
-HTTP-01-via-Gateway needs cert-manager to manage `HTTPRoute`s. Since cert-manager 1.15 this is the
-controller file config `config.enableGatewayAPI: true` (**not** the old `ExperimentalGatewayAPISupport`
-feature gate, which is gone), set under the `cert-manager:` key in `02_cert_manager/values.yaml`. The
+HTTP-01-via-Gateway needs cert-manager to manage `HTTPRoute`s. This is the controller file config
+`config.enableGatewayAPI: true` (**not** a feature gate), set under the `cert-manager:` key in
+`02_cert_manager/values.yaml`. The
 Gateway API CRDs must exist before the controller starts; they do, because Envoy Gateway installs
 them at wave 1. If you ever install the CRDs after cert-manager, restart its Deployment.
 

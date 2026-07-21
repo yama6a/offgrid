@@ -42,8 +42,8 @@ argo_apps/
 - `root.yaml` is the root-of-roots: it recurses `argo_apps/roots/` and manages the two child root Applications it
   finds. Their sync-waves order CREATION only (a 5s `ARGOCD_SYNC_WAVE_DELAY`, set in `01_argocd` values): it creates `platform` (wave 0),
   then `workloads` (wave 1). It does NOT wait for platform health — see below.
-  - **No Application health gate (deliberate).** ArgoCD *removed* the built-in health assessment for
-    `argoproj.io/Application` in v1.8, so a parent app-of-apps sees its child Applications as health-less and a
+  - **No Application health gate (deliberate).** ArgoCD ships no built-in health assessment for
+    `argoproj.io/Application`, so a parent app-of-apps sees its child Applications as health-less and a
     wave never waits on child health. We used to restore it via
     `resource.customizations.health.argoproj.io_Application` to make the wave-0 → wave-1 gate wait — but that gate
     proved fragile: a child that transiently reports Degraded/Progressing **latches a stale health status** (a
@@ -162,12 +162,11 @@ The 2-replica components carry `global.topologySpreadConstraints` (`maxSkew 1`, 
   `helm dependency build`, which requires the lock. `00_cilium` already has one; `01_argocd`'s is generated on the
   first run of `05_argocd.sh` (`helm dependency update`), commit it before the `argocd` app reconciles (the script
   reminds you).
-- `global.networkPolicy.create` pinned `false`. The argo-cd chart's 10.0.0 major flipped this default `false`->`true`,
-  which renders standard k8s NetworkPolicy objects (the server's is `ingress: - {}`, allow-all). Cilium enforces those
-  too and UNIONs them with our own default-deny CiliumNetworkPolicy for the argocd namespace (the chart's
-  `templates/networkpolicy.yaml`), so an allow-all NP would blow the default-deny open on this cluster-admin/git-creds
-  namespace. Cilium is the sole policy engine here, so we opt back out per the upstream 10.0.0 migration note. See
-  [04_networking.md](04_networking.md).
+- `global.networkPolicy.create` pinned `false`. The chart defaults it `true`, which renders standard k8s NetworkPolicy
+  objects (the server's is `ingress: - {}`, allow-all). Cilium enforces those too and UNIONs them with our own
+  default-deny CiliumNetworkPolicy for the argocd namespace (the chart's `templates/networkpolicy.yaml`), so an
+  allow-all NP would blow the default-deny open on this cluster-admin/git-creds namespace. Cilium is the sole policy
+  engine here, so we opt back out. See [04_networking.md](04_networking.md).
 - UI over port-forward for now. `server.insecure: true` serves plain HTTP, so no TLS to fumble through a port-forward.
   Cilium's LB-IPAM is live (step 04) and the Envoy Gateway ingress lands later, so a `LoadBalancer` Service or Gateway
   is an option later (see [Exposure](#exposure-the-argocd-ui-behind-google-sso) below); flip `server.insecure` to
