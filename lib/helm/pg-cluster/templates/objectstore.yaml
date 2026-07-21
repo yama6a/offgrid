@@ -1,0 +1,47 @@
+{{- if eq (include "pg-cluster.backupsEnabled" .) "true" -}}
+{{- $b := .Values.cluster.backups -}}
+{{- if ne $b.provider "s3" }}{{ fail "pg-cluster: only backups.provider=s3 is implemented" }}{{ end -}}
+apiVersion: barmancloud.cnpg.io/v1
+kind: ObjectStore
+metadata:
+  name: {{ include "pg-cluster.name" . }}-backups
+  namespace: {{ .Release.Namespace }}
+  annotations:
+    # sync-wave -1: apply the ObjectStore BEFORE the Cluster. The upstream cnpg/cluster chart annotated this a
+    # Helm hook (pre-install,...), which ArgoCD turns into an ephemeral PreSync resource -> it got deleted and
+    # WAL archiving broke. Rendering the CR ourselves lets it be a normal, persistent resource. See docs/13_backups.md.
+    argocd.argoproj.io/sync-wave: "-1"
+  labels:
+    cnpg.io/cluster: {{ include "pg-cluster.name" . }}
+    {{- include "pg-cluster.labels" . | nindent 4 }}
+spec:
+  retentionPolicy: {{ $b.retentionPolicy }}
+  configuration:
+    wal:
+      compression: {{ $b.wal.compression }}
+      {{- if $b.wal.encryption }}
+      encryption: {{ $b.wal.encryption }}
+      {{- end }}
+      maxParallel: {{ $b.wal.maxParallel }}
+    data:
+      compression: {{ $b.data.compression }}
+      {{- if $b.data.encryption }}
+      encryption: {{ $b.data.encryption }}
+      {{- end }}
+      jobs: {{ $b.data.jobs }}
+    endpointURL: "https://s3.{{ required "pg-cluster: backups.s3.region required when backups enabled" $b.s3.region }}.amazonaws.com"
+    destinationPath: "s3://{{ required "pg-cluster: backups.s3.bucket required when backups enabled" $b.s3.bucket }}{{ $b.s3.path }}"
+    {{- if $b.s3.inheritFromIAMRole }}
+    s3Credentials:
+      inheritFromIAMRole: true
+    {{- else }}
+    s3Credentials:
+      accessKeyId:
+        name: {{ $b.secret.name }}
+        key: ACCESS_KEY_ID
+      secretAccessKey:
+        name: {{ $b.secret.name }}
+        key: ACCESS_SECRET_KEY
+    {{- end }}
+  instanceSidecarConfiguration: {}
+{{- end }}

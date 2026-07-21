@@ -1,0 +1,24 @@
+{{- if eq (include "pg-cluster.backupsEnabled" .) "true" -}}
+{{- $ctx := . -}}
+{{- range .Values.cluster.backups.scheduledBackups }}
+---
+apiVersion: postgresql.cnpg.io/v1
+kind: ScheduledBackup
+metadata:
+  name: {{ include "pg-cluster.name" $ctx }}-{{ .name }}
+  namespace: {{ $ctx.Release.Namespace }}
+  labels:
+    {{- include "pg-cluster.labels" $ctx | nindent 4 }}
+spec:
+  immediate: true
+  schedule: {{ .schedule | quote }}
+  method: {{ .method }}
+  backupOwnerReference: {{ .backupOwnerReference }}
+  cluster:
+    name: {{ include "pg-cluster.name" $ctx }}
+  {{- with .pluginConfiguration }}
+  pluginConfiguration:
+    {{- toYaml . | nindent 4 }}
+  {{- end }}
+{{- end }}
+{{- end }}

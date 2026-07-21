@@ -44,9 +44,9 @@ evaluates them (so they'd produce no series anyway) and no dashboard/alert here 
 > `kubectl get vmrule -A` is empty.
 
 Other charts follow the same rule: their bundled alerts are kept OFF (e.g. `02_sealed_secrets`
-`metrics.prometheusRule.enabled: false`, `lib/helm/pg-cluster` `...monitoring.prometheusRule.enabled:
-false`), and the coverage lives as a Grafana rule instead (sealed-secrets → the `sealed-secrets-health`
-group; CNPG WAL/backup → the `backups` group).
+`metrics.prometheusRule.enabled: false`; `lib/helm/pg-cluster` renders its CNPG CRs directly and simply emits
+NO `PrometheusRule`), and the coverage lives as a Grafana rule instead (sealed-secrets → the
+`sealed-secrets-health` group; CNPG WAL/backup → the `backups` group).
 
 ### Talos control-plane scrapes (outside ArgoCD)
 kube-controller-manager (:10257), kube-scheduler (:10259) (both https, self-signed → `insecureSkipVerify`)

@@ -273,14 +273,10 @@ Pi 5 Talos image builds on [talos-rpi5/talos-builder](https://github.com/talos-r
 - check all logs/hubble for network policies in audit more that are dropping traffic that should be allowed
 - check log and metric accumulation, drop noise to storage doesn't grow meaninglessly
 - migrate old pi stuff to cluster
-- fork my personal clsuter rpoject form OSS version
+- fork my personal cluster project for OSS version
 - rewrite git history to remove secrets and email addresses and domains from past commits
 - read and shorten all md files.
 - improve then apply comment rules from claude.md to all yaml and other code files.
 - disaster recovery exercise
 - don't put versions into markdown or comments. We don't want to have to update those every time we bump a version. Instead, reference the versions.env file. also document this in the claude.md
 - 
-- what about vendored helm charts? Why did we vendor them and not take them from source?
-- add something to test in CI so that PRs have at least SOME confidence in not being garbage.
-- add missing ciliumNetworkPolicy for everything that should have one but that doesn't have one yet.
-- remove all prometheus and vmalerts alerting rules.

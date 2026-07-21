@@ -19,8 +19,8 @@ database, both ingress modes (open + SSO), **and** a live RabbitMQ message loop.
 - app: a Deployment + Service running the sample-app image's `/manager` binary, with the Postgres `app`-role
   password injected as `PG_PASSWORD` from the CNPG-generated Secret, plus the `RABBITMQ_*` + `WORKLOAD_NAME`
   env for the messaging hub. It serves `GET /users` (the persisted users as JSON).
-- database: a CloudNativePG `Cluster` via the shared `pg-cluster` wrapper (which pins `cnpg/cluster` and
-  pre-bakes the boilerplate; this workload sets only `type`/`instances`/`resources`), 2-instance HA on the
+- database: a CloudNativePG `Cluster` via the shared `pg-cluster` wrapper (which renders the CNPG CRs directly
+  and pre-bakes the boilerplate; this workload sets only `type`/`instances`/`resources`), 2-instance HA on the
   node-local `local-path` class.
 - ingress: one ingress, two hosts (plain edges rendered by the shared `ingress` library, see
   [07_ingress.md](07_ingress.md)), each host's Gateway folded onto the one shared Envoy via `mergeGateways`.
@@ -37,8 +37,8 @@ Delivered purely by ArgoCD:
 - `argo_apps/workloads/apps/sample_workload.yaml`: the Application. A workload (in the workloads
   tree), so no `NN_` number and no `sync-wave`, see "Ordering" below.
 - `argo_apps/workloads/charts/sample_workload/`: wraps two `file://` dependencies — the shared `pg-cluster`
-  wrapper (which itself pins `cnpg/cluster`) and the shared `ingress` library (both `Chart.lock`-committed,
-  vendored `charts/*.tgz` gitignored) — and adds a first-party template for the app plus a one-line
+  wrapper (which renders the CNPG CRs directly, no upstream chart) and the shared `ingress` library (both
+  `Chart.lock`-committed, vendored `charts/*.tgz` gitignored) — and adds a first-party template for the app plus a one-line
   `{{ include "ingress.render" . }}` for the ingress. The Postgres needs no template: `pg-cluster` renders
   the `Cluster` from the `pg-cluster:` values block. See the shared-charts section in [CLAUDE.md](../CLAUDE.md).
 
@@ -94,21 +94,21 @@ or `subdomain: "@"` for the apex). A different-domain group is a new `ingresses[
 `domain`. The library renders Gateway + listener + cert + route together (no SSO — that's central in
 `04_google_sso`), nothing to keep in step in `03_gateway`.
 
-### Postgres via the `pg-cluster` wrapper, not the raw `cnpg/cluster` chart
-The workload doesn't depend on `cnpg/cluster` directly; it depends on the shared `pg-cluster` wrapper
-(`lib/helm/pg-cluster`, see [CLAUDE.md](../CLAUDE.md)), which pins `cnpg/cluster` and pre-bakes every
-value a workload shouldn't think about (node-local `local-path` storage + 45Gi, hostname anti-affinity,
-monitoring on, an `app`/`app` initdb, backups off). Each instance sets only the REQUIRED knobs —
+### Postgres via the `pg-cluster` wrapper
+The workload doesn't template CNPG CRs directly; it depends on the shared `pg-cluster` wrapper
+(`lib/helm/pg-cluster`, see [CLAUDE.md](../CLAUDE.md)), which renders the CNPG CRs itself (no upstream chart)
+and pre-bakes every value a workload shouldn't think about (node-local `local-path` storage + 45Gi, hostname
+anti-affinity, monitoring on, an `app`/`app` initdb, backups off). Each instance sets only the REQUIRED knobs —
 `cluster.fullnameOverride` (the instance name), `type`, `instances` (1 or 2), `resources` — so a Postgres is
 ~8 lines, not ~40. A validation template in the wrapper fails the render (with a clear message) if any required
-knob is missing. Trade-off, inherent to wrapping a subchart (Helm can't transform or lock a child's values):
-the pre-baked values are *soft* defaults a consumer could still override, and the values sit one level deeper
-(`<alias>.cluster.cluster.*`). Because `initdb` is a wrapper default (a subchart default isn't visible at this
-chart's scope), the app template hardcodes `PG_USER`/`PG_DATABASE` to the literal `app`.
+knob is missing. Trade-offs: the pre-baked values are *soft* defaults a consumer could still override, and the
+values sit one level deeper (`<alias>.cluster.cluster.*`, a historical artifact of the old subchart shape kept
+so consumer values didn't have to change). Because `initdb` is a wrapper default, the app template hardcodes
+`PG_USER`/`PG_DATABASE` to the literal `app`.
 
 **Explicit names, and multiple DBs per workload.** The instance name is the wrapper's own REQUIRED
-`cluster.fullnameOverride` (cnpg/cluster's native field) — used verbatim (`<name>-rw`/`-ro`/`-r` Services,
-`<name>-app` Secret, PodMonitor, PrometheusRule). There is no `-cluster` suffix and no `.Release.Name`
+`cluster.fullnameOverride` — used verbatim (`<name>-rw`/`-ro`/`-r` Services,
+`<name>-app` Secret, PodMonitor). There is no `-cluster` suffix and no `.Release.Name`
 derivation: the app's `PG_HOST`/secret and the network policies all reference the explicit name, so nothing
 drifts and the DB is decoupled from the release name. To run **more than one** Postgres in a workload you
 alias the wrapper per DB in `Chart.yaml` — Helm renders a dependency once, so N databases means N aliased

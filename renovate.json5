@@ -26,10 +26,12 @@
   // cron runs every 3h, not weekly. (platformAutomerge stays false: keep Renovate's own API merge.)
   platformAutomerge: false,
 
-  // helmv3 auto-discovers every Chart.yaml. Refresh the committed vendored subchart tarballs + Chart.lock
-  // on a bump (the repo commits charts/*.tgz, e.g. lib/helm/pg-cluster). file:// deps have no datasource so
-  // Renovate skips them. NOTE: do NOT add a "**/charts/**" disable rule — the wrapper charts themselves live
-  // under paths containing /charts/, so that would disable the whole repo.
+  // helmv3 auto-discovers every Chart.yaml and refreshes each wrapper's Chart.lock on a bump. NO chart commits
+  // charts/*.tgz anymore (every wrapper either gitignores the fetched blob or, like pg-cluster/redis-instance,
+  // renders CRs directly with no upstream dep) — so helmUpdateSubChartArchives is currently a no-op; kept as a
+  // harmless guard in case a vendored tarball is ever reintroduced. file:// deps have no datasource so Renovate
+  // skips them. NOTE: do NOT add a "**/charts/**" disable rule — the wrapper charts themselves live under paths
+  // containing /charts/, so that would disable the whole repo.
   postUpdateOptions: ["helmUpdateSubChartArchives"],
 
   // Bumping this file re-vendors an upstream release manifest verbatim (per its README curl recipe), not a
@@ -48,6 +50,7 @@
         "/^versions\\.env$/",
         "/^lib/shell/.*\\.sh$/",
         "/^lib/helm/redis-instance/templates/redis\\.yaml$/",
+        "/^lib/helm/pg-cluster/templates/cluster\\.yaml$/", // the postgresql/postgis imageName pins (type-selected)
         "/^argo_apps/platform/charts/07_redis_backup/templates/cronjob\\.yaml$/", // alpine/k8s + opstree-redis refs
       ],
       matchStrings: [

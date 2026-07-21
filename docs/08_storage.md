@@ -190,13 +190,14 @@ The root-of-roots creates the workloads tree only after the whole platform is He
 `Cluster` CR is applied both its real dependencies — the operator's `Cluster` CRD and the `local-path` class —
 are guaranteed present, no per-app `sync-wave` needed. Chart versions live in the charts: the operator dep
 `cnpg/cloudnative-pg` (`argo_apps/platform/charts/02_cnpg_operator/Chart.yaml`); the `Cluster` comes via the
-shared `pg-cluster` wrapper (`lib/helm/pg-cluster`), which pins the `cnpg/cluster` dep. Images
-(`ghcr.io/cloudnative-pg/*`) are multi-arch incl. arm64.
+shared `pg-cluster` wrapper (`lib/helm/pg-cluster`), which renders the CNPG CRs directly (no upstream chart) and
+pins the `postgresql`/`postgis` image itself. Images (`ghcr.io/cloudnative-pg/*`) are multi-arch incl. arm64.
 
-> Values nesting: `sample_workload` depends on the `pg-cluster` wrapper (dependency key `pg-cluster:`), which
-> depends on `cnpg/cluster` (its `cluster:` map) — which itself has a top-level `cluster:` map for the CR spec.
-> So a workload's Postgres knobs live at `pg-cluster.cluster.cluster.*`. Not a typo. Most of that tree is
-> pre-baked in the wrapper; a workload only sets `type` + `instances` + `resources`.
+> Values nesting: `sample_workload` depends on the `pg-cluster` wrapper (dependency key `pg-cluster:`), whose
+> own values carry a `cluster:` map with a nested `cluster:` map for the CR knobs. So a workload's Postgres knobs
+> live at `pg-cluster.cluster.cluster.*` — a historical artifact of the old subchart shape, kept so consumer
+> values didn't have to change. Most of that tree is pre-baked in the wrapper; a workload only sets `type` +
+> `instances` + `resources`.
 
 **Storage: node-local, off Longhorn.** CNPG runs on the node-local `local-path` class on the dedicated 50 GiB
 `/var/mnt/localpath` partition — no Longhorn engine/CSI in the Postgres data path, isolated so the two can't starve

@@ -17,7 +17,7 @@ Pieces (Terraform is out-of-cluster; the plugin is platform; backups are configu
 |-------------------------|--------------------------------------------------------------------|------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------|
 | **the bucket + IAM**    | `terraform/`                                                       | one S3 bucket + a **per-prefix** lifecycle (`cnpg/`+`redis/`: Standard → Glacier IR @30d → expire @180d; `longhorn/`: Standard, never expires), SSE, public-access block, and a scoped IAM writer. Local state (gitignored — holds the IAM secret). |
 | **the plugin**          | `argo_apps/platform/{apps,charts}/03_barman_cloud_plugin` (wave 3) | the `ObjectStore` CRD + the Barman Cloud plugin Deployment/Service/RBAC + its cert-manager mTLS certs, in `cnpg-system`. Vendored release manifest (no upstream Helm chart).             |
-| **per-cluster backups** | `lib/helm/pg-cluster` (`backups.method: plugin`)                   | every CNPG cluster inherits WAL archiving + a daily `ScheduledBackup` + its own `ObjectStore`, all rendered by the upstream `cnpg/cluster` chart from values.                   |
+| **per-cluster backups** | `lib/helm/pg-cluster` (`backups.method: plugin`)                   | every CNPG cluster inherits WAL archiving + a daily `ScheduledBackup` + its own `ObjectStore`, all rendered directly by the first-party `pg-cluster` chart from values (no upstream chart).                   |
 | **wiring scripts**      | `lib/shell/13_s3_backup_bucket.sh`, `14_cnpg_backup.sh`            | 13 runs Terraform; 14 seals the writer creds into each CNPG namespace + flips backups on in the chart values.                                                                            |
 | **recovery**            | `lib/shell/recover_cnpg_from_s3.sh`                                | restore (latest or PITR) into a fresh cluster from the object store.                                                                                                                     |
 
@@ -36,9 +36,8 @@ That's why the WAL-archive alert below is `critical`.
 ## Decisions (and the why)
 
 - **Barman Cloud *plugin*, not the in-tree integration.** CNPG deprecated the in-tree `barmanObjectStore` in
-  favour of the CNPG-I plugin, so we build on the plugin. This forced a `cnpg/cluster` chart bump: the older
-  chart only rendered the deprecated path; the newer one renders the plugin `ObjectStore` + auto-adds
-  `.spec.plugins` + the `ScheduledBackup`.
+  favour of the CNPG-I plugin, so we build on the plugin: `pg-cluster` templates the plugin path directly — the
+  `ObjectStore` CR, the Cluster's `.spec.plugins[]` WAL-archiver entry, and the `ScheduledBackup`.
 - **ARM64.** Both the CNPG operand images and the plugin **sidecar** image
   (`ghcr.io/cloudnative-pg/plugin-barman-cloud-sidecar`) ship multi-arch manifests incl. `linux/arm64` — they
   run on the Pi 5s (the usual Pi gate, cf. the Redis exporter in [12_redis.md](12_redis.md)).
@@ -197,9 +196,9 @@ reset-cluster`** tears the bucket down (empty + `terraform destroy`). See the tw
 
 Backup health is alerted by **Grafana-provisioned rules** (`05_grafana/values.yaml`) — the only path that fires,
 since `vmalert` + Alertmanager are off (a chart `PrometheusRule` is converted to a VMRule, but nothing evaluates
-it). The chart PrometheusRules that used to define these are therefore **disabled** to avoid inert duplicates:
-`lib/helm/pg-cluster` sets `cluster.cluster.monitoring.prometheusRule.enabled: false` (this also drops the 18
-upstream CNPG rules), and the `08_vm_backup` alerts template was removed. The CNPG backup rules (Grafana `backups`
+it). No chart `PrometheusRule` defines these, to avoid inert duplicates: `lib/helm/pg-cluster` renders its CNPG
+CRs directly and emits no `PrometheusRule` at all (the 18 upstream CNPG rules never enter the cluster), and the
+`08_vm_backup` alerts template was removed. The CNPG backup rules (Grafana `backups`
 group), exprs lifted verbatim from the old PrometheusRule (per-instance pod regex dropped for cluster-wide):
 
 - **`cnpg-wal-archive-failing`** (`critical`): `cnpg_collector_pg_wal_archive_status{value="ready"} > 0` for 15 min —
@@ -450,16 +449,19 @@ that destroy so the bucket survives the rebuild.)
 6. **Alerts:** confirm the metric name/label against `/metrics`; break archiving (e.g. revoke the IAM key
    briefly) → the `cnpg-wal-archive-failing` Grafana alert fires; restore → it clears.
 
-## ArgoCD + the ObjectStore Helm hook (PATCHED — do not un-patch)
+## ArgoCD + the ObjectStore sync-wave (why we render the CR ourselves)
 
-The `cnpg/cluster` chart annotates the `ObjectStore` as a Helm `pre-install,pre-upgrade,pre-rollback` hook.
-Under ArgoCD that makes it an **ephemeral PreSync hook**, not a tracked resource — ArgoCD created it once, it
-was removed, and it **never came back**: WAL archiving stopped, the CNPG cluster stuck `Ready=False`
+The upstream `cnpg/cluster` chart annotates the `ObjectStore` as a Helm `pre-install,pre-upgrade,pre-rollback`
+hook. Under ArgoCD that makes it an **ephemeral PreSync hook**, not a tracked resource — ArgoCD created it once,
+it was removed, and it **never came back**: WAL archiving stopped, the CNPG cluster stuck `Ready=False`
 (`ContinuousArchivingFailing: ObjectStore … not found`), and the whole workload's sync wedged behind the
 unready cluster (verified on a rebuild: 3 stale S3 objects, then nothing for ~1 h). Not a "tiny blip" — a hard
 break.
 
-Fix (applied): the vendored `cnpg/cluster` chart tarball (`charts/cluster-*.tgz`) is **patched** — the ObjectStore
-templates' `helm.sh/hook` is stripped and replaced with `argocd.argoproj.io/sync-wave: "-1"`, so the ObjectStore is a normal persistent
-resource applied just before the Cluster. Re-apply after any `helm dependency update` (repack with
-`COPYFILE_DISABLE=1` so macOS AppleDouble files don't break `helm dependency build`). See `lib/helm/pg-cluster/.gitignore`.
+This is the reason `pg-cluster` **renders the CNPG CRs directly** instead of wrapping the upstream chart. Our
+`templates/objectstore.yaml` annotates the `ObjectStore` with `argocd.argoproj.io/sync-wave: "-1"` — a normal,
+persistent resource applied just before the Cluster — with no Helm hook anywhere. Previously this required a
+hand-**patched** vendored `charts/cluster-*.tgz`, which Renovate's `helmUpdateSubChartArchives` would silently
+re-vendor pristine (clobbering the patch) on any `cnpg/cluster` bump. Rendering the CR ourselves removes the
+vendored tarball entirely, so there is nothing to patch and nothing for Renovate to clobber. See
+`lib/helm/pg-cluster/templates/objectstore.yaml`.

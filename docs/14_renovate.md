@@ -11,9 +11,10 @@ Separately, [`.github/workflows/ci.yaml`](../.github/workflows/ci.yaml) validate
 Dependabot has no Helm manager and can't touch image tags inside `values.yaml` or the version vars in `versions.env`.
 It would cover only Terraform and (once they exist) GitHub Actions. Renovate covers everything this repo pins:
 
-- **Helm chart deps** — every wrapper chart's `Chart.yaml`, its `Chart.lock`, and the committed vendored
-  `charts/*.tgz` (helmv3 + `helmUpdateSubChartArchives`). `file://` deps have no datasource, so Renovate skips
-  them.
+- **Helm chart deps** — every wrapper chart's `Chart.yaml` + its `Chart.lock` (helmv3). No chart commits a
+  vendored `charts/*.tgz` (each either gitignores the fetched blob or renders CRs directly, like pg-cluster /
+  redis-instance), so `helmUpdateSubChartArchives` is a currently-dormant guard. `file://` deps have no
+  datasource, so Renovate skips them.
 - **Terraform** — the aws provider in `terraform/versions.tf` + `.terraform.lock.hcl`.
 - **GitHub Actions** — the workflow's own action pins (kept digest-pinned).
 - **Everything else, via comment-annotated regex** (`# renovate: datasource=…`): single-string `image:` values,

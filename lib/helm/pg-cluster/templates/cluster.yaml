@@ -1,0 +1,65 @@
+{{- $c := .Values.cluster.cluster -}}
+apiVersion: postgresql.cnpg.io/v1
+kind: Cluster
+metadata:
+  name: {{ include "pg-cluster.name" . }}
+  namespace: {{ .Release.Namespace }}
+  labels:
+    {{- include "pg-cluster.labels" . | nindent 4 }}
+spec:
+  instances: {{ $c.instances }}
+  {{- if eq .Values.cluster.type "postgresql" }}
+  # renovate: datasource=docker
+  imageName: ghcr.io/cloudnative-pg/postgresql:16
+  {{- else if eq .Values.cluster.type "postgis" }}
+  # renovate: datasource=docker
+  imageName: ghcr.io/cloudnative-pg/postgis:16-3.4
+  {{- else }}
+  {{- fail "pg-cluster: cluster.type must be postgresql | postgis" }}
+  {{- end }}
+  imagePullPolicy: IfNotPresent
+  # non-root postgres UID/GID (CNPG default for the postgresql/postgis images).
+  postgresUID: 26
+  postgresGID: 26
+  storage:
+    size: {{ $c.storage.size }}
+    storageClass: {{ $c.storage.storageClass }}
+  {{- with $c.resources }}
+  resources:
+    {{- toYaml . | nindent 4 }}
+  {{- end }}
+  {{- with $c.affinity }}
+  affinity:
+    {{- toYaml . | nindent 4 }}
+  {{- end }}
+  priorityClassName: {{ $c.priorityClassName }}
+  # 2-instance defaults; a single-instance consumer overrides both (see values.yaml).
+  primaryUpdateMethod: {{ $c.primaryUpdateMethod }}
+  primaryUpdateStrategy: unsupervised
+  enablePDB: {{ $c.enablePDB }}
+  stopDelay: 1800
+  logLevel: info
+  enableSuperuserAccess: {{ $c.enableSuperuserAccess }}
+  postgresql:
+    {{- with $c.postgresql.parameters }}
+    parameters:
+      {{- toYaml . | nindent 6 }}
+    {{- end }}
+  monitoring:
+    disableDefaultQueries: false
+    tls:
+      enabled: false
+  bootstrap:
+    initdb:
+      database: {{ $c.initdb.database }}
+      owner: {{ $c.initdb.owner }}
+  {{- if eq (include "pg-cluster.backupsEnabled" .) "true" }}
+  # Barman Cloud CNPG-I plugin as the WAL archiver; the ObjectStore it points at is rendered by
+  # templates/objectstore.yaml (barmanObjectName = <cluster>-backups). See docs/13_backups.md.
+  plugins:
+    - name: barman-cloud.cloudnative-pg.io
+      enabled: true
+      isWALArchiver: true
+      parameters:
+        barmanObjectName: {{ include "pg-cluster.name" . }}-backups
+  {{- end }}
