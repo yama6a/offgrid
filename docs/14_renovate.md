@@ -51,7 +51,7 @@ week. A manual `workflow_dispatch` also completes a pending merge on demand.
 
 Branch protection on `main` requires the CI **checks, not reviews** — a required review would deadlock Renovate
 (it can't approve its own PR) — and leaves `enforce_admins` off so a break-glass fix can still land. One-time
-setup, run once after `ci.yaml` has run on `main` at least once (so the check contexts exist):
+setup, run once the CI checks have run at least once — open a PR first so GitHub registers the check contexts:
 
 ```bash
 gh api -X PUT repos/yama6a/offgrid/branches/main/protection \

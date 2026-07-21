@@ -8,9 +8,7 @@ name: CI
 on:
   pull_request:
     branches: [main] # the ask: gate everything merging into main (human PRs AND Renovate's automerge)
-  push:
-    branches: [main] # so the required-check contexts exist for branch protection + main stays verified
-  workflow_dispatch: {}
+  workflow_dispatch: {} # manual/on-demand runs (also handy for the first run, to register the check contexts)
 
 concurrency: # a newer push cancels the stale run — faster feedback, fewer wasted minutes
   group: ci-${{ github.workflow }}-${{ github.ref }}
@@ -60,9 +58,9 @@ jobs:
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@9c091bb21b7c1c1d1991bb908d89e4e9dddfe3e0 # v7.0.0
-      - uses: azure/setup-helm@9bc31f4ebc9c6b171d7bfbaa5d006ae7abdb4310 # v5.0.1
+      - uses: azure/setup-helm@1a275c3b69536ee54be43f2070a358922e12c8d4 # v4.3.1
         with:
-          version: v4.2.3 # pinned = deterministic gate (matches the maintainer's local helm)
+          version: v3.18.3 # pinned = deterministic gate (matches the maintainer's local helm)
       - name: install kubeconform
         run: |
           curl -fsSL https://github.com/yannh/kubeconform/releases/download/v0.6.7/kubeconform-linux-amd64.tar.gz \
