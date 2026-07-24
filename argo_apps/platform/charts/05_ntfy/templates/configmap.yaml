@@ -18,5 +18,5 @@ data:
     enable-login: true                   # the phone user logs in via the Android app
     enable-signup: false                 # no self-service signup; users are seeded, not self-registered
     cache-file: "/var/lib/ntfy/cache.db" # message cache (disposable)
-    cache-duration: "12h"
+    cache-duration: "168h"               # 1 week (Go duration has no "d" unit); lets phone history scroll back a week
     # Android-only: self-contained instant delivery. No upstream-base-url / firebase (those are the iOS/ntfy.sh push proxy).

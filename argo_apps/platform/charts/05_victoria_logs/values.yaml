@@ -20,7 +20,9 @@ vlsingle:
     size: 30Gi
   resources:
     requests: {cpu: 10m, memory: 96Mi}
-    limits: {memory: 192Mi}
+    # 512Mi: at rest VL sits ~17Mi, but the daily vm-backup export (a full-day logsql dump, ~20MB+) spikes it
+    # past 192Mi and OOMs mid-response (fails the backup's logs leg). Headroom for that transient query spike.
+    limits: {memory: 512Mi}
 
 # ---- victoria-logs-collector (the DaemonSet) -------------------------------------------------------
 victoria-logs-collector:

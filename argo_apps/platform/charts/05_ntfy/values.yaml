@@ -12,7 +12,7 @@ baseUrl: "https://ntfy.ops.example.com"
 
 # Auth + cache SQLite DBs live on this PVC (/var/lib/ntfy). Retain class (02_longhorn): survives an accidental
 # delete so the seeded users/token aren't lost; 10_ntfy_auth.sh re-creates them idempotently if it ever is.
-# 1Gi is plenty (a handful of users + a 12h message cache).
+# 1Gi is plenty (a handful of users + a 1-week message cache — a few thousand tiny alert rows).
 storage:
   storageClassName: longhorn-r2-retained   # Retain r2 (02_longhorn): same class 05_victoria_logs uses
   size: 1Gi

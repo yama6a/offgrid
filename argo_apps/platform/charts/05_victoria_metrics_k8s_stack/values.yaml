@@ -32,8 +32,10 @@ victoria-metrics-k8s-stack:
           requests:
             storage: 50Gi
       resources:
-        requests: {cpu: 50m, memory: 256Mi}
-        limits: {memory: 512Mi}     # no CPU limit, avoid throttling merges/queries
+        requests: {cpu: 50m, memory: 512Mi}
+        # 1Gi: baseline working-set already ~490Mi at this dataset size, so 512Mi pegged it at ~96% and the
+        # daily vm-backup full-series export tipped it OOM. No CPU limit — avoid throttling merges/queries.
+        limits: {memory: 1Gi}
       # Reschedule fast on node loss instead of the default. Pair with Longhorn
       # nodeDownPodDeletionPolicy=delete-statefulset-pod (02_longhorn). See 09_monitoring.md (failover).
       tolerations:
