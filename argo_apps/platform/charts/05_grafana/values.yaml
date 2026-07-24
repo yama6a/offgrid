@@ -147,10 +147,10 @@ grafana:
   # Modest footprint for a Pi 5.
   resources:
     requests:
-      cpu: 10m
-      memory: 192Mi
+      cpu: 250m
+      memory: 256Mi
     limits:
-      memory: 320Mi
+      memory: 384Mi
 
   # Spread across Pi nodes if `replicas` is ever raised. PREFERRED + hostname: bare Pi nodes have no zone
   # label, and soft so a scale-up never wedges as Pending on the 3-node cluster. No-op at the default single
