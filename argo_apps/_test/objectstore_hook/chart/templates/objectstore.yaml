@@ -1,0 +1,40 @@
+apiVersion: barmancloud.cnpg.io/v1
+kind: ObjectStore
+metadata:
+  name: {{ .Values.name }}-backups
+  namespace: {{ .Release.Namespace }}
+  annotations:
+    {{- if eq .Values.hookMode "stock" }}
+    # EXACT upstream (charts/cluster/templates/backup-objectstore.yaml): no hook-delete-policy set, so ArgoCD
+    # applies its default (BeforeHookCreation). pre-rollback is not a valid ArgoCD phase.
+    "helm.sh/hook": pre-install,pre-upgrade,pre-rollback
+    {{- else if eq .Values.hookMode "no-rollback" }}
+    # maintainer's hypothesis (#964): pre-rollback is the culprit -> drop it, keep the PreSync mapping.
+    "helm.sh/hook": pre-install,pre-upgrade
+    {{- else if eq .Values.hookMode "syncwave" }}
+    # our fix: plain persistent resource, applied one wave BEFORE the Cluster. No Helm hook anywhere.
+    argocd.argoproj.io/sync-wave: "-1"
+    {{- else }}
+    {{- fail (printf "hookMode must be stock | no-rollback | syncwave, got %q" .Values.hookMode) }}
+    {{- end }}
+  labels:
+    cnpg.io/cluster: {{ .Values.name }}
+spec:
+  retentionPolicy: {{ .Values.backups.retentionPolicy }}
+  configuration:
+    wal:
+      compression: gzip
+      maxParallel: 1
+    data:
+      compression: gzip
+      jobs: 1
+    endpointURL: "https://s3.{{ .Values.backups.s3.region }}.amazonaws.com"
+    destinationPath: "s3://{{ .Values.backups.s3.bucket }}{{ .Values.backups.s3.path }}"
+    s3Credentials:
+      accessKeyId:
+        name: {{ .Values.backups.s3.secretName }}
+        key: ACCESS_KEY_ID
+      secretAccessKey:
+        name: {{ .Values.backups.s3.secretName }}
+        key: ACCESS_SECRET_KEY
+  instanceSidecarConfiguration: {}

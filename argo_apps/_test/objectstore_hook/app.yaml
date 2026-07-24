@@ -1,0 +1,48 @@
+# THROWAWAY test Application for cloudnative-pg/charts#964. NOT under a roots-recursed path, so no root
+# creates/prunes it -> apply + delete it BY HAND (kubectl apply -f / kubectl delete -f). Delete the whole
+# argo_apps/_test/ tree when the investigation is done.
+#
+# Posture deliberately MIRRORS a real workload (automated + prune + selfHeal + retry -1 + ServerSideApply):
+# selfHeal & prune are part of the suspected mechanism, so testing under a weaker posture would prove nothing.
+#
+# Switch the variant under test via the `hookMode` helm param below (stock | no-rollback | syncwave). For a
+# clean install each run (so pre-install fires, not pre-upgrade), delete the app before changing it. See README.md.
+apiVersion: argoproj.io/v1alpha1
+kind: Application
+metadata:
+  name: oshook-test
+  namespace: argocd
+  finalizers:
+    - resources-finalizer.argocd.argoproj.io   # cascade-delete the ObjectStore/Cluster on app delete
+  annotations:
+    argocd.argoproj.io/compare-options: ServerSideDiff=true   # large CNPG Cluster CR; avoid false OutOfSync
+spec:
+  project: default
+  revisionHistoryLimit: 0
+  source:
+    repoURL: https://github.com/yama6a/offgrid
+    targetRevision: HEAD
+    path: argo_apps/_test/objectstore_hook/chart
+    helm:
+      parameters:
+        - name: hookMode        # <-- the variable under test: stock | no-rollback | syncwave
+          value: stock
+        - name: cluster.enabled # <-- false = mechanism tier (fast); true = full-symptom tier (needs a bucket)
+          value: "false"
+  destination:
+    server: https://kubernetes.default.svc
+    namespace: oshook-test
+  syncPolicy:
+    automated:
+      prune: true
+      selfHeal: true
+    retry:
+      limit: -1
+      refresh: true
+      backoff:
+        duration: 5s
+        factor: 2
+        maxDuration: 1m
+    syncOptions:
+      - CreateNamespace=true
+      - ServerSideApply=true
