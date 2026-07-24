@@ -165,7 +165,7 @@ groups:
         condition: C
         for: 2m
         labels:
-          severity: '{{ if eq $labels.label_alert_criticality "critical" }}critical{{ else }}warning{{ end }}'
+          severity: '{{ if eq (index $labels "label_alert_criticality") "critical" }}critical{{ else }}warning{{ end }}'
         annotations:
           summary: 'CNPG {{ $labels.namespace }}/{{ $labels.pod }} is up but not ready (Postgres not serving)'
           description: |

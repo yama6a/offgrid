@@ -16,7 +16,7 @@ groups:
         condition: C
         for: 2m
         labels:
-          severity: '{{ if eq $labels.label_alert_criticality "critical" }}critical{{ else }}warning{{ end }}'
+          severity: '{{ if eq (index $labels "label_alert_criticality") "critical" }}critical{{ else }}warning{{ end }}'
         annotations:
           summary: 'Redis {{ $labels.namespace }}/{{ $labels.pod }} is not responding (redis_up=0)'
           description: |

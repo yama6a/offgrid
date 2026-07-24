@@ -25,9 +25,10 @@ groups:
             model:
               refId: A
               queryType: stats
-              # level:error only (dropped bare `error` — it substring-matched info logs mentioning "error").
-              # NOT-list mutes known-benign lines misclassed as error: cert-manager informer, argocd cache race.
-              expr: '(level:error OR level:ERROR) AND NOT ("OnUpdate missing ObjectOld" OR "DiffFromCache" OR "cache: key is missing") | stats count() as logs'
+              # match structured (level:error) AND logfmt-text (level=error) so text-format loggers (grafana, etc.)
+              # still count — but NOT bare `error`, which substring-matched info logs merely mentioning "error".
+              # NOT-list mutes benign lines misclassed as error: cert-manager informer, argocd reconcile cache race.
+              expr: '(level:error OR level:ERROR OR "level=error" OR "level=ERROR") AND NOT ("OnUpdate missing ObjectOld" OR "DiffFromCache" OR "cache: key is missing") | stats count() as logs'
           - refId: B
             relativeTimeRange: {from: 300, to: 0}
             datasourceUid: __expr__

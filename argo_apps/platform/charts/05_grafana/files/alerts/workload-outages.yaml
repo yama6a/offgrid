@@ -20,7 +20,7 @@ groups:
         condition: C
         for: 5m
         labels:
-          severity: '{{ if eq $labels.label_alert_criticality "critical" }}critical{{ else }}warning{{ end }}'
+          severity: '{{ if eq (index $labels "label_alert_criticality") "critical" }}critical{{ else }}warning{{ end }}'
         annotations:
           summary: 'Deployment {{ $labels.namespace }}/{{ $labels.deployment }} has no available replicas'
           description: |
@@ -58,7 +58,7 @@ groups:
         condition: C
         for: 5m
         labels:
-          severity: '{{ if eq $labels.label_alert_criticality "critical" }}critical{{ else }}warning{{ end }}'
+          severity: '{{ if eq (index $labels "label_alert_criticality") "critical" }}critical{{ else }}warning{{ end }}'
         annotations:
           summary: 'StatefulSet {{ $labels.namespace }}/{{ $labels.statefulset }} has no ready replicas'
           description: |
@@ -96,7 +96,7 @@ groups:
         condition: C
         for: 5m
         labels:
-          severity: '{{ if eq $labels.label_alert_criticality "critical" }}critical{{ else }}warning{{ end }}'
+          severity: '{{ if eq (index $labels "label_alert_criticality") "critical" }}critical{{ else }}warning{{ end }}'
         annotations:
           summary: 'DaemonSet {{ $labels.namespace }}/{{ $labels.daemonset }} has no available pods'
           description: |
@@ -137,7 +137,7 @@ groups:
         condition: C
         for: 15m
         labels:
-          severity: '{{ if eq $labels.label_alert_criticality "critical" }}critical{{ else }}warning{{ end }}'
+          severity: '{{ if eq (index $labels "label_alert_criticality") "critical" }}critical{{ else }}warning{{ end }}'
         annotations:
           summary: 'Container {{ $labels.namespace }}/{{ $labels.pod }}/{{ $labels.container }} stuck: {{ $labels.reason }}'
           description: |
