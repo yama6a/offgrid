@@ -25,9 +25,10 @@ metadata:
     app.kubernetes.io/name: {{ .Values.name }}
     app.kubernetes.io/managed-by: {{ .Release.Service }}
     app.kubernetes.io/component: cache
-    {{- if .Values.alertCritical }}
-    alert-criticality: critical   # OpsTree copies CR labels onto the StatefulSet + pods, so the outage alerts (statefulset-not-available / container-waiting-fatal) page `critical`. See docs/09_monitoring.md.
-    {{- end }}
+    # always stamped so the label is never absent on kube_pod_labels — a missing field breaks the alert-severity
+    # template ($labels.label_alert_criticality). OpsTree copies CR labels onto the StatefulSet + pods; critical
+    # pages `critical`, everything else `warning`. See docs/09_monitoring.md.
+    alert-criticality: {{ if .Values.alertCritical }}critical{{ else }}warning{{ end }}
     {{- if .Values.persistence }}
     redis-backup.raspi-cluster/enabled: "true"   # discovered by the central 07_redis_backup job (durable only)
     {{- end }}

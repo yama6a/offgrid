@@ -337,8 +337,10 @@ The operator's automated `vmBackup` sidecar uses **`vmbackupmanager`, which is E
 FOSS route VictoriaMetrics itself documents for migration/backup — the HTTP export/import API — which needs no
 volume access and mirrors the Redis central-CronJob shape:
 
-- **metrics** — `GET /api/v1/export/native?match[]={__name__!=""}` → gzip → `s3://<bucket>/vm/metrics/<UTC>.native.gz`
-- **logs** — `GET /select/logsql/query?query=*` → gzip → `s3://<bucket>/vm/logs/<UTC>.jsonl.gz`
+Each 01:00 run backs up **only the previous full UTC day** (a bounded daily slice), one file per day:
+
+- **metrics** — `GET /api/v1/export/native?match[]={__name__!=""}&start&end` → gzip → `s3://<bucket>/vm/metrics/<YYYYMMDD>.native.gz`
+- **logs** — `GET /select/logsql/query?query=_time:[start,end)` → gzip → `s3://<bucket>/vm/logs/<YYYYMMDD>.jsonl.gz`
 
 Pieces, all under `argo_apps/platform/charts/08_vm_backup/` (+ two netpol edits on the `05_*` stores):
 
@@ -356,9 +358,12 @@ Pieces, all under `argo_apps/platform/charts/08_vm_backup/` (+ two netpol edits 
   `AWS_SECRET_ACCESS_KEY`) in `monitoring`, written by `17`.
 
 **Retention is S3's** (same model as Redis): the `vm/` prefix transitions to Glacier IR @`transition_days` and
-expires @`retention_days` — each object is a self-contained full export, so age-expiry is safe. **Caveats:** each
-run is a **full logical dump** (not incremental — tune `schedule` / the `match[]` scope if it grows), and the
-VictoriaLogs JSONL round-trip is **best-effort on stream-field fidelity** (stream labels are re-derived on import).
+expires @`retention_days` — each daily slice is self-contained, so age-expiry just drops the oldest days. **Why
+daily slices, not one full dump:** a full-store export's peak memory grows with the dataset and eventually OOMs
+`vmsingle`/`vlsingle` (it did); a fixed one-day window keeps peak memory flat forever. Trade-off: **DR replays every
+slice** (`recover_vm_from_s3.sh --target all`), not one file. **Caveats:** a gap day (a failed run) leaves a hole
+unless re-run for that day, and the VictoriaLogs JSONL round-trip is **best-effort on stream-field fidelity**
+(stream labels are re-derived on import).
 
 ### Turning VM/VL backups on
 
@@ -380,9 +385,9 @@ allowlist; a break-glass egress netpol lets it reach S3 + the store). **Non-dest
 for a clean DR point it at a fresh/empty store.
 
 ```sh
-make restore-vm   # interactive: prompts for kind (metrics|logs) + target (latest|<s3-key>)
-# or non-interactive:
-bash lib/shell/recover_vm_from_s3.sh --kind metrics --target latest --apply
+make restore-vm   # interactive: prompts for kind (metrics|logs) + target (all|latest|<s3-key>)
+# or non-interactive — `all` replays every daily slice (full DR), `latest` just the newest day:
+bash lib/shell/recover_vm_from_s3.sh --kind metrics --target all --apply
 ```
 
 **Full-cluster DR ordering:** `make restore-secrets-key` (06) → platform syncs (VMSingle/VLSingle come up empty) →

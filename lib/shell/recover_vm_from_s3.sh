@@ -19,7 +19,8 @@
 # are re-derived), which is expected for a logical export/import.
 #
 # Usage (flags optional — prompts for anything missing):
-#   bash recover_vm_from_s3.sh [--kind metrics|logs] [--target latest|<s3-key>] [--apply]
+#   bash recover_vm_from_s3.sh [--kind metrics|logs] [--target all|latest|<s3-key>] [--apply]
+#   (backups are one gzip'd slice per UTC day; `all` replays every slice for a full DR, `latest` just the newest.)
 #   make restore-vm
 #
 set -euo pipefail
@@ -80,17 +81,28 @@ esac
 kubectl -n "$RESTORE_NS" get secret "$SECRET_NAME" >/dev/null 2>&1 \
   || die "sealed creds ${RESTORE_NS}/${SECRET_NAME} missing — enable backups first (make configure-vm-backup)"
 
+# Backups are one gzip'd slice PER UTC DAY (08_vm_backup); DR replays them all. OBJECTS is a newline list of full
+# s3:// urls — `all` = every daily slice (date-named => sort is chronological), `latest` = newest day, else one key.
 DEST="s3://${BUCKET}/${PREFIX}${SUBPREFIX}"
-if [ "$TARGET" = "latest" ]; then
-  say "resolving latest ${KIND} export under ${DEST}"
-  KEY="$(aws s3 ls "$DEST" | awk '{print $4}' | grep -E "${EXT}\$" | sort | tail -1)"
-  [ -n "$KEY" ] || die "no ${EXT} objects under ${DEST} — nothing to restore"
-  OBJECT="${DEST}${KEY}"
-else
-  OBJECT="s3://${BUCKET}/${TARGET#/}"   # caller passed a full key relative to the bucket
-fi
-aws s3 ls "$OBJECT" >/dev/null 2>&1 || die "object not found: ${OBJECT}"
-ok "restoring from: ${OBJECT}"
+case "$TARGET" in
+  all)
+    say "resolving ALL ${KIND} daily slices under ${DEST}"
+    KEYS="$(aws s3 ls "$DEST" | awk '{print $4}' | grep -E "${EXT}\$" | sort)"
+    [ -n "$KEYS" ] || die "no ${EXT} objects under ${DEST} — nothing to restore"
+    OBJECTS="$(printf '%s\n' "$KEYS" | sed "s#^#${DEST}#")" ;;
+  latest)
+    say "resolving latest ${KIND} daily slice under ${DEST}"
+    KEY="$(aws s3 ls "$DEST" | awk '{print $4}' | grep -E "${EXT}\$" | sort | tail -1)"
+    [ -n "$KEY" ] || die "no ${EXT} objects under ${DEST} — nothing to restore"
+    OBJECTS="${DEST}${KEY}" ;;
+  *)
+    OBJECTS="s3://${BUCKET}/${TARGET#/}"   # caller passed a full key relative to the bucket
+    aws s3 ls "$OBJECTS" >/dev/null 2>&1 || die "object not found: ${OBJECTS}" ;;
+esac
+OBJECTS_ONELINE="$(printf '%s ' $OBJECTS)"   # space-joined for the pod's `for` loop (keys have no spaces)
+N_OBJ="$(printf '%s\n' "$OBJECTS" | grep -c .)"
+ok "restoring ${N_OBJ} object(s):"
+printf '%s\n' "$OBJECTS" | sed 's/^/    /'
 
 RESTORE_POD="vm-restore-${KIND}"
 BG_NETPOL="vm-restore-breakglass-${KIND}"
@@ -98,7 +110,7 @@ BG_NETPOL="vm-restore-breakglass-${KIND}"
 echo
 say "Restore plan"
 echo "    Kind        : ${KIND}"
-echo "    From        : ${OBJECT}"
+echo "    From        : ${N_OBJ} object(s) under ${DEST}"
 echo "    Into        : ${IMPORT_URL}  (MERGE — import never wipes)"
 echo "    Runner pod  : ${RESTORE_NS}/${RESTORE_POD}  (image ${RUNNER_IMAGE})"
 echo
@@ -181,8 +193,18 @@ spec:
       args:
         - |
           set -o pipefail
-          echo "streaming ${OBJECT} -> ${IMPORT_URL}"
-          aws s3 cp "${OBJECT}" - | gunzip | curl -sf --max-time 3000 -X POST "${IMPORT_URL}" -T -
+          fail=0
+          # host bakes the space-joined slice list (keys are date-named, no spaces => safe word-split); pod-local
+          # \$-vars are escaped so the unquoted heredoc doesn't expand them. Any failed slice fails the pod.
+          for o in ${OBJECTS_ONELINE}; do
+            echo "streaming \${o} -> ${IMPORT_URL}"
+            if aws s3 cp "\$o" - | gunzip | curl -sf --max-time 3000 -X POST "${IMPORT_URL}" -T -; then
+              echo "  ok"
+            else
+              echo "  FAILED \${o}"; fail=1
+            fi
+          done
+          [ "\$fail" -eq 0 ]
       env:
         - { name: HOME, value: /tmp }
         - { name: TMPDIR, value: /tmp }
