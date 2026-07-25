@@ -10,7 +10,7 @@ spec:
   instances: {{ $c.instances }}
   {{- if eq .Values.cluster.type "postgresql" }}
   # renovate: datasource=docker
-  imageName: ghcr.io/cloudnative-pg/postgresql:16
+  imageName: ghcr.io/cloudnative-pg/postgresql:18
   {{- else if eq .Values.cluster.type "postgis" }}
   # renovate: datasource=docker
   imageName: ghcr.io/cloudnative-pg/postgis:17-3.4
