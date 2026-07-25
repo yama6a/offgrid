@@ -40,7 +40,7 @@ victoria-metrics-operator:
   # Modest footprint for an 8GB Pi 5 already running etcd + control plane + Cilium + Longhorn.
   resources:
     requests: {cpu: 10m, memory: 64Mi}
-    limits: {memory: 96Mi}
+    limits: {memory: 144Mi}
 
   # Soft GC ceiling just under the 96Mi hard limit above: the Go runtime is otherwise blind to the cgroup cap
   # and only GCs on heap growth, so a transient spike during BULK prometheus->VM conversion (the converter's
