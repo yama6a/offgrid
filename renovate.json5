@@ -41,20 +41,32 @@
   customManagers: [
     {
       // Container images annotated `# renovate: datasource=docker` in files helm-values can't read: chart
-      // templates (redis-instance), shell-script literals, and the versions.env system extensions. (Images
-      // in values.yaml are handled by helm-values — NOT here — to avoid double-managing.)
-      // Captures repo:tag(+@sha256 digest) from the ref itself, so the tag AND digest stay fresh.
+      // templates (redis-instance's exporter), shell-script literals, and the versions.env system extensions.
+      // (Images in values.yaml are handled by helm-values or the workload-imageTag manager below, NOT here, to
+      // avoid double-managing.) Captures repo:tag(+@sha256 digest) from the ref itself, so tag AND digest stay fresh.
       customType: "regex",
       description: "docker image refs (annotated) in chart templates, shell scripts, versions.env",
       managerFilePatterns: [
         "/^versions\\.env$/",
         "/^lib/shell/.*\\.sh$/",
-        "/^lib/helm/redis-instance/templates/redis\\.yaml$/",
-        "/^lib/helm/pg-cluster/templates/cluster\\.yaml$/", // the postgresql/postgis imageName pins (type-selected)
+        "/^lib/helm/redis-instance/templates/redis\\.yaml$/", // the redis-exporter ref (the server tag is now per-workload)
         "/^argo_apps/platform/charts/07_redis_backup/templates/cronjob\\.yaml$/", // alpine/k8s + opstree-redis refs
       ],
       matchStrings: [
         "# renovate: datasource=docker(?: versioning=(?<versioning>\\S+))?\\s+[^\\n]*?(?<depName>[a-z0-9][a-z0-9._/-]+):(?<currentValue>[\\w][\\w.-]*)(?:@(?<currentDigest>sha256:[a-f0-9]{64}))?",
+      ],
+      datasourceTemplate: "docker",
+    },
+    {
+      // Per-workload datastore versions: a bare `imageTag` scalar in a workload's values.yaml, with the repo named
+      // in the `depName=` annotation (the tag alone has no repo). pg-cluster + redis-instance moved their image
+      // TAG out of the library so each workload owns its own Postgres/Redis version; this keeps the combined
+      // auto-merged PR bumping every workload's pin. See docs/14_renovate.md.
+      customType: "regex",
+      description: "per-workload datastore image tags (annotated imageTag in workload values.yaml)",
+      managerFilePatterns: ["/^argo_apps/workloads/charts/[^/]+/values\\.yaml$/"],
+      matchStrings: [
+        "# renovate: datasource=docker depName=(?<depName>\\S+)(?: versioning=(?<versioning>\\S+))?\\s+imageTag:\\s*\"?(?<currentValue>[\\w][\\w.-]*)\"?",
       ],
       datasourceTemplate: "docker",
     },

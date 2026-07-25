@@ -9,11 +9,9 @@ metadata:
 spec:
   instances: {{ $c.instances }}
   {{- if eq .Values.cluster.type "postgresql" }}
-  # renovate: datasource=docker
-  imageName: ghcr.io/cloudnative-pg/postgresql:18
+  imageName: ghcr.io/cloudnative-pg/postgresql:{{ .Values.cluster.imageTag }}
   {{- else if eq .Values.cluster.type "postgis" }}
-  # renovate: datasource=docker
-  imageName: ghcr.io/cloudnative-pg/postgis:17-3.4
+  imageName: ghcr.io/cloudnative-pg/postgis:{{ .Values.cluster.imageTag }}
   {{- else }}
   {{- fail "pg-cluster: cluster.type must be postgresql | postgis" }}
   {{- end }}

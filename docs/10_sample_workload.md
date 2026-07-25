@@ -98,9 +98,9 @@ or `subdomain: "@"` for the apex). A different-domain group is a new `ingresses[
 The workload doesn't template CNPG CRs directly; it depends on the shared `pg-cluster` wrapper
 (`lib/helm/pg-cluster`, see [CLAUDE.md](../CLAUDE.md)), which renders the CNPG CRs itself (no upstream chart)
 and pre-bakes every value a workload shouldn't think about (node-local `local-path` storage + 45Gi, hostname
-anti-affinity, monitoring on, an `app`/`app` initdb, backups off). Each instance sets only the REQUIRED knobs —
-`cluster.fullnameOverride` (the instance name), `type`, `instances` (1 or 2), `resources` — so a Postgres is
-~8 lines, not ~40. A validation template in the wrapper fails the render (with a clear message) if any required
+anti-affinity, monitoring on, an `app`/`app` initdb, backups off). Each instance sets only the REQUIRED knobs:
+`cluster.fullnameOverride` (the instance name), `type`, `imageTag` (the Postgres version, owned per-workload),
+`instances` (1 or 2), and `resources`, so a Postgres is ~9 lines, not ~40. A validation template in the wrapper fails the render (with a clear message) if any required
 knob is missing. Trade-offs: the pre-baked values are *soft* defaults a consumer could still override, and the
 values sit one level deeper (`<alias>.cluster.cluster.*`, a historical artifact of the old subchart shape kept
 so consumer values didn't have to change). Because `initdb` is a wrapper default, the app template hardcodes

@@ -6,9 +6,9 @@ description: >-
   curated interface for workloads. It pre-bakes every boilerplate value a workload should never think about
   (node-local local-path storage, hostname anti-affinity, monitoring on, an `app`/`app` initdb, non-root UID,
   the barman WAL-archiver plugin wiring) and exposes only the knobs a workload actually decides: REQUIRED
-  `cluster.type`, `cluster.cluster.instances`, `cluster.cluster.resources`, and OPTIONAL-with-defaults
-  max_connections / shared_buffers / effective_cache_size. A consumer's Postgres drops to ~6 lines of real
-  decisions.
+  `cluster.type`, `cluster.imageTag` (the Postgres version, owned per-workload), `cluster.cluster.instances`,
+  `cluster.cluster.resources`, and OPTIONAL-with-defaults max_connections / shared_buffers /
+  effective_cache_size. A consumer's Postgres drops to ~7 lines of real decisions.
 
   Off-cluster S3 backups (continuous WAL archiving + daily base backups via the Barman Cloud CNPG-I plugin)
   are wired but OFF by default; `lib/shell/14_cnpg_backup.sh` flips them on from `.env` + a sealed S3 secret.
@@ -27,9 +27,9 @@ description: >-
     - The `cluster.cluster.*` double nesting is a historical artifact of the old subchart shape, kept so the
       consumer values + 14_cnpg_backup.sh didn't have to change.
   Required fields: a validation-only template (templates/validate.yaml) fails the render with a clear message
-  if fullnameOverride/type/instances/resources/allowedClients are unset. Consumed via a file:// dependency;
+  if fullnameOverride/type/imageTag/instances/resources/allowedClients are unset. Consumed via a file:// dependency;
   see argo_apps/workloads/charts/sample_user_manager. The Cluster + its services/secret are named off the
   REQUIRED `cluster.fullnameOverride` (e.g. `<name>-rw`, `<name>-app`) — an explicit name you set, not the
   release name, so a workload can alias this wrapper for multiple DBs. See 10_sample_workload.md.
 type: application               # renders CRs directly (like redis-instance); NOT a library, which renders nothing
-version: 0.2.0                  # this chart's own version (bumped: dropped the cnpg/cluster dependency)
+version: 0.3.0                  # this chart's own version

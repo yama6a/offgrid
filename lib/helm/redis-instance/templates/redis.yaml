@@ -4,8 +4,9 @@ reconciles a single-pod StatefulSet with ONE PVC. Single-instance by design (no 
 Longhorn reattaches the volume elsewhere and the pod reschedules — a brief availability gap, the volume follows.
 Field shape mirrors the upstream ot-helm/redis chart's standalone template (verified against redis 0.16.9).
 
-A workload sets name / resources / allowedClients (+ optional persistence + initialFixedDiskSize). EVERYTHING
-ELSE IS PINNED HERE, once, for every instance at once:
+A workload sets name / imageTag / resources / allowedClients / persistence (+ optional initialFixedDiskSize).
+imageTag is the Redis SERVER version, owned per-workload. EVERYTHING ELSE IS PINNED HERE, once, for every
+instance at once (the server image REPO, and the exporter's full ref):
   storage class    persistence=true -> longhorn-r2-retained (Retain); false -> longhorn-r2-ephemeral (Delete);
                    both 2-replica, from the platform 02_longhorn app. initialFixedDiskSize is the only storage
                    knob, create-time only — default 1Gi (see docs/12_redis.md "Resizing an instance")
@@ -14,7 +15,7 @@ ELSE IS PINNED HERE, once, for every instance at once:
   security         non-root uid/gid 1000
   auth             OFF — access is gated by the CiliumNetworkPolicy (see networkpolicy.yaml), not requirepass
 Single standalone instance by design: no HA / replication / sentinel / cluster, and no off-cluster backups.
-Bump a tag / image here and every instance the chart renders picks it up.
+Bump the server REPO or the exporter here and every instance picks it up; the server TAG is per-workload (imageTag).
 */ -}}
 apiVersion: redis.redis.opstreelabs.in/v1beta2
 kind: Redis
@@ -34,8 +35,7 @@ metadata:
     {{- end }}
 spec:
   kubernetesConfig:
-    # renovate: datasource=docker
-    image: "quay.io/opstree/redis:v8.6.2"
+    image: "quay.io/opstree/redis:{{ .Values.imageTag }}"
     imagePullPolicy: IfNotPresent
     resources:
       {{- toYaml .Values.resources | nindent 6 }}

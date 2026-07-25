@@ -7,9 +7,9 @@ description: >-
   platform's 03_redis_operator. A REQUIRED `persistence` flag (no default) selects the mode: durable
   (longhorn-r2-retained class, Retain + AOF) or ephemeral cache (longhorn-r2-ephemeral class, Delete,
   RDB-only) — the two 2-replica classes are shipped by the platform's 02_longhorn app. Everything a workload
-  shouldn't decide is HARDCODED in the templates (images + tags, the redis-exporter, a maxmemory bound, a non-root
-  podSecurityContext, and no-auth — gated by the network policy instead); a workload sets four REQUIRED knobs
-  (name / resources / allowedClients / persistence) plus an OPTIONAL create-time initialFixedDiskSize (default 1Gi;
+  shouldn't decide is HARDCODED in the templates (the image repo, the redis-exporter, a maxmemory bound, a non-root
+  podSecurityContext, and no-auth, gated by the network policy instead); a workload sets five REQUIRED knobs
+  (name / imageTag / resources / allowedClients / persistence) plus an OPTIONAL create-time initialFixedDiskSize (default 1Gi;
   changing it later has no effect — see docs/12_redis.md). A single standalone instance (no HA / replication
   / sentinel / cluster); DURABLE instances are labelled for off-cluster RDB backups to S3, done centrally by
   the platform's 07_redis_backup app (not per instance — see docs/12_redis.md + docs/13_backups.md). Declared
@@ -17,4 +17,4 @@ description: >-
   values key), the same shape as pg-cluster — so "one or more Redis per workload" is just "one or more aliases".
   See README.md and docs/12_redis.md.
 type: application
-version: 0.3.0                 # this chart's own version
+version: 0.4.0                 # this chart's own version

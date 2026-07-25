@@ -6,6 +6,9 @@ wouldn't catch them. Runs in this chart's scope, so it sees the consumer's overr
 {{- if not .Values.name }}
 {{- fail "redis-instance: name is required (the explicit Redis instance name; also the Service DNS clients dial; must be unique across a workload's Redis instances)" }}
 {{- end }}
+{{- if not .Values.imageTag }}
+{{- fail "redis-instance: imageTag is required (the Redis server image tag, e.g. v8.6.2)" }}
+{{- end }}
 {{- if not .Values.resources }}
 {{- fail "redis-instance: resources is required (per-pod requests/limits; set a memory limit so maxMemoryPercentOfLimit has a base)" }}
 {{- end }}

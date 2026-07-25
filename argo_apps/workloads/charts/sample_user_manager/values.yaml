@@ -72,6 +72,8 @@ maindb:
   cluster:
     fullnameOverride: sample-user-manager-db
     type: postgresql        # postgresql | postgis | timescaledb
+    # renovate: datasource=docker depName=ghcr.io/cloudnative-pg/postgresql
+    imageTag: "16"          # Postgres version, owned by this workload (depName above must match type)
     cluster:
       instances: 2
       # Primary DB — the app can't function without it. Labels the Cluster CR; the CNPG operator's
@@ -97,6 +99,8 @@ analyticsdb:
   cluster:
     fullnameOverride: sample-user-manager-analytics
     type: postgresql
+    # renovate: datasource=docker depName=ghcr.io/cloudnative-pg/postgresql
+    imageTag: "16"          # Postgres version, owned by this workload (depName above must match type)
     cluster:
       instances: 1
       # single-instance PDB is minAvailable:1 => blocks EVERY eviction, so a Talos node drain (03f upgrade)
@@ -128,6 +132,8 @@ analyticsdb:
 # Primary Redis: the manager's audit-log store (RPUSH per user UUID, 1h TTL; read back by GET /audit). EPHEMERAL.
 redis-cache:
   name: sample-user-manager-redis-cache
+  # renovate: datasource=docker depName=quay.io/opstree/redis
+  imageTag: "v8.6.2"    # Redis server version, owned by this workload
   alertCritical: true   # the app's primary datastore -> outage rules page `critical` (see docs/09_monitoring.md)
   # For the sake of the demo we treat the audit-log cache as EPHEMERAL: Delete class + RDB-only, no AOF. Real
   # audit logs might warrant durability, but these are 1h-TTL and regenerable — so this also exercises (and
@@ -144,7 +150,9 @@ redis-cache:
 # Second Redis: demonstrates multiple instances per workload AND the DURABLE mode (the manager doesn't dial it).
 redis-sessions:
   name: sample-user-manager-redis-sessions
-  persistence: true           # durable: Retain class + AOF (crash-durable) — showcases the persistent mode
+  # renovate: datasource=docker depName=quay.io/opstree/redis
+  imageTag: "v8.6.2"          # Redis server version, owned by this workload
+  persistence: true           # durable: Retain class + AOF (crash-durable); showcases the persistent mode
   # Durable => labelled for backup + backed up automatically by the central 07_redis_backup job (see 12_redis.md).
   initialFixedDiskSize: 1Gi   # create-time ONLY — changing this does NOT resize a live instance (see 12_redis.md)
   resources:

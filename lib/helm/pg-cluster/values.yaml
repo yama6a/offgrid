@@ -12,7 +12,9 @@ cluster:
   # Secret, PodMonitor, ObjectStore). No suffix, no `.Release.Name` derivation — you name it. Two DBs in one
   # workload are aliased instances of THIS wrapper, so each MUST carry a distinct name.
   fullnameOverride: "" # REQUIRED: e.g. sample-workload-db
-  type: "" # REQUIRED: postgresql | postgis (drives the container image).
+  type: "" # REQUIRED: postgresql | postgis (selects the container image REPO).
+  # REQUIRED: image tag for the selected type; each workload owns its own Postgres version (no shared default).
+  imageTag: "" # e.g. "16" for postgresql, "17-3.4" for postgis. Renovate tracks the annotated pin in the consumer values.
   cluster:
     instances: # REQUIRED: 1 (single) or 2 (primary + streaming replica on 2 nodes); only 1|2 allowed.
     resources: {} # REQUIRED: per-instance requests/limits (no sane default for a Pi; force a choice).

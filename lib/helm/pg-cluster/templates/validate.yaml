@@ -11,6 +11,9 @@ sees the consumer's overrides merged over values.yaml.
 {{- if not (has .Values.cluster.type (list "postgresql" "postgis")) }}
 {{- fail "pg-cluster: cluster.type is required and must be postgresql | postgis" }}
 {{- end }}
+{{- if not .Values.cluster.imageTag }}
+{{- fail "pg-cluster: cluster.imageTag is required (the Postgres image tag; e.g. \"16\" for postgresql or \"17-3.4\" for postgis)" }}
+{{- end }}
 {{- if not (has (int ($c.instances | default 0)) (list 1 2)) }}
 {{- fail (printf "pg-cluster: cluster.cluster.instances is required and must be 1 or 2 (got %v)" $c.instances) }}
 {{- end }}
