@@ -2,9 +2,6 @@ dependencies:
 - name: pg-cluster
   repository: file://../../../../lib/helm/pg-cluster
   version: 0.4.0
-- name: pg-cluster
-  repository: file://../../../../lib/helm/pg-cluster
-  version: 0.4.0
 - name: redis-instance
   repository: file://../../../../lib/helm/redis-instance
   version: 0.4.0
@@ -17,5 +14,5 @@ dependencies:
 - name: rabbitmq-topology
   repository: file://../../../../lib/helm/rabbitmq-topology
   version: 0.1.0
-digest: sha256:987353284659a66b8c4460a4f34f0d0ac58104a3cec297c04353a01a15140736
-generated: "2026-07-25T22:33:22.36755+02:00"
+digest: sha256:4af3e9003454057e6c251e0be98f66ae8828f7b7b213f8a655d90095cb8f9c79
+generated: "2026-07-26T22:23:15.168166+02:00"
