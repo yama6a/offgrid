@@ -18,6 +18,10 @@ kind: CiliumNetworkPolicy
 metadata:
   name: {{ $cluster }}
   namespace: {{ .Release.Namespace }}
+  {{- with (include "pg-cluster.protectAnnotations" .) }}
+  annotations:
+    {{- . | nindent 4 }}
+  {{- end }}
 spec:
   endpointSelector:
     matchLabels:

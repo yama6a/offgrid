@@ -131,11 +131,7 @@ backup-secrets-key: ## 06: back up the sealed-secrets master key (do this BEFORE
 restore-secrets-key: ## 06: restore the sealed-secrets master key so committed SealedSecrets decrypt.
 	bash lib/shell/06_restore_sealed_secrets_key.sh
 
-##@ Data recovery  (CNPG — two tiers: reattach the retained PV, or restore from S3; Redis + Longhorn + VM/VL — restore from S3)
-.PHONY: recover-cnpg
-recover-cnpg: ## Reattach a deleted CNPG Cluster to its RETAINED local-path PV (fast; pauses ArgoCD, recreates the adopt PVC).
-	bash lib/shell/recover_cnpg_from_pv.sh
-
+##@ Data recovery  (restore from S3: CNPG + Redis + Longhorn + VM/VL. A GitOps-pruned CNPG cluster is not deleted; just restore its files.)
 .PHONY: restore-cnpg
 restore-cnpg: ## Restore a CNPG database from S3 — latest or PITR — into a fresh cluster (interactive; needs backups on).
 	bash lib/shell/recover_cnpg_from_s3.sh
@@ -151,6 +147,11 @@ restore-longhorn: ## Restore a Longhorn volume from S3 into a new Volume + PV/PV
 .PHONY: restore-vm
 restore-vm: ## Restore VictoriaMetrics/Logs from an S3 export — stream it into the live store via a temp pod (interactive; needs backups on).
 	bash lib/shell/recover_vm_from_s3.sh
+
+##@ Verify  (static checks; no cluster needed)
+.PHONY: verify-cnpg-protect
+verify-cnpg-protect: ## Assert every workload's CNPG DB unit carries the orphan-not-delete sync-options (helm template).
+	bash lib/shell/verify_cnpg_protect.sh
 
 ##@ Health & inspection  (read-only; use the dockerized talosctl + the 03d kubeconfig)
 .PHONY: check-health

@@ -7,6 +7,10 @@ kind: ScheduledBackup
 metadata:
   name: {{ include "pg-cluster.name" $ctx }}-{{ .name }}
   namespace: {{ $ctx.Release.Namespace }}
+  {{- with (include "pg-cluster.protectAnnotations" $ctx) }}
+  annotations:
+    {{- . | nindent 4 }}
+  {{- end }}
   labels:
     {{- include "pg-cluster.labels" $ctx | nindent 4 }}
 spec:

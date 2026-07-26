@@ -11,6 +11,9 @@ metadata:
     # Helm hook (pre-install,...), which ArgoCD turns into an ephemeral PreSync resource -> it got deleted and
     # WAL archiving broke. Rendering the CR ourselves lets it be a normal, persistent resource. See docs/13_backups.md.
     argocd.argoproj.io/sync-wave: "-1"
+    {{- with (include "pg-cluster.protectAnnotations" .) }}
+    {{- . | nindent 4 }}
+    {{- end }}
   labels:
     cnpg.io/cluster: {{ include "pg-cluster.name" . }}
     {{- include "pg-cluster.labels" . | nindent 4 }}

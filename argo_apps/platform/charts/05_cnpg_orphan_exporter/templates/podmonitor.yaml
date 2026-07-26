@@ -1,0 +1,16 @@
+# The VM operator converts this PodMonitor to a VMPodScrape; vmagent discovers it cluster-wide. Feeds
+# orphaned_cnpg_cluster / cnpg_cluster_untracked / cnpg_orphan_exporter_up to VictoriaMetrics.
+apiVersion: monitoring.coreos.com/v1
+kind: PodMonitor
+metadata:
+  name: cnpg-orphan-exporter
+  namespace: {{ .Release.Namespace }}
+  labels:
+    app.kubernetes.io/name: cnpg-orphan-exporter
+spec:
+  selector:
+    matchLabels:
+      app.kubernetes.io/name: cnpg-orphan-exporter
+  podMetricsEndpoints:
+    - port: metrics
+      interval: 60s

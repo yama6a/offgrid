@@ -35,16 +35,17 @@ dataPath: /var/mnt/localpath
 # Neither is the cluster default — Longhorn stays default; a consumer opts in by name. Both use
 # WaitForFirstConsumer, mandatory for true node-local storage: the volume exists on one node only, so the
 # scheduler must place the pod first (honoring the consumer's hostname anti-affinity) before the volume is
-# provisioned there — Immediate would bind to an arbitrary node first. They differ ONLY in reclaim policy, and
-# that choice tracks who owns replication:
+# provisioned there (Immediate would bind to an arbitrary node first). Both are reclaimPolicy: Delete now; they
+# stay separate classes by intent (CNPG vs RabbitMQ), see each below:
 storageClasses:
-    # local-path (Retain): for CNPG. Postgres data is the source of truth, so deleting a PVC/Cluster must never
-    # silently destroy it. NOTE: local-path only runs its teardown (rm -rf $VOL_DIR) on Delete, so with Retain
-    # the host dir under /var/mnt/localpath is left behind — clean up manually to reclaim space.
+    # local-path (Delete): for CNPG. Data safety no longer rests on Retain: the Cluster is protected from a
+    # GitOps prune by orphan-not-delete (Prune=false,Delete=false on the whole DB unit, see lib/helm/pg-cluster +
+    # docs/13_backups.md), so a prune never deletes its PVC. Delete auto-cleans the /var/mnt/localpath dir on a
+    # LEGITIMATE PVC delete (replica scale-down, intentional cluster delete) instead of leaking it.
   - name: local-path
     defaultClass: false
     volumeBindingMode: WaitForFirstConsumer
-    reclaimPolicy: Retain
+    reclaimPolicy: Delete
     # local-path-ephemeral (Delete): for self-replicating stateful apps whose HA + durability live in the app,
     # not the volume (RabbitMQ quorum queues replicate across brokers via Raft). The per-broker volume is
     # disposable — a replacement broker rebuilds it from healthy peers — so a deleted PVC SHOULD reclaim: Delete

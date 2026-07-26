@@ -1,0 +1,102 @@
+# The exporter, kept in Git and mounted read-only into the pod (run as python3 /app/exporter.py). Stdlib only
+# (urllib + http.server), so the base python image needs no pip install. Resolves each CNPG Cluster to its owning
+# ArgoCD Application via tracking metadata and reports orphaned / untracked. See docs/13_backups.md.
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: cnpg-orphan-exporter
+  namespace: {{ .Release.Namespace }}
+data:
+  exporter.py: |
+    import json, os, ssl, threading, time, urllib.request, urllib.error
+    from http.server import BaseHTTPRequestHandler, HTTPServer
+
+    API = "https://%s:%s" % (os.environ["KUBERNETES_SERVICE_HOST"],
+                             os.environ.get("KUBERNETES_SERVICE_PORT", "443"))
+    ARGOCD_NS = os.environ.get("ARGOCD_NS", "argocd")
+    INTERVAL = int(os.environ.get("INTERVAL", "60"))
+    PORT = int(os.environ.get("PORT", "9100"))
+    SA = "/var/run/secrets/kubernetes.io/serviceaccount"
+    CTX = ssl.create_default_context(cafile=SA + "/ca.crt")
+
+    def get(path):
+        with open(SA + "/token") as f:
+            tok = f.read().strip()
+        req = urllib.request.Request(API + path, headers={"Authorization": "Bearer " + tok})
+        with urllib.request.urlopen(req, context=CTX, timeout=15) as r:
+            return json.load(r)
+
+    def items(path):
+        try:
+            return get(path).get("items", [])
+        except urllib.error.HTTPError as e:
+            if e.code == 404:            # CRD not installed yet
+                return []
+            raise
+
+    # Owning app from Argo tracking metadata. Reads BOTH keys so it works under any
+    # application.resourceTrackingMethod (annotation | label | annotation+label); neither present => untracked.
+    def owning_app(meta):
+        tid = (meta.get("annotations") or {}).get("argocd.argoproj.io/tracking-id")
+        if tid:
+            return tid.split(":", 1)[0]
+        return (meta.get("labels") or {}).get("app.kubernetes.io/instance")
+
+    def esc(v):
+        return v.replace("\\", "\\\\").replace('"', '\\"')
+
+    def collect():
+        apps = items("/apis/argoproj.io/v1alpha1/namespaces/%s/applications" % ARGOCD_NS)
+        names = {a["metadata"]["name"] for a in apps}
+        argo_ns = {(a.get("spec") or {}).get("destination", {}).get("namespace") for a in apps}
+        argo_ns.discard(None)
+        out = [
+            "# HELP cnpg_orphan_exporter_up exporter heartbeat (1 = last scan ok)",
+            "# TYPE cnpg_orphan_exporter_up gauge",
+            "# HELP orphaned_cnpg_cluster CNPG Cluster whose owning ArgoCD Application no longer exists",
+            "# TYPE orphaned_cnpg_cluster gauge",
+            "# HELP cnpg_cluster_untracked CNPG Cluster in an Argo-managed namespace with no tracking metadata",
+            "# TYPE cnpg_cluster_untracked gauge",
+        ]
+        for c in items("/apis/postgresql.cnpg.io/v1/clusters"):
+            m = c["metadata"]
+            ns, name = m["namespace"], m["name"]
+            app = owning_app(m)
+            if not app:
+                # Only for Clusters in an Argo-managed namespace; a manual cluster elsewhere is intentionally ignored.
+                if ns in argo_ns:
+                    out.append('cnpg_cluster_untracked{namespace="%s",cluster="%s"} 1' % (esc(ns), esc(name)))
+                continue
+            if app not in names:
+                out.append('orphaned_cnpg_cluster{namespace="%s",cluster="%s",app="%s"} 1'
+                           % (esc(ns), esc(name), esc(app)))
+        out.append("cnpg_orphan_exporter_up 1")
+        return "\n".join(out) + "\n"
+
+    _metrics = "cnpg_orphan_exporter_up 0\n"
+    _lock = threading.Lock()
+
+    def scan():
+        global _metrics
+        while True:
+            try:
+                body = collect()
+            except Exception as e:
+                body = "cnpg_orphan_exporter_up 0\n# scan error: %s\n" % str(e).replace("\n", " ")[:200]
+            with _lock:
+                _metrics = body
+            time.sleep(INTERVAL)
+
+    class Handler(BaseHTTPRequestHandler):
+        def do_GET(self):
+            with _lock:
+                body = _metrics.encode()
+            self.send_response(200)
+            self.send_header("Content-Type", "text/plain; version=0.0.4")
+            self.end_headers()
+            self.wfile.write(body)
+        def log_message(self, *a):
+            pass
+
+    threading.Thread(target=scan, daemon=True).start()
+    HTTPServer(("", PORT), Handler).serve_forever()

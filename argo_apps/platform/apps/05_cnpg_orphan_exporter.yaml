@@ -1,0 +1,41 @@
+# ArgoCD Application for the cnpg-orphan-exporter (argo_apps/platform/charts/05_cnpg_orphan_exporter/). Detects
+# CNPG Clusters orphaned by a GitOps prune (owning Argo app gone) or lacking Argo tracking metadata, the
+# monitoring half of the orphan-not-delete design. See docs/13_backups.md.
+#
+# AUTOMATED (prune + selfHeal): a safe read-only leaf.
+#
+# sync-wave "5": needs the CNPG CRD (wave 2) + Argo Application CRD (wave 1) to read, and the VM operator
+# (wave 1) to convert its PodMonitor. Grouped with the monitoring apps at wave 5.
+apiVersion: argoproj.io/v1alpha1
+kind: Application
+metadata:
+  name: cnpg-orphan-exporter
+  namespace: argocd
+  # Cascade-delete this app's own resources on Application deletion instead of orphaning them; see 05_gitops.md.
+  finalizers:
+    - resources-finalizer.argocd.argoproj.io
+  annotations:
+    argocd.argoproj.io/sync-wave: "5"
+spec:
+  project: default
+  revisionHistoryLimit: 0  # roll-forward only; no Argo rollback history (05_gitops.md)
+  source:
+    repoURL: https://github.com/yama6a/offgrid
+    targetRevision: HEAD
+    path: argo_apps/platform/charts/05_cnpg_orphan_exporter
+  destination:
+    server: https://kubernetes.default.svc
+    namespace: cnpg-orphan-exporter
+  syncPolicy:
+    automated:
+      prune: true
+      selfHeal: true
+    retry:
+      limit: -1  # unbounded; only retry re-drives a failed sync (see 05_gitops.md)
+      refresh: true  # retry the latest revision so a fix commit lands mid-loop
+      backoff:
+        duration: 5s
+        factor: 2
+        maxDuration: 1m
+    syncOptions:
+      - CreateNamespace=true

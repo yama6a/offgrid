@@ -4,6 +4,10 @@ kind: Cluster
 metadata:
   name: {{ include "pg-cluster.name" . }}
   namespace: {{ .Release.Namespace }}
+  {{- with (include "pg-cluster.protectAnnotations" .) }}
+  annotations:
+    {{- . | nindent 4 }}
+  {{- end }}
   labels:
     {{- include "pg-cluster.labels" . | nindent 4 }}
 spec:

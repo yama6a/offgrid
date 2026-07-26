@@ -73,7 +73,7 @@ maindb:
     fullnameOverride: sample-user-manager-db
     type: postgresql        # postgresql | postgis | timescaledb
     # renovate: datasource=docker depName=ghcr.io/cloudnative-pg/postgresql
-    imageTag: "16"          # Postgres version, owned by this workload (depName above must match type)
+    imageTag: "18"          # Postgres version, owned by this workload (depName above must match type)
     cluster:
       instances: 2
       # Primary DB — the app can't function without it. Labels the Cluster CR; the CNPG operator's
@@ -100,7 +100,7 @@ analyticsdb:
     fullnameOverride: sample-user-manager-analytics
     type: postgresql
     # renovate: datasource=docker depName=ghcr.io/cloudnative-pg/postgresql
-    imageTag: "16"          # Postgres version, owned by this workload (depName above must match type)
+    imageTag: "18"          # Postgres version, owned by this workload (depName above must match type)
     cluster:
       instances: 1
       # single-instance PDB is minAvailable:1 => blocks EVERY eviction, so a Talos node drain (03f upgrade)

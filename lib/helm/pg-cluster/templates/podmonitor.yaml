@@ -4,6 +4,10 @@ kind: PodMonitor
 metadata:
   name: {{ include "pg-cluster.name" . }}-cluster-podmonitor
   namespace: {{ .Release.Namespace }}
+  {{- with (include "pg-cluster.protectAnnotations" .) }}
+  annotations:
+    {{- . | nindent 4 }}
+  {{- end }}
   labels:
     cnpg.io/cluster: {{ include "pg-cluster.name" . }}
     {{- include "pg-cluster.labels" . | nindent 4 }}

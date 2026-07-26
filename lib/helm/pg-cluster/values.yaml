@@ -15,6 +15,10 @@ cluster:
   type: "" # REQUIRED: postgresql | postgis (selects the container image REPO).
   # REQUIRED: image tag for the selected type; each workload owns its own Postgres version (no shared default).
   imageTag: "" # e.g. "16" for postgresql, "17-3.4" for postgis. Renovate tracks the annotated pin in the consumer values.
+  # Orphan-not-delete: keep the DB unit (Cluster + its ObjectStore/ScheduledBackup/PodMonitor/NetworkPolicy)
+  # alive when its manifests leave git, so restoring them re-adopts the running cluster with no data loss. Set
+  # false only to intentionally, permanently delete a DB (then remove the app). See _helpers.tpl / 13_backups.md.
+  protectFromPrune: true
   cluster:
     instances: # REQUIRED: 1 (single) or 2 (primary + streaming replica on 2 nodes); only 1|2 allowed.
     resources: {} # REQUIRED: per-instance requests/limits (no sane default for a Pi; force a choice).
@@ -66,9 +70,9 @@ cluster:
     # Don't let the DB primary lose the OOM/eviction race against monitoring/argo on the shared 8GB nodes.
     priorityClassName: platform-critical
   # Off-cluster S3 backups via the Barman Cloud CNPG-I plugin: continuous WAL archiving + a daily base backup.
-  # This is the SECOND durability tier — the first is Postgres replication across the instances + local-path
-  # Retain (a lost instance is rebuilt from a survivor; a deleted Cluster CR is reattached to its retained PV by
-  # recover_cnpg_from_pv.sh). S3 covers what that can't: total data loss, corruption, PITR, a full rebuild.
+  # The SECOND durability tier. The first is Postgres replication across the instances + orphan-not-delete: a
+  # workload removed from git ORPHANS its Cluster (Prune=false,Delete=false) instead of deleting it, and
+  # restoring the files re-adopts it. S3 covers what that can't: total data loss, corruption, PITR, a full rebuild.
   #
   # method=plugin => templates/cluster.yaml adds the barman plugin to the Cluster's `.spec.plugins`
   # (isWALArchiver), templates/objectstore.yaml renders the `ObjectStore` CR, and templates/scheduledbackup.yaml

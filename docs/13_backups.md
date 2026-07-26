@@ -13,13 +13,13 @@ CNPG backups land under `cnpg/`, Redis RDB dumps under `redis/`, and Longhorn vo
 
 Pieces (Terraform is out-of-cluster; the plugin is platform; backups are configured per-cluster via the shared chart):
 
-| Piece                   | Where                                                              | What                                                                                                                                                                                     |
-|-------------------------|--------------------------------------------------------------------|------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------|
+| Piece                   | Where                                                              | What                                                                                                                                                                                                                                                |
+|-------------------------|--------------------------------------------------------------------|-----------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------|
 | **the bucket + IAM**    | `terraform/`                                                       | one S3 bucket + a **per-prefix** lifecycle (`cnpg/`+`redis/`: Standard → Glacier IR @30d → expire @180d; `longhorn/`: Standard, never expires), SSE, public-access block, and a scoped IAM writer. Local state (gitignored — holds the IAM secret). |
-| **the plugin**          | `argo_apps/platform/{apps,charts}/03_barman_cloud_plugin` (wave 3) | the `ObjectStore` CRD + the Barman Cloud plugin Deployment/Service/RBAC + its cert-manager mTLS certs, in `cnpg-system`. Vendored release manifest (no upstream Helm chart).             |
-| **per-cluster backups** | `lib/helm/pg-cluster` (`backups.method: plugin`)                   | every CNPG cluster inherits WAL archiving + a daily `ScheduledBackup` + its own `ObjectStore`, all rendered directly by the first-party `pg-cluster` chart from values (no upstream chart).                   |
-| **wiring scripts**      | `lib/shell/13_s3_backup_bucket.sh`, `14_cnpg_backup.sh`            | 13 runs Terraform; 14 seals the writer creds into each CNPG namespace + flips backups on in the chart values.                                                                            |
-| **recovery**            | `lib/shell/recover_cnpg_from_s3.sh`                                | restore (latest or PITR) into a fresh cluster from the object store.                                                                                                                     |
+| **the plugin**          | `argo_apps/platform/{apps,charts}/03_barman_cloud_plugin` (wave 3) | the `ObjectStore` CRD + the Barman Cloud plugin Deployment/Service/RBAC + its cert-manager mTLS certs, in `cnpg-system`. Vendored release manifest (no upstream Helm chart).                                                                        |
+| **per-cluster backups** | `lib/helm/pg-cluster` (`backups.method: plugin`)                   | every CNPG cluster inherits WAL archiving + a daily `ScheduledBackup` + its own `ObjectStore`, all rendered directly by the first-party `pg-cluster` chart from values (no upstream chart).                                                         |
+| **wiring scripts**      | `lib/shell/13_s3_backup_bucket.sh`, `14_cnpg_backup.sh`            | 13 runs Terraform; 14 seals the writer creds into each CNPG namespace + flips backups on in the chart values.                                                                                                                                       |
+| **recovery**            | `lib/shell/recover_cnpg_from_s3.sh`                                | restore (latest or PITR) into a fresh cluster from the object store.                                                                                                                                                                                |
 
 ## The mental model: WAL + base, not a snapshot
 
@@ -218,9 +218,11 @@ backup-timestamp metric populates) against the live cluster — see the verify s
 `05_grafana/values.yaml` group `backups` adds two rules keyed on the CronJob **name** via kube-state-metrics
 (arbitrary pod/job labels aren't exported; the name always is):
 
-- **`redis-backup-failed`** (`warning`): `kube_job_failed{condition="true", namespace="redis-backup", job_name=~"redis-backup-.+"} > 0`
+- **`redis-backup-failed`** (`warning`):
+  `kube_job_failed{condition="true", namespace="redis-backup", job_name=~"redis-backup-.+"} > 0`
   — the central backup Job failed (one or more instances failed to dump/upload; the job's stdout says which).
-- **`redis-backup-stale`** (`warning`): `time() - kube_cronjob_status_last_successful_time{namespace="redis-backup", cronjob="redis-backup"} > 36h`,
+- **`redis-backup-stale`** (`warning`):
+  `time() - kube_cronjob_status_last_successful_time{namespace="redis-backup", cronjob="redis-backup"} > 36h`,
   guarded `> 0` so it stays quiet before the first success. Raise it if you set a slower schedule. Verify
   `kube_cronjob_status_last_successful_time` exists in the running KSM at apply time.
 
@@ -339,7 +341,8 @@ volume access and mirrors the Redis central-CronJob shape:
 
 Each 01:00 run backs up **only the previous full UTC day** (a bounded daily slice), one file per day:
 
-- **metrics** — `GET /api/v1/export/native?match[]={__name__!=""}&start&end` → gzip → `s3://<bucket>/vm/metrics/<YYYYMMDD>.native.gz`
+- **metrics** — `GET /api/v1/export/native?match[]={__name__!=""}&start&end` → gzip →
+  `s3://<bucket>/vm/metrics/<YYYYMMDD>.native.gz`
 - **logs** — `GET /select/logsql/query?query=_time:[start,end)` → gzip → `s3://<bucket>/vm/logs/<YYYYMMDD>.jsonl.gz`
 
 Pieces, all under `argo_apps/platform/charts/08_vm_backup/` (+ two netpol edits on the `05_*` stores):
@@ -393,12 +396,43 @@ bash lib/shell/recover_vm_from_s3.sh --kind metrics --target all --apply
 **Full-cluster DR ordering:** `make restore-secrets-key` (06) → platform syncs (VMSingle/VLSingle come up empty) →
 `make restore-vm --kind metrics` + `--kind logs` to backfill. Same key dependency as every other backup here.
 
-## The two recovery tiers
+## Recovery paths
 
-| When                                                                | Use                                             | How                                                  |
-|---------------------------------------------------------------------|-------------------------------------------------|------------------------------------------------------|
-| Cluster CR deleted, **local PV survived**                           | `recover_cnpg_from_pv.sh`                       | reattach the retained `local-path` PV (fast, no S3). |
-| Data **genuinely gone** — disk/node loss, corruption, PITR         | `recover_cnpg_from_s3.sh` (`make restore-cnpg`) | bootstrap a NEW cluster from the object store.       |
+Durability is two layers, and only the second has a recovery step:
+
+- **In-cluster, no recovery step:** Postgres streaming replication across the instances, plus orphan-not-delete.
+  Removing a workload's manifests from git does NOT delete its `Cluster`: the whole DB unit carries
+  `argocd.argoproj.io/sync-options: Prune=false,Delete=false` (see 08_storage.md and the pg-cluster wrapper), so
+  the database keeps running, unmanaged, and restoring the files re-adopts it with zero data movement. The
+  `cnpg-orphan-exporter` and its alerts (`05_cnpg_orphan_exporter`, `cnpg-orphan.yaml`) make that orphaned state
+  loud so it gets noticed.
+- **Off-cluster (S3):** Barman Cloud (continuous WAL + daily base) for TRUE data loss: disk/node loss,
+  corruption, or PITR. `local-path` is node-pinned, so a lost node's data is only recoverable from here.
+
+| When                                                      | Use                                             | How                                                          |
+|-----------------------------------------------------------|-------------------------------------------------|--------------------------------------------------------------|
+| Workload manifests pruned from git (DB orphaned, running) | restore the git files                           | Argo re-adopts the live `Cluster`; no data moves. See below. |
+| Data genuinely gone: disk/node loss, corruption, PITR     | `recover_cnpg_from_s3.sh` (`make restore-cnpg`) | bootstrap a NEW cluster from the object store.               |
+
+### Restore a GitOps-pruned cluster (orphan-not-delete)
+
+Removing a whole workload from git prunes its stateless resources (Deployment, Service, HTTPRoute, redis,
+rabbitmq) but ORPHANS the DB unit: the `Cluster`, its PVCs, the `<cluster>-app` Secret, the ObjectStore,
+ScheduledBackup, PodMonitor and CiliumNetworkPolicy keep running. Removing just the `Cluster` from a workload's
+chart instead leaves the app permanently OutOfSync (the vector-1 signal in `argocd-health.yaml`). Either way the
+data is untouched. To restore:
+
+1. Restore the workload's files under `argo_apps/workloads/` and push.
+2. Watch Argo re-adopt it: `kubectl -n argocd get app <workload>` returns to Synced.
+3. Confirm the DB never churned (no initdb, no pod restart): `kubectl -n <ns> get cluster <cluster>` and
+   `kubectl -n <ns> get pods -l cnpg.io/cluster=<cluster>` show the same, still-Running instances.
+4. Confirm archiving still flows: `kubectl cnpg status <cluster> -n <ns>` shows "Continuous Archiving: OK".
+
+No `bootstrap.recovery`, no PV reattach, no initdb: the volume never moved. If the orphaned state went unnoticed
+and someone then deleted the `Cluster` (or its PVs), fall back to Restore from S3 below.
+
+To permanently delete a DB on purpose, set `protectFromPrune: false` for that instance in its values and commit
+(this drops the sync-options so the next prune cascades normally), then remove the workload.
 
 ### Restore from S3
 

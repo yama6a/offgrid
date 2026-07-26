@@ -278,4 +278,8 @@ Pi 5 Talos image builds on [talos-rpi5/talos-builder](https://github.com/talos-r
 - read and shorten all md files.
 - improve then apply comment rules from claude.md to all yaml and other code files.
 - disaster recovery exercise
-- 
+- make cnpg s3 sealed secret part of cnpg lib
+- why make db and extraDbs separate in workload chart? (same with redis). why confgure it at all?
+- why is redis chart and pg chart clean teamplates but ingress and rabbitmq are werid with _prefixed unreadable templates? can we make them charts instead of libraries?
+- now that cnpg is a vendored chart, can we remove all the unnecessary stuff from the values, and make single-instance charts easier (enforce postgres and no postgis, implicit enablePDB and primaryUpdateMethod, implicit network policy, give fullnameOverride a better name, and imageTag as well, deal better with additional labels)
+  - maybe same with redis chart? 

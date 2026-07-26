@@ -3,9 +3,9 @@
 # recover_cnpg_from_s3.sh  (macOS)
 #
 # Restore a CloudNativePG database from the off-cluster S3 backups (continuous WAL + daily base, written by the
-# Barman Cloud plugin). This is the SECOND DR tier — use it when the data is genuinely gone (node/disk loss,
-# corruption, a bad migration you want to rewind, or a full cluster rebuild). If the local PV still exists and
-# only the Cluster CR was deleted, use recover_cnpg_from_pv.sh instead (faster, no S3 transfer). See docs/13_backups.md.
+# Barman Cloud plugin). Use it when the data is genuinely gone: node/disk loss, corruption, a bad migration you
+# want to rewind, or a full cluster rebuild. A CNPG Cluster merely removed from git is NOT deleted
+# (orphan-not-delete): just restore its files and Argo re-adopts the running cluster. See docs/13_backups.md.
 #
 # Non-destructive by design: it bootstraps a NEW, single-instance Cluster in the source namespace from the
 # EXISTING ObjectStore (read-only pull via externalClusters), leaving the source backups and any live cluster

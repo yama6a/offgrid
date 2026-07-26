@@ -147,10 +147,11 @@ Config worth calling out (`values.yaml`):
   quorum-log volumes co-tenant this 50 GiB slice with Postgres (tiny, accepted; see
   [11_messaging.md](11_messaging.md)).
 - `storageClasses`: two classes on the one provisioner, both `defaultClass: false` (there is no cluster-default
-  class; consumers opt in by name) and `volumeBindingMode: WaitForFirstConsumer`, differing only in reclaim
-  policy — `local-path` (`Retain`, for CNPG: Postgres data is the source of truth) and `local-path-ephemeral`
-  (`Delete`, for RabbitMQ: quorum queues replicate at the app layer, so the volume is disposable and a deleted
-  PVC auto-cleans its dir).
+  class; consumers opt in by name), both `volumeBindingMode: WaitForFirstConsumer`, and both now
+  `reclaimPolicy: Delete`: `local-path` (CNPG) and `local-path-ephemeral` (RabbitMQ). CNPG no longer needs
+  Retain: its data is protected from a GitOps prune by orphan-not-delete (see [13_backups.md](13_backups.md)),
+  and Delete auto-cleans a per-volume dir on a legitimate PVC delete (scale-down, intentional cluster delete)
+  instead of leaking it.
 - `helperImage` pinned (see `values.yaml`) for reproducibility.
 
 **Privileged PSA required** (like Longhorn): the provisioner runs unprivileged, but the short-lived helper pods
@@ -170,9 +171,9 @@ kubectl -n local-path-storage get pods                                 # provisi
 kubectl get sc local-path -o jsonpath='{.volumeBindingMode}'; echo     # == WaitForFirstConsumer
 ```
 
-**Caveat.** `reclaimPolicy: Retain` leaves host dirs behind: local-path only runs its teardown (`rm -rf
-$VOL_DIR`) on `Delete`, so per-volume dirs under `/var/mnt/localpath` persist after the PVC is gone — clean them up
-manually to reclaim space.
+**Caveat.** Both classes are `reclaimPolicy: Delete`, so local-path runs its teardown (`rm -rf $VOL_DIR`) when a
+PVC is deleted and frees the dir automatically. A GitOps prune does NOT delete a CNPG PVC (orphan-not-delete
+keeps the `Cluster`, so its PVCs stay bound), so the data is not at risk from a prune.
 
 ## CloudNativePG
 
@@ -234,12 +235,13 @@ workload only overrides the ⭐ **set-per-workload** ones (in `sample_workload/v
   auto-generates the owner's credentials into the `<name>-app` Secret (e.g. `sample-workload-db-app`, where the
   name is the instance's REQUIRED `cluster.fullnameOverride`) — no sealed-secret needed.
 
-**Reclaim & durability.** PVCs are `reclaimPolicy: Retain`, so a `prune` is data-safe (and deleting the app
-leaks the `/var/mnt/localpath` dirs by design — clean up manually). Durability has two tiers: in-cluster,
-Postgres replication across the 2 instances plus `Retain` (a node loss re-streams a full base backup from the
-peer; a deleted Cluster CR is reattached to its retained PV by `recover_cnpg_from_pv.sh`); and off-cluster,
-optional **S3 backups** (continuous WAL archiving + daily base backups via the `cnpg/plugin-barman-cloud`
-plugin) for real PITR and total-loss recovery. Backups are OFF by default (`backups.enabled: false`) and turned
+**Reclaim & durability.** The `local-path` class is `reclaimPolicy: Delete`: data safety no longer rests on
+Retain, because the DB unit is protected from a GitOps prune by orphan-not-delete (`Prune=false,Delete=false` on
+the Cluster + its ObjectStore/ScheduledBackup/PodMonitor/NetworkPolicy + the S3-creds SealedSecret, see the
+pg-cluster wrapper). Removing a workload from git leaves its `Cluster` + PVCs running, and restoring the files
+re-adopts them with no data movement. Durability has two tiers: in-cluster, Postgres replication across the 2
+instances plus orphan-not-delete; and off-cluster, optional **S3 backups** (continuous WAL archiving + daily
+base backups via the `cnpg/plugin-barman-cloud` plugin) for real PITR and total-loss recovery. Backups are OFF by default (`backups.enabled: false`) and turned
 on from `.env` by `14_cnpg_backup.sh`. See **[13_backups.md](13_backups.md)** for the full design and the two
 recovery paths.
 
