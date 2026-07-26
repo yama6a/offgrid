@@ -20,10 +20,10 @@ dependencies:
     alias: maindb
     version: "*"
     repository: "file://../../../../lib/helm/pg-cluster"
-#  - name: pg-cluster
-#    alias: analyticsdb
-#    version: "*"
-#    repository: "file://../../../../lib/helm/pg-cluster"
+  - name: pg-cluster
+    alias: analyticsdb
+    version: "*"
+    repository: "file://../../../../lib/helm/pg-cluster"
   # Two standalone Redis instances, each an ALIASED instance of the shared redis-instance wrapper (same
   # aliasing rule as pg-cluster above: N instances == N aliases, each a values key with its own name).
   # `redis-cache` holds the audit-log demo (the manager dials it); `redis-sessions` is provisioned + monitored
