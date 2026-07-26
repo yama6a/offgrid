@@ -25,7 +25,8 @@ spec:
     matchLabels:
       app: {{ $name }}
   ingress:
-    # (a) Redis clients — the app(s) allowed to open connections on 6379.
+    # (a) Redis clients: the app(s) allowed to open connections on 6379. Same list drives the client-side egress
+    # CNP (client-egress.yaml), so a consuming workload never re-lists its Redis instances in its own netpol.
     {{- range .Values.allowedClients }}
     - fromEndpoints:
         - matchLabels:

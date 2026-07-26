@@ -15,6 +15,14 @@ wouldn't catch them. Runs in this chart's scope, so it sees the consumer's overr
 {{- if not .Values.allowedClients }}
 {{- fail "redis-instance: allowedClients is required (who may reach Redis on 6379); the policy is always enforced and is the only access control, so an empty list would wall off the instance" }}
 {{- end }}
+{{- /* allowedClients drives the client-egress CNP too (client-egress.yaml), a namespaced CNP that can only
+      select same-ns clients. The instance always renders into the workload's namespace, so a cross-ns client
+      would get ingress but no egress. Reject it rather than half-wire the edge. */ -}}
+{{- range .Values.allowedClients }}
+{{- if and .namespace (ne .namespace $.Release.Namespace) }}
+{{- fail (printf "redis-instance: allowedClients namespace %q must equal the release namespace %q (client-egress is same-ns only; a cross-ns client needs the clusterwide-CNP variant)" .namespace $.Release.Namespace) }}
+{{- end }}
+{{- end }}
 {{- if not (kindIs "bool" .Values.persistence) }}
 {{- fail "redis-instance: persistence is required and must be explicitly true (durable — Retain + AOF) or false (ephemeral cache — Delete + RDB-only); there is no default" }}
 {{- end }}

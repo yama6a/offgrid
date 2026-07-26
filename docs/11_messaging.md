@@ -1,6 +1,6 @@
 # 11: messaging, one shared RabbitMQ broker + a reusable topology chart
 
-The cluster's message bus: a single RabbitMQ broker every workload shares, plus a reusable Helm library that
+The cluster's message bus: a single RabbitMQ broker every workload shares, plus a reusable Helm chart that
 lets a workload declare its own messaging topology (exchanges/queues/users) with proper isolation from other
 workloads. Like [07_ingress.md](07_ingress.md), this one doc covers several ArgoCD apps at different waves plus
 a shared `lib/helm/` chart.
@@ -15,16 +15,16 @@ Two pieces (the operators + broker are one platform app; the topology is per-wor
   one shared `Vhost` (`apps`) + the broker's `CiliumNetworkPolicy`. There is exactly ONE broker for the whole
   cluster (unlike Postgres, which is per-workload), so it lives in platform. (See "One app: operator + broker"
   below for why operators and their CRs safely share one wave.)
-- **the reusable chart** — `lib/helm/rabbitmq-topology/` (`type: library`, like `ingress`). A workload
-  consumes it via a `file://` dependency + a one-line `{{ include "rabbitmq-topology.render" . }}` template and
-  declares its topology in values. Demonstrated by the sample-user-* workloads (see [10_sample_workload.md](10_sample_workload.md)).
+- **the reusable chart**: `lib/helm/rabbitmq-topology/` (`type: application`, like `pg-cluster`/`redis-instance`). A workload
+  consumes it via a `file://` dependency and declares its topology in a `rabbitmq-topology:` values block (no
+  template of its own). Demonstrated by the sample-user-* workloads (see [10_sample_workload.md](10_sample_workload.md)).
 
 ## The two patterns, and who owns what
 
 RabbitMQ separation comes down to *who declares the exchange and the queue*, and *what each user is allowed to
-do*. The library encodes both patterns as intent-named lists so ownership lands on the correct side:
+do*. The chart encodes both patterns as intent-named lists so ownership lands on the correct side:
 
-| Pattern | Shape | Exchange owned by | Queue owned by | Library keys |
+| Pattern | Shape | Exchange owned by | Queue owned by | Chart keys |
 |---|---|---|---|---|
 | **Command topic** | N publishers → 1 consumer | the **consumer** | the **consumer** | consumer: `consumeCommands`; publishers: `sendCommands` |
 | **Event topic** | 1 publisher → N consumers | the **publisher** | each **consumer** (its own) | publisher: `publishEvents`; consumers: `subscribeEvents` |
@@ -38,7 +38,7 @@ do*. The library encodes both patterns as intent-named lists so ownership lands 
   it — so one consumer can never read another's queue.
 
 Each workload gets exactly **one** user (reusable across all its publish/consume needs). RabbitMQ has a single
-`configure`/`write`/`read` permission triple per user+vhost, so the library aggregates: `write` = every
+`configure`/`write`/`read` permission triple per user+vhost, so the chart aggregates: `write` = every
 exchange the workload publishes to (`publishEvents` + `sendCommands`), `read` = every queue it consumes (its
 command queues + its per-subscription event queues), `configure` = `""` (the operator's admin user declares all
 topology, so an app user never needs configure). Regex metacharacters in the auto queue names are escaped, so a
@@ -46,9 +46,9 @@ name matches only itself.
 
 ## The reusable chart (`lib/helm/rabbitmq-topology`)
 
-A `type: library` chart — no upstream dependency, no `Chart.lock`, no vendored `charts/` (the exact shape of
-`ingress`; the `pg-cluster` `type: application` apparatus isn't needed because there's no upstream chart to
-wrap, only CRs to render). A consumer wires it exactly like `ingress`:
+A `type: application` chart that renders the messaging CRs directly (like `pg-cluster`/`redis-instance`): no
+upstream dependency, no `Chart.lock`, no vendored `charts/`. A consumer declares the `file://` dependency and
+supplies a `rabbitmq-topology:` values block; it needs no template of its own (the chart renders itself):
 
 ```yaml
 # Chart.yaml
@@ -56,10 +56,6 @@ dependencies:
   - name: rabbitmq-topology
     version: "*"
     repository: "file://../../../../lib/helm/rabbitmq-topology"
-```
-```yaml
-# templates/messaging.yaml — the whole thing
-{{ include "rabbitmq-topology.render" . }}
 ```
 The sample app demonstrates all three exchange types across three real workloads — a user-lifecycle loop
 (`sample-user-signup` → `sample-user-manager` → `sample-user-signup`/`sample-audit-logger`). The manager (the
@@ -98,7 +94,7 @@ This is the teaching payoff: **direct** (`create-user-command`) point-to-point; 
 signup binds only `users.created`, so `users.deleted` — which the manager still publishes — reaches no queue
 and is dropped by the broker; **fanout** (`user-audit-logger`) broadcast to two independent subscribers
 (signup + audit-logger), each with its OWN `<user>.user-audit-logger` queue, so neither can read the other's.
-The broker (`rabbitmq`/`rabbitmq`) and `vhost` (`apps`) are platform invariants hardcoded in the library — same
+The broker (`rabbitmq`/`rabbitmq`) and `vhost` (`apps`) are platform invariants hardcoded in the chart, same
 for every workload, not configurable; setting `cluster`/`vhost` is rejected at render.
 
 ### Why there is no permission escape hatch (apps never create topology)
@@ -297,7 +293,7 @@ Checks (`export KUBECONFIG=secrets/kubeconfig`):
   `configure`/`write`/`read` as `""` (no access), and the topology operator drops empty strings from the stored
   object. So a manifest that declares `configure: ""` (the usual case — an app user needs no configure) leaves
   ArgoCD owning a field the live object doesn't have, holding the `Permission` OutOfSync forever (only
-  `configure` in practice, since `write`/`read` are non-empty). The `rabbitmq-topology` library therefore emits
+  `configure` in practice, since `write`/`read` are non-empty). The `rabbitmq-topology` chart therefore emits
   ONLY the non-empty permission fields (`_all.tpl` builds the map, `_permission.tpl` `toYaml`s it), so the
   desired manifest matches what the operator stores. Don't reintroduce empty fields, and don't paper over it
   with an ArgoCD `ignoreDifferences` — matching the stored shape is the correct fix.
@@ -306,7 +302,7 @@ Checks (`export KUBECONFIG=secrets/kubeconfig`):
   `Permission` finalizer can't complete and the object hangs in `Terminating`. Today all a workload's topology
   syncs in one wave, so this only bites on an out-of-order manual delete — clear it with
   `kubectl patch permission <name> -p '{"metadata":{"finalizers":[]}}' --type=merge`. If it becomes a routine
-  problem, add sync-waves in the library (User at a lower wave than Permission, so prune — reverse-wave —
+  problem, add sync-waves in the chart (User at a lower wave than Permission, so prune — reverse-wave —
   removes Permission first); see rabbitmq/messaging-topology-operator#324.
 - **`prune` deletes the RabbitmqCluster CR *and* the data — by design.** The broker PVCs are on the
   `local-path-ephemeral` (`Delete`) class, so a prune tears them down; there is no volume to recover. That's

@@ -1,0 +1,91 @@
+{{- /* Every queue this workload CONSUMES, with its binding and (unless deadLetter=false) its dead-letter
+       companions. Two sources, one shape: a consumeCommands queue is named after the command; a subscribeEvents
+       queue is `<user>.<exchange>` (private per subscriber). Each gets `<queue>.dlx` (fanout) + `<queue>.dlq`
+       (quorum) + the binding between them; the source queue points its x-dead-letter-exchange at `<queue>.dlx`,
+       so after deliveryLimit failed redeliveries a poison message lands in the DLQ instead of being dropped.
+       Queue arguments are IMMUTABLE: toggling deadLetter on an existing queue needs it recreated. */ -}}
+{{- $ns := .Release.Namespace -}}
+{{- $user := include "rabbitmq-topology.user" . -}}
+{{- $deadLetter := true -}}{{- if hasKey .Values "deadLetter" }}{{- $deadLetter = .Values.deadLetter -}}{{- end -}}
+{{- $deliveryLimit := .Values.deliveryLimit | default 5 -}}
+{{- $queues := list -}}
+{{- range $c := (.Values.consumeCommands | default list) -}}
+{{- $queues = append $queues (dict "name" $c.name "source" $c.name "routingKey" ($c.routingKey | default $c.name)) -}}
+{{- end -}}
+{{- range $s := (.Values.subscribeEvents | default list) -}}
+{{- $queues = append $queues (dict "name" (printf "%s.%s" $user $s.exchange) "source" $s.exchange "routingKey" ($s.routingKey | default "#")) -}}
+{{- end -}}
+{{- range $q := $queues }}
+---
+apiVersion: rabbitmq.com/v1beta1
+kind: Queue
+metadata:
+  name: {{ $q.name }}
+  namespace: {{ $ns }}
+spec:
+  name: {{ $q.name }}
+  type: quorum           # durable, Raft-replicated; the modern default (classic mirrored queues are gone in 4.x)
+  durable: true
+  autoDelete: false
+  vhost: apps
+  {{- if $deadLetter }}
+  arguments:
+    x-dead-letter-exchange: {{ printf "%s.dlx" $q.name | quote }}
+    x-delivery-limit: {{ $deliveryLimit }}
+  {{- end }}
+  {{- include "rabbitmq-topology.clusterRef" $ | nindent 2 }}
+---
+apiVersion: rabbitmq.com/v1beta1
+kind: Binding
+metadata:
+  name: {{ $q.name }}
+  namespace: {{ $ns }}
+spec:
+  source: {{ $q.source }}            # the exchange
+  destination: {{ $q.name }}         # the queue
+  destinationType: queue
+  routingKey: {{ $q.routingKey | quote }}
+  vhost: apps
+  {{- include "rabbitmq-topology.clusterRef" $ | nindent 2 }}
+{{- if $deadLetter }}
+---
+apiVersion: rabbitmq.com/v1beta1
+kind: Exchange
+metadata:
+  name: {{ printf "%s.dlx" $q.name }}
+  namespace: {{ $ns }}
+spec:
+  name: {{ printf "%s.dlx" $q.name }}
+  type: fanout
+  durable: true
+  autoDelete: false
+  vhost: apps
+  {{- include "rabbitmq-topology.clusterRef" $ | nindent 2 }}
+---
+apiVersion: rabbitmq.com/v1beta1
+kind: Queue
+metadata:
+  name: {{ printf "%s.dlq" $q.name }}
+  namespace: {{ $ns }}
+spec:
+  name: {{ printf "%s.dlq" $q.name }}
+  type: quorum           # holding queue, no consumer; alert on its depth (rabbitmq-dlq-not-empty), drain by hand
+  durable: true
+  autoDelete: false
+  vhost: apps
+  {{- include "rabbitmq-topology.clusterRef" $ | nindent 2 }}
+---
+apiVersion: rabbitmq.com/v1beta1
+kind: Binding
+metadata:
+  name: {{ printf "%s.dlq" $q.name }}
+  namespace: {{ $ns }}
+spec:
+  source: {{ printf "%s.dlx" $q.name }}
+  destination: {{ printf "%s.dlq" $q.name }}
+  destinationType: queue
+  routingKey: ""
+  vhost: apps
+  {{- include "rabbitmq-topology.clusterRef" $ | nindent 2 }}
+{{- end }}
+{{- end }}

@@ -1,16 +1,17 @@
 apiVersion: v2
 name: ingress
 description: >-
-  Shared LIBRARY chart (type: library, renders nothing on its own) that emits the ingress "edge" for a
-  list of ingresses: per host a :443 Gateway listener + an HTTPRoute + a ReferenceGrant, and ONE multi-SAN
-  cert-manager Certificate per ingress (covering all its hosts, into one shared Secret every listener
-  references). Consumed via a `file://` dependency by the platform ingress
-  (argo_apps/platform/charts/06_platform_ingress), each workload chart, and the google-sso chart (for its
-  callback hosts), so the edge lives in one place. It renders NO SSO — Google-SSO is applied centrally per
-  domain by 04_google_sso (one SecurityPolicy per domain with per-host email allowlists). See 07_ingress.md.
-# A library chart pins NO upstream dependency and renders no templates of its own, so there is no
-# Chart.lock here (the CONSUMERS that depend on this one carry the lock).
-type: library
+  Shared APPLICATION chart that renders the ingress "edge" for a consumer's `ingresses:` list: per host a
+  :443 Gateway listener + an HTTPRoute + a ReferenceGrant, and ONE multi-SAN cert-manager Certificate per
+  ingress (covering all its hosts, into one shared Secret every listener references). Consumed via a `file://`
+  dependency by the platform ingress (argo_apps/platform/charts/06_platform_ingress) and each workload chart,
+  which just supply values (no template). The google-sso chart depends on it too but for its callback hosts
+  calls the `ingress.renderIngress` named template directly from its own templates (named templates are global
+  across the chart tree). It renders NO SSO: Google-SSO is applied centrally per domain by 04_google_sso (one
+  SecurityPolicy per domain with per-host email allowlists). See 07_ingress.md.
+# type: application (renders first-party Gateway API + cert-manager resources), like pg-cluster/redis-instance.
+# Pins NO upstream and has no dependencies, so there is no Chart.lock here (the CONSUMERS carry the lock).
+type: application
 # Renders per-domain Cloudflare DNS-01 wildcard support (cloudflareZones): CF domains reference the shared
 # wildcard-<domain>-tls Secret + skip their per-ingress Certificate; non-CF domains unchanged (HTTP-01).
-version: 0.2.0
+version: 0.3.0

@@ -1,13 +1,14 @@
 # rabbitmq-topology
 
-A Helm **library chart** (`type: library`) that renders a workload's RabbitMQ topology — its `User`, the
-`Exchange`/`Queue`/`Binding` CRs it owns, and one aggregated `Permission` — against the shared broker, from a
-declarative `rabbitmq-topology:` values block. See [`docs/11_messaging.md`](../../../docs/11_messaging.md) for
-the ownership model and the full values schema.
+A Helm **application chart** (`type: application`) that renders a workload's RabbitMQ topology directly: its
+`User`, the `Exchange`/`Queue`/`Binding` CRs it owns (plus a `<queue>.dlx`/`<queue>.dlq` dead-letter pair per
+consumer queue), and one aggregated `Permission`, against the shared broker, from a declarative
+`rabbitmq-topology:` values block. See [`docs/11_messaging.md`](../../../docs/11_messaging.md) for the
+ownership model and the full values schema.
 
 ## Use it
 
-Add the dependency and a one-line template in the consumer chart (an `application` chart):
+Add the dependency to the consumer chart. No template of your own: this chart renders itself.
 
 ```yaml
 # Chart.yaml
@@ -16,40 +17,32 @@ dependencies:
     version: "*"
     repository: "file://../../../../lib/helm/rabbitmq-topology"
 ```
-```yaml
-# templates/messaging.yaml — the whole file
-{{ include "rabbitmq-topology.render" . }}
-```
 
 Then declare intent in `values.yaml` under `rabbitmq-topology:` (`publishEvents` / `subscribeEvents` /
-`consumeCommands` / `sendCommands`).
+`consumeCommands` / `sendCommands`). Run `helm dependency update` and commit the consumer's `Chart.lock`.
 
-## Why it looks the way it does
+## Layout
 
-The `_*.tpl` partials + single `include` entry point are not stylistic — two Helm facts force this shape:
+Plain manifest files (like `pg-cluster`/`redis-instance`), one per resource kind:
 
-1. **It's a library chart, so it renders nothing itself.** Helm does not turn a library chart's
-   `templates/*.yaml` into manifests; a library chart only contributes *named templates* that a consumer pulls
-   in via `include`. So the output happens in the **consumer's** `templates/messaging.yaml` (an application
-   chart, which does render), and everything here must be a `{{ define }}` block.
-2. **The `_` prefix marks partials.** Any `templates/` file whose name starts with `_` is never rendered to its
-   own manifest — it only holds named-template definitions. Hence `_user.tpl`, `_exchange.tpl`, `_queue.tpl`,
-   `_binding.tpl`, `_permission.tpl` (one per resource) and `_all.tpl` (the orchestrator). `.tpl` is convention.
+- `user.yaml`: the one `User` (operator-generated credentials Secret).
+- `exchanges.yaml`: the exchanges this workload owns (`publishEvents` + the direct `consumeCommands` exchanges).
+- `queues.yaml`: each consumed queue + its binding, and its dead-letter companions when `deadLetter` is on.
+- `permission.yaml`: the one aggregated `Permission`.
+- `validate.yaml`: fail-fast guards (renders nothing).
+- `_helpers.tpl`: the two small shared snippets (`rabbitmq-topology.user`, `rabbitmq-topology.clusterRef`).
 
-## Why `_all.tpl` is a composition root (not independent files)
+## The aggregated Permission
 
-RabbitMQ allows exactly **one** `configure`/`write`/`read` permission triple per user+vhost, but the inputs are
-scattered across four intent lists. So the single `Permission` must be computed by scanning *all* of them at
-once — that aggregation can't live in independent per-resource files. `rabbitmq-topology.render` (`_all.tpl`)
-is the one place that sees everything: it `range`s over each list, calls the per-resource partials to emit the
-CRs, accumulates the write/read sets as it goes (escaping regex metacharacters, omitting empty fields to avoid
-perpetual OutOfSync), and emits one `Permission` at the end.
-
-Named templates don't inherit the top-level `.` scope, so `_all.tpl` bundles `user`/`vhost`/`cluster`/`ns` into
-a `$ctx` dict and threads it into each partial — that's the plumbing you see at the top.
+RabbitMQ allows exactly one `configure`/`write`/`read` triple per user+vhost, and the inputs are scattered
+across the four intent lists. `permission.yaml` recomputes both sets from the same values (`write` =
+`publishEvents` + `sendCommands`, `read` = `consumeCommands` queues + the `<user>.<exchange>` subscribe
+queues), escapes regex metacharacters, and emits only the non-empty fields (an empty `write`/`read` would sit
+perpetually OutOfSync, since the operator drops empty strings). It needs no shared state with the other files:
+each manifest ranges the values it cares about.
 
 ## Related
 
-- [`ingress`](../ingress) — the same library-chart idiom (`include "ingress.render"`).
-- [`pg-cluster`](../pg-cluster) — `type: application` instead, because it *wraps* an upstream chart (real
-  rendered templates + committed `Chart.lock`), rather than composing first-party CRs.
+- [`pg-cluster`](../pg-cluster) / [`redis-instance`](../redis-instance) / [`ingress`](../ingress): the other
+  `type: application` shared charts that render first-party CRs from values with no consumer template. Pin no
+  upstream, ship no `Chart.lock`.

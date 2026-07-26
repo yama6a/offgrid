@@ -55,17 +55,17 @@ pattern the platform-ingress app uses for the argocd + monitoring UIs.
 
 ## The PG_PASSWORD wiring
 
-Each `Cluster` is named by the wrapper's REQUIRED `cluster.fullnameOverride` — an explicit name, no
-`.Release.Name` derivation. The app's primary is `sample-workload-db` (its `app.db` value), so the CNPG
+Each `Cluster` is named by the wrapper's REQUIRED `cluster.fullnameOverride`: an explicit name, no
+`.Release.Name` derivation. The really-dialed DB is `sample-workload-db` (`app.dbs[0]`), so the CNPG
 operator generates the `app`-role credentials into the Secret `sample-workload-db-app`. The app Deployment
-injects only the password, referencing that same explicit name (`app.db`):
+injects only the password, referencing that same explicit name (`app.dbs[0]`):
 
 ```yaml
 env:
   - name: PG_PASSWORD
     valueFrom:
       secretKeyRef:
-        name: sample-workload-db-app   # {{ .Values.app.db }}-app — the explicit instance name, not the release
+        name: sample-workload-db-app   # {{ index .Values.app.dbs 0 }}-app, the explicit instance name, not the release
         key: password
 ```
 
@@ -113,9 +113,9 @@ derivation: the app's `PG_HOST`/secret and the network policies all reference th
 drifts and the DB is decoupled from the release name. To run **more than one** Postgres in a workload you
 alias the wrapper per DB in `Chart.yaml` — Helm renders a dependency once, so N databases means N aliased
 `pg-cluster` entries (there's no values-list alternative). This sample declares two: `maindb`
-(`sample-workload-db`, 2-instance HA, the app's primary — `app.db`) and `analyticsdb`
-(`sample-workload-analytics`, single-instance, a second store the app is *permitted* to reach via `app.extraDbs`
-but the sample binary doesn't dial). Each alias carries its own name, sizing, and DB-lockdown allowlist. (The
+(`sample-workload-db`, 2-instance HA, the really-dialed DB, `app.dbs[0]`) and `analyticsdb`
+(`sample-workload-analytics`, single-instance, a second store also listed in `app.dbs` and *permitted* to reach
+via its own `pg-cluster` allowedClients, but the sample binary doesn't dial it). Each alias carries its own name, sizing, and DB-lockdown allowlist. (The
 file:// deps use `version: "*"` — for a local-path dependency the version is a required-but-inert constraint,
 not a selector, so an exact pin would only force a bump here whenever the local chart's version changes.)
 
@@ -136,15 +136,18 @@ replica). The full reasoning lives in [08_storage.md](08_storage.md).
 
 ### Network policy: the cluster's first CiliumNetworkPolicy lockdown
 This workload is where east-west lockdown is exercised (the cluster is otherwise default-allow — see
-[04_networking.md](04_networking.md)). Three `CiliumNetworkPolicy` objects (one app + one per DB), all in the
+[04_networking.md](04_networking.md)). The `CiliumNetworkPolicy` objects (the app lockdown, plus per store an
+ingress rule and a companion client-egress rule), all in the
 `sample-workload` namespace, each default-deny both directions (a CNP that lists ingress *and* egress makes its
 endpoints deny-by-default in each), then allow only what's needed:
 
 - **App** (`sample-workload-app`, in this chart's `templates/networkpolicy.yaml`): ingress ONLY from the
-  merged Envoy data-plane pod (`envoy-gateway-system`) on 8080; egress ONLY to CoreDNS (53) and its
-  Postgres instances on 5432 — one rule per DB it may reach (`app.db` + `app.extraDbs`). No monitoring rule —
-  the app has no metrics port and nothing scrapes it (add one here if that changes). Not toggleable — there's
-  no situation where we'd want the app reachable from arbitrary sources.
+  merged Envoy data-plane pod (`envoy-gateway-system`) on 8080; egress ONLY to CoreDNS (53) and the shared
+  RabbitMQ broker (5672). Postgres + Redis egress is NOT listed here: each store's own chart renders a
+  client-egress CNP from its `allowedClients`, so `allowedClients` is the single source of truth for the
+  app-to-store edge (both directions) and this policy names no store. No monitoring rule: the app has no
+  metrics port and nothing scrapes it. Not toggleable: there's no situation where we'd want the app reachable
+  from arbitrary sources.
 - **DB** (one per instance — `sample-workload-db`, `sample-workload-analytics`): lives in the shared
   **`pg-cluster`** wrapper, not here — DB lockdown is reusable, so every Postgres-backed instance inherits it
   (`lib/helm/pg-cluster/templates/networkpolicy.yaml`); the CNP is named after the instance so aliased DBs
@@ -157,9 +160,13 @@ endpoints deny-by-default in each), then allow only what's needed:
   peer instance (5432), and `toEntities: [kube-apiserver]` for the instance-manager. Using a CNP (not a vanilla
   `NetworkPolicy`) is deliberate: the `kube-apiserver` entity avoids hardcoding the API-server IP.
 
-`allowedClients` is validated (render fails on an empty list — you'd wall off the database). The fixed platform
-selectors (Envoy, CoreDNS, the CNPG operator, vmagent) are hardcoded in the templates — they're cluster
-constants, not per-workload knobs; values carry only the one real decision (the DB's `allowedClients`).
+`allowedClients` is validated (render fails on an empty list, you'd wall off the database). It is now the single
+source of truth for the app-to-DB edge: besides the 5432 ingress on the DB pods, it renders a companion
+client-egress CNP (`lib/helm/pg-cluster/templates/client-egress.yaml`) opening the app pod's egress to this DB,
+so the workload never re-lists its DBs. Same-ns only (a namespaced CNP can't select a cross-ns client, and
+validate.yaml rejects one). The fixed platform selectors (Envoy, CoreDNS, the CNPG operator, vmagent) are
+hardcoded in the templates: they're cluster constants, not per-workload knobs; values carry only the one real
+decision (the DB's `allowedClients`).
 **Rollout is audit-first**: put the app + DB endpoints in Cilium
 `PolicyAuditMode` (drops logged, not enforced), watch `hubble observe --verdict DROPPED,AUDIT` while exercising
 every path, and only disable audit once clean. If a platform component was relabelled and a legitimate flow

@@ -30,11 +30,13 @@
 {{- end }}
 {{- end -}}
 
-{{/* ingress.render — a consumer's entry point (`{{ include "ingress.render" . }}`): validate +
-     render each ingress in the consumer's `ingresses[]`. ctx: `.`. */}}
+{{/* ingress.render: the app chart's render entry point (called by templates/edge.yaml). Validate + render
+     each ingress in the consumer's `ingresses[]`. Runs in this chart's SUBCHART scope, so a consumer's
+     values-under-the-dependency-name (`ingress:`) IS `.Values` here: reads `.Values.ingresses` /
+     `.Values.cloudflareZones` (no `.ingress.` prefix). ctx: `.`. */}}
 {{- define "ingress.render" -}}
-{{- $zones := .Values.ingress.cloudflareZones | default (list) -}}
-{{- range $ing := .Values.ingress.ingresses }}
+{{- $zones := .Values.cloudflareZones | default (list) -}}
+{{- range $ing := .Values.ingresses }}
 {{- /* Guard: every ingress has one domain; hosts are subdomains under it. */}}
 {{- if not $ing.domain }}
 {{- fail (printf "ingress: ingress %q has no domain (every ingress must set exactly one registrable domain; hosts give a subdomain under it)" $ing.name) }}

@@ -1,6 +1,6 @@
 # Shared defaults every rabbitmq-topology consumer inherits (merged under the `rabbitmq-topology` key, the
 # repo's usual "config under the dependency name" convention). A workload overrides these under its own
-# `rabbitmq-topology:` block. This library renders only topology CRs (User/Exchange/Queue/Binding/Permission)
+# `rabbitmq-topology:` block. This chart renders only topology CRs (User/Exchange/Queue/Binding/Permission)
 # against the shared broker; it never touches the workload's Deployment (the pod wires the generated
 # credentials Secret itself, like the PG_PASSWORD block). Full schema + the ownership model: see 11_messaging.md.
 

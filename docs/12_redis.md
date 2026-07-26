@@ -53,9 +53,9 @@ The CRDs ship in the chart's `crds/` dir; ArgoCD renders Helm with `--include-cr
 ## The reusable chart (`lib/helm/redis-instance`)
 
 A **first-party `type: application` chart** — it templates the `Redis` CR itself (no upstream dependency, so no
-`Chart.lock`, no vendored `charts/*.tgz`); the CRD comes from the operator. This is a third `lib/helm/` variant
-distinct from both `ingress` (`type: library`) and `pg-cluster` (`type: application` **with** a wrapped upstream
-chart). It renders three things per instance: the `Redis` CR, a `ServiceMonitor`, and a `CiliumNetworkPolicy`, plus a
+`Chart.lock`, no vendored `charts/*.tgz`); the CRD comes from the operator. Every `lib/helm/` shared chart now
+follows this shape (`pg-cluster`, `rabbitmq-topology`, `ingress`): `type: application`, first-party CRs
+rendered from values, no wrapped upstream. It renders three things per instance: the `Redis` CR, a `ServiceMonitor`, and a `CiliumNetworkPolicy`, plus a
 `validate.yaml` that hard-fails on missing required knobs (the `pg-cluster` pattern).
 
 A workload consumes it exactly like `pg-cluster`: an **aliased `file://` dependency, once per instance** — "one or
@@ -221,7 +221,7 @@ kubectl -n <ns> exec <old-pod> -- sh -c '
 ```
 
 (`--scan` avoids blocking like `KEYS *`; `COPY` leaves the source intact for rollback; drop it once verified.
-For a large dataset prefer a streaming tool such as `redis-shake`.) Then repoint the app (`app.redis` →
+For a large dataset prefer a streaming tool such as `redis-shake`.) Then repoint the app (`app.redises[0]` to
 the new instance's `name`, so `REDIS_ADDR` follows), sync, confirm, and remove the old alias. Because our data is
 regenerable audit logs with a 1h TTL, "just start fresh on a new instance" is often simpler than migrating at all.
 
@@ -283,9 +283,11 @@ verify arm64 (quay v2 manifest-list API) before bumping. The redis + operator im
 `sample_user_manager` provisions two instances to showcase both multiplicity AND both persistence modes:
 **`redis-cache`** (dialed; **`persistence: false`** — for the sake of the demo the audit-log cache is treated as
 ephemeral, since its data is 1h-TTL and regenerable) and **`redis-sessions`** (**`persistence: true`**, durable;
-provisioned + monitored + egress-allowed, but never dialed — the Redis equivalent of the `analyticsdb`
-extra-Postgres demo). The app wiring mirrors Postgres: `app.redis` is the primary (fed as `REDIS_ADDR`),
-`app.extraRedis` only widens the app's egress NetworkPolicy.
+provisioned + monitored + reachable, but never dialed, the Redis equivalent of the `analyticsdb`
+extra-Postgres demo). The app wiring mirrors Postgres: one flat `app.redises` list, no primary/extra split.
+`redises[0]` is aliased to the bare `REDIS_ADDR` the manager actually dials; every entry also gets a cosmetic
+`REDIS_<NAME>_ADDR`. Egress isn't listed in the app netpol: each instance's `redis-instance` chart renders a
+client-egress CNP from its own `allowedClients` (the single source of truth for the app-to-Redis edge).
 
 The manager binary ([`pi5-k8s-sample-app`](https://github.com/yama6a/pi5-k8s-sample-app), `internal/audit`) already
 emitted an `AuditLog` on every user create/delete (broadcast on the `user-audit-logger` fanout). It now ALSO stores

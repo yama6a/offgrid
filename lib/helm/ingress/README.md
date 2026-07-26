@@ -1,8 +1,8 @@
 # ingress
 
-A Helm **library chart** (`type: library`) that renders a workload's ingress "edge" from a declarative
-`ingress:` values block: per host a `:443` Gateway listener + an `HTTPRoute` (+ a cross-namespace
-`ReferenceGrant`), and **one** multi-SAN cert-manager `Certificate` per ingress. It renders **no SSO** —
+A Helm **application chart** (`type: application`) that renders a consumer's ingress "edge" from a declarative
+`ingresses:` values block: per host a `:443` Gateway listener + an `HTTPRoute` (+ a cross-namespace
+`ReferenceGrant`), and **one** multi-SAN cert-manager `Certificate` per ingress. It renders **no SSO**:
 Google-SSO is applied centrally per domain by `04_google_sso`. See
 [`docs/07_ingress.md`](../../../docs/07_ingress.md) for the full model and values schema.
 
@@ -14,7 +14,7 @@ not per-consumer choices, so a consumer can't (and shouldn't) override them; the
 
 ## Use it
 
-Add the dependency and a one-line template in the consumer chart (an `application` chart):
+Add the dependency and supply values. No template needed: the chart auto-renders from `ingresses:`.
 
 ```yaml
 # Chart.yaml
@@ -24,24 +24,34 @@ dependencies:
     repository: "file://../../../../lib/helm/ingress"
 ```
 ```yaml
-# templates/ingress.yaml — the whole file
-{{ include "ingress.render" . }}
+# values.yaml (config under the dependency name)
+ingress:
+  ingresses:               # each with a `domain` and `hosts[]`
+    - name: ...
+      domain: ...
+      hosts: [...]
 ```
 
-Then declare intent in `values.yaml` under `ingress:` (`ingresses[]`, each with a `domain` and `hosts[]`).
+A chart that instead wants the edge helper inline (google-sso builds its callback hosts alongside its own
+SecurityPolicy) declares the same dependency, then calls the global named template from its OWN template:
+
+```yaml
+# templates/whatever.yaml
+{{ include "ingress.renderIngress" (dict "ingress" $ing "release" $.Release "cloudflareZones" $zones) }}
+```
 
 ## Why it looks the way it does
 
-The `_*.tpl` partials + single `include` entry point are not stylistic — two Helm facts force this shape:
+The `_*.tpl` partials + the single `templates/edge.yaml` entry point are not stylistic:
 
-1. **It's a library chart, so it renders nothing itself.** Helm does not turn a library chart's
-   `templates/*.yaml` into manifests; a library chart only contributes *named templates* that a consumer pulls
-   in via `include`. So the output happens in the **consumer's** `templates/ingress.yaml` (an application
-   chart, which does render), and everything here must be a `{{ define }}` block.
+1. **`edge.yaml` is the one rendering template.** It calls `ingress.render` over the consumer's `ingresses:`,
+   guarded so a consumer that only wants the helpers (google-sso) gets no stray render. Everything else here is
+   a `{{ define }}` block.
 2. **The `_` prefix marks partials.** Any `templates/` file whose name starts with `_` is never rendered to its
-   own manifest — it only holds named-template definitions. Hence `_gateway.tpl`, `_httproute.tpl`,
+   own manifest, it only holds named-template definitions. Hence `_gateway.tpl`, `_httproute.tpl`,
    `_referencegrant.tpl`, `_certificate.tpl` (one per resource), `_helpers.tpl`, and `_all.tpl` (the
-   orchestrator). `.tpl` is convention.
+   orchestrator). `.tpl` is convention. Named templates are global across the chart tree, so a consumer that
+   wants them inline (google-sso) can `include` them from its OWN templates.
 
 ## Why `_all.tpl` is a composition root (not independent files)
 
@@ -61,6 +71,8 @@ into a `$ctx` dict and threads it into each partial — that's the plumbing you 
 
 ## Related
 
-- [`rabbitmq-topology`](../rabbitmq-topology) — the same library-chart idiom (`include "rabbitmq-topology.render"`).
-- [`pg-cluster`](../pg-cluster) — `type: application` instead, because it *wraps* an upstream chart (real
-  rendered templates + committed `Chart.lock`), rather than composing first-party resources.
+- [`pg-cluster`](../pg-cluster) / [`redis-instance`](../redis-instance): also `type: application` shared charts
+  that render first-party CRs from values with no consumer template, the same shape this chart now uses (pin no
+  upstream, ship no `Chart.lock`).
+- [`rabbitmq-topology`](../rabbitmq-topology): the other messaging shared chart, also `type: application`,
+  rendering its topology CRs from values with no consumer template.

@@ -1,0 +1,7 @@
+{{- /* The one rendering template: auto-emit this consumer's edge from its `ingresses:` values, so a consumer
+       (workload / platform-ingress) needs NO template of its own, just a dependency + values. Guarded so a
+       consumer that only wants the named-template helpers (google-sso calls `ingress.renderIngress` itself for
+       its callback hosts) gets no stray/empty render. See 07_ingress.md. */ -}}
+{{- if .Values.ingresses }}
+{{ include "ingress.render" . }}
+{{- end }}

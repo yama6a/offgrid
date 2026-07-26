@@ -7,8 +7,8 @@ domain, wave 4), and the **platform ingress** edges (wave 6). Together they term
 route/authenticate every ingress host on one pinned LoadBalancer IP. Cilium
 ([04_networking.md](04_networking.md)) stays the CNI and LB-IPAM provider; only the gateway lives here.
 
-The repeated **edge** shape — per host a Gateway + HTTPRoute + ReferenceGrant, one multi-SAN `Certificate`
-per ingress — is rendered once by the shared `ingress` library chart (`lib/helm/ingress/`,
+The repeated **edge** shape (per host a Gateway + HTTPRoute + ReferenceGrant, one multi-SAN `Certificate`
+per ingress) is rendered once by the shared `ingress` chart (`lib/helm/ingress/`,
 see [the wrapper-chart conventions](../CLAUDE.md)); Envoy Gateway's `mergeGateways` folds every host's Gateway
 onto one Envoy + one LoadBalancer Service. So the cluster keeps a single ingress point on the pinned IP while
 each ingress is just a values list of hosts. **SSO is not part of the edge** — it's applied centrally per
@@ -177,7 +177,7 @@ Wildcards match one label only, so we mint per tier (`*.ops.<base>`, `*.app.<bas
 single `*.<base>`. cert-manager runs a DNS self-check before validation; it's pointed at public resolvers
 (`dns01RecursiveNameservers` in `02_cert_manager`) so a split-horizon home DNS can't wedge issuance, and its
 NetworkPolicy allows egress `:53`/`:443` to the world for the Cloudflare API + that check. **After changing
-the ingress library you must re-vendor its consumers** (`helm dependency update` per consumer) — `07_gateway.sh`
+the ingress chart you must re-vendor its consumers** (`helm dependency update` per consumer). `07_gateway.sh`
 prints the exact loop. Once `ntfy` rides the shared `ops` wildcard (prod), its separate-ingress workaround
 (a prod cert off the staging SAN set) is no longer needed and it can fold back into `platform`.
 
@@ -210,21 +210,23 @@ monolithic cert must keep renewing).
   EXTERNAL-IP `192.168.100.10`.
 - `kubectl get clusterissuer` -> both `letsencrypt-staging` / `letsencrypt-prod` `READY=True`.
 
-## The ingress library
+## The shared ingress chart
 
 The per-host edge used to be four hand-copied templates in every app chart. It now lives in ONE
-`type: library` chart, `lib/helm/ingress/`, which renders — for a list of `ingresses[]`, each a
-group of subdomains under one `domain` — a Gateway + HTTPRoute + ReferenceGrant per host and, for a
+`type: application` chart, `lib/helm/ingress/`, which renders (for a list of `ingresses[]`, each a
+group of subdomains under one `domain`) a Gateway + HTTPRoute + ReferenceGrant per host and, for a
 non-Cloudflare domain, ONE multi-SAN `Certificate` per ingress (covering all its hosts, into one shared
 Secret every listener references). For a Cloudflare domain (its `domain` in `cloudflareZones`) it instead
 points the listeners at the shared `wildcard-<domain>-tls` minted by `03_gateway` and emits no per-ingress
-cert (see "Cloudflare DNS-01 & wildcards"). It renders **no SSO** — Google-SSO is applied centrally per
+cert (see "Cloudflare DNS-01 & wildcards"). It renders **no SSO**: Google-SSO is applied centrally per
 domain by `04_google_sso` (below). The cluster
-wiring (gateway namespace `gateway`, gateway class `eg`, fallback issuer) is hardcoded in the library, NOT a
-per-consumer value — those are platform invariants, so a consumer's only cert knob is `ingresses[].issuer`.
-Consumers are thin: a `file://` dependency on the library, a one-line template
-(`{{ include "ingress.render" . }}`), and an `ingress:` values block. See [CLAUDE.md](../CLAUDE.md) for the
-library-chart + `file://` + committed-`Chart.lock` convention.
+wiring (gateway namespace `gateway`, gateway class `eg`, fallback issuer) is hardcoded in the chart, NOT a
+per-consumer value: those are platform invariants, so a consumer's only cert knob is `ingresses[].issuer`.
+Consumers are thin: a `file://` dependency and an `ingress:` values block, NO template of their own (the chart
+auto-renders its edge from `ingresses:`). The one exception is `04_google_sso`, which builds its callback hosts
+by calling the `ingress.renderIngress` named template inline (interleaved with its own SecurityPolicy), so it
+carries the dependency but keeps its own template. See [CLAUDE.md](../CLAUDE.md) for the `file://` +
+committed-`Chart.lock` convention.
 
 Consumers: `06_platform_ingress` (the platform UIs' edges), each workload chart, and `04_google_sso` (its
 callback hosts' edges). ReferenceGrants are emitted only for cross-namespace backends.

@@ -1,0 +1,33 @@
+{{- /* The exchanges this workload OWNS: one per publishEvents entry (its declared type) + one direct exchange
+       per consumeCommands entry. Subscribers/senders don't declare these (their owner does). */ -}}
+{{- $ns := .Release.Namespace -}}
+{{- range $e := (.Values.publishEvents | default list) }}
+---
+apiVersion: rabbitmq.com/v1beta1
+kind: Exchange
+metadata:
+  name: {{ $e.name }}
+  namespace: {{ $ns }}
+spec:
+  name: {{ $e.name }}
+  type: {{ $e.type }}
+  durable: true          # survives broker restart
+  autoDelete: false      # never auto-removed when the last binding/queue detaches
+  vhost: apps
+  {{- include "rabbitmq-topology.clusterRef" $ | nindent 2 }}
+{{- end }}
+{{- range $c := (.Values.consumeCommands | default list) }}
+---
+apiVersion: rabbitmq.com/v1beta1
+kind: Exchange
+metadata:
+  name: {{ $c.name }}
+  namespace: {{ $ns }}
+spec:
+  name: {{ $c.name }}
+  type: direct           # a command topic is point-to-point (N publishers : 1 consumer), so never configurable
+  durable: true
+  autoDelete: false
+  vhost: apps
+  {{- include "rabbitmq-topology.clusterRef" $ | nindent 2 }}
+{{- end }}

@@ -1,0 +1,35 @@
+{{- /* The ONE per-user permission on the vhost (RabbitMQ has a single configure/write/read triple per
+       user+vhost). References the User CR by name (username is operator-GENERATED, unknown at render time).
+       write = every exchange this workload publishes to (publishEvents it owns + sendCommands it targets);
+       read = every queue it consumes (its command queues + its per-subscription event queues). configure
+       stays unset: the operator's admin user declares all topology, so an app user never creates/deletes.
+       Regex metachars (`.` in the auto queue names) are escaped so a name matches only itself. Only the
+       non-empty fields are emitted: the operator drops empty strings, so emitting write:"" / read:"" would
+       leave ArgoCD owning a field the live object lacks -> permanently OutOfSync. */ -}}
+{{- $user := include "rabbitmq-topology.user" . -}}
+{{- $writeSet := list -}}
+{{- range $e := (.Values.publishEvents | default list) -}}{{- $writeSet = append $writeSet $e.name -}}{{- end -}}
+{{- range $x := (.Values.sendCommands | default list) -}}{{- $writeSet = append $writeSet $x -}}{{- end -}}
+{{- $readSet := list -}}
+{{- range $c := (.Values.consumeCommands | default list) -}}{{- $readSet = append $readSet $c.name -}}{{- end -}}
+{{- range $s := (.Values.subscribeEvents | default list) -}}{{- $readSet = append $readSet (printf "%s.%s" $user $s.exchange) -}}{{- end -}}
+{{- $writeEsc := list -}}{{- range $w := $writeSet -}}{{- $writeEsc = append $writeEsc (replace "." "\\." $w) -}}{{- end -}}
+{{- $readEsc := list -}}{{- range $r := $readSet -}}{{- $readEsc = append $readEsc (replace "." "\\." $r) -}}{{- end -}}
+{{- $write := ternary (printf "^(%s)$" (join "|" $writeEsc)) "" (gt (len $writeSet) 0) -}}
+{{- $read := ternary (printf "^(%s)$" (join "|" $readEsc)) "" (gt (len $readSet) 0) -}}
+{{- $perms := dict -}}
+{{- if $write }}{{- $perms = set $perms "write" $write -}}{{- end -}}
+{{- if $read }}{{- $perms = set $perms "read" $read -}}{{- end }}
+---
+apiVersion: rabbitmq.com/v1beta1
+kind: Permission
+metadata:
+  name: {{ $user }}
+  namespace: {{ .Release.Namespace }}
+spec:
+  vhost: apps
+  userReference:
+    name: {{ $user }}
+  permissions:
+    {{- toYaml $perms | nindent 4 }}
+  {{- include "rabbitmq-topology.clusterRef" . | nindent 2 }}

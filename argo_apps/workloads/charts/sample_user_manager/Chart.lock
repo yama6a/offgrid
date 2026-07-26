@@ -13,9 +13,9 @@ dependencies:
   version: 0.4.0
 - name: ingress
   repository: file://../../../../lib/helm/ingress
-  version: 0.2.0
+  version: 0.3.0
 - name: rabbitmq-topology
   repository: file://../../../../lib/helm/rabbitmq-topology
-  version: 0.1.0
-digest: sha256:987353284659a66b8c4460a4f34f0d0ac58104a3cec297c04353a01a15140736
-generated: "2026-07-26T22:36:35.72727+02:00"
+  version: 0.2.0
+digest: sha256:8bfdf8fef53bb92645b9912c6b55a47992371c4b089890bce20577fbdb5ba1d5
+generated: "2026-07-26T23:40:07.963002+02:00"

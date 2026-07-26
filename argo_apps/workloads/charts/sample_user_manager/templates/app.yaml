@@ -1,6 +1,6 @@
 # sample-user-manager: a single Deployment + Service in this chart's release namespace, alongside its two
-# CNPG Postgres instances. Runs the image's `/manager` binary. PG_PASSWORD is injected from the primary DB's
-# operator-generated owner Secret (`<app.db>-app`, key `password`). Both ingress hosts (open + SSO) route to
+# CNPG Postgres instances. Runs the image's `/manager` binary. PG_PASSWORD is injected from dbs[0]'s
+# operator-generated owner Secret (`<dbs[0]>-app`, key `password`). Both ingress hosts (open + SSO) route to
 # this one Service. See 10_sample_workload.md / 11_messaging.md.
 apiVersion: apps/v1
 kind: Deployment
@@ -46,14 +46,15 @@ spec:
             # Make the chart's `app.port` authoritative (the app honours PORT; defaults to 8080).
             - name: PORT
               value: {{ .Values.app.port | quote }}
-            # Postgres connection, fed to the app's DSNFromEnv() as discrete PG_* parts (it assembles + escapes
-            # the DSN itself, safer than a pre-built URL with the raw password). Points at the app's PRIMARY
-            # Postgres by its explicit instance name (`app.db`, == that DB's pg-cluster fullnameOverride) — its
-            # `<db>-rw` read-write Service in this namespace, no release-name derivation. User/database are
-            # `app`/`app`, pre-baked (hardcoded) in the pg-cluster wrapper's initdb, literals here. PG_PASSWORD
-            # comes from the CNPG operator-generated owner Secret, always `<db>-app` / key `password`.
+            # Postgres. The binary reads ONE DSN via the bare PG_* below, fed to DSNFromEnv() as discrete parts
+            # (it assembles + escapes the DSN itself, safer than a pre-built URL with the raw password). Bare
+            # PG_* points at dbs[0] (the really-dialed instance): its `<db>-rw` Service in this namespace, no
+            # release derivation. User/database are `app`/`app`, hardcoded in the pg-cluster wrapper's initdb.
+            # PG_PASSWORD comes from the CNPG operator-generated owner Secret `<db>-app` / key `password`.
+            {{- $ns := .Release.Namespace }}
+            {{- $primaryDb := index .Values.app.dbs 0 }}
             - name: PG_HOST
-              value: "{{ .Values.app.db }}-rw.{{ .Release.Namespace }}.svc.cluster.local"
+              value: "{{ $primaryDb }}-rw.{{ $ns }}.svc.cluster.local"
             - name: PG_USER
               value: "app"
             - name: PG_DATABASE
@@ -61,17 +62,39 @@ spec:
             - name: PG_PASSWORD
               valueFrom:
                 secretKeyRef:
-                  name: {{ .Values.app.db }}-app
+                  name: {{ $primaryDb }}-app
                   key: password
-            # Redis (audit-log cache) connection. Points at the app's PRIMARY Redis by its explicit instance
-            # name (`app.redis`, == that instance's redis-instance fullnameOverride) — its ClusterIP Service in
-            # this namespace, no release derivation. NO password env: the instance is locked to this workload by
-            # the redis-instance CiliumNetworkPolicy (network-RBAC), not requirepass, so there's no secret to
-            # inject. The manager RPUSHes each AuditLog under audit:<uuid> with a 1h TTL and reads it back on
-            # GET /audit. The second instance (app.extraRedis) is provisioned + egress-allowed but never dialed.
-            # See 12_redis.md.
+            # Every DB in app.dbs also gets a per-instance PG_<NAME>_* set (NAME = upper-snake of the instance
+            # name). Uniform, no primary/extra split; the non-[0] entries are cosmetic (provisioned + reachable,
+            # not dialed) until the image reads them. Egress to each is rendered by that DB's pg-cluster chart.
+            {{- range .Values.app.dbs }}
+            {{- $snake := regexReplaceAll "[^A-Za-z0-9]" . "_" | upper }}
+            - name: PG_{{ $snake }}_HOST
+              value: "{{ . }}-rw.{{ $ns }}.svc.cluster.local"
+            - name: PG_{{ $snake }}_USER
+              value: "app"
+            - name: PG_{{ $snake }}_DATABASE
+              value: "app"
+            - name: PG_{{ $snake }}_PASSWORD
+              valueFrom:
+                secretKeyRef:
+                  name: {{ . }}-app
+                  key: password
+            {{- end }}
+            # Redis (audit-log cache). Bare REDIS_ADDR points at redises[0], the instance the manager dials: its
+            # ClusterIP Service in this namespace, no release derivation. NO password env: the instance is locked
+            # to this workload by the redis-instance CiliumNetworkPolicy (network-RBAC), not requirepass. The
+            # manager RPUSHes each AuditLog under audit:<uuid> with a 1h TTL and reads it back on GET /audit.
+            {{- $primaryRedis := index .Values.app.redises 0 }}
             - name: REDIS_ADDR
-              value: "{{ .Values.app.redis }}.{{ .Release.Namespace }}.svc.cluster.local:6379"
+              value: "{{ $primaryRedis }}.{{ $ns }}.svc.cluster.local:6379"
+            # Every instance in app.redises also gets a cosmetic REDIS_<NAME>_ADDR (non-[0] are reachable, not
+            # dialed). Egress to each is rendered by that instance's redis-instance chart. See 12_redis.md.
+            {{- range .Values.app.redises }}
+            {{- $snake := regexReplaceAll "[^A-Za-z0-9]" . "_" | upper }}
+            - name: REDIS_{{ $snake }}_ADDR
+              value: "{{ . }}.{{ $ns }}.svc.cluster.local:6379"
+            {{- end }}
             # RabbitMQ connection. This workload's single user has operator-GENERATED credentials in the Secret
             # `<user>-user-credentials` (the rabbitmq-topology `user` is set to app.name, so it's
             # `{{ .Values.app.name }}-user-credentials`). Host is the shared broker's client Service; vhost is the

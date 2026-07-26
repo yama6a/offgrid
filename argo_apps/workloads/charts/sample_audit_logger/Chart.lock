@@ -1,6 +1,6 @@
 dependencies:
 - name: rabbitmq-topology
   repository: file://../../../../lib/helm/rabbitmq-topology
-  version: 0.1.0
-digest: sha256:2c2eeb85c4bf8dce29394470f899da63e8e221390e7d961cf1adf0839ef766e7
-generated: "2026-07-10T00:05:12.402871+02:00"
+  version: 0.2.0
+digest: sha256:0c54e1a8a5516acc00d940c694fea1f9e5fbf9a80b391690d7bb1743aad2b43a
+generated: "2026-07-26T23:40:12.925935+02:00"

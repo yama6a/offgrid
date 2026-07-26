@@ -4,11 +4,11 @@ deny-by-default in each), then allow only: ingress from the ingress edge (Envoy)
 for DNS + this app's own Postgres. The app has no probes and no metrics scrape, so nothing else is opened.
 
 Fixed platform selectors are hardcoded (they don't vary): the merged Envoy Gateway data-plane pod lives in
-envoy-gateway-system (mergeGateways => one Envoy for the whole cluster), CoreDNS in kube-system. The DB egress
-targets each CNPG instance the app may reach (`app.db` + `app.extraDbs`) by identity, so it covers the `-rw`
-Service too: with kube-proxy replacement Cilium enforces egress on the translated backend, not the ClusterIP.
-Always rendered: the app lockdown is not optional (there's no situation where we'd want it reachable from
-arbitrary sources).
+envoy-gateway-system (mergeGateways => one Envoy for the whole cluster), CoreDNS in kube-system. Postgres/Redis
+egress is NOT here: each store's pg-cluster/redis-instance chart renders the client-egress CNP from its own
+allowedClients (allowedClients is the single source of truth for the app<->store edge, both directions). So this
+policy names no store. Always rendered: the app lockdown is not optional (there's no situation where we'd want it
+reachable from arbitrary sources).
 */ -}}
 apiVersion: cilium.io/v2
 kind: CiliumNetworkPolicy
@@ -38,29 +38,9 @@ spec:
         - ports:
             - { port: "53", protocol: UDP }
             - { port: "53", protocol: TCP }
-    # Its Postgres instances — the primary (app.db) + any extraDbs it's permitted to reach. Selected by
-    # identity (covers each -rw Service via backend identity).
-    {{- range prepend .Values.app.extraDbs .Values.app.db }}
-    - toEndpoints:
-        - matchLabels:
-            cnpg.io/cluster: {{ . }}
-            cnpg.io/podRole: instance
-      toPorts:
-        - ports:
-            - { port: "5432", protocol: TCP }
-    {{- end }}
-    # Its Redis instances — the primary (app.redis) + any extraRedis it may reach. The OpsTree operator stamps
-    # each redis pod with a per-instance `app: <name>` label (== that instance's fullnameOverride). 6379, no
-    # auth; the return path is allowed by each instance's own redis-instance ingress policy. See 12_redis.md.
-    {{- range prepend .Values.app.extraRedis .Values.app.redis }}
-    - toEndpoints:
-        - matchLabels:
-            app: {{ . }}
-      toPorts:
-        - ports:
-            - { port: "6379", protocol: TCP }
-    {{- end }}
-    # The shared RabbitMQ broker (ns rabbitmq) on AMQP 5672 — this workload publishes/consumes messages. The
+    # Postgres + Redis egress is rendered by each store's own chart (pg-cluster / redis-instance client-egress
+    # CNP, keyed by allowedClients), NOT here. Cilium UNIONs those onto this endpoint.
+    # The shared RabbitMQ broker (ns rabbitmq) on AMQP 5672: this workload publishes/consumes messages. The
     # broker side allows this via its `messaging-client: "true"` ingress rule (the pod carries that label). See
     # 11_messaging.md.
     - toEndpoints:

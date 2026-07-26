@@ -8,18 +8,17 @@ app:
   command: ["/manager"]
   port: 8080
   replicas: 1
-  # Postgres wiring — explicit instance names (must match the pg-cluster fullnameOverride values below), no
-  # release-name derivation. `db` is the app's primary (PG_* env points at its -rw Service + -app Secret); the
-  # manager binary reads a single DSN. `extraDbs` are additional instances the app is permitted to reach — they
-  # only widen the app's egress NetworkPolicy (proving multi-DB reachability), the binary doesn't dial them.
-  db: sample-user-manager-db
-  extraDbs: [sample-user-manager-analytics]
-  # Redis wiring — same shape as db/extraDbs. `redis` is the app's PRIMARY (REDIS_ADDR env points at its
-  # ClusterIP Service; the manager stores audit logs there); `extraRedis` are additional instances the app may
-  # reach — they only widen the app's egress NetworkPolicy (proving multi-instance reachability), the binary
-  # doesn't dial them. Names must match the redis-instance `name` values below. See 12_redis.md.
-  redis: sample-user-manager-redis-cache
-  extraRedis: [sample-user-manager-redis-sessions]
+  # Postgres wiring: one flat list of instance names (must match the pg-cluster fullnameOverride values below),
+  # no release-name derivation. Uniform, no primary/extra split: app.yaml injects a per-instance PG_<NAME>_* env
+  # set for EVERY entry. Ordering is the only distinction: dbs[0] is also aliased to the bare PG_* the binary
+  # actually reads (it dials a single DSN), so put the really-used DB first. The rest are "provisioned +
+  # reachable, not dialed" (cosmetic env until the image reads it). Egress is NOT listed here: each DB's own
+  # pg-cluster allowedClients renders it. See 10_sample_workload.md.
+  dbs: [sample-user-manager-db, sample-user-manager-analytics]
+  # Redis wiring: same shape as dbs. redises[0] is aliased to the bare REDIS_ADDR the manager dials (audit-log
+  # store); the rest get a cosmetic REDIS_<NAME>_ADDR only. Names must match the redis-instance `name` values
+  # below. No egress here either (each instance's redis-instance allowedClients renders it). See 12_redis.md.
+  redises: [sample-user-manager-redis-cache, sample-user-manager-redis-sessions]
   resources:
     requests: { cpu: 10m, memory: 32Mi }
     limits:   { memory: 48Mi }

@@ -28,7 +28,8 @@ spec:
       cnpg.io/cluster: {{ $cluster }}
       cnpg.io/podRole: instance
   ingress:
-    # (a) DB clients — the app(s) allowed to open Postgres connections.
+    # (a) DB clients: the app(s) allowed to open Postgres connections. Same list drives the client-side egress
+    # CNP (client-egress.yaml), so a consuming workload never re-lists its DBs in its own netpol.
     {{- range .Values.networkPolicy.allowedClients }}
     - fromEndpoints:
         - matchLabels:
