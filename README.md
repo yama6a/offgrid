@@ -280,3 +280,4 @@ Pi 5 Talos image builds on [talos-rpi5/talos-builder](https://github.com/talos-r
 - disaster recovery exercise
 - make cnpg s3 sealed secret part of cnpg lib
 - replace .tgz gitignore files with one rule in the global file. 
+- put in claude.md to not bump helm versions of internal charts where the version makes no difference. and bring all back down to 0.1.0

@@ -1,2 +1,2 @@
-# pulled by `helm dependency build`; reproducible from Chart.lock, don't commit the blob
-charts/*.tgz
+# no external chart dependencies, no lockfile needed
+Chart.lock

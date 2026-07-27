@@ -1,2 +1,0 @@
-# first-party chart (renders CRs directly, no upstream dependency) -> nothing to vendor.
-charts/*.tgz

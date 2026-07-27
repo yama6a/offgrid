@@ -11,3 +11,7 @@
 # Build scratch + output for the step-03 image build (03a writes, 03b reads) — talos-builder checkouts,
 # kernel tarball, staged image. Can grow to >100 GB; never commit it.
 /.cache/
+
+# Vendored Helm dependency blobs. `helm dependency build` pulls each chart's deps into its own charts/ dir;
+# reproducible from Chart.yaml (+ Chart.lock where committed), so never committed. One rule for every chart.
+**/charts/*.tgz

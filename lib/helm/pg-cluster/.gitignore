@@ -1,3 +1,0 @@
-# first-party chart (renders CNPG CRs directly, no upstream dependency) -> nothing to vendor.
-# guard rule in case a `dependencies:` block is ever re-added: never commit a fetched blob.
-charts/*.tgz
