@@ -85,3 +85,44 @@ groups:
               conditions:
                 - type: query
                   evaluator: {type: gt, params: [0]}
+      # sync_status=Unknown = argocd could not RENDER the app (ComparisonError: bad helm dep, missing path, repo
+      # unreachable). It is neither OutOfSync nor Degraded, so the two rules above BOTH miss it, and the app just
+      # silently freezes on its last-good manifests. Blind spot until this rule existed; do not fold it into the
+      # OutOfSync rule (different cause, different fix).
+      - uid: argocd-app-comparison-error
+        title: ArgoCD application cannot be compared
+        condition: C
+        for: 15m
+        labels: {severity: warning}
+        annotations:
+          summary: 'ArgoCD app {{ $labels.name }} sync status Unknown (cannot render manifests)'
+          description: |
+            - ArgoCD app {{ $labels.name }} fails manifest generation, so it is frozen on its last-good state
+            - usual cause: stale Chart.lock vs the chart's deps, a missing path, or an unreachable repo
+            - check: argocd app get {{ $labels.name }}; read the ComparisonError message in .status.conditions
+            - helm deps: helm dependency build on that chart reproduces the failure locally
+        noDataState: OK
+        execErrState: Error
+        data:
+          - refId: A
+            relativeTimeRange: {from: 600, to: 0}
+            datasourceUid: VictoriaMetrics
+            model:
+              refId: A
+              instant: true
+              expr: 'max by (name, dest_namespace) (argocd_app_info{sync_status="Unknown"})'
+          - refId: B
+            relativeTimeRange: {from: 600, to: 0}
+            datasourceUid: __expr__
+            model: {refId: B, type: reduce, expression: A, reducer: last, datasource: {type: __expr__, uid: __expr__}}
+          - refId: C
+            relativeTimeRange: {from: 600, to: 0}
+            datasourceUid: __expr__
+            model:
+              refId: C
+              type: threshold
+              expression: B
+              datasource: {type: __expr__, uid: __expr__}
+              conditions:
+                - type: query
+                  evaluator: {type: gt, params: [0]}

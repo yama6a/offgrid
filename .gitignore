@@ -15,3 +15,10 @@
 # Vendored Helm dependency blobs. `helm dependency build` pulls each chart's deps into its own charts/ dir;
 # reproducible from Chart.yaml (+ Chart.lock where committed), so never committed. One rule for every chart.
 **/charts/*.tgz
+
+# Chart.lock for the file://-only consumers: the git commit already fixes those deps, so a lock pins nothing
+# and BREAKS argocd's `helm dependency build` the moment the lib chart's inert version drifts from it. Charts
+# with a REMOTE dep still commit their lock (not matched here, they are listed explicitly).
+argo_apps/platform/charts/04_google_sso/Chart.lock
+argo_apps/platform/charts/06_platform_ingress/Chart.lock
+argo_apps/workloads/charts/*/Chart.lock

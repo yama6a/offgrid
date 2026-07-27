@@ -37,6 +37,13 @@ spec:
                   matchLabels:
                     app: {{ .Values.app.name }}
                 topologyKey: kubernetes.io/hostname
+      # PodSecurity `restricted` baseline; same block on every first-party pod in the repo. 65532 matches the
+      # distroless nonroot uid the sample-app image already declares.
+      securityContext:
+        runAsNonRoot: true
+        runAsUser: 65532
+        runAsGroup: 65532
+        seccompProfile: { type: RuntimeDefault }
       containers:
         - name: signup
           image: {{ .Values.app.image | quote }}
@@ -66,5 +73,8 @@ spec:
             # names are compile-time constants in the binary — nothing topology-related via env.
             - name: WORKLOAD_NAME
               value: {{ .Values.app.name | quote }}
+          securityContext:
+            allowPrivilegeEscalation: false
+            capabilities: { drop: ["ALL"] }
           resources:
             {{- toYaml .Values.app.resources | nindent 12 }}
