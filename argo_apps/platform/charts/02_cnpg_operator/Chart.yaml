@@ -11,7 +11,7 @@ description: >-
   sealed-secrets (independent leaves, only need the CNI). The operator/Postgres images
   (ghcr.io/cloudnative-pg/*) are multi-arch incl. arm64. See 08_storage.md.
 type: application
-version: 0.1.0                 # this wrapper chart's own version
+version: 0.1.0                 # local chart, never bump version
 
 dependencies:
   - name: cloudnative-pg

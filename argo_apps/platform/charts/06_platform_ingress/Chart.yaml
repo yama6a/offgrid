@@ -11,7 +11,7 @@ description: >-
   the monitoring backends at wave 5, so every backendRef resolves on creation, and after 04_google_sso at
   wave 4 for the callback host + sealed OAuth secret). See 07_ingress.md.
 type: application
-version: 0.1.0
+version: 0.1.0                 # local chart, never bump version
 
 dependencies:
   - name: ingress

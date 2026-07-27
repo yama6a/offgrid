@@ -5,7 +5,7 @@ description: >-
   user-audit-logger fanout exchange and logs every audit message. The second fanout subscriber alongside
   sample-user-signup, demonstrating broadcast from the sample-user-manager hub.
 type: application
-version: 0.1.0                 # this wrapper chart's own version
+version: 0.1.0                 # local chart, never bump version
 
 dependencies:
   # Only the shared messaging library — this worker has no Postgres and no ingress. version: "*" for the

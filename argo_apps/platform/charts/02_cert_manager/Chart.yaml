@@ -9,7 +9,7 @@ description: >-
   argo_apps/apps/02_cert_manager.yaml, wave 2, same as nic-keeper / sealed-secrets
   (independent leaves). NO ClusterIssuer here yet, see 08_cert_manager.md.
 type: application
-version: 0.1.0                 # this wrapper chart's own version
+version: 0.1.0                 # local chart, never bump version
 
 dependencies:
   - name: cert-manager

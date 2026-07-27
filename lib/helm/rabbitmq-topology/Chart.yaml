@@ -12,4 +12,4 @@ description: >-
 # type: application (renders first-party rabbitmq.com CRs), like pg-cluster/redis-instance. Pins NO upstream
 # and has no dependencies, so there is no Chart.lock here (the CONSUMERS that depend on this one carry the lock).
 type: application
-version: 0.2.0
+version: 0.1.0                 # local chart, never bump version

@@ -7,7 +7,7 @@ description: >-
   `argo-cd:` key). Bootstrapped imperatively once by ../../../05_gitops/05_argocd.sh,
   then adopted and self-managed by ArgoCD against this same chart. See 05_gitops.md.
 type: application
-version: 0.1.0                 # this wrapper chart's own version
+version: 0.1.0                 # local chart, never bump version
 
 dependencies:
   - name: argo-cd

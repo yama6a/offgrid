@@ -6,7 +6,7 @@ description: >-
   users.created/users.deleted) and user-audit-logger (fanout). Exercises ingress end to end with its own
   Postgres + Google-SSO allowlist.
 type: application
-version: 0.1.0                 # this wrapper chart's own version
+version: 0.1.0                 # local chart, never bump version
 
 dependencies:
   # version: "*" for every file:// dep — the path IS the source, so the version is just a required constraint

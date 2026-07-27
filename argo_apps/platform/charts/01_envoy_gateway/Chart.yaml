@@ -13,7 +13,7 @@ description: >-
   which needs the Gateway API CRDs, and the gateway wave 3 which needs the `eg` class).
   See 11_envoy_gateway.md.
 type: application
-version: 0.1.0                 # this wrapper chart's own version
+version: 0.1.0                 # local chart, never bump version
 
 dependencies:
   - name: gateway-helm

@@ -10,7 +10,7 @@ description: >-
   sealed-secrets / cert-manager (independent leaves). The one-time host prerequisite
   (kubelet extraMount for /var/mnt/longhorn) lives in 03d. See 09_longhorn.md.
 type: application
-version: 0.1.0                 # this wrapper chart's own version
+version: 0.1.0                 # local chart, never bump version
 
 dependencies:
   - name: longhorn

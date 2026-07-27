@@ -11,7 +11,7 @@ description: >-
   operator simply wait for it. Single source of truth for the CRD version (this file). The CRDs are
   huge, so the Application syncs them ServerSideApply=true. See 15_monitoring.md.
 type: application
-version: 0.1.0                 # this wrapper chart's own version
+version: 0.1.0                 # local chart, never bump version
 
 dependencies:
   - name: prometheus-operator-crds

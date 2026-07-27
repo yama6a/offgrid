@@ -11,7 +11,7 @@ description: >-
   depends on Longhorn now that the classes moved out). The operator + redis images (quay.io/opstree/*) are
   multi-arch incl. arm64 (but the exporter needs a pinned recent tag — see the redis-instance chart). See 12_redis.md.
 type: application
-version: 0.1.0                 # this wrapper chart's own version
+version: 0.1.0                 # local chart, never bump version
 
 dependencies:
   - name: redis-operator

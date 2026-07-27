@@ -13,7 +13,7 @@ description: >-
   an admission webhook, alongside argocd / envoy-gateway; after its CRDs at wave 0, before the wave-5
   CRs). See 15_monitoring.md.
 type: application
-version: 0.1.0                 # this wrapper chart's own version
+version: 0.1.0                 # local chart, never bump version
 
 dependencies:
   - name: victoria-metrics-operator

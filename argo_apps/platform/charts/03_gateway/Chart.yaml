@@ -13,4 +13,4 @@ description: >-
   (values.yaml; email written by 07_gateway.sh). Delivered purely by ArgoCD via
   argo_apps/apps/03_gateway.yaml, wave 3 (after the `eg` class wave 1 + cert-manager wave 2). See 10_gateway.md.
 type: application
-version: 0.1.0                 # this wrapper chart's own version
+version: 0.1.0                 # local chart, never bump version

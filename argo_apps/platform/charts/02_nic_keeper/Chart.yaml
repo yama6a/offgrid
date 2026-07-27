@@ -8,6 +8,6 @@ description: >-
   templates/configmap.yaml, all knobs in values.yaml. Adopted by ArgoCD via
   argo_apps/apps/02_nic_keeper.yaml. See 06_nic_keeper.md.
 type: application
-version: 0.1.0                 # this chart's own version
+version: 0.1.0                 # local chart, never bump version
 # No upstream dependency, this is our own DaemonSet (the loop is in templates/configmap.yaml),
 # so there is no Chart.lock / charts/ to build, unlike 00_cilium / 01_argocd.

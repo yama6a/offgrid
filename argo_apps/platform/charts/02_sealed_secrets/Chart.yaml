@@ -8,7 +8,7 @@ description: >-
   The controller's RSA private key is the crown jewel: back it up with
   ../../../05_gitops/backup_sealed_secrets_key.sh. See 07_sealed_secrets.md.
 type: application
-version: 0.1.0                 # this wrapper chart's own version
+version: 0.1.0                 # local chart, never bump version
 
 dependencies:
   - name: sealed-secrets

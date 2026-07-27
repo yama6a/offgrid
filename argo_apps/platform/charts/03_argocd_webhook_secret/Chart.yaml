@@ -12,4 +12,4 @@ description: >-
   DELIBERATE DEVIATION from the usual wrapper-chart pattern: this chart pins no upstream and renders a single
   committed manifest, so like redis-instance it ships no Chart.lock and no vendored charts/*.tgz.
 type: application
-version: 0.1.0                 # this wrapper chart's own version
+version: 0.1.0                 # local chart, never bump version

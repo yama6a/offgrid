@@ -14,4 +14,4 @@ description: >-
 type: application
 # Renders per-domain Cloudflare DNS-01 wildcard support (cloudflareZones): CF domains reference the shared
 # wildcard-<domain>-tls Secret + skip their per-ingress Certificate; non-CF domains unchanged (HTTP-01).
-version: 0.3.0
+version: 0.1.0                 # local chart, never bump version

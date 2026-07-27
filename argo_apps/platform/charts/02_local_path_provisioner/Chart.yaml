@@ -16,5 +16,5 @@ description: >-
   Chart.lock / `helm dependency build` needed (no chart dependencies). Bump by editing
   values.image.tag + appVersion and re-diffing against the upstream release manifest.
 type: application
-version: 0.1.0                 # this wrapper chart's own version
+version: 0.1.0                 # local chart, never bump version
 appVersion: "v0.0.36"         # rancher/local-path-provisioner release the vendored manifests track

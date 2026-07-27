@@ -14,7 +14,7 @@ description: >-
   plugin (GF_INSTALL_PLUGINS). Delivered by ArgoCD via argo_apps/apps/05_grafana.yaml, wave 5, same as
   the stacks it reads from (05_victoria_metrics_k8s_stack, 05_victoria_logs). See 09_monitoring.md.
 type: application
-version: 0.1.0                 # this wrapper chart's own version
+version: 0.1.0                 # local chart, never bump version
 
 dependencies:
   - name: grafana

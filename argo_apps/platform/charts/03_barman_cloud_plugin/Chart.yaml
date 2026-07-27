@@ -15,5 +15,5 @@ description: >-
   passes it straight through). To bump: re-run the curl in this chart's README.md and re-commit. The version
   pin lives in `appVersion` below + the image tag inside the vendored manifest.
 type: application
-version: 0.1.0                 # this wrapper chart's own version
+version: 0.1.0                 # local chart, never bump version
 appVersion: "v0.13.0"          # pinned plugin-barman-cloud release (== the image tag in the vendored manifest)

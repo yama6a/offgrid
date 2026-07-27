@@ -10,4 +10,4 @@ description: >-
   vmbackup needs filesystem access to the RWO PVC (can't co-mount) and vmbackupmanager is Enterprise-only.
   See docs/13_backups.md + docs/09_monitoring.md.
 type: application
-version: 0.1.0                 # this chart's own version
+version: 0.1.0                 # local chart, never bump version

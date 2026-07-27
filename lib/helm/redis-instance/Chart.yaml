@@ -17,4 +17,4 @@ description: >-
   values key), the same shape as pg-cluster — so "one or more Redis per workload" is just "one or more aliases".
   See README.md and docs/12_redis.md.
 type: application
-version: 0.5.0                 # this chart's own version
+version: 0.1.0                 # local chart, never bump version

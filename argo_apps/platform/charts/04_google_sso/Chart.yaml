@@ -11,7 +11,7 @@ description: >-
   redirect URI per domain (google-sso.<domain>/oauth2/callback). Delivered by ArgoCD via
   argo_apps/platform/apps/04_google_sso.yaml, wave 4. See 07_ingress.md.
 type: application
-version: 0.1.0                 # this wrapper chart's own version
+version: 0.1.0                 # local chart, never bump version
 
 dependencies:
   - name: ingress

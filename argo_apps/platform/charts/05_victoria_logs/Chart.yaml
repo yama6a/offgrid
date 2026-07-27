@@ -12,7 +12,7 @@ description: >-
   all config (values.yaml). Delivered by ArgoCD via argo_apps/apps/05_victoria_logs.yaml, wave 5 (after
   the operator wave 1 + Longhorn wave 2; same wave as the metrics stack and Grafana). See 15_monitoring.md.
 type: application
-version: 0.1.0                 # this wrapper chart's own version
+version: 0.1.0                 # local chart, never bump version
 
 dependencies:
   - name: victoria-logs-collector

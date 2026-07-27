@@ -8,7 +8,7 @@ description: >-
   Bootstrapped imperatively by ../../../04_networking/04_cilium.sh; later adopted
   by ArgoCD against this same chart. See 04_networking.md.
 type: application
-version: 0.1.0                 # this wrapper chart's own version
+version: 0.1.0                 # local chart, never bump version
 
 dependencies:
   - name: cilium

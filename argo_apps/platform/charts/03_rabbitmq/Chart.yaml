@@ -21,7 +21,7 @@ description: >-
   ghcr.io/rabbitmq/messaging-topology-operator, ghcr.io/rabbitmq/default-user-credential-updater,
   docker.io/library/rabbitmq) — all multi-arch incl. arm64. See 11_messaging.md.
 type: application
-version: 0.1.0                 # this wrapper chart's own version
+version: 0.1.0                 # local chart, never bump version
 
 dependencies:
   - name: rabbitmq-cluster-operator

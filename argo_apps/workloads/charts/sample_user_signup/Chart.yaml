@@ -5,7 +5,7 @@ description: >-
   consumes the manager's users.created (topic) + audit (fanout) outputs, logging both. The command-publisher /
   event-consumer end of the loop whose hub is sample-user-manager.
 type: application
-version: 0.1.0                 # this wrapper chart's own version
+version: 0.1.0                 # local chart, never bump version
 
 dependencies:
   # Only the shared messaging library — this worker has no Postgres and no ingress. version: "*" for the

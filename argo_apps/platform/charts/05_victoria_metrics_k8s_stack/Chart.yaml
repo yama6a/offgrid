@@ -13,7 +13,7 @@ description: >-
   argo_apps/apps/05_victoria_metrics_k8s_stack.yaml, wave 5 (after the operator wave 1 + Longhorn wave 2).
   See 15_monitoring.md.
 type: application
-version: 0.1.0                 # this wrapper chart's own version
+version: 0.1.0                 # local chart, never bump version
 
 dependencies:
   - name: victoria-metrics-k8s-stack
