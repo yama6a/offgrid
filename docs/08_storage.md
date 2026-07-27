@@ -192,13 +192,12 @@ The root-of-roots creates the workloads tree only after the whole platform is He
 are guaranteed present, no per-app `sync-wave` needed. Chart versions live in the charts: the operator dep
 `cnpg/cloudnative-pg` (`argo_apps/platform/charts/02_cnpg_operator/Chart.yaml`); the `Cluster` comes via the
 shared `pg-cluster` wrapper (`lib/helm/pg-cluster`), which renders the CNPG CRs directly (no upstream chart) and
-pins the `postgresql`/`postgis` image itself. Images (`ghcr.io/cloudnative-pg/*`) are multi-arch incl. arm64.
+pins the `ghcr.io/cloudnative-pg/postgresql` image itself (postgres only, no postgis). Images are multi-arch incl. arm64.
 
-> Values nesting: `sample_workload` depends on the `pg-cluster` wrapper (dependency key `pg-cluster:`), whose
-> own values carry a `cluster:` map with a nested `cluster:` map for the CR knobs. So a workload's Postgres knobs
-> live at `pg-cluster.cluster.cluster.*` — a historical artifact of the old subchart shape, kept so consumer
-> values didn't have to change. Most of that tree is pre-baked in the wrapper; a workload only sets `type` +
-> `instances` + `resources`.
+> Values shape: `sample_workload` depends on the `pg-cluster` wrapper (dependency key `pg-cluster:`); the wrapper
+> exposes a flat interface, so a workload's Postgres knobs live directly under the alias key. Most of the tree is
+> pre-baked in the wrapper; a workload only sets `name` + `postgresVersion` + `highAvailability` + `resources`
+> (+ its `allowedClients`).
 
 **Storage: node-local, off Longhorn.** CNPG runs on the node-local `local-path` class on the dedicated 50 GiB
 `/var/mnt/localpath` partition — no Longhorn engine/CSI in the Postgres data path, isolated so the two can't starve
@@ -212,13 +211,13 @@ reconciles). The operator pod carries its own pod-scoped `CiliumNetworkPolicy`
 (`02_cnpg_operator/templates/networkpolicy.yaml`): in — vmagent metrics `:8080`, apiserver webhook `:9443`,
 kubelet probe; out — DNS, apiserver, each instance's instance-manager `:8000` (cross-namespace via
 `matchExpressions` ns-Exists), and the barman-cloud plugin `:9090`. See [04_networking.md](04_networking.md). Cluster — most of the following is pre-baked in the `pg-cluster` wrapper's `values.yaml`; the
-workload only overrides the ⭐ **set-per-workload** ones (in `sample_workload/values.yaml` under
-`pg-cluster.cluster.cluster.*`):
+workload only overrides the ⭐ **set-per-workload** ones (in `sample_workload/values.yaml` under the alias key):
 
-- ⭐ **`instances: 2`** (REQUIRED): 1 primary + 1 streaming replica on two distinct nodes. Two is enough —
-  losing 2 of 3 nodes breaks the cluster many other ways anyway. The wrapper caps this at 1 or 2.
+- ⭐ **`highAvailability: true`** (REQUIRED bool): 2 instances (1 primary + 1 streaming replica on two distinct
+  nodes; PDB on; switchover updates). `false` = a single instance (PDB off, in-place restart). One bool drives it;
+  there is no separate `instances`/`enablePDB`/`primaryUpdateMethod` knob.
 - ⭐ **`resources`** (REQUIRED; here 256Mi/250m req, 512Mi/1cpu limit): sized for the Pi 5s. Per-instance.
-- ⭐ **`type: postgresql`** (REQUIRED): selects the container image (postgresql | postgis | timescaledb).
+- ⭐ **`postgresVersion`** (REQUIRED): the image tag on `ghcr.io/cloudnative-pg/postgresql` (postgres only, no postgis).
 - **`affinity.topologyKey: kubernetes.io/hostname`** (wrapper-baked): the chart default spreads by
   `topology.kubernetes.io/zone`, but bare Pi nodes carry no zone label, so both instances could land on one
   node. Spreading by hostname forces distinct nodes — the node-loss HA that node-local storage relies on.
@@ -233,7 +232,7 @@ workload only overrides the ⭐ **set-per-workload** ones (in `sample_workload/v
   (see [13_backups.md](13_backups.md)).
 - `initdb: { database: app, owner: app }` (wrapper-baked): bootstraps a demo `app` DB; the operator
   auto-generates the owner's credentials into the `<name>-app` Secret (e.g. `sample-workload-db-app`, where the
-  name is the instance's REQUIRED `cluster.fullnameOverride`) — no sealed-secret needed.
+  name is the instance's REQUIRED `name`), no sealed-secret needed.
 
 **Reclaim & durability.** The `local-path` class is `reclaimPolicy: Delete`: data safety no longer rests on
 Retain, because the DB unit is protected from a GitOps prune by orphan-not-delete (`Prune=false,Delete=false` on

@@ -144,11 +144,12 @@ firing alert keys off:
 - **Plain Deployments/StatefulSets/DaemonSets** (e.g. the sample apps): set it on BOTH the workload
   `metadata.labels` *and* the pod template `spec.template.metadata.labels` (so the object AND its pods carry
   it). See `argo_apps/workloads/charts/*/templates/app.yaml`.
-- **CNPG Postgres**: set `cluster.cluster.additionalLabels.alert-criticality: critical` on the DB (per
-  consumer/alias). CNPG has no Deployment/StatefulSet, so the operator's `INHERITED_LABELS: alert-criticality`
-  (`02_cnpg_operator`) copies it from the Cluster CR onto the Postgres pods — the pod path is what pages.
+- **CNPG Postgres** (`lib/helm/pg-cluster`): set `alertCritical: true` on the DB (per consumer/alias). CNPG has
+  no Deployment/StatefulSet, so the operator's `INHERITED_LABELS: alert-criticality` (`02_cnpg_operator`) copies
+  the label from the Cluster CR onto the Postgres pods, the pod path is what pages. The wrapper always stamps
+  `alert-criticality` (critical|warning), so the label is never absent.
 - **Redis** (`lib/helm/redis-instance`): set `alertCritical: true` on the instance; OpsTree propagates the CR
-  label onto the StatefulSet + pods. Default `false` — a plain cache being down usually just degrades.
+  label onto the StatefulSet + pods. Default `false`: a plain cache being down usually just degrades.
 - **Ingress** (`01_envoy_gateway`): the merged Envoy proxy pods are labeled `critical` in the EnvoyProxy
   (`envoyDeployment.pod.labels`) — a crashlooping ingress pod pages `critical` via `container-waiting-fatal`.
 

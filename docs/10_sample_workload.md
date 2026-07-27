@@ -55,7 +55,7 @@ pattern the platform-ingress app uses for the argocd + monitoring UIs.
 
 ## The PG_PASSWORD wiring
 
-Each `Cluster` is named by the wrapper's REQUIRED `cluster.fullnameOverride`: an explicit name, no
+Each `Cluster` is named by the wrapper's REQUIRED `name`: an explicit name, no
 `.Release.Name` derivation. The really-dialed DB is `sample-workload-db` (`app.dbs[0]`), so the CNPG
 operator generates the `app`-role credentials into the Secret `sample-workload-db-app`. The app Deployment
 injects only the password, referencing that same explicit name (`app.dbs[0]`):
@@ -99,15 +99,15 @@ The workload doesn't template CNPG CRs directly; it depends on the shared `pg-cl
 (`lib/helm/pg-cluster`, see [CLAUDE.md](../CLAUDE.md)), which renders the CNPG CRs itself (no upstream chart)
 and pre-bakes every value a workload shouldn't think about (node-local `local-path` storage + 45Gi, hostname
 anti-affinity, monitoring on, an `app`/`app` initdb, backups off). Each instance sets only the REQUIRED knobs:
-`cluster.fullnameOverride` (the instance name), `type`, `imageTag` (the Postgres version, owned per-workload),
-`instances` (1 or 2), and `resources`, so a Postgres is ~9 lines, not ~40. A validation template in the wrapper fails the render (with a clear message) if any required
-knob is missing. Trade-offs: the pre-baked values are *soft* defaults a consumer could still override, and the
-values sit one level deeper (`<alias>.cluster.cluster.*`, a historical artifact of the old subchart shape kept
-so consumer values didn't have to change). Because `initdb` is a wrapper default, the app template hardcodes
-`PG_USER`/`PG_DATABASE` to the literal `app`.
+`name` (the instance name), `postgresVersion` (the tag on `ghcr.io/cloudnative-pg/postgresql`, owned
+per-workload), `highAvailability` (one bool: true = 2 instances + PDB + switchover, false = single), and
+`resources`, so a Postgres is ~7 lines, not ~40. A validation template in the wrapper fails the render (with a
+clear message) if any required knob is missing. Trade-off: the pre-baked values are *soft* defaults a consumer
+could still override. Because `initdb` is a wrapper default, the app template hardcodes `PG_USER`/`PG_DATABASE`
+to the literal `app`.
 
 **Explicit names, and multiple DBs per workload.** The instance name is the wrapper's own REQUIRED
-`cluster.fullnameOverride` — used verbatim (`<name>-rw`/`-ro`/`-r` Services,
+`name`, used verbatim (`<name>-rw`/`-ro`/`-r` Services,
 `<name>-app` Secret, PodMonitor). There is no `-cluster` suffix and no `.Release.Name`
 derivation: the app's `PG_HOST`/secret and the network policies all reference the explicit name, so nothing
 drifts and the DB is decoupled from the release name. To run **more than one** Postgres in a workload you

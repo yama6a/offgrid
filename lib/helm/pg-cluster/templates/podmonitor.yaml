@@ -1,4 +1,3 @@
-{{- if and .Values.cluster.cluster.monitoring.enabled .Values.cluster.cluster.monitoring.podMonitor.enabled -}}
 apiVersion: monitoring.coreos.com/v1
 kind: PodMonitor
 metadata:
@@ -18,4 +17,3 @@ spec:
       cnpg.io/podRole: instance
   podMetricsEndpoints:
     - port: metrics
-{{- end }}

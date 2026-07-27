@@ -2,34 +2,29 @@ apiVersion: v2
 name: pg-cluster
 description: >-
   Shared wrapper chart that renders the CloudNativePG resources for one Postgres instance (the `Cluster` CR
-  + its `PodMonitor`, and when backups are on the Barman Cloud `ObjectStore` + `ScheduledBackup`) as a small,
-  curated interface for workloads. It pre-bakes every boilerplate value a workload should never think about
-  (node-local local-path storage, hostname anti-affinity, monitoring on, an `app`/`app` initdb, non-root UID,
-  the barman WAL-archiver plugin wiring) and exposes only the knobs a workload actually decides: REQUIRED
-  `cluster.type`, `cluster.imageTag` (the Postgres version, owned per-workload), `cluster.cluster.instances`,
-  `cluster.cluster.resources`, and OPTIONAL-with-defaults max_connections / shared_buffers /
-  effective_cache_size. A consumer's Postgres drops to ~7 lines of real decisions.
+  + its `PodMonitor` + a default-deny CiliumNetworkPolicy pair, and when backups are on the Barman Cloud
+  `ObjectStore` + `ScheduledBackup`) as a small, curated interface for workloads. It pre-bakes every boilerplate
+  value a workload should never think about (node-local local-path storage, hostname anti-affinity, monitoring on,
+  an `app`/`app` initdb, non-root UID, the barman WAL-archiver plugin wiring) and exposes only the knobs a
+  workload actually decides: REQUIRED `name`, `postgresVersion` (the tag on ghcr.io/cloudnative-pg/postgresql,
+  owned per-workload), `highAvailability` (one bool: true = 2 instances + PDB + switchover, false = single
+  instance), `resources`, `allowedClients`, plus OPTIONAL `alertCritical` and the defaulted postgresql params.
 
-  Off-cluster S3 backups (continuous WAL archiving + daily base backups via the Barman Cloud CNPG-I plugin)
-  are wired but OFF by default; `lib/shell/14_cnpg_backup.sh` flips them on from `.env` + a sealed S3 secret.
-  See docs/13_backups.md.
+  Postgres only, no postgis: the image repo is fixed and only `postgresVersion` (the tag) varies. Off-cluster S3
+  backups (continuous WAL archiving + daily base backups via the Barman Cloud CNPG-I plugin) are wired but OFF by
+  default; `lib/shell/14_cnpg_backup.sh` flips them on from `.env` + a sealed S3 secret. See docs/13_backups.md.
 
   FIRST-PARTY templates, NO upstream dependency: like `lib/helm/redis-instance`, this chart templates the
-  operator's CRs directly (the CNPG CRDs come from `02_cnpg_operator`; the Barman plugin + ObjectStore CRD
-  from `03_barman_cloud_plugin`). It used to wrap the upstream `cnpg/cluster` chart, but that forced a
-  vendored + hand-PATCHED `charts/*.tgz` (the chart annotates the ObjectStore as a Helm hook, which ArgoCD
-  turns ephemeral -> archiving breaks). Rendering the CRs ourselves kills the vendored tarball (so Renovate
-  manages everything hands-off) and lets us annotate the ObjectStore with `sync-wave: "-1"` natively. See
-  CLAUDE.md's shared-charts paragraph + docs/13_backups.md.
+  operator's CRs directly (the CNPG CRDs come from `02_cnpg_operator`; the Barman plugin + ObjectStore CRD from
+  `03_barman_cloud_plugin`). It used to wrap the upstream `cnpg/cluster` chart, but that forced a vendored +
+  hand-PATCHED `charts/*.tgz` (the chart annotates the ObjectStore as a Helm hook, which ArgoCD turns ephemeral,
+  so archiving breaks). Rendering the CRs ourselves kills the vendored tarball (Renovate manages everything
+  hands-off) and lets us annotate the ObjectStore with `sync-wave: "-1"` natively. See CLAUDE.md's shared-charts
+  paragraph + docs/13_backups.md.
 
-  CAVEATS:
-    - "Hardcoded" values below are SOFT: fixed defaults a consumer *could* still override but shouldn't.
-    - The `cluster.cluster.*` double nesting is a historical artifact of the old subchart shape, kept so the
-      consumer values + 14_cnpg_backup.sh didn't have to change.
-  Required fields: a validation-only template (templates/validate.yaml) fails the render with a clear message
-  if fullnameOverride/type/imageTag/instances/resources/allowedClients are unset. Consumed via a file:// dependency;
-  see argo_apps/workloads/charts/sample_user_manager. The Cluster + its services/secret are named off the
-  REQUIRED `cluster.fullnameOverride` (e.g. `<name>-rw`, `<name>-app`) — an explicit name you set, not the
-  release name, so a workload can alias this wrapper for multiple DBs. See 10_sample_workload.md.
+  Required fields: templates/validate.yaml fails the render with a clear message if
+  name/postgresVersion/highAvailability/resources/allowedClients are unset. Consumed via a file:// dependency,
+  aliased once per DB (a workload runs one or more); see argo_apps/workloads/charts/sample_user_manager. The
+  Cluster + its services/secret are named off the REQUIRED `name` (e.g. `<name>-rw`, `<name>-app`).
 type: application               # renders CRs directly (like redis-instance); NOT a library, which renders nothing
-version: 0.4.0                  # this chart's own version
+version: 0.5.0                  # this chart's own version

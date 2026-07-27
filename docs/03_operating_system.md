@@ -170,10 +170,10 @@ no-op). The nodes pull the installer using the `read:packages` auth `03d` baked 
 drains it (honoring the eviction API / PodDisruptionBudgets) before the reboot. On this cluster that drain used to
 *hang* — three pods it can't gracefully evict, each for a different reason:
 
-- **CNPG single-instance DB** (`analyticsdb`, `instances: 1`): the operator's PDB is `minAvailable: 1`, so with one
-  instance *any* eviction violates it — a hard block unrelated to storage. Fixed by `enablePDB: false` on that Cluster
-  (see its comment in `argo_apps/workloads/charts/sample_user_manager/values.yaml`); `maindb` (2 instances) is left
-  alone — it switches over and its PDB permits the eviction.
+- **CNPG single-instance DB** (`analyticsdb`, `highAvailability: false`): the operator's PDB is `minAvailable: 1`, so
+  with one instance *any* eviction violates it, a hard block unrelated to storage. The wrapper turns the PDB off
+  automatically for a non-HA instance (`highAvailability: false` drives `enablePDB: false`); `maindb`
+  (`highAvailability: true`, 2 instances) is left alone, it switches over and its PDB permits the eviction.
 - **Longhorn `instance-manager`**: Longhorn's PDB blocks the drain only while the node holds a volume's **last healthy
   replica** — i.e. when a volume is already `degraded` (common here, the NICs are flaky, so a replica is often down).
 - **RabbitMQ broker** (`rabbitmq-server-0`): no PDB and no finalizer — just slow to terminate (quorum preStop) and

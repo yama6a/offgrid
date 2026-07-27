@@ -7,12 +7,12 @@ allowedClients (who may reach 5432) — every other peer here is fixed platform 
 Fixed selectors below are cluster constants for this repo (their namespaces/labels/ports don't vary between
 workloads): the CNPG operator (cnpg-system), vmagent (monitoring), CoreDNS (kube-system). If a platform
 component is ever relabelled, fix it here. Ports: 5432 Postgres, 8000 CNPG instance-manager API, 9187 CNPG
-metrics, 53 DNS. Cluster name is the consumer's explicit `cluster.fullnameOverride` (validated non-empty) — the
+metrics, 53 DNS. Cluster name is the consumer's explicit `name` (validated non-empty), the
 same name the official chart stamps on the `cnpg.io/cluster` pod label; no `.Release.Name` derivation, so the
 CNP name is unique per DB even when a workload aliases this wrapper more than once. Namespace peers use Cilium's
 `k8s:io.kubernetes.pod.namespace` label. Always rendered — not disableable; only knob is allowedClients.
 */ -}}
-{{- $cluster := .Values.cluster.fullnameOverride }}
+{{- $cluster := .Values.name }}
 apiVersion: cilium.io/v2
 kind: CiliumNetworkPolicy
 metadata:
@@ -30,7 +30,7 @@ spec:
   ingress:
     # (a) DB clients: the app(s) allowed to open Postgres connections. Same list drives the client-side egress
     # CNP (client-egress.yaml), so a consuming workload never re-lists its DBs in its own netpol.
-    {{- range .Values.networkPolicy.allowedClients }}
+    {{- range .Values.allowedClients }}
     - fromEndpoints:
         - matchLabels:
             k8s:io.kubernetes.pod.namespace: {{ .namespace }}
@@ -106,7 +106,7 @@ spec:
       toPorts:
         - ports:
             - { port: "8000", protocol: TCP }
-    {{- if .Values.cluster.backups.enabled }}
+    {{- if .Values.backups.enabled }}
     # (i) S3 egress for the Barman Cloud plugin sidecar: WAL archiving + base-backup upload/restore go to the
     # AWS S3 endpoint over HTTPS. Only rendered when backups are ON. Scoped to `world` on 443 — deliberately
     # broad (S3 is reached over the public internet and its address set is large/volatile); tighten to a

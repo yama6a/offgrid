@@ -69,7 +69,7 @@ That's why the WAL-archive alert below is `critical`.
   output and seals it into the cluster. The powerful deployer creds that run Terraform never enter the cluster.
   On bare-metal Talos there's no instance role, so it's static keys — sealed, never in `.env` or git.
 - **One bucket, per-cluster prefix.** `destinationPath: s3://<bucket>/cnpg/`; Barman appends each cluster's
-  `serverName` (= its `fullnameOverride`, unique per DB here), so clusters land in their own
+  `serverName` (= its `name`, unique per DB here), so clusters land in their own
   `cnpg/<clusterName>/{wals,base}/` — no collisions, one shared bucket + one sealed creds Secret per namespace.
   Redis reuses the same bucket + writer under `redis/<namespace>/<instance>/`, but with ONE sealed
   `redis-backup-s3` in a single namespace (its backup runs centrally — see "Redis RDB backups").
@@ -453,8 +453,8 @@ recovery cluster does **not** re-archive (it's a restore/verify target). When He
 namespace, the S3-creds Secret it references must be present (seal it with `14_cnpg_backup.sh` if restoring
 into a namespace that never had backups), and there must be a **completed base backup** — WAL alone has no
 recovery point. It warns if the source cluster shows no `firstRecoverabilityPoint`. **Limitation:** the
-recovery cluster uses the default `postgresql` operand image; a `postgis`/`timescaledb` source would need a
-matching `spec.imageName` (not wired — all clusters here are `postgresql`).
+recovery cluster uses the `postgresql` operand image, which matches every cluster here (the pg-cluster wrapper
+is postgres-only; it pins `ghcr.io/cloudnative-pg/postgresql` and there is no postgis option).
 
 ### Rebuild vs reset (and why rebuild wipes the backups)
 

@@ -15,8 +15,8 @@ A **REQUIRED `persistence`** flag (no default) picks the mode: `true` = durable 
 the platform's `02_longhorn` app. Almost everything else is **hardcoded in the templates** (single source of
 truth, updated for every instance at once): the image repo, the redis-exporter's full ref, `maxmemory` (80% of the
 memory limit, `noeviction`), the non-root uid/gid 1000 security context, and no-auth. A workload sets five
-**required** knobs (`name`, `imageTag`, `resources`, `allowedClients`, `persistence`), plus an optional create-time
-`initialFixedDiskSize`. `imageTag` is the Redis SERVER version, owned per-workload (no shared default). It is a
+**required** knobs (`name`, `redisVersion`, `resources`, `allowedClients`, `persistence`), plus an optional create-time
+`initialFixedDiskSize`. `redisVersion` is the Redis SERVER version, owned per-workload (no shared default). It is a
 single standalone instance, no HA/replication. **Durable** (`persistence: true`) instances are labelled
 `redis-backup.raspi-cluster/enabled` and backed up to S3 centrally by the platform's `07_redis_backup` app,
 nothing to configure per instance (see `docs/12_redis.md` / `docs/13_backups.md`).
@@ -50,7 +50,7 @@ small):
 redis-cache:
   name: sample-user-manager-redis-cache  # also the Service DNS: sample-user-manager-redis-cache.<ns>.svc.cluster.local:6379
   # renovate: datasource=docker depName=quay.io/opstree/redis
-  imageTag: "v8.6.2"                     # REQUIRED: Redis server version, owned per-workload
+  redisVersion: "v8.6.2"                 # REQUIRED: Redis server version, owned per-workload
   resources:
     requests: { cpu: 25m, memory: 64Mi }
     limits: { memory: 96Mi }           # a memory limit is required — maxmemory is 80% of it
@@ -68,7 +68,7 @@ No template is needed in the consumer.
 | Key                    | Required | Default | Notes                                                                                                                                                            |
 |------------------------|----------|---------|------------------------------------------------------------------------------------------------------------------------------------------------------------------|
 | `name`                 | yes      | -       | instance + Service name; unique per workload                                                                                                                     |
-| `imageTag`             | yes      | -       | Redis SERVER image tag (e.g. `v8.6.2`), owned per-workload; repo + exporter stay pinned in the chart                                                             |
+| `redisVersion`         | yes      | -       | Redis SERVER image tag (e.g. `v8.6.2`), owned per-workload; repo + exporter stay pinned in the chart                                                             |
 | `resources`            | yes      | -       | per-pod requests/limits (set a memory limit)                                                                                                                     |
 | `allowedClients`       | yes      | -       | who may reach `:6379`, the only access control                                                                                                                   |
 | `persistence`          | yes      | -       | `true` = durable (Retain class + AOF); `false` = ephemeral cache (Delete class, RDB-only)                                                                        |
@@ -76,5 +76,5 @@ No template is needed in the consumer.
 
 Everything else (the image repo, the redis-exporter's full ref, `maxmemory`, security context, no-auth) is pinned in
 `templates/redis.yaml` / `templates/configmap.yaml` / `templates/networkpolicy.yaml`; the storage class + AOF follow
-`persistence`. The server image tag is per-workload (`imageTag`). To bump the repo/exporter for all instances, or to
+`persistence`. The server image tag is per-workload (`redisVersion`). To bump the repo/exporter for all instances, or to
 add a `requirepass` password, edit the template. See `docs/12_redis.md` for the design rationale.

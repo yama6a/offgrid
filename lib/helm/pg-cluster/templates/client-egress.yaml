@@ -8,8 +8,8 @@ targets the DB pods by identity (covers the -rw Service backend; kube-proxy repl
 not the ClusterIP). Adding this flips the client to default-deny egress, which is a no-op here since every app
 pod already carries its own egress policy (DNS etc.).
 */ -}}
-{{- $cluster := .Values.cluster.fullnameOverride }}
-{{- range $i, $client := .Values.networkPolicy.allowedClients }}
+{{- $cluster := .Values.name }}
+{{- range $i, $client := .Values.allowedClients }}
 ---
 apiVersion: cilium.io/v2
 kind: CiliumNetworkPolicy

@@ -14,8 +14,7 @@ metadata:
   name: {{ .Values.name }}-redis
   namespace: {{ .Release.Namespace }}
   labels:
-    app.kubernetes.io/name: {{ .Values.name }}
-    app.kubernetes.io/component: cache
+    {{- include "redis-instance.labels" . | nindent 4 }}
 spec:
   selector:
     matchLabels:

@@ -15,10 +15,10 @@ cloudnative-pg:
     create: true
 
   # Propagate the `alert-criticality` label from each Cluster CR's metadata.labels onto the Postgres PODS the
-  # operator spawns (CNPG only inherits labels named here). This is how a labeled-critical DB (set via a
-  # consumer's `cluster.cluster.additionalLabels`) reaches kube_pod_labels, so the container-waiting-fatal
-  # outage alert can page `critical` for it — CNPG has no Deployment/StatefulSet the availability rules see.
-  # See 09_monitoring.md (alerting severity model).
+  # operator spawns (CNPG only inherits labels named here). This is how a labeled-critical DB (the pg-cluster
+  # wrapper always stamps `alert-criticality`, critical|warning, from its `alertCritical` bool) reaches
+  # kube_pod_labels, so the container-waiting-fatal outage alert can page `critical` for it. CNPG has no
+  # Deployment/StatefulSet the availability rules see. See 09_monitoring.md (alerting severity model).
   config:
     data:
       INHERITED_LABELS: alert-criticality

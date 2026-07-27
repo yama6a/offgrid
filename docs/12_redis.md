@@ -71,7 +71,7 @@ more Redis" is just "one or more aliases". Each alias is a values key carrying i
 redis-cache:
   name: sample-user-manager-redis-cache   # also the Service DNS clients dial
   # renovate: datasource=docker depName=quay.io/opstree/redis
-  imageTag: "v8.6.2"                      # REQUIRED: Redis server version, owned per-workload
+  redisVersion: "v8.6.2"                  # REQUIRED: Redis server version, owned per-workload
   persistence: false                      # REQUIRED, no default: true = durable (Retain + AOF) | false = ephemeral (Delete, RDB-only)
   resources: { requests: { cpu: 25m, memory: 64Mi }, limits: { memory: 96Mi } }
   allowedClients: [ { namespace: sample-user-manager, matchLabels: { app: sample-user-manager } } ]
@@ -81,7 +81,7 @@ redis-cache:
 Everything a workload shouldn't decide is **hardcoded in `templates/redis.yaml`** (one place, updated for every
 instance at once): the image repo, the redis-exporter's full ref, non-root uid/gid 1000, `maxmemory` = 80% of the
 memory limit (so Redis can't OOM its cgroup), and no-auth (the storage class + AOF follow the `persistence` flag).
-The server image TAG is the exception, a per-workload knob (`imageTag`) so each workload owns its Redis version. The
+The server image TAG is the exception, a per-workload knob (`redisVersion`) so each workload owns its Redis version. The
 workload interface is deliberately just five required knobs, plus an optional create-time `initialFixedDiskSize`
 (default 1Gi; see "Resizing an instance" for why it's create-time). See `lib/helm/redis-instance/README.md`.
 

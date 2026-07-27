@@ -18,9 +18,9 @@ It would cover only Terraform and (once they exist) GitHub Actions. Renovate cov
 - **Terraform** — the aws provider in `terraform/versions.tf` + `.terraform.lock.hcl`.
 - **GitHub Actions** — the workflow's own action pins (kept digest-pinned).
 - **Everything else, via comment-annotated regex** (`# renovate: datasource=...`): single-string `image:` values,
-  chart-template images, shell-script image literals, the per-workload datastore `imageTag` pins in workload
-  `values.yaml` (pg-cluster/redis-instance versions, owned per-workload), and the Talos/kernel build recipe in
-  `versions.env`.
+  chart-template images, shell-script image literals, the per-workload datastore version pins in workload
+  `values.yaml` (the annotated `postgresVersion`/`redisVersion` scalars, owned per-workload), and the Talos/kernel
+  build recipe in `versions.env`.
 
 We keep the pin as the single source of truth (see [CLAUDE.md]) and do NOT restate versions in prose/comments,
 so a bump never strands a stale number. Version literals survive in docs only where the specific version is
@@ -103,10 +103,11 @@ Two things ride in the combined PR that need care before merging:
   usual Helm guard would disable the whole repo.
 - **`helm-values` owns standard-shape `values.yaml` images; the template/shell docker regex manager does NOT scan
   `values.yaml`.** helm-values only recognizes `image:`/`repository`+`tag` structures, so the per-workload datastore
-  version (a bare annotated `imageTag` scalar, repo named in the `depName=` comment) is handled by a SEPARATE regex
-  manager scoped to `argo_apps/workloads/charts/*/values.yaml`. The three managers must not overlap on the same key:
-  a built-in manager's `managerFilePatterns` is additive (can't narrow it), so the template/shell regex manager keeps
-  `values.yaml` out entirely, and the workload-imageTag manager matches only the annotated `imageTag` line.
+  version (a bare annotated `postgresVersion`/`redisVersion` scalar, repo named in the `depName=` comment) is handled
+  by a SEPARATE regex manager scoped to `argo_apps/workloads/charts/*/values.yaml`. The three managers must not overlap
+  on the same key: a built-in manager's `managerFilePatterns` is additive (can't narrow it), so the template/shell
+  regex manager keeps `values.yaml` out entirely, and the datastore-version manager matches only the annotated
+  `postgresVersion`/`redisVersion` line.
 - **The barman-cloud vendored manifest is in `ignorePaths`** — bumping it re-vendors an upstream release verbatim
   (per that chart's README), not a line edit.
 - **VictoriaMetrics charts are grouped**; the CRD chart's app version must match its operator, a human check on

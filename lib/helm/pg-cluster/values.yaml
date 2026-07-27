@@ -1,130 +1,93 @@
-# Curated CNPG Postgres interface. This chart renders the CNPG CRs directly (no upstream dependency), but keeps
-# the historical `cluster.*` value shape so consumers + 14_cnpg_backup.sh didn't have to change: outer `cluster:`
-# groups the Cluster CR knobs, with a nested `cluster.cluster:` map (the double key is the artifact). A consumer
-# only sets the REQUIRED fields (+ optionally the three postgresql params); everything else here is pre-baked.
+# Curated CNPG Postgres interface. Renders the CNPG CRs directly (no upstream dependency). A consumer sets the
+# REQUIRED knobs (+ optionally the postgresql params); everything else is pre-baked in the templates.
 # See 10_sample_workload.md / 08_storage.md / 13_backups.md.
-cluster:
-  # REQUIRED — the consumer MUST set these. They're seeded with INVALID sentinels (empty name/type, empty
-  # resources, instances unset) so templates/validate.yaml fails the render with a clear message until the
-  # consumer overrides them. Do NOT give them real defaults.
 
-  # REQUIRED: the Postgres instance name, used VERBATIM (Cluster CR, <name>-rw/-ro/-r services, <name>-app owner
-  # Secret, PodMonitor, ObjectStore). No suffix, no `.Release.Name` derivation — you name it. Two DBs in one
-  # workload are aliased instances of THIS wrapper, so each MUST carry a distinct name.
-  fullnameOverride: "" # REQUIRED: e.g. sample-workload-db
-  type: "" # REQUIRED: postgresql | postgis (selects the container image REPO).
-  # REQUIRED: image tag for the selected type; each workload owns its own Postgres version (no shared default).
-  imageTag: "" # e.g. "16" for postgresql, "17-3.4" for postgis. Renovate tracks the annotated pin in the consumer values.
-  # Orphan-not-delete: keep the DB unit (Cluster + its ObjectStore/ScheduledBackup/PodMonitor/NetworkPolicy)
-  # alive when its manifests leave git, so restoring them re-adopts the running cluster with no data loss. Set
-  # false only to intentionally, permanently delete a DB (then remove the app). See _helpers.tpl / 13_backups.md.
-  protectFromPrune: true
-  cluster:
-    instances: # REQUIRED: 1 (single) or 2 (primary + streaming replica on 2 nodes); only 1|2 allowed.
-    resources: {} # REQUIRED: per-instance requests/limits (no sane default for a Pi; force a choice).
-    # Tune Postgres to the per-instance memory; optional, defaulted here (override only to diverge).
-    postgresql:
-      parameters:
-        max_connections: "50" # keep the connection cap small; matched to the modest per-instance memory.
-        shared_buffers: "128MB" # Postgres shared buffers; sized for a ~512Mi-class instance.
-        # Planner hint only (no memory cost): PG defaults this to 4GB, which badly misleads the planner on a
-        # shared 8GB Pi into assuming cache that isn't there. Sized conservatively for these 256-512Mi instances.
-        effective_cache_size: "256MB"
-        # RPO ceiling for WAL archiving: force a segment switch (=> the segment gets archived to S3) at most
-        # this long after the last one, so at most this much committed data is un-archived when a primary dies.
-        # Only binds when backups are ON; harmless otherwise (WAL is just recycled). Set from .env CNPG_BACKUP_RPO
-        # by 14_cnpg_backup.sh. See docs/13_backups.md for why 15min (and why idle DBs don't churn empty WAL).
-        archive_timeout: "15min"
-    # ---- PER-CONSUMER defaults (settable; correct for instances:2, WRONG for instances:1) ----
-    # A single-instance consumer MUST override BOTH (see analyticsdb in sample_user_manager):
-    #   enablePDB: false          # a 1-instance PDB is minAvailable:1 => blocks EVERY eviction (Talos node drains)
-    #   primaryUpdateMethod: restart  # no replica to switch to on a 1-instance cluster
-    enablePDB: true # 2-instance default; single-instance MUST set false.
-    primaryUpdateMethod: switchover # 2-instance default; single-instance MUST set restart.
-    # ---- everything below is hardcoded — do not override (soft: settable, but shouldn't be) ----
-    # PodMonitor -> scraped cluster-wide by vmagent. No PrometheusRule is rendered (vmalert is disabled, so its
-    # converted VMRules never fire); the CNPG alerts that matter (WAL archiving + backup staleness, connection
-    # saturation, replication lag) are Grafana-provisioned rules instead. See 09_monitoring.md / 13_backups.md.
-    monitoring:
-      enabled: true # hardcoded — do not override.
-      podMonitor:
-        enabled: true # hardcoded — do not override.
-    storage:
-      # Node-local /var/mnt/localpath partition (02_local_path_provisioner), isolated from Longhorn; Postgres
-      # replication is the only data-path redundancy. See 08_storage.md.
-      storageClass: local-path
-      # REQUIRED by the CR but a NO-OP under local-path (just makes a dir; Postgres statfs's the whole
-      # partition). Set to the honest partition budget in case the class is ever swapped for an enforcing one.
-      size: 45Gi
-    # Chart default spreads by zone, but bare Pi nodes have no zone label; spread by hostname so the
-    # primary + replica land on 2 distinct nodes (node-loss HA, required for node-local storage).
-    affinity:
-      topologyKey: kubernetes.io/hostname
-    # Bootstrap an `app` db + `app` role; the operator writes the owner creds into `<cluster>-app` (the app's PG_PASSWORD).
-    initdb:
-      database: app
-      owner: app
-    # Blank the `postgres` superuser secret: apps connect only via the `app` role above. Cheap attack-surface
-    # reduction, given the default-deny CiliumNetworkPolicy below. CNPG's own guidance.
-    enableSuperuserAccess: false
-    # Don't let the DB primary lose the OOM/eviction race against monitoring/argo on the shared 8GB nodes.
-    priorityClassName: platform-critical
-  # Off-cluster S3 backups via the Barman Cloud CNPG-I plugin: continuous WAL archiving + a daily base backup.
-  # The SECOND durability tier. The first is Postgres replication across the instances + orphan-not-delete: a
-  # workload removed from git ORPHANS its Cluster (Prune=false,Delete=false) instead of deleting it, and
-  # restoring the files re-adopts it. S3 covers what that can't: total data loss, corruption, PITR, a full rebuild.
-  #
-  # method=plugin => templates/cluster.yaml adds the barman plugin to the Cluster's `.spec.plugins`
-  # (isWALArchiver), templates/objectstore.yaml renders the `ObjectStore` CR, and templates/scheduledbackup.yaml
-  # renders the daily `ScheduledBackup`. See docs/13_backups.md.
-  #
-  # `lib/shell/14_cnpg_backup.sh` flips enabled=true and injects s3.bucket/s3.region (+ archive_timeout above)
-  # from .env, and seals the S3 creds (secret `cnpg-backup-s3`) into each consumer ns.
-  backups:
-    enabled: true # 14_cnpg_backup.sh -> true when .env has AWS creds.
-    method: plugin # the CNPG-I Barman Cloud plugin (NOT the deprecated in-tree barmanObjectStore).
-    pluginConfiguration:
-      name: barman-cloud.cloudnative-pg.io # must match the installed plugin (platform app 03_barman_cloud_plugin).
-    provider: s3
-    s3:
-      region: "eu-central-1" # 14 injects from .env AWS_REGION (required by the chart when enabled).
-      bucket: "my-cluster-backups" # 14 injects from .env S3_BACKUP_BUCKET (the shared bucket, Terraform-created).
-      # Base path in the bucket. Barman then appends the serverName (= this cluster's fullnameOverride, unique per
-      # DB in this repo) under it, so each cluster lands in its own s3://<bucket>/cnpg/<clusterName>/{wals,base}.
-      path: "/cnpg/"
-      inheritFromIAMRole: false # bare-metal Talos has no instance role; we use static keys (sealed).
-    secret:
-      name: cnpg-backup-s3 # SealedSecret (keys ACCESS_KEY_ID + ACCESS_SECRET_KEY) sealed by 14 into the ns.
-    wal:
-      compression: gzip # shrink WAL before upload (also shrinks near-empty idle segments).
-      encryption: AES256 # request SSE-S3 on upload; matches the bucket's AWS-managed SSE (decision 5).
-      maxParallel: 1
-    data:
-      compression: gzip
-      encryption: AES256
-      jobs: 2
-    # Barman's recovery window. The ObjectStore CRD REQUIRES a string matching ^[1-9][0-9]*[dwm]$ (empty/null is
-    # rejected) and we always emit the field, so we can't leave it unset — instead we ALIGN it to the S3 lifecycle
-    # expiry (S3_BACKUP_RETENTION_DAYS, default 180d): Barman prunes its own catalog coherently at that age and the
-    # S3 expiry (same age) is the backstop. 14_cnpg_backup.sh injects "<retention>d" from .env.
-    retentionPolicy: "180d"
-    scheduledBackups:
-      # Daily base backup at 02:00 (6-field cron, seconds first — CNPG uses the Go cron spec). CNPG's default
-      # backup target is prefer-standby (base backup runs on the most up-to-date replica, falling back to the
-      # primary), which is what we want.
-      - name: daily
-        schedule: "0 0 2 * * *"
-        backupOwnerReference: self
-        method: plugin
-        pluginConfiguration:
-          name: barman-cloud.cloudnative-pg.io
-# CiliumNetworkPolicy for the Postgres instance pods (templates/networkpolicy.yaml). A top-level key (NOT under
-# `cluster:`), so it's the wrapper's OWN value. ALWAYS ENFORCED and not disableable: a database has no business
-# being reachable from arbitrary sources, and there is no "open to the world" mode — permissive cases (several
-# clients, a whole namespace) are still expressed by LISTING them below. The DB pods go default-deny both
-# directions; the allowed flows (client + replication 5432, CNPG operator API, kubelet probes, metrics scrape,
-# DNS + kube-apiserver egress) and their fixed platform selectors are baked into the template. The only decision
-# is WHO may connect. See 10_sample_workload.md.
-networkPolicy:
-  # REQUIRED (validate.yaml fails an empty list, like type/instances/resources): who may open a 5432 connection.
-  allowedClients: [] # [{ namespace: <ns>, matchLabels: { <k>: <v> } }, ...]
+# REQUIRED: seeded with invalid sentinels (empty name/version, resources={}, highAvailability unset) so
+# templates/validate.yaml fails the render with a clear message until the consumer overrides them. No real defaults.
+
+# REQUIRED: the Postgres instance name, used VERBATIM (Cluster CR, <name>-rw/-ro/-r services, <name>-app owner
+# Secret, PodMonitor, ObjectStore, CiliumNetworkPolicy). No suffix, no `.Release.Name` derivation. You name it.
+# Two DBs in one workload are aliased instances of THIS wrapper, so each MUST carry a distinct name.
+name: "" # REQUIRED: e.g. sample-user-manager-db
+
+# REQUIRED: image tag on ghcr.io/cloudnative-pg/postgresql (repo is fixed: postgres only, no postgis). Each
+# workload owns its own Postgres version; no shared default. Renovate tracks the annotated pin in the consumer values.
+postgresVersion: "" # e.g. "18"
+
+# REQUIRED bool. true = 2 instances (primary + streaming replica on 2 nodes; PDB on; switchover updates). false =
+# single instance (PDB off, so a 1-pod minAvailable:1 can't block Talos node drains; in-place restart updates).
+# One bool drives instances + enablePDB + primaryUpdateMethod together; there is no separate knob for each.
+highAvailability: # REQUIRED: true | false
+
+resources: {} # REQUIRED: per-instance requests/limits (no sane default for a Pi; force a choice).
+
+# REQUIRED (validate.yaml fails an empty list): who may open a 5432 connection. SAME-NS ONLY: a cross-ns entry is
+# rejected (client-egress is a namespaced CNP). The DB pods go default-deny both directions; this is the ONLY
+# per-consumer netpol knob (every other peer (replication, operator, kubelet, vmagent, DNS, S3) is baked in).
+# Shape: [{ namespace: <ns>, matchLabels: { <k>: <v> } }, ...]
+allowedClients: []
+
+# Mark this DB app-critical: stamps alert-criticality=critical on the Cluster; CNPG INHERITED_LABELS
+# (02_cnpg_operator) copies it onto the pods, so the outage rules page `critical` (not `warning`) if a pod
+# crashloops. Default false (the label is always stamped, critical|warning, so the alert-severity template never
+# sees it absent). See docs/09_monitoring.md.
+alertCritical: false
+
+# Orphan-not-delete: keep the DB unit (Cluster + its ObjectStore/ScheduledBackup/PodMonitor/NetworkPolicy) alive
+# when its manifests leave git, so restoring them re-adopts the running cluster with no data loss. Set false only
+# to intentionally, permanently delete a DB (then remove the app). See _helpers.tpl / 13_backups.md.
+protectFromPrune: true
+
+# Tune Postgres to the per-instance memory; optional, defaulted (override only to diverge).
+postgresql:
+  parameters:
+    max_connections: "50" # keep the connection cap small; matched to the modest per-instance memory.
+    shared_buffers: "128MB" # sized for a ~512Mi-class instance.
+    # Planner hint only (no memory cost): PG defaults this to 4GB, which badly misleads the planner on a shared
+    # 8GB Pi into assuming cache that isn't there. Sized conservatively for these 256-512Mi instances.
+    effective_cache_size: "256MB"
+    # RPO ceiling for WAL archiving: force a segment switch (segment gets archived to S3) at most this long after
+    # the last one, so at most this much committed data is un-archived when a primary dies. Only binds when backups
+    # are ON; harmless otherwise. Set from .env CNPG_BACKUP_RPO by 14_cnpg_backup.sh. See docs/13_backups.md.
+    archive_timeout: "15min"
+
+# Off-cluster S3 backups via the Barman Cloud CNPG-I plugin: continuous WAL archiving + a daily base backup. The
+# SECOND durability tier (the first is replication + orphan-not-delete). method=plugin makes cluster.yaml add the
+# barman plugin to the Cluster's .spec.plugins, objectstore.yaml render the ObjectStore, and scheduledbackup.yaml
+# render the daily ScheduledBackup. `lib/shell/14_cnpg_backup.sh` flips enabled=true and injects
+# s3.bucket/s3.region (+ archive_timeout above) from .env, and seals the S3 creds into each consumer ns.
+# See docs/13_backups.md.
+backups:
+  enabled: true # 14_cnpg_backup.sh sets true when .env has AWS creds.
+  method: plugin # the CNPG-I Barman Cloud plugin (NOT the deprecated in-tree barmanObjectStore).
+  provider: s3
+  s3:
+    region: "eu-central-1" # 14 injects from .env AWS_REGION (required by the chart when enabled).
+    bucket: "my-cluster-backups" # 14 injects from .env S3_BACKUP_BUCKET (the shared bucket, Terraform-created).
+    # Base path in the bucket. Barman appends the serverName (= this cluster's name, unique per DB in this repo)
+    # under it, so each cluster lands in its own s3://<bucket>/cnpg/<name>/{wals,base}.
+    path: "/cnpg/"
+    inheritFromIAMRole: false # bare-metal Talos has no instance role; we use static keys (sealed).
+  secret:
+    name: cnpg-backup-s3 # SealedSecret (keys ACCESS_KEY_ID + ACCESS_SECRET_KEY) sealed by 14 into the ns.
+  wal:
+    compression: gzip # shrink WAL before upload (also shrinks near-empty idle segments).
+    encryption: AES256 # request SSE-S3 on upload; matches the bucket's AWS-managed SSE.
+    maxParallel: 1
+  data:
+    compression: gzip
+    encryption: AES256
+    jobs: 2
+  # Barman's recovery window. The ObjectStore CRD REQUIRES a non-empty string matching ^[1-9][0-9]*[dwm]$, so we
+  # always emit it, aligned to the S3 lifecycle expiry (S3_BACKUP_RETENTION_DAYS, default 180d) so Barman prunes
+  # its catalog coherently and the S3 expiry is the backstop. 14_cnpg_backup.sh injects "<retention>d" from .env.
+  retentionPolicy: "180d"
+  scheduledBackups:
+    # Daily base backup at 02:00 (6-field cron, seconds first; CNPG uses the Go cron spec). CNPG's default target
+    # is prefer-standby (runs on the most up-to-date replica, falling back to the primary), which is what we want.
+    - name: daily
+      schedule: "0 0 2 * * *"
+      backupOwnerReference: self
+      method: plugin
+      pluginConfiguration:
+        name: barman-cloud.cloudnative-pg.io

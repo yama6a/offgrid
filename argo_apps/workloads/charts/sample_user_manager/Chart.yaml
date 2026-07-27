@@ -15,7 +15,7 @@ dependencies:
   #
   # Two Postgres instances, each an ALIASED instance of the shared pg-cluster wrapper. Helm renders a dependency
   # once, so N databases == N aliases; each alias is a values key (maindb/analyticsdb) and carries its own
-  # explicit cluster.fullnameOverride. Add another alias block to add another DB.
+  # explicit name. Add another alias block to add another DB.
   - name: pg-cluster
     alias: maindb
     version: "*"

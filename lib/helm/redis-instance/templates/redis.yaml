@@ -4,18 +4,18 @@ reconciles a single-pod StatefulSet with ONE PVC. Single-instance by design (no 
 Longhorn reattaches the volume elsewhere and the pod reschedules — a brief availability gap, the volume follows.
 Field shape mirrors the upstream ot-helm/redis chart's standalone template (verified against redis 0.16.9).
 
-A workload sets name / imageTag / resources / allowedClients / persistence (+ optional initialFixedDiskSize).
-imageTag is the Redis SERVER version, owned per-workload. EVERYTHING ELSE IS PINNED HERE, once, for every
+A workload sets name / redisVersion / resources / allowedClients / persistence (+ optional initialFixedDiskSize).
+redisVersion is the Redis SERVER image tag, owned per-workload. EVERYTHING ELSE IS PINNED HERE, once, for every
 instance at once (the server image REPO, and the exporter's full ref):
   storage class    persistence=true -> longhorn-r2-retained (Retain); false -> longhorn-r2-ephemeral (Delete);
                    both 2-replica, from the platform 02_longhorn app. initialFixedDiskSize is the only storage
-                   knob, create-time only — default 1Gi (see docs/12_redis.md "Resizing an instance")
+                   knob, create-time only, default 1Gi (see docs/12_redis.md "Resizing an instance")
   persistence      REQUIRED (no default). true: AOF appendfsync everysec + RDB, crash-durable. false: RDB only, no AOF
   maxmemory        80% of the container memory limit (noeviction: writes fail at the cap, never drop data)
   security         non-root uid/gid 1000
-  auth             OFF — access is gated by the CiliumNetworkPolicy (see networkpolicy.yaml), not requirepass
+  auth             OFF: access is gated by the CiliumNetworkPolicy (see networkpolicy.yaml), not requirepass
 Single standalone instance by design: no HA / replication / sentinel / cluster, and no off-cluster backups.
-Bump the server REPO or the exporter here and every instance picks it up; the server TAG is per-workload (imageTag).
+Bump the server REPO or the exporter here and every instance picks it up; the server tag is per-workload (redisVersion).
 */ -}}
 apiVersion: redis.redis.opstreelabs.in/v1beta2
 kind: Redis
@@ -23,23 +23,17 @@ metadata:
   name: {{ .Values.name }}
   namespace: {{ .Release.Namespace }}
   labels:
-    app.kubernetes.io/name: {{ .Values.name }}
-    app.kubernetes.io/managed-by: {{ .Release.Service }}
-    app.kubernetes.io/component: cache
-    # always stamped so the label is never absent on kube_pod_labels — a missing field breaks the alert-severity
-    # template ($labels.label_alert_criticality). OpsTree copies CR labels onto the StatefulSet + pods; critical
-    # pages `critical`, everything else `warning`. See docs/09_monitoring.md.
-    alert-criticality: {{ if .Values.alertCritical }}critical{{ else }}warning{{ end }}
+    {{- include "redis-instance.labels" . | nindent 4 }}
     {{- if .Values.persistence }}
     redis-backup.raspi-cluster/enabled: "true"   # discovered by the central 07_redis_backup job (durable only)
     {{- end }}
 spec:
   kubernetesConfig:
-    image: "quay.io/opstree/redis:{{ .Values.imageTag }}"
+    image: "quay.io/opstree/redis:{{ .Values.redisVersion }}"
     imagePullPolicy: IfNotPresent
     resources:
       {{- toYaml .Values.resources | nindent 6 }}
-    # No auth: access is gated by the CiliumNetworkPolicy (network-RBAC), not requirepass — so there is no
+    # No auth: access is gated by the CiliumNetworkPolicy (network-RBAC), not requirepass, so there is no
     # secret to commit or generate. To add a password, drop a `redisSecret: { name, key }` here pointing at a
     # (sealed) Secret; deliberately not a per-workload knob. See docs/12_redis.md.
   redisExporter:

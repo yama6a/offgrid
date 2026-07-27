@@ -4,7 +4,7 @@
 # the values key, exactly like pg-cluster's maindb/analyticsdb). See README.md and docs/12_redis.md.
 #
 # A workload sets the five REQUIRED knobs below, plus an optional create-time disk size. The Redis SERVER version
-# (imageTag) is one of them, owned per-workload. Everything else -- the image repo, the redis-exporter, maxmemory,
+# (redisVersion) is one of them, owned per-workload. Everything else -- the image repo, the redis-exporter, maxmemory,
 # the non-root security context, and no-auth -- is hardcoded in the templates (single source of truth, updated for
 # every instance at once); see templates/redis.yaml. The `persistence` flag
 # (REQUIRED, no default) selects the storage class + whether AOF is on. The REQUIRED knobs are seeded with invalid
@@ -20,7 +20,7 @@ name: ""
 # REQUIRED: the Redis SERVER image tag (e.g. "v8.6.2"); each workload owns its own Redis version, no shared
 # default. The image repo and the redis-exporter tag stay pinned in the chart. Renovate tracks the annotated
 # pin in the consumer values.
-imageTag: ""
+redisVersion: ""
 
 # REQUIRED: per-pod requests/limits. No sane default for a Pi: force a choice. Set a memory LIMIT: Redis'
 # maxmemory is derived from it (80% of the limit, hardcoded in the template).

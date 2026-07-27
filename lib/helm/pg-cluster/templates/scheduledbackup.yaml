@@ -1,6 +1,6 @@
 {{- if eq (include "pg-cluster.backupsEnabled" .) "true" -}}
 {{- $ctx := . -}}
-{{- range .Values.cluster.backups.scheduledBackups }}
+{{- range .Values.backups.scheduledBackups }}
 ---
 apiVersion: postgresql.cnpg.io/v1
 kind: ScheduledBackup

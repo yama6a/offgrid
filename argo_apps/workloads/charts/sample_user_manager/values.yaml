@@ -62,64 +62,46 @@ rabbitmq-topology:
     - { name: user-audit-logger, type: fanout }  # broadcast to signup + audit-logger
 
 # Two CloudNativePG Postgres instances, each an aliased instance of the shared pg-cluster wrapper (file://
-# dependency; pins cnpg/cluster, pre-bakes storage/affinity/monitoring/initdb/backups). The alias key routes
-# values; each instance sets its REQUIRED knobs — an explicit `cluster.fullnameOverride` (the instance name,
-# no release derivation), type, instances, resources — plus its own DB-lockdown allowlist. See 10_sample_workload.md.
+# dependency; renders the CNPG CRs directly, pre-bakes storage/affinity/monitoring/initdb/backups). The alias key
+# routes values; each instance sets its REQUIRED knobs (explicit `name`, `postgresVersion`, `highAvailability`,
+# `resources`) plus its own DB-lockdown allowlist. See 10_sample_workload.md.
 
-# Primary DB: the manager's users store (2-instance HA — primary + streaming replica on 2 distinct nodes).
+# Primary DB: the manager's users store. highAvailability -> 2 instances (primary + streaming replica, 2 nodes).
 maindb:
-  cluster:
-    fullnameOverride: sample-user-manager-db
-    type: postgresql        # postgresql | postgis | timescaledb
-    # renovate: datasource=docker depName=ghcr.io/cloudnative-pg/postgresql
-    imageTag: "18"          # Postgres version, owned by this workload (depName above must match type)
-    cluster:
-      instances: 2
-      # Primary DB — the app can't function without it. Labels the Cluster CR; the CNPG operator's
-      # INHERITED_LABELS (02_cnpg_operator) copies it onto the Postgres pods, so the container-waiting-fatal
-      # outage rule pages `critical` if a DB pod crashloops. See docs/09_monitoring.md.
-      additionalLabels:
-        alert-criticality: critical
-      # Conservative footprint for the Pi 5s (8 GB RAM, lots already running). Per-instance.
-      resources:
-        requests:
-          cpu: 250m
-          memory: 256Mi
-        limits:
-          cpu: "1"
-          memory: 512Mi
-  networkPolicy:
-    allowedClients:
-      - namespace: sample-user-manager
-        matchLabels: { app: sample-user-manager }
+  name: sample-user-manager-db
+  # renovate: datasource=docker depName=ghcr.io/cloudnative-pg/postgresql
+  postgresVersion: "18"     # Postgres version, owned by this workload
+  highAvailability: true
+  alertCritical: true       # the app can't function without it; a DB-pod crashloop pages `critical` (docs/09_monitoring.md)
+  # Conservative footprint for the Pi 5s (8 GB RAM, lots already running). Per-instance.
+  resources:
+    requests:
+      cpu: 250m
+      memory: 256Mi
+    limits:
+      cpu: "1"
+      memory: 512Mi
+  allowedClients:
+    - namespace: sample-user-manager
+      matchLabels: { app: sample-user-manager }
 
-# Second DB: demonstrates multiple DBs per workload (the manager binary doesn't dial it). Single-instance.
+# Second DB: demonstrates multiple DBs per workload (the manager binary doesn't dial it). Single-instance:
+# highAvailability=false collapses instances:1 + PDB-off + in-place-restart into the one bool.
 analyticsdb:
-  cluster:
-    fullnameOverride: sample-user-manager-analytics
-    type: postgresql
-    # renovate: datasource=docker depName=ghcr.io/cloudnative-pg/postgresql
-    imageTag: "18"          # Postgres version, owned by this workload (depName above must match type)
-    cluster:
-      instances: 1
-      # single-instance PDB is minAvailable:1 => blocks EVERY eviction, so a Talos node drain (03f upgrade)
-      # can never evict this pod. It's single/non-HA and unused by the binary, so drop the PDB: the pod is
-      # evictable, node reboots, data on local-path Retain survives + it re-attaches on the same node.
-      enablePDB: false
-      # No replica to switch over to on a 1-instance cluster, so update the primary in place. (CNPG falls back
-      # to restart here anyway; set explicitly to match the default switchover being wrong for single-instance.)
-      primaryUpdateMethod: restart
-      resources:
-        requests:
-          cpu: 100m
-          memory: 128Mi
-        limits:
-          cpu: "500m"
-          memory: 256Mi
-  networkPolicy:
-    allowedClients:
-      - namespace: sample-user-manager
-        matchLabels: { app: sample-user-manager }
+  name: sample-user-manager-analytics
+  # renovate: datasource=docker depName=ghcr.io/cloudnative-pg/postgresql
+  postgresVersion: "18"     # Postgres version, owned by this workload
+  highAvailability: false
+  resources:
+    requests:
+      cpu: 100m
+      memory: 128Mi
+    limits:
+      cpu: "500m"
+      memory: 256Mi
+  allowedClients:
+    - namespace: sample-user-manager
+      matchLabels: { app: sample-user-manager }
 
 # Two standalone Redis instances, each an aliased instance of the shared redis-instance wrapper (file://
 # dependency; renders a `Redis` CR + ServiceMonitor + a default-deny CiliumNetworkPolicy). Everything else —
@@ -132,7 +114,7 @@ analyticsdb:
 redis-cache:
   name: sample-user-manager-redis-cache
   # renovate: datasource=docker depName=quay.io/opstree/redis
-  imageTag: "v8.6.2"    # Redis server version, owned by this workload
+  redisVersion: "v8.6.2"    # Redis server version, owned by this workload
   alertCritical: true   # the app's primary datastore -> outage rules page `critical` (see docs/09_monitoring.md)
   # For the sake of the demo we treat the audit-log cache as EPHEMERAL: Delete class + RDB-only, no AOF. Real
   # audit logs might warrant durability, but these are 1h-TTL and regenerable — so this also exercises (and
@@ -150,7 +132,7 @@ redis-cache:
 redis-sessions:
   name: sample-user-manager-redis-sessions
   # renovate: datasource=docker depName=quay.io/opstree/redis
-  imageTag: "v8.6.2"          # Redis server version, owned by this workload
+  redisVersion: "v8.6.2"      # Redis server version, owned by this workload
   persistence: true           # durable: Retain class + AOF (crash-durable); showcases the persistent mode
   # Durable => labelled for backup + backed up automatically by the central 07_redis_backup job (see 12_redis.md).
   initialFixedDiskSize: 1Gi   # create-time ONLY — changing this does NOT resize a live instance (see 12_redis.md)

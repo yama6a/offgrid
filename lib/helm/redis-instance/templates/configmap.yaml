@@ -21,8 +21,7 @@ metadata:
   name: {{ .Values.name }}-ext-config
   namespace: {{ .Release.Namespace }}
   labels:
-    app.kubernetes.io/name: {{ .Values.name }}
-    app.kubernetes.io/component: redis
+    {{- include "redis-instance.labels" . | nindent 4 }}
 data:
   redis-additional.conf: |
     activedefrag yes
