@@ -94,6 +94,13 @@ victoria-metrics-k8s-stack:
         - sourceLabels: [__name__]
           action: drop
           regex: "flag|kubernetes_feature_enabled|kube_pod_tolerations|container_tasks_state"
+        # App-exporter internals, never charted or alerted here:
+        #   erlang_vm_allocators                 : RabbitMQ Erlang per-allocator/scheduler memory internals (~1.5k series).
+        #   redis_commands_latencies_usec_bucket : redis-exporter per-command latency histogram buckets (redis-instance
+        #                                          + argocd-redis); command rate/duration/failures (_total) are kept.
+        - sourceLabels: [__name__]
+          action: drop
+          regex: "erlang_vm_allocators|redis_commands_latencies_usec_bucket"
         # Go runtime GC/scheduler histograms + the GC-pause summary, per-bucket detail for EVERY Go target,
         # never queried. Deliberately KEEPS go_sched_latencies_seconds_bucket (used by the VM dashboards) and
         # all the cheap go_memstats_*/go_goroutines scalars.

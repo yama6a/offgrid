@@ -53,6 +53,10 @@ rabbitmq-cluster-operator:
     enabled: true
     replicaCount: 1
     revisionHistoryLimit: 0  # roll-forward only; no old ReplicaSets kept (05_gitops.md)
+    # --zap-log-level=error. It logs Start/Successfully-declare/Finished at INFO per topology CR every
+    # SYNC_PERIOD -> ~55% of ALL cluster log volume, pure success chatter. Also drops WARN; real failures
+    # still surface via CR status conditions, k8s events, and the queue/DLQ alerts (05_grafana rabbitmq-health.yaml).
+    logLevel: error
     resources:
       requests:
         cpu: 10m

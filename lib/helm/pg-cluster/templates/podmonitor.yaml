@@ -17,3 +17,15 @@ spec:
       cnpg.io/podRole: instance
   podMetricsEndpoints:
     - port: metrics
+      metricRelabelings:
+        # Keep only max_connections from cnpg_pg_settings_setting: it feeds the CNPG connection-saturation
+        # alert (05_grafana cnpg-health.yaml, .../max_connections). The other ~90 GUCs/pod are a static config
+        # dump, never charted (~848 series). FOOTGUN: alerting on another GUC needs it added to the keep here.
+        # RE2 has no negative lookahead, so stamp the kept series then drop every other pg_settings series.
+        - sourceLabels: [__name__, name]
+          regex: "cnpg_pg_settings_setting;max_connections"
+          targetLabel: __tmp_keep_pgsetting
+          replacement: "keep"
+        - sourceLabels: [__name__, __tmp_keep_pgsetting]
+          regex: "cnpg_pg_settings_setting;"
+          action: drop

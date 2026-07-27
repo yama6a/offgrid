@@ -70,6 +70,13 @@ platform-ingress app. Cilium/Hubble also ships Grafana dashboards: `hubble.metri
 `00_cilium` emits `grafana_dashboard` ConfigMaps that this stack's Grafana sidecar picks up cluster-wide (see
 [04_networking.md](04_networking.md)).
 
+### Keeping the stores lean
+
+Retention has ample PVC headroom, so the goal is dropping data that never gets charted or alerted, not avoiding overflow. Exact drops and reasons live as comments where the config does. The narrative:
+
+- **Metrics.** vmagent's `globalScrapeMetricRelabelConfigs` (in `05_victoria_metrics_k8s_stack` values) is the "drop everywhere regardless of job" list; per-target `metricRelabelConfigs` handle single-job families (apiserver/etcd histograms, the rabbitmq broker). Two exporter families are dropped globally: `erlang_vm_allocators` (RabbitMQ Erlang allocator internals) and `redis_commands_latencies_usec_bucket` (redis-exporter per-command latency buckets). Neither is charted or alerted. `lib/helm/pg-cluster` keeps only `cnpg_pg_settings_setting{name="max_connections"}` (the CNPG connection-saturation alert reads it) and drops the rest of the per-GUC config dump. Alerting on another GUC means widening that keep-list.
+- **Logs.** The `rabbitmq-messaging-topology-operator` was ~55% of all cluster log volume: Start/declare/Finished at INFO per topology CR every `SYNC_PERIOD`. It runs at `logLevel: error` (`03_rabbitmq` values). That drops WARN too, but failures still surface via CR status conditions, k8s events, and the `rabbitmq-health` Grafana alerts. The collector also drops its own logs pre-read (`excludeFilter` in `05_victoria_logs` values).
+
 ### Pinned versions
 
 Chart versions live in each app's `Chart.yaml` (Renovate groups the VictoriaMetrics charts —
