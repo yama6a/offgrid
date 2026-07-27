@@ -58,3 +58,5 @@ spec:
       toPorts:
         - ports:
             - { port: "443", protocol: TCP }
+    # k8s-sidecar (dashboards NAMESPACE=ALL + alerts) WATCH the apiserver :6443 for their ConfigMaps.
+    - toEntities: [kube-apiserver]

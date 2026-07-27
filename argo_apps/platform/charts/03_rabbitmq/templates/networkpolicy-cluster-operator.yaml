@@ -8,7 +8,7 @@
 # global.networkPolicy.create:false (see 05_gitops.md).
 #
 # Audit-first rollout like every netpol here (Cilium PolicyAuditMode + `hubble observe --verdict DROPPED,AUDIT`,
-# then enforce). Ports: 9782 metrics, 8081 health probe, 53 DNS. See 04_networking.md / 11_messaging.md.
+# then enforce). Ports: 9782 metrics, 8081 health probe, 53 DNS, 15672 broker mgmt. See 04_networking.md / 11_messaging.md.
 apiVersion: cilium.io/v2
 kind: CiliumNetworkPolicy
 metadata:
@@ -43,7 +43,14 @@ spec:
         - ports:
             - { port: "53", protocol: UDP }
             - { port: "53", protocol: TCP }
-    # (d) Reconciles the RabbitmqCluster (StatefulSet/Service/Secrets/pod status) via the API server. The broker
-    # is managed through the k8s API, not dialed directly (that's the topology operator's job); the admission
-    # webhook is OFF by default (clusterOperator.webhook.enabled:false). Audit-first surfaces any missed flow.
+    # (d) Reconciles the RabbitmqCluster (StatefulSet/Service/Secrets/pod status) via the API server. The
+    # admission webhook is OFF by default (clusterOperator.webhook.enabled:false).
     - toEntities: [kube-apiserver]
+    # (e) Dials the broker mgmt API :15672 post-formation (feature-flag enable / setup). Same-ns broker
+    # selector; broker ingress (c) already admits :15672 from any pod in this namespace.
+    - toEndpoints:
+        - matchLabels:
+            app.kubernetes.io/name: rabbitmq
+      toPorts:
+        - ports:
+            - { port: "15672", protocol: TCP }
