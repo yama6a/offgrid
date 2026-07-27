@@ -8,6 +8,21 @@ unique when a workload aliases this wrapper more than once.
 {{- end -}}
 
 {{/*
+Resolve postgresVersion (a major, e.g. "18") to the pinned image (tag@digest) from files/postgres-images.yaml.
+The chart owns the repo/flavor/OS/digest; a consumer picks only a supported major. Fails with the supported list
+if the major isn't a key, so an unsupported/EOL version can't render. See docs/13_backups.md.
+*/}}
+{{- define "pg-cluster.image" -}}
+{{- $images := .Files.Get "files/postgres-images.yaml" | fromYaml -}}
+{{- $v := .Values.postgresVersion | toString -}}
+{{- $img := index $images $v -}}
+{{- if not $img -}}
+{{- fail (printf "pg-cluster: postgresVersion %q is not a supported major; files/postgres-images.yaml has: %s" $v (keys $images | sortAlpha | join ", ")) -}}
+{{- end -}}
+{{- $img -}}
+{{- end -}}
+
+{{/*
 Common labels. alert-criticality is ALWAYS stamped (critical|warning) so the label is never absent: the CNPG
 operator's INHERITED_LABELS (02_cnpg_operator) copies it onto the pods, and the alert-severity template keys on
 it (a missing field would break that template). See docs/09_monitoring.md.

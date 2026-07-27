@@ -99,8 +99,9 @@ The workload doesn't template CNPG CRs directly; it depends on the shared `pg-cl
 (`lib/helm/pg-cluster`, see [CLAUDE.md](../CLAUDE.md)), which renders the CNPG CRs itself (no upstream chart)
 and pre-bakes every value a workload shouldn't think about (node-local `local-path` storage + 45Gi, hostname
 anti-affinity, monitoring on, an `app`/`app` initdb, backups off). Each instance sets only the REQUIRED knobs:
-`name` (the instance name), `postgresVersion` (the tag on `ghcr.io/cloudnative-pg/postgresql`, owned
-per-workload), `highAvailability` (one bool: true = 2 instances + PDB + switchover, false = single), and
+`name` (the instance name), `postgresVersion` (the Postgres MAJOR, e.g. `"18"`, which the chart resolves to a
+pinned image via `files/postgres-images.yaml`, owned per-workload), `highAvailability` (one bool: true = 2
+instances + PDB + switchover, false = single), and
 `resources`, so a Postgres is ~7 lines, not ~40. A validation template in the wrapper fails the render (with a
 clear message) if any required knob is missing. Trade-off: the pre-baked values are *soft* defaults a consumer
 could still override. Because `initdb` is a wrapper default, the app template hardcodes `PG_USER`/`PG_DATABASE`

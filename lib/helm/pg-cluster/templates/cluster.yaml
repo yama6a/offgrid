@@ -12,7 +12,7 @@ metadata:
 spec:
   # highAvailability drives instances + enablePDB + primaryUpdateMethod together (see values.yaml).
   instances: {{ if .Values.highAvailability }}2{{ else }}1{{ end }}
-  imageName: ghcr.io/cloudnative-pg/postgresql:{{ .Values.postgresVersion }}
+  imageName: {{ include "pg-cluster.image" . }}
   imagePullPolicy: IfNotPresent
   # non-root postgres UID/GID (CNPG default for the postgresql image).
   postgresUID: 26

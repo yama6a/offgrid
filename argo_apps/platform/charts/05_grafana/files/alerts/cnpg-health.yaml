@@ -163,7 +163,7 @@ groups:
       - uid: cnpg-instance-not-ready
         title: CNPG instance not ready
         condition: C
-        for: 2m
+        for: 6m   # a rolling restart/switchover on a Pi 5 takes ~2-4m per instance; 2m paged on every planned rollout
         labels:
           severity: '{{ if eq (index $labels "label_alert_criticality") "critical" }}critical{{ else }}warning{{ end }}'
         annotations:

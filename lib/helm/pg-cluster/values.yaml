@@ -12,9 +12,10 @@
 # uniqueness requirement.
 name: "" # REQUIRED: e.g. sample-user-manager-db
 
-# REQUIRED: image tag on ghcr.io/cloudnative-pg/postgresql (repo is fixed: postgres only, no postgis). Each
-# workload owns its own Postgres version; no shared default. Renovate tracks the annotated pin in the consumer values.
-postgresVersion: "" # e.g. "18"
+# REQUIRED: the Postgres MAJOR, e.g. "18". NOT a raw tag: it's a key into files/postgres-images.yaml, which the
+# chart resolves to a pinned minimal image (tag@digest). Renovate digest-tracks that file, so the consumer owns
+# only the major and can't pick an unpinned/unsupported tag. An unlisted major fails the render (validate.yaml).
+postgresVersion: "" # e.g. "18" (must be a key in files/postgres-images.yaml)
 
 # REQUIRED bool. true = 2 instances (primary + streaming replica on 2 nodes; PDB on; switchover updates). false =
 # single instance (PDB off, so a 1-pod minAvailable:1 can't block Talos node drains; in-place restart updates).

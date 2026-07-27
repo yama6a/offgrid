@@ -59,14 +59,28 @@
     },
     {
       // Per-workload datastore versions: a bare `postgresVersion`/`redisVersion` scalar in a workload's
-      // values.yaml, with the repo named in the `depName=` annotation (the tag alone has no repo). pg-cluster +
-      // redis-instance moved their image TAG out of the library so each workload owns its own Postgres/Redis
-      // version; this keeps the combined auto-merged PR bumping every workload's pin. See docs/14_renovate.md.
+      // values.yaml, with the repo named in the `depName=` annotation (the tag alone has no repo). Each workload
+      // owns its own major. redisVersion tracks all update types (patch+minor+major); postgresVersion is held to
+      // MAJOR-only by a packageRule below (patch/minor come from the chart's digest-pinned image map instead), so
+      // Renovate surfaces a per-workload PG major upgrade (18->19) for review. See docs/14_renovate.md.
       customType: "regex",
       description: "per-workload datastore image tags (annotated postgresVersion/redisVersion in workload values.yaml)",
       managerFilePatterns: ["/^argo_apps/workloads/charts/[^/]+/values\\.yaml$/"],
       matchStrings: [
         "# renovate: datasource=docker depName=(?<depName>\\S+)(?: versioning=(?<versioning>\\S+))?\\s+(?:postgresVersion|redisVersion):\\s*\"?(?<currentValue>[\\w][\\w.-]*)\"?",
+      ],
+      datasourceTemplate: "docker",
+    },
+    {
+      // pg-cluster's supported Postgres image map (lib/helm/pg-cluster/files/postgres-images.yaml): one pinned
+      // `<repo>:<tag>@<digest>` per supported major. Digest-only (the packageRule below disables tag bumps):
+      // Renovate refreshes each digest as the rolling <major>-minimal-trixie tag moves onto a new patch build.
+      // Adding/removing a major is a manual edit (a new PG major is a pg_upgrade, not a digest swap).
+      customType: "regex",
+      description: "pg-cluster supported Postgres images (tag@digest per major)",
+      managerFilePatterns: ["/^lib/helm/pg-cluster/files/postgres-images\\.yaml$/"],
+      matchStrings: [
+        "(?<depName>ghcr\\.io/cloudnative-pg/postgresql):(?<currentValue>[\\w][\\w.-]*)@(?<currentDigest>sha256:[a-f0-9]{64})",
       ],
       datasourceTemplate: "docker",
     },
@@ -141,6 +155,28 @@
       description: "pin github action refs to digests",
       matchManagers: ["github-actions"],
       pinDigests: true,
+    },
+    {
+      // Per-workload `postgresVersion` is a MAJOR selector only (a key into pg-cluster's image map); the actual
+      // patch/digest is pinned and tracked in that map. Disable patch/minor/digest here so the workload scalar
+      // never churns on a patch. Only a PG MAJOR bump (18 to 19) surfaces, as its own reviewed (non-automerged)
+      // PR. It fails CI until the matching major is added to files/postgres-images.yaml (the deliberate pg_upgrade
+      // gate). See lib/helm/pg-cluster + docs/14_renovate.md.
+      description: "workload postgresVersion: major-only (patch/minor come from the pg-cluster image map)",
+      matchFileNames: ["argo_apps/workloads/charts/**/values.yaml"],
+      matchDepNames: ["ghcr.io/cloudnative-pg/postgresql"],
+      matchUpdateTypes: ["minor", "patch", "digest"],
+      enabled: false,
+    },
+    {
+      // The pg-cluster image map is DIGEST-ONLY: each line stays on its major's rolling <major>-minimal-trixie
+      // tag forever and Renovate just refreshes the digest as that tag moves onto new patch builds. Disable tag
+      // version bumps so 18-minimal-trixie is never auto-rewritten to a 19 tag. A new PG major is added by hand
+      // (a pg_upgrade, not a swap). See lib/helm/pg-cluster/files/postgres-images.yaml.
+      description: "pg-cluster image map: digest-only, no tag version bumps",
+      matchFileNames: ["lib/helm/pg-cluster/files/postgres-images.yaml"],
+      matchUpdateTypes: ["major", "minor", "patch"],
+      enabled: false,
     },
   ],
 }

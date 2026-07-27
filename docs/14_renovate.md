@@ -19,8 +19,9 @@ It would cover only Terraform and (once they exist) GitHub Actions. Renovate cov
 - **GitHub Actions** — the workflow's own action pins (kept digest-pinned).
 - **Everything else, via comment-annotated regex** (`# renovate: datasource=...`): single-string `image:` values,
   chart-template images, shell-script image literals, the per-workload datastore version pins in workload
-  `values.yaml` (the annotated `postgresVersion`/`redisVersion` scalars, owned per-workload), and the Talos/kernel
-  build recipe in `versions.env`.
+  `values.yaml` (the annotated `postgresVersion`/`redisVersion` scalars, owned per-workload), the pg-cluster
+  Postgres image map (`lib/helm/pg-cluster/files/postgres-images.yaml`, digest-pinned per major), and the
+  Talos/kernel build recipe in `versions.env`.
 
 We keep the pin as the single source of truth (see [CLAUDE.md]) and do NOT restate versions in prose/comments,
 so a bump never strands a stale number. Version literals survive in docs only where the specific version is
@@ -108,6 +109,13 @@ Two things ride in the combined PR that need care before merging:
   on the same key: a built-in manager's `managerFilePatterns` is additive (can't narrow it), so the template/shell
   regex manager keeps `values.yaml` out entirely, and the datastore-version manager matches only the annotated
   `postgresVersion`/`redisVersion` line.
+- **Postgres version is split across two pins: MAJOR (workload) + patch/digest (chart map).** A workload's
+  `postgresVersion` is a bare major (`"18"`), Renovate-tracked but held MAJOR-only by a packageRule, so it only
+  surfaces a `18 to 19` upgrade for review. The actual image (flavor, OS, patch, digest) lives once in
+  `lib/helm/pg-cluster/files/postgres-images.yaml`, one pinned `tag@digest` per supported major, which Renovate
+  tracks DIGEST-only (patches move the rolling `<major>-minimal-trixie` tag; the tag string never changes). A new
+  major is added to the map by hand (a `pg_upgrade`, not a swap); until it is, a workload bumped to that major
+  fails the render (the chart's `pg-cluster.image` helper fails on an unlisted key), which blocks the major PR.
 - **The barman-cloud vendored manifest is in `ignorePaths`** — bumping it re-vendors an upstream release verbatim
   (per that chart's README), not a line edit.
 - **VictoriaMetrics charts are grouped**; the CRD chart's app version must match its operator, a human check on

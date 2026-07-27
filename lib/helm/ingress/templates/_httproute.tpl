@@ -19,4 +19,8 @@ spec:
         - name: {{ .host.targetService }}
           namespace: {{ include "ingress.backendNs" . }}
           port: {{ .host.targetPort }}
+{{- with .host.requestTimeout }}
+      timeouts:
+        request: {{ . | quote }}          # "0s" = off; needed for SSE/long-poll backends (Envoy cuts at 15s -> 504)
+{{- end }}
 {{- end -}}

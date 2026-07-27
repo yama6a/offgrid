@@ -8,7 +8,7 @@ values.yaml.
 {{- fail "pg-cluster: name is required (the explicit Postgres instance name; no release-name derivation, and it must be unique across a workload's DBs)" }}
 {{- end }}
 {{- if not .Values.postgresVersion }}
-{{- fail "pg-cluster: postgresVersion is required (the image tag on ghcr.io/cloudnative-pg/postgresql; e.g. \"18\")" }}
+{{- fail "pg-cluster: postgresVersion is required (the Postgres major, a key in files/postgres-images.yaml; e.g. \"18\")" }}
 {{- end }}
 {{- if not (kindIs "bool" .Values.highAvailability) }}
 {{- fail "pg-cluster: highAvailability is required and must be explicitly true (2 instances + PDB + switchover) or false (single instance, no PDB, in-place restart); there is no default" }}

@@ -70,7 +70,7 @@ rabbitmq-topology:
 maindb:
   name: sample-user-manager-db
   # renovate: datasource=docker depName=ghcr.io/cloudnative-pg/postgresql
-  postgresVersion: "18"     # Postgres version, owned by this workload
+  postgresVersion: "18"     # Postgres MAJOR (a key in pg-cluster's image map, which pins the patch+digest). Renovate proposes only MAJOR bumps here.
   highAvailability: true
   alertCritical: true       # the app can't function without it; a DB-pod crashloop pages `critical` (docs/09_monitoring.md)
   # Conservative footprint for the Pi 5s (8 GB RAM, lots already running). Per-instance.
@@ -90,7 +90,7 @@ maindb:
 analyticsdb:
   name: sample-user-manager-analytics
   # renovate: datasource=docker depName=ghcr.io/cloudnative-pg/postgresql
-  postgresVersion: "18"     # Postgres version, owned by this workload
+  postgresVersion: "18"     # Postgres MAJOR (a key in pg-cluster's image map, which pins the patch+digest). Renovate proposes only MAJOR bumps here.
   highAvailability: false
   resources:
     requests:

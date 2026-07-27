@@ -270,6 +270,8 @@ Pi 5 Talos image builds on [talos-rpi5/talos-builder](https://github.com/talos-r
 
 - add a worker node (4th bay in the rack)
 - check cnpg backup accumulation, ensure it doesn't build up too much. consider extending WAL backup time.
+- look at all latest ntfy alerts, and check if they are actionable or just noise. if noise, change limits, or suggest how to deal with them.
+- look at all latest error logs in the last 24h. noise or actionable? if noise, or suggest how to deal with them.-
 - check all logs/hubble for network policies in audit more that are dropping traffic that should be allowed
 - check log accumulation and metrics cardinality, drop noise so storage doesn't grow meaninglessly
 - migrate old pi stuff to cluster

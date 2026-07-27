@@ -10,6 +10,8 @@ ingress:
           targetNamespace: argocd
           targetService: argocd-server
           targetPort: 80
+          requestTimeout: "0s"           # UI holds SSE streams on /api/v1/stream/*; Envoy's 15s default 504s them
+
         - subdomain: grafana
           targetNamespace: monitoring
           targetService: grafana
@@ -47,3 +49,5 @@ ingress:
           targetNamespace: monitoring
           targetService: ntfy
           targetPort: 8080
+          requestTimeout: "0s"             # Android app holds a long-poll JSON stream; Envoy's 15s default forces
+                                           # a reconnect 4x/min (battery drain + delivery gaps)
