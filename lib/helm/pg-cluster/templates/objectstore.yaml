@@ -29,9 +29,10 @@ spec:
       encryption: AES256
       jobs: 2
     endpointURL: "https://s3.{{ required "pg-cluster: files/backup.yaml region missing but backups on; run 14_cnpg_backup.sh" $b.region }}.amazonaws.com"
-    # Barman appends the serverName (= this cluster's name, unique per DB) under /cnpg/, so each cluster lands in
-    # its own s3://<bucket>/cnpg/<name>/{wals,base}.
-    destinationPath: "s3://{{ $b.bucket }}/cnpg/"
+    # Namespace in the prefix + Barman appending the serverName (= this cluster's name) => each cluster lands in
+    # its own s3://<bucket>/cnpg/<ns>/<name>/{wals,base}. The <ns> makes the path globally unique on just the
+    # per-namespace name uniqueness validate.yaml already enforces (no cross-namespace name collision in S3).
+    destinationPath: "s3://{{ $b.bucket }}/cnpg/{{ .Release.Namespace }}/"
     # bare-metal Talos has no instance role: static keys, sealed cluster-wide by 14. Name from the helper so it
     # can't drift from the SealedSecret that creates it (drift => ObjectStore points at a missing Secret).
     s3Credentials:

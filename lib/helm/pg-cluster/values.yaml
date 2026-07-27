@@ -7,7 +7,9 @@
 
 # REQUIRED: the Postgres instance name, used VERBATIM (Cluster CR, <name>-rw/-ro/-r services, <name>-app owner
 # Secret, PodMonitor, ObjectStore, CiliumNetworkPolicy). No suffix, no `.Release.Name` derivation. You name it.
-# Two DBs in one workload are aliased instances of THIS wrapper, so each MUST carry a distinct name.
+# Two DBs in one workload are aliased instances of THIS wrapper, so each MUST carry a distinct name. Unique per
+# NAMESPACE is enough (all resources are namespaced, and the S3 backup path is namespace-qualified); no global-
+# uniqueness requirement.
 name: "" # REQUIRED: e.g. sample-user-manager-db
 
 # REQUIRED: image tag on ghcr.io/cloudnative-pg/postgresql (repo is fixed: postgres only, no postgis). Each

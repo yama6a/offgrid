@@ -68,9 +68,10 @@ That's why the WAL-archive alert below is `critical`.
   a dedicated, bucket-scoped IAM writer and exposes its access key as an output; `14_cnpg_backup.sh` reads that
   output and seals it into the cluster. The powerful deployer creds that run Terraform never enter the cluster.
   On bare-metal Talos there's no instance role, so it's static keys — sealed, never in `.env` or git.
-- **One bucket, per-cluster prefix.** `destinationPath: s3://<bucket>/cnpg/`; Barman appends each cluster's
-  `serverName` (= its `name`, unique per DB here), so clusters land in their own
-  `cnpg/<clusterName>/{wals,base}/` — no collisions, one shared bucket + one sealed creds Secret per namespace.
+- **One bucket, namespace + cluster prefix.** `destinationPath: s3://<bucket>/cnpg/<namespace>/`; Barman appends
+  each cluster's `serverName` (= its `name`), so clusters land in their own `cnpg/<namespace>/<clusterName>/{wals,base}/`.
+  The namespace in the path makes it collision-proof on just per-namespace name uniqueness (which validate.yaml
+  enforces), so no global-uniqueness requirement. One shared bucket + one sealed creds Secret per DB instance.
   Redis reuses the same bucket + writer under `redis/<namespace>/<instance>/`, but with ONE sealed
   `redis-backup-s3` in a single namespace (its backup runs centrally — see "Redis RDB backups").
 - **The plugin is network-policed.** The `barman-cloud` plugin Deployment (cnpg-system) carries its own
@@ -485,7 +486,7 @@ that destroy so the bucket survives the rebuild.)
 2. **Plugin synced:** platform Healthy; `kubectl get crd objectstores.barmancloud.cnpg.io`; the `barman-cloud`
    Deployment Ready in `cnpg-system`.
 3. **WAL archiving live** (load-bearing): `kubectl cnpg status <cluster> -n <ns>` → "Continuous Archiving: OK"
-    + a first-recoverability point; objects under `s3://<bucket>/cnpg/<cluster>/wals/`. The daily base backup
+    + a first-recoverability point; objects under `s3://<bucket>/cnpg/<ns>/<cluster>/wals/`. The daily base backup
       runs on the **standby** pod.
 4. **RPO:** `SELECT pg_switch_wal();` on the primary → a new object in `…/wals/` within seconds; confirm
    `SHOW archive_timeout;` is `15min`.
