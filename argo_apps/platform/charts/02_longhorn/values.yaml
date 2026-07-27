@@ -49,8 +49,8 @@ longhorn:
     backupTargetCredentialSecret: "longhorn-backup-s3" # -> longhorn-backup-s3 (sealed into longhorn-system, templates/backup-s3-sealedsecret.yaml)
     pollInterval: 300 # s; how often Longhorn rescans S3 (also how DR discovers BackupVolumes on a rebuild)
   persistence:
-    # NO default StorageClass. The three explicit classes (templates/storageclasses.yaml: longhorn-r2-ephemeral /
-    # -retained / -retained-with-backups) are the only Longhorn classes, and every workload names one deliberately
+    # NO default StorageClass. The two explicit classes (templates/storageclasses.yaml: longhorn-r2-ephemeral /
+    # -retained-with-backups) are the only Longhorn classes, and every workload names one deliberately
     # — a PVC that omits a class stays Pending rather than silently landing on Longhorn. See docs/08_storage.md.
     defaultClass: false
   # The pre-upgrade checker is a Helm pre-upgrade HOOK Job. Under ArgoCD a hook Job can stall the
