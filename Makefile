@@ -133,7 +133,7 @@ restore-secrets-key: ## 06: restore the sealed-secrets master key so committed S
 
 ##@ Data recovery  (restore from S3: CNPG + Redis + Longhorn + VM/VL. A GitOps-pruned CNPG cluster is not deleted; just restore its files.)
 .PHONY: restore-cnpg
-restore-cnpg: ## Restore a CNPG database from S3 — latest or PITR — into a fresh cluster (interactive; needs backups on).
+restore-cnpg: ## Restore a CNPG database from S3, latest or PITR: in-place under its own name, or into a throwaway side cluster (interactive, resumable).
 	bash lib/shell/recover_cnpg_from_s3.sh
 
 .PHONY: restore-redis

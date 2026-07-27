@@ -407,101 +407,65 @@ bash lib/shell/recover_vm_from_s3.sh --kind metrics --target all --apply
 
 Durability is two layers, and only the second has a recovery step:
 
-- **In-cluster, no recovery step:** Postgres streaming replication across the instances, plus orphan-not-delete.
-  Removing a workload's manifests from git does NOT delete its `Cluster`: the whole DB unit carries
-  `argocd.argoproj.io/sync-options: Prune=false,Delete=false` (see 08_storage.md and the pg-cluster wrapper), so
-  the database keeps running, unmanaged, and restoring the files re-adopts it with zero data movement. The
-  `orphan-exporter` and its alerts (`05_orphan_exporter`, `orphan.yaml`) make that orphaned state loud so it gets
-  noticed. Same mechanism, same exporter, for Redis (see 12_redis.md).
-- **Off-cluster (S3):** Barman Cloud (continuous WAL + daily base) for TRUE data loss: disk/node loss,
-  corruption, or PITR. `local-path` is node-pinned, so a lost node's data is only recoverable from here.
+- **In-cluster, nothing to run:** streaming replication across the instances, plus orphan-not-delete. Manifests
+  leaving git do NOT delete the `Cluster` (`Prune=false,Delete=false` on the whole DB unit), so the DB keeps
+  running unmanaged and restoring the files re-adopts it. `05_orphan_exporter` + `orphan.yaml` make that state loud.
+- **Off-cluster (S3):** Barman Cloud (continuous WAL + daily base) for real data loss. `local-path` is
+  node-pinned, so a lost node's data exists only here.
 
-| When                                                      | Use                                             | How                                                          |
-|-----------------------------------------------------------|-------------------------------------------------|--------------------------------------------------------------|
-| Workload manifests pruned from git (DB orphaned, running) | restore the git files                           | Argo re-adopts the live `Cluster`; no data moves. See below. |
-| DB gone, want it BACK under its own name, GitOps-managed  | pg-cluster `restore.enabled: true`              | Argo rebuilds `<name>` in place from S3. See below.          |
-| Verify a backup / read old data / PITR side-by-side       | `recover_cnpg_from_s3.sh` (`make restore-cnpg`) | bootstrap a NEW, unmanaged cluster from the object store.    |
+Pick by what is actually wrong:
 
-### Restore a GitOps-pruned cluster (orphan-not-delete)
+| Symptom | What to do |
+|---|---|
+| DB still running, app permanently OutOfSync | Restore the workload's files in git and push. Argo re-adopts it, no data moves. Nothing else to do. |
+| `Cluster` is GONE and you want it back as itself | `make restore-cnpg`, mode **in-place**. |
+| DB is fine; verify a backup, read old rows, test a PITR target | `make restore-cnpg`, mode **side**. |
+| Whole cluster rebuilt | `make restore-secrets-key` first (the sealed S3 creds must decrypt), then mode **in-place** per DB. |
 
-Removing a whole workload from git prunes its stateless resources (Deployment, Service, HTTPRoute, rabbitmq) but
-ORPHANS every unit carrying `deletionProtection: true`. For a DB that means the `Cluster`, its PVCs, the
-`<cluster>-app` Secret, the ObjectStore, ScheduledBackup, PodMonitor and CiliumNetworkPolicy all keep running (a
-protected Redis orphans the same way, see 12_redis.md). Removing just the `Cluster` from a workload's
-chart instead leaves the app permanently OutOfSync (the vector-1 signal in `argocd-health.yaml`). Either way the
-data is untouched. To restore:
+### `make restore-cnpg`
 
-1. Restore the workload's files under `argo_apps/workloads/` and push.
-2. Watch Argo re-adopt it: `kubectl -n argocd get app <workload>` returns to Synced.
-3. Confirm the DB never churned (no initdb, no pod restart): `kubectl -n <ns> get cluster <cluster>` and
-   `kubectl -n <ns> get pods -l cnpg.io/cluster=<cluster>` show the same, still-Running instances.
-4. Confirm archiving still flows: `kubectl cnpg status <cluster> -n <ns>` shows "Continuous Archiving: OK".
+`lib/shell/recover_cnpg_from_s3.sh` is the runbook, executable. It asks for a mode, namespace and database name,
+then in both modes: lists every catalog it can see, checks the S3 creds Secret, and proves a **completed base
+backup** exists (from the ObjectStore status, and independently by listing S3 with the `.env` deployer creds).
+That last check is the one that matters: WAL alone has no recovery point, and it is what catches a
+`destinationPath` change having orphaned the old catalog at a different prefix.
 
-No `bootstrap.recovery`, no PV reattach, no initdb: the volume never moved. If the orphaned state went unnoticed
-and someone then deleted the `Cluster` (or its PVs), fall back to Restore from S3 below.
+**Mode `side`** applies one throwaway single-instance `Cluster` named `<db>-restore` that reads the same catalog
+(`latest` or a PITR timestamp). It does not archive WAL and is not a GitOps object. Data at `<name>-rw.<ns>`;
+delete it when done. Refuses to overwrite an existing cluster.
 
-To permanently delete a DB on purpose, set `deletionProtection: false` for that instance in its values and commit
-(this drops the sync-options so the next prune cascades normally), then remove the workload.
+**Mode `in-place`** drives the `pg-cluster` `restore` knob, so it spans your commits and is **resumable**: run it,
+push what it edited, run it again. It prints its phase every time.
 
-### Restore in place, under the same name (`restore.enabled`)
+1. **Enable.** Finds the workload chart and alias owning the DB, sets `<alias>.restore.enabled: true` (plus
+   `targetTime` for PITR), prints the commit. Refuses if the `Cluster` still exists, since `spec.bootstrap` is
+   only read at create time.
+2. **Wait.** Watches the sync, the base-backup pull, WAL replay, promotion and the replica join. The recovery job
+   is one-shot and the operator never retries it, so a failed attempt is offered for deletion (this is the normal
+   way to resume after fixing anything).
+3. **Verify and finish.** Prints `cnpg status`, every restored table with its live row count, the new timeline,
+   and whether the restored DB is backed up again. Offers to roll every workload referencing the regenerated
+   `<db>-app` Secret. Then removes `restore`, sets `deletionProtection: true` if it was false, and prints the
+   final commit.
 
-For when the `Cluster` is genuinely gone (a deliberate two-commit delete, a wiped node, a prune that got past
-`deletionProtection: false`) and you want THE database back: same name, same `-rw` Service, still GitOps-managed,
-so the app reconnects with no chart edit. The script below can't do this: it only builds an unmanaged side
-cluster under a different name.
+Between phases you run the `git add/commit/push` it prints. No script here runs git.
 
-Three commits, mirroring the flip-then-remove delete flow in reverse:
+Three facts the script relies on, worth knowing when it goes sideways:
 
-1. Restore the instance's values block + its `Chart.yaml` alias, with `restore.enabled: true`. Push. Argo applies
-   the `ObjectStore` first (sync-wave `-1`), then a `Cluster` whose `bootstrap.recovery` pulls the newest base
-   backup and replays WAL. `restore.targetTime` set = stop there instead (PITR); empty = replay everything.
-2. Verify the data, then flip `restore.enabled` back to `false`. Inert: CNPG reads `spec.bootstrap` only when it
-   first builds the cluster, and the update webhook doesn't validate bootstrap changes, so Argo patching
-   `recovery` back to `initdb` causes no churn. Leaving it `true` would make a future re-create silently restore.
-3. Set `deletionProtection: true` again if the delete had dropped it.
+- A restore always lands on a **new timeline** and re-archives into the same prefix, so the plugin's pre-flight
+  `barman-cloud-check-wal-archive` would abort with `Expected empty archive`. The chart stamps
+  `cnpg.io/skipEmptyWalArchiveCheck: enabled` when recovering from its own catalog, and deliberately not when
+  `restore.serverName` names a different source, where the check is protective.
+- Deleting a `Cluster` takes its `<db>-app` Secret with it, so the password is **regenerated**. The chart's
+  recovery block sets `database: app` / `owner: app` so CNPG realigns the role; consumers still need a restart.
+- Turning `restore` back off is inert (`spec.bootstrap` is never re-read). Leaving it on would make a future
+  re-create silently restore instead of `initdb`.
 
-```sh
-kubectl -n <ns> logs -l cnpg.io/jobRole=full-recovery -f   # watch base pull + WAL replay
-kubectl cnpg status <cluster> -n <ns>                      # then: new timeline, Continuous Archiving OK
-kubectl -n <ns> rollout restart deploy/<app>               # pick up the regenerated <cluster>-app password
-```
+### Deleting a database on purpose
 
-Three things to know:
-
-- **The app password is regenerated.** Deleting the `Cluster` GCs its `<cluster>-app` Secret, and the restored
-  `app` role still carries the old password hash. The chart's recovery block sets `database: app` / `owner: app`
-  precisely so CNPG realigns the role to the new Secret; consuming pods still need a restart to re-read it.
-- **It re-archives into the same S3 prefix** (`serverName` defaults to the instance name) on a NEW timeline, so
-  the plugin's pre-flight `barman-cloud-check-wal-archive` finds a non-empty archive and aborts the recovery job
-  with `Expected empty archive`, crashlooping in `Setting up primary` forever. The chart therefore stamps
-  `cnpg.io/skipEmptyWalArchiveCheck: enabled` whenever it restores from its OWN catalog. That check exists to
-  stop two clusters writing one catalog, so skipping it is only safe because the source is gone. The chart does
-  NOT stamp it when `restore.serverName` names a different source, because there the check is protective.
-- **Restoring from ANOTHER cluster's catalog** (`restore.serverName: <other>`) leaves that check on and keeps
-  archiving to this instance's own prefix. That is the shape to use when the source is still alive; never point
-  two live clusters at one `serverName`.
-
-### Restore from S3 into a side cluster
-
-```sh
-make restore-cnpg    # interactive: pick namespace + source cluster + target (latest | "YYYY-MM-DD HH:MM:SS+ZZ")
-# or non-interactive:
-bash lib/shell/recover_cnpg_from_s3.sh --namespace sample-user-manager --source sample-user-manager-db \
-     --target "2026-07-13 14:30:00+00" --name sample-user-manager-db-restore --apply
-```
-
-It's **non-destructive**: it creates a new single-instance `Cluster` in the source namespace that bootstraps
-`bootstrap.recovery` from the existing `ObjectStore` (read-only pull via `externalClusters[].plugin`), leaving
-the source backups and any live cluster untouched, and refuses to overwrite an existing cluster name. The
-recovery cluster does **not** re-archive (it's a restore/verify target). When Healthy, its data is served at
-`<name>-rw.<ns>` — repoint your app or dump/reload into the real cluster, then delete the recovery cluster.
-
-**Prerequisites the script preflight-checks:** the `ObjectStore` `<source>-backups` must exist in the target
-namespace, the S3-creds Secret it references must be present (seal it with `14_cnpg_backup.sh` if restoring
-into a namespace that never had backups), and there must be a **completed base backup** — WAL alone has no
-recovery point. It warns if the source cluster shows no `firstRecoverabilityPoint`. **Limitation:** the
-recovery cluster uses the `postgresql` operand image, which matches every cluster here (the pg-cluster wrapper
-is postgres-only; it pins `ghcr.io/cloudnative-pg/postgresql` and there is no postgis option).
+Two commits, never `kubectl delete`: set `deletionProtection: false` for that instance and push (drops the
+sync-options), then remove its values block + `Chart.yaml` alias and push (the prune now cascades, PVCs included).
+Never leave a DB sitting on `false`.
 
 ### Rebuild vs reset (and why rebuild wipes the backups)
 
@@ -530,8 +494,11 @@ that destroy so the bucket survives the rebuild.)
       runs on the **standby** pod.
 4. **RPO:** `SELECT pg_switch_wal();` on the primary → a new object in `…/wals/` within seconds; confirm
    `SHOW archive_timeout;` is `15min`.
-5. **Restore drill:** `make restore-cnpg` → target `latest` into a throwaway name → it reaches Healthy from S3
-   and serves data. Repeat with a PITR `targetTime`.
+5. **Restore drill:** `make restore-cnpg`, mode `side`, target `latest`. It reaches Healthy from S3 and serves
+   data; delete it after. Repeat with a PITR `targetTime`. A full in-place drill (delete the DB, bring it back)
+   is the same script in mode `in-place`.
+   Also check `cnpg_backup_recoverable` reads `1` per DB: it is the only signal that catches an empty catalog
+   sitting behind healthy WAL archiving.
 6. **Alerts:** confirm the metric name/label against `/metrics`; break archiving (e.g. revoke the IAM key
    briefly) → the `cnpg-wal-archive-failing` Grafana alert fires; restore → it clears.
 

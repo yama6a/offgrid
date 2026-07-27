@@ -61,17 +61,11 @@ postgresql:
 # the ONLY per-instance knob is the on/off switch below. See docs/13_backups.md.
 backupsEnabled: true # opt-OUT switch; actual rendering also needs a populated files/backup.yaml (14 must have run).
 
-# DR bootstrap: rebuild this instance FROM its own S3 catalog (base backup + WAL replay) instead of creating an
-# empty DB. The GitOps counterpart to lib/shell/recover_cnpg_from_s3.sh, which can only build an unmanaged side
-# cluster. This one restores in place, under the same name, so the app reconnects to the same -rw Service.
-#
-# Only bites at CREATE time: CNPG reads spec.bootstrap when it first builds the cluster and never again, so
-# flipping this back to false afterwards is inert (no churn, no webhook rejection).
-#
-# TRANSIENT, exactly like deletionProtection is transiently false: flip on, let Argo build the cluster, verify
-# the data, flip off. Leaving it true means a future re-create silently restores instead of initdb'ing.
-# Requires backups on (validate.yaml rejects it otherwise). See docs/13_backups.md.
+# DR bootstrap: build this instance by RESTORING its S3 catalog (base backup + WAL replay) instead of an empty
+# initdb. TRANSIENT: on, let Argo build it, verify, off again. Only read at CREATE time, so flipping it back is
+# inert; leaving it on would make a future re-create silently restore. Driven by `make restore-cnpg` (mode
+# in-place), which is the runbook. See docs/13_backups.md.
 restore:
   enabled: false
-  serverName: "" # barman serverName to read; empty = this instance's own name (in-place, same-name restore)
+  serverName: "" # catalog to read; empty = our own name (in-place). A DIFFERENT name keeps the empty-archive check on.
   targetTime: "" # PITR target, RFC3339 (e.g. "2026-07-13 14:30:00+00"); empty = latest, replay every WAL there is
