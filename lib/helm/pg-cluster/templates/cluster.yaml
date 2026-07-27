@@ -3,9 +3,21 @@ kind: Cluster
 metadata:
   name: {{ include "pg-cluster.name" . }}
   namespace: {{ .Release.Namespace }}
-  {{- with (include "pg-cluster.protectAnnotations" .) }}
+  {{- $protect := include "pg-cluster.protectAnnotations" . }}
+  {{- $sameCatalog := and .Values.restore.enabled (or (not .Values.restore.serverName) (eq .Values.restore.serverName (include "pg-cluster.name" .))) }}
+  {{- if or $protect $sameCatalog }}
   annotations:
+    {{- with $protect }}
     {{- . | nindent 4 }}
+    {{- end }}
+    {{- if $sameCatalog }}
+    # MANDATORY for an in-place restore, not optional tuning: the plugin runs barman-cloud-check-wal-archive
+    # before recovery and aborts with "Expected empty archive" because we are recovering FROM the very catalog
+    # we will archive back into. The check exists to stop two clusters sharing one catalog, so it is only safe
+    # to skip because the source is gone. Deliberately NOT stamped when restore.serverName names a DIFFERENT
+    # source: there the target catalog is our own and the check is genuinely protective. See docs/13_backups.md.
+    cnpg.io/skipEmptyWalArchiveCheck: enabled
+    {{- end }}
   {{- end }}
   labels:
     {{- include "pg-cluster.labels" . | nindent 4 }}

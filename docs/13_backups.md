@@ -466,14 +466,20 @@ kubectl cnpg status <cluster> -n <ns>                      # then: new timeline,
 kubectl -n <ns> rollout restart deploy/<app>               # pick up the regenerated <cluster>-app password
 ```
 
-Two things to know:
+Three things to know:
 
 - **The app password is regenerated.** Deleting the `Cluster` GCs its `<cluster>-app` Secret, and the restored
   `app` role still carries the old password hash. The chart's recovery block sets `database: app` / `owner: app`
   precisely so CNPG realigns the role to the new Secret; consuming pods still need a restart to re-read it.
-- **It re-archives into the same S3 prefix** (`serverName` defaults to the instance name) on a NEW timeline.
-  Safe, because segment names are timeline-qualified and the source is gone. If the source were still running
-  you'd be pointing two writers at one catalog: use `restore.serverName` and a distinct instance name instead.
+- **It re-archives into the same S3 prefix** (`serverName` defaults to the instance name) on a NEW timeline, so
+  the plugin's pre-flight `barman-cloud-check-wal-archive` finds a non-empty archive and aborts the recovery job
+  with `Expected empty archive`, crashlooping in `Setting up primary` forever. The chart therefore stamps
+  `cnpg.io/skipEmptyWalArchiveCheck: enabled` whenever it restores from its OWN catalog. That check exists to
+  stop two clusters writing one catalog, so skipping it is only safe because the source is gone. The chart does
+  NOT stamp it when `restore.serverName` names a different source, because there the check is protective.
+- **Restoring from ANOTHER cluster's catalog** (`restore.serverName: <other>`) leaves that check on and keeps
+  archiving to this instance's own prefix. That is the shape to use when the source is still alive; never point
+  two live clusters at one `serverName`.
 
 ### Restore from S3 into a side cluster
 
