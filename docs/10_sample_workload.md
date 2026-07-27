@@ -203,8 +203,10 @@ Checks (`export KUBECONFIG=secrets/kubeconfig`):
 - `sample-workload-sso` is gated centrally, not here: it must be listed in `04_google_sso` `domains[].hosts`
   (with its allowlist), and the shared client secret sealed via `lib/shell/07_google_sso.sh`. If it's not
   listed, the host is OPEN; if the secret isn't sealed, login fails (see [07_ingress.md](07_ingress.md)).
-- `prune` is data-safe: the Postgres PVCs use `local-path` with `reclaimPolicy: Retain`, so removing
-  the app never destroys the node-local volumes under `/var/mnt/localpath` (see
-  [08_storage.md](08_storage.md)).
-- No PITR until backups are wired (`backups.enabled: false`, hardcoded in the `pg-cluster` wrapper):
-  durability rests on Postgres replication across the 2 instances; see [08_storage.md](08_storage.md).
+- `prune` is data-safe because every stateful unit sets `deletionProtection: true`, stamping
+  `Prune=false,Delete=false`: removing the app ORPHANS the Postgres Clusters and Redis instances (still running on
+  their volumes) instead of deleting them, and restoring the files re-adopts them. It is NOT the storage class
+  doing this: `local-path` is `reclaimPolicy: Delete` (see [08_storage.md](08_storage.md)).
+- PITR comes from the `pg-cluster` wrapper's `backupsEnabled` (default true), which only renders once
+  `lib/helm/pg-cluster/files/backup.yaml` is populated by `14_cnpg_backup.sh`. Until then durability rests on
+  Postgres replication across the 2 instances; see [08_storage.md](08_storage.md) / [13_backups.md](13_backups.md).

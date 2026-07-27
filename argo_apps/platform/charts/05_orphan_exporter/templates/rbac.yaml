@@ -1,12 +1,15 @@
-# Cluster-wide READ on CNPG Clusters + Argo Applications only, the least needed to resolve each Cluster to its
-# owning Application and decide orphaned / untracked. No write, no other resources.
+# Cluster-wide READ on the protected stateful CRs (CNPG Clusters, OpsTree Redis) + Argo Applications only, the
+# least needed to resolve each CR to its owning Application and decide orphaned / untracked. No write, nothing else.
 apiVersion: rbac.authorization.k8s.io/v1
 kind: ClusterRole
 metadata:
-  name: cnpg-orphan-exporter
+  name: orphan-exporter
 rules:
   - apiGroups: ["postgresql.cnpg.io"]
     resources: ["clusters"]
+    verbs: ["get", "list"]
+  - apiGroups: ["redis.redis.opstreelabs.in"]
+    resources: ["redis"]
     verbs: ["get", "list"]
   - apiGroups: ["argoproj.io"]
     resources: ["applications"]
@@ -15,12 +18,12 @@ rules:
 apiVersion: rbac.authorization.k8s.io/v1
 kind: ClusterRoleBinding
 metadata:
-  name: cnpg-orphan-exporter
+  name: orphan-exporter
 roleRef:
   apiGroup: rbac.authorization.k8s.io
   kind: ClusterRole
-  name: cnpg-orphan-exporter
+  name: orphan-exporter
 subjects:
   - kind: ServiceAccount
-    name: cnpg-orphan-exporter
+    name: orphan-exporter
     namespace: {{ .Release.Namespace }}

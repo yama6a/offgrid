@@ -20,6 +20,10 @@ kind: CiliumNetworkPolicy
 metadata:
   name: {{ $name }}
   namespace: {{ .Release.Namespace }}
+  {{- with (include "redis-instance.protectAnnotations" .) }}
+  annotations:
+    {{- . | nindent 4 }}
+  {{- end }}
 spec:
   endpointSelector:
     matchLabels:

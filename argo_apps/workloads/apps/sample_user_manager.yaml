@@ -8,9 +8,11 @@
 # rendered by the shared ingress library from the chart's `ingress:` values. See
 # 10_sample_workload.md / 08_storage.md.
 #
-# AUTOMATED (prune + selfHeal): drift auto-corrects. A prune is data-safe, the Postgres PVCs use the
-# `local-path` class with reclaimPolicy: Retain, so removing the Cluster CR never destroys the node-local
-# volumes (the dirs under /var/mnt/localpath persist). The app + echo routes are safe leaves.
+# AUTOMATED (prune + selfHeal): drift auto-corrects. A prune is data-safe because every stateful unit carries
+# `deletionProtection: true`, which stamps Prune=false,Delete=false: the Postgres Clusters and the Redis instances
+# are ORPHANED (left running on their volumes), not deleted, and restoring the files re-adopts them. NOT because
+# of the storage class: `local-path` is reclaimPolicy Delete, so the annotation is the only thing between a stray
+# prune and gone data. The app + echo routes are safe leaves.
 #
 # MULTI-NAMESPACE: the app + Cluster (+ generated password Secret) land in the destination namespace
 # `sample-user-manager`; the per-host Gateways/Certs/HTTPRoutes set metadata.namespace: gateway explicitly

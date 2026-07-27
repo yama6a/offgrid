@@ -1,6 +1,0 @@
-apiVersion: v2
-name: cnpg-orphan-exporter
-description: Flags CNPG Clusters orphaned by a GitOps prune (owning Argo app gone) or lacking Argo tracking metadata.
-type: application
-version: 0.1.0                 # local chart, never bump version
-appVersion: "1.0"

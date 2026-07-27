@@ -48,7 +48,7 @@ groups:
       # stuck (bad manifest, failed hook, missing dependency) and needs a human.
       # LOAD-BEARING for orphan-not-delete: a Cluster removed from a live app (Prune=false) leaves that app
       # permanently OutOfSync, so this general rule IS the vector-1 orphan signal. Do not narrow it to exclude
-      # CNPG. See docs/13_backups.md / cnpg-orphan.yaml.
+      # CNPG or Redis. See docs/13_backups.md / orphan.yaml.
       - uid: argocd-app-out-of-sync
         title: ArgoCD application stuck OutOfSync
         condition: C

@@ -10,7 +10,7 @@ Three pieces (the operator + storage classes are platform; the instances are per
 
 | Piece | Where | What |
 |-------|-------|------|
-| **the operator** | `argo_apps/platform/{apps,charts}/03_redis_operator` (wave 3) | wraps the OpsTree `ot-helm/redis-operator` chart (the controller + its `Redis`/`RedisReplication`/`RedisCluster`/`RedisSentinel` CRDs). The Longhorn classes `redis-instance` selects between via `persistence` — `longhorn-r2-retained` (Retain) + `longhorn-r2-ephemeral` (Delete), both 2-replica — are shipped by `02_longhorn`, not here (see [08_storage.md](08_storage.md)). |
+| **the operator** | `argo_apps/platform/{apps,charts}/03_redis_operator` (wave 3) | wraps the OpsTree `ot-helm/redis-operator` chart (the controller + its `Redis`/`RedisReplication`/`RedisCluster`/`RedisSentinel` CRDs). The Longhorn class `redis-instance` uses for every instance (`longhorn-r2-ephemeral`, 2-replica, reclaim Delete) is shipped by `02_longhorn`, not here (see [08_storage.md](08_storage.md)). |
 | **the reusable chart** | `lib/helm/redis-instance/` (`type: application`) | renders ONE standalone `Redis` CR + its `ServiceMonitor` + a default-deny `CiliumNetworkPolicy`. A workload consumes it via an aliased `file://` dependency, one alias per instance (like `pg-cluster`). |
 | **sample usage** | `argo_apps/workloads/charts/sample_user_manager` | two instances showcasing BOTH modes — `redis-cache` (the audit-log demo, **ephemeral** for the demo) + `redis-sessions` (**persistent**, provisioned but unused). The manager binary stores audit events in `redis-cache` and serves them at `GET /audit`. |
 
@@ -21,20 +21,19 @@ caveat below). We run **standalone** single-instance Redis (`kind: Redis`): one 
 each instance chooses durable vs ephemeral; see below); on a node loss the pod reschedules and Longhorn reattaches
 the volume, a brief availability gap.
 
-## The operator + storage classes (`03_redis_operator`, wave 3)
+## The operator (`03_redis_operator`, wave 3)
 
-One app ships both the operator and the two StorageClasses. The wrapper chart pins `ot-helm/redis-operator`
-(operator config under the `redis-operator:` key in `values.yaml`) and renders the two
-Longhorn classes from its own `templates/storageclasses.yaml` (top-level `persistent:`/`ephemeral:` values).
-Automated `prune`+`selfHeal`, `CreateNamespace=true`, `ServerSideApply=true` (the CRDs are large). The operator
-runs in its own `redis-operator` namespace and watches all namespaces (cluster RBAC scope, the chart default), so
-per-workload `Redis` CRs in the workloads tree are reconciled once the platform is Healthy.
+The app ships the operator only. The wrapper chart pins `ot-helm/redis-operator` (operator config under the
+`redis-operator:` key in `values.yaml`); it renders no StorageClasses of its own, the class every instance uses
+(`longhorn-r2-ephemeral`) belongs to `02_longhorn`. Automated `prune`+`selfHeal`, `CreateNamespace=true`,
+`ServerSideApply=true` (the CRDs are large). The operator runs in its own `redis-operator` namespace and watches all
+namespaces (cluster RBAC scope, the chart default), so per-workload `Redis` CRs in the workloads tree are reconciled
+once the platform is Healthy.
 
-**Wave 3, not 2:** the operator alone would be a wave-2 independent leaf (needs only the CNI, like `cnpg-operator`),
-but the bundled StorageClasses use Longhorn's `driver.longhorn.io` provisioner, so the whole app lands after
-Longhorn (wave 2) — the operator/engine-then-consumer ordering the waves exist for. Bundling keeps all Redis
-platform setup in one app; the only cost is the operator installing one wave later, invisible in practice (redis
-workloads are post-platform and need Longhorn anyway).
+**Wave 3, not 2:** the operator needs only the CNI, so it would be a wave-2 independent leaf like `cnpg-operator`.
+It stays at 3 purely to avoid renumbering (the prefix is treated as stable, see [CLAUDE.md](../CLAUDE.md)); it
+installs one wave later than strictly necessary, invisible in practice since redis workloads are post-platform and
+need Longhorn (wave 2) anyway.
 
 **Values worth calling out** (under `redis-operator:`):
 
@@ -72,7 +71,7 @@ redis-cache:
   name: sample-user-manager-redis-cache   # also the Service DNS clients dial
   # renovate: datasource=docker depName=quay.io/opstree/redis
   redisVersion: "v8.6.2"                  # REQUIRED: Redis server version, owned per-workload
-  persistence: false                      # REQUIRED, no default: true = durable (Retain + AOF) | false = ephemeral (Delete, RDB-only)
+  persistence: false                      # REQUIRED, no default: true = durable (AOF + S3 backup) | false = ephemeral (RDB-only)
   resources: { requests: { cpu: 25m, memory: 64Mi }, limits: { memory: 96Mi } }
   allowedClients: [ { namespace: sample-user-manager, matchLabels: { app: sample-user-manager } } ]
   # initialFixedDiskSize: 2Gi   # optional; default 1Gi; create-time only (see "Resizing an instance")
@@ -87,16 +86,29 @@ workload interface is deliberately just five required knobs, plus an optional cr
 
 ## Storage & persistence
 
-A standalone `Redis` is one PVC. A **REQUIRED `persistence`** flag (no default) picks the mode; the two Longhorn
-StorageClasses it selects between are the shared classes shipped by **`02_longhorn`** (they're generic Longhorn
-tiers, not Redis-specific — see [08_storage.md](08_storage.md)). Both are `numberOfReplicas: 2` (this cluster's
-nodes are flaky, so even a cache should survive a node loss), differing only in reclaimPolicy:
+A standalone `Redis` is one PVC, always on **`longhorn-r2-ephemeral`** (`numberOfReplicas: 2` so even a cache
+survives a node loss; `reclaimPolicy: Delete`), a shared generic Longhorn tier from **`02_longhorn`**, not a
+Redis-specific class (see [08_storage.md](08_storage.md)).
 
-| `persistence` | Storage class | reclaimPolicy | AOF | For |
-|---|---|---|---|---|
-| `true` | `longhorn-r2-retained` | **Retain** — volume survives a PVC delete/prune, so an ArgoCD prune is data-safe (Released volumes cleaned up manually) | **on** (`appendfsync everysec`) | durable data |
-| `false` | `longhorn-r2-ephemeral` | **Delete** — volume cleaned up when its PVC is deleted | **off** (RDB only) | disposable caches |
+The **REQUIRED `persistence`** flag (no default) does NOT pick a class. Reclaim policy stopped being a safety knob
+once `deletionProtection` arrived: an accidental prune can't delete the instance at all (restore the files, zero
+loss), and an INTENTIONAL delete falls back to the S3 dump with its RPO window. A Retain class would add nothing
+to either case and would leak orphaned `Released` PVs on every deliberate delete. What `persistence` actually
+drives:
 
+| `persistence` | AOF | S3 RDB backup | For |
+|---|---|---|---|
+| `true` | **on** (`appendfsync everysec`, ~1s worst-case loss on a hard crash) | enrolled (daily, via the `redis-backup.raspi-cluster/enabled` label) | durable data |
+| `false` | **off** (RDB snapshots only) | not enrolled | disposable caches |
+
+- **Deletion protection is the real prune guard, not the reclaim policy.** `deletionProtection` (REQUIRED bool, no
+  default, independent of `persistence`) stamps `argocd.argoproj.io/sync-options: Prune=false,Delete=false` on the
+  Redis CR + its ext-config ConfigMap, ServiceMonitor and NetworkPolicy. Manifests leaving git ORPHAN a running
+  instance instead of deleting it, and restoring them re-adopts it: no outage, no PV rebind. Keep it `true` in
+  steady state for every instance, caches included. The orphan then shows up as a permanently-OutOfSync app
+  (`argocd-health.yaml`, vector 1) or, if the whole app is gone, via `orphaned_redis_instance` from
+  `05_orphan_exporter` (vector 2, `orphan.yaml`). Client-egress policies are deliberately NOT protected: they are
+  trivially re-rendered and the client pods get pruned with the workload anyway.
 - **AOF (persistent only).** `templates/configmap.yaml` renders an extra-config ConfigMap (`<name>-ext-config`,
   wired via the CR's `redisConfig.additionalRedisConfig`) that sets `appendonly yes` + `appendfsync everysec`. On
   restart the instance replays its append-only log — at most ~1s of writes lost on a hard crash, not the whole
@@ -222,8 +234,23 @@ kubectl -n <ns> exec <old-pod> -- sh -c '
 
 (`--scan` avoids blocking like `KEYS *`; `COPY` leaves the source intact for rollback; drop it once verified.
 For a large dataset prefer a streaming tool such as `redis-shake`.) Then repoint the app (`app.redises[0]` to
-the new instance's `name`, so `REDIS_ADDR` follows), sync, confirm, and remove the old alias. Because our data is
-regenerable audit logs with a 1h TTL, "just start fresh on a new instance" is often simpler than migrating at all.
+the new instance's `name`, so `REDIS_ADDR` follows), sync, confirm, then delete the old alias per the section
+below. Because our data is regenerable audit logs with a 1h TTL, "just start fresh on a new instance" is often
+simpler than migrating at all.
+
+## Deleting an instance (two commits)
+
+`deletionProtection: true` means removing an alias from git ORPHANS the instance (it keeps running, unmanaged) and
+leaves the app permanently OutOfSync. Deleting is deliberately a two-step, pure-GitOps flow, no `kubectl delete`:
+
+1. Set `deletionProtection: false` on that alias. Commit + push, let ArgoCD sync. This only drops the
+   `Prune=false,Delete=false` annotations; the instance keeps running.
+2. Remove the alias (its values block + the `Chart.yaml` dependency entry). Commit + push. The next sync prunes it
+   for real, and the PVC goes with it (its volume then obeys the class reclaim policy: gone for `-ephemeral`,
+   reclaim Delete, so it is removed for good; the off-cluster S3 dump is the only copy left).
+
+Never leave an instance sitting on `false`: that is a transient state between those two commits, not a config
+choice. Same flow as CNPG (see [13_backups.md](13_backups.md)).
 
 ## Security: no password, gated by network policy
 
@@ -311,7 +338,7 @@ helm dependency update argo_apps/workloads/charts/sample_user_manager && helm te
 export KUBECONFIG=secrets/kubeconfig
 kubectl -n redis-operator get pods                                        # operator Running
 kubectl -n sample-user-manager get redis                                  # redis-cache + redis-sessions
-kubectl -n sample-user-manager get pvc -o wide                            # redis-cache=longhorn-r2-ephemeral, redis-sessions=longhorn-r2-retained
+kubectl -n sample-user-manager get pvc -o wide                            # both instances on longhorn-r2-ephemeral
 kubectl -n longhorn-system get volumes.longhorn.io                        # each Redis volume: 2 replicas
 kubectl get vmservicescrape -A | grep -i redis                            # metrics wired into VictoriaMetrics
 ```

@@ -23,6 +23,9 @@ wouldn't catch them. Runs in this chart's scope, so it sees the consumer's overr
 {{- fail (printf "redis-instance: allowedClients namespace %q must equal the release namespace %q (client-egress is same-ns only; a cross-ns client needs the clusterwide-CNP variant)" .namespace $.Release.Namespace) }}
 {{- end }}
 {{- end }}
+{{- if not (kindIs "bool" .Values.deletionProtection) }}
+{{- fail "redis-instance: deletionProtection is required and must be explicitly true (a GitOps prune orphans the running instance instead of deleting it) or false (the instance is deletable); there is no default" }}
+{{- end }}
 {{- if not (kindIs "bool" .Values.persistence) }}
-{{- fail "redis-instance: persistence is required and must be explicitly true (durable — Retain + AOF) or false (ephemeral cache — Delete + RDB-only); there is no default" }}
+{{- fail "redis-instance: persistence is required and must be explicitly true (durable: AOF + S3 backup) or false (ephemeral cache: RDB-only); there is no default. It does not pick a storage class" }}
 {{- end }}

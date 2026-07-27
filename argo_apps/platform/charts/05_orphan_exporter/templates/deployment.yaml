@@ -1,22 +1,22 @@
 apiVersion: apps/v1
 kind: Deployment
 metadata:
-  name: cnpg-orphan-exporter
+  name: orphan-exporter
   namespace: {{ .Release.Namespace }}
   labels:
-    app.kubernetes.io/name: cnpg-orphan-exporter
+    app.kubernetes.io/name: orphan-exporter
 spec:
   replicas: 1
   revisionHistoryLimit: 0  # roll-forward only; no Argo rollback history (05_gitops.md)
   selector:
     matchLabels:
-      app.kubernetes.io/name: cnpg-orphan-exporter
+      app.kubernetes.io/name: orphan-exporter
   template:
     metadata:
       labels:
-        app.kubernetes.io/name: cnpg-orphan-exporter
+        app.kubernetes.io/name: orphan-exporter
     spec:
-      serviceAccountName: cnpg-orphan-exporter
+      serviceAccountName: orphan-exporter
       securityContext:
         runAsNonRoot: true
         runAsUser: 65534
@@ -54,4 +54,4 @@ spec:
       volumes:
         - name: app
           configMap:
-            name: cnpg-orphan-exporter
+            name: orphan-exporter

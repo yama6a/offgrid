@@ -259,7 +259,7 @@ workloads that keep state on a Longhorn PVC with no backup mechanism of its own 
 app data). It is **opt-in per volume via the StorageClass**: `02_longhorn` ships three classes (all r2 —
 `longhorn-r2-ephemeral` / `longhorn-r2-retained` / `longhorn-r2-retained-with-backups`; see
 [08_storage.md](08_storage.md)). Only PVCs on **`longhorn-r2-retained-with-backups`** are backed up off-cluster.
-The monitoring volumes (VM/VL, on `longhorn-r2-retained`) and Redis (on the ephemeral/retained classes) are
+The monitoring volumes (VM/VL, on `longhorn-r2-retained`) and Redis (all on `longhorn-r2-ephemeral`) are
 deliberately **not** Longhorn-backed-up — each backs up off-cluster via its own logical path instead (Redis RDB
 dumps; VM/VL native exports, see "VictoriaMetrics / VictoriaLogs backups" below), which is app-consistent and far
 cheaper than block-level backup of large, churny stores. A workload opts in simply by naming the `-with-backups`
@@ -411,8 +411,8 @@ Durability is two layers, and only the second has a recovery step:
   Removing a workload's manifests from git does NOT delete its `Cluster`: the whole DB unit carries
   `argocd.argoproj.io/sync-options: Prune=false,Delete=false` (see 08_storage.md and the pg-cluster wrapper), so
   the database keeps running, unmanaged, and restoring the files re-adopts it with zero data movement. The
-  `cnpg-orphan-exporter` and its alerts (`05_cnpg_orphan_exporter`, `cnpg-orphan.yaml`) make that orphaned state
-  loud so it gets noticed.
+  `orphan-exporter` and its alerts (`05_orphan_exporter`, `orphan.yaml`) make that orphaned state loud so it gets
+  noticed. Same mechanism, same exporter, for Redis (see 12_redis.md).
 - **Off-cluster (S3):** Barman Cloud (continuous WAL + daily base) for TRUE data loss: disk/node loss,
   corruption, or PITR. `local-path` is node-pinned, so a lost node's data is only recoverable from here.
 
@@ -423,9 +423,10 @@ Durability is two layers, and only the second has a recovery step:
 
 ### Restore a GitOps-pruned cluster (orphan-not-delete)
 
-Removing a whole workload from git prunes its stateless resources (Deployment, Service, HTTPRoute, redis,
-rabbitmq) but ORPHANS the DB unit: the `Cluster`, its PVCs, the `<cluster>-app` Secret, the ObjectStore,
-ScheduledBackup, PodMonitor and CiliumNetworkPolicy keep running. Removing just the `Cluster` from a workload's
+Removing a whole workload from git prunes its stateless resources (Deployment, Service, HTTPRoute, rabbitmq) but
+ORPHANS every unit carrying `deletionProtection: true`. For a DB that means the `Cluster`, its PVCs, the
+`<cluster>-app` Secret, the ObjectStore, ScheduledBackup, PodMonitor and CiliumNetworkPolicy all keep running (a
+protected Redis orphans the same way, see 12_redis.md). Removing just the `Cluster` from a workload's
 chart instead leaves the app permanently OutOfSync (the vector-1 signal in `argocd-health.yaml`). Either way the
 data is untouched. To restore:
 
@@ -438,7 +439,7 @@ data is untouched. To restore:
 No `bootstrap.recovery`, no PV reattach, no initdb: the volume never moved. If the orphaned state went unnoticed
 and someone then deleted the `Cluster` (or its PVs), fall back to Restore from S3 below.
 
-To permanently delete a DB on purpose, set `protectFromPrune: false` for that instance in its values and commit
+To permanently delete a DB on purpose, set `deletionProtection: false` for that instance in its values and commit
 (this drops the sync-options so the next prune cascades normally), then remove the workload.
 
 ### Restore from S3

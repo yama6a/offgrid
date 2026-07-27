@@ -67,7 +67,7 @@ every resource the surviving Cluster needs. Cost: the app reports OutOfSync fore
 intended orphan signal, do NOT add compare-options IgnoreExtraneous. See docs/13_backups.md.
 */}}
 {{- define "pg-cluster.protectAnnotations" -}}
-{{- if .Values.protectFromPrune -}}
+{{- if .Values.deletionProtection -}}
 argocd.argoproj.io/sync-options: Prune=false,Delete=false
 {{- end -}}
 {{- end -}}

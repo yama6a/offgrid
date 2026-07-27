@@ -10,9 +10,8 @@ prefix: "redis/" # bucket prefix for redis dumps (cnpg/ is CNPG's; see docs/13_b
 secretName: "redis-backup-s3" # the sealed S3 writer creds in THIS namespace; keys AWS_ACCESS_KEY_ID / AWS_SECRET_ACCESS_KEY
 # The CR label the chart discovers durable instances by (lib/helm/redis-instance stamps it on persistence:true).
 discoveryLabel: "redis-backup.raspi-cluster/enabled"
-# Pinned images (renovate-annotated in templates/cronjob.yaml, both multi-arch incl. arm64):
+# NO images here on purpose: both pins live (renovate-annotated) in templates/cronjob.yaml, which is what the
+# regex manager scans. A copy here would be a second, UNtracked pin that silently rots. Both are multi-arch
+# incl. arm64:
 #   k8s    discovery (kubectl) + upload (aws) + shell   alpine/k8s (bundles kubectl + aws-cli + jq; tag ~ k8s ver)
 #   redis  redis-cli --rdb full-sync dump               quay.io/opstree/redis (--rdb is version-tolerant)
-images:
-  k8s: "alpine/k8s:1.36.2"
-  redis: "quay.io/opstree/redis:v8.6.2"

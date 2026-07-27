@@ -32,13 +32,20 @@ resources: {}
 allowedClients: []
 
 # REQUIRED: persistence mode — NO default; each instance must choose explicitly (durability is a deliberate call).
-#   true  = DURABLE: storage class `longhorn-r2-retained` (reclaimPolicy Retain — the volume survives a PVC
-#           delete/prune) + AOF (appendfsync everysec, crash-durable to ~1s).
-#   false = EPHEMERAL cache: storage class `longhorn-r2-ephemeral` (reclaimPolicy Delete — the volume is
-#           cleaned up when the PVC is deleted) + NO AOF (RDB only, less write overhead).
-# Both classes are 2-replica (this cluster's nodes are flaky, so even a cache should survive a node loss); they
-# differ only in reclaimPolicy. The classes are shipped by the platform's 02_longhorn app. See docs/12_redis.md.
+#   true  = DURABLE: AOF (appendfsync everysec, crash-durable to ~1s) + enrolled in the central S3 RDB backup.
+#   false = EPHEMERAL cache: NO AOF (RDB only, less write overhead), no backup.
+# It does NOT pick a storage class: both modes use `longhorn-r2-ephemeral` (2-replica, reclaim Delete, from
+# 02_longhorn). Reclaim stopped being a safety knob when deletionProtection landed, see that knob below.
+# See docs/12_redis.md.
 persistence: null   # invalid sentinel — validate.yaml fails until set to an explicit true or false
+
+# REQUIRED bool, no default. Orphan-not-delete: true stamps Prune=false,Delete=false on the instance (Redis CR +
+# its ext-config ConfigMap, ServiceMonitor and NetworkPolicy), so manifests leaving git ORPHAN a running instance
+# instead of deleting it, and restoring them re-adopts it. Independent of `persistence`: the retained class's
+# Retain is only a backstop (it saves the data, but the instance still goes down and needs a manual PV rebind).
+# ALWAYS true in steady state, caches included. false is a TRANSIENT state only: set it, commit+push, let Argo
+# sync, THEN remove the alias in a follow-up commit. Never leave an instance sitting on false.
+deletionProtection: # REQUIRED: true | false
 
 # ---- optional; defaulted ----
 
@@ -53,8 +60,7 @@ alertCritical: false
 # existing volume keeps its original size. To actually grow a running instance you expand its PVC out-of-band;
 # shrinking is impossible in place. See docs/12_redis.md ("Resizing an instance").
 #
-# The storage CLASS is chosen by `persistence` (longhorn-r2-retained / longhorn-r2-ephemeral, both 2-replica); size
-# is the only storage knob.
+# The storage CLASS is fixed (longhorn-r2-ephemeral, both modes); size is the only storage knob.
 # Size it against the MEMORY LIMIT, not just the dataset: with noeviction + AOF/RDB the whole in-RAM dataset (up to
 # maxmemory = 80% of the mem limit) is persisted and the append-log adds overhead, so budget disk >= ~2x the memory
 # limit. The 1Gi default covers the small instances typical here (e.g. a 96Mi mem limit).

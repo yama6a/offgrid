@@ -58,16 +58,24 @@ Longhorn classes in the cluster). They differ in reclaim + off-cluster backup:
 
 | Class | reclaimPolicy | S3 backup | Use for |
 |---|---|---|---|
-| `longhorn-r2-ephemeral` | Delete | — | regenerable data that still wants node-loss survival while alive (redis caches) |
-| `longhorn-r2-retained` | Retain | — | zero-RPO recovery of an accidental delete; total loss covered app-side or accepted (VM, VL, persistent redis) |
+| `longhorn-r2-ephemeral` | Delete | — | the general-purpose tier: anything whose prune-safety comes from `deletionProtection` + an app-level backup rather than from Retain (ALL redis, durable included) |
+| `longhorn-r2-retained` | Retain | — | zero-RPO recovery of an accidental delete, for apps with NO deletion-protection annotations (VM, VL, ntfy) |
 | `longhorn-r2-retained-with-backups` | Retain | daily + weekly | precious data with no app-level backup (sqlite / config) |
 
 `Retain` means a PVC/app delete leaves the volume intact — recover an accidental delete with **zero data loss** by
 clearing the released PV's `claimRef` and rebinding (vs restoring from a backup, which costs up to the backup
 interval). The cost is orphaned `Released` PVs + their Longhorn volumes on delete, cleaned up manually. The
 `-with-backups` class adds off-cluster S3 backups via `recurringJobSelector`; see [13_backups.md](13_backups.md)
-("Longhorn volume backups"). Redis selects between the ephemeral/retained classes via its `persistence` flag; see
-[12_redis.md](12_redis.md).
+("Longhorn volume backups").
+
+**Which class to pick comes down to whether the app has `deletionProtection`.** An app that stamps
+`Prune=false,Delete=false` on its stateful CRs (CNPG via `pg-cluster`, Redis via `redis-instance`) is already
+immune to the accidental case: a prune can't delete the CR, so restoring the files brings it back with zero loss
+and nothing is ever `Released`. For those, `Retain` protects nothing a deliberate deletion wouldn't have meant,
+and only leaks orphaned PVs, so they use a **Delete** class (`longhorn-r2-ephemeral`; `local-path` for CNPG) and
+accept the backup's RPO window if a deliberate delete is later regretted. Apps with **no** such annotations (VM,
+VL, ntfy) have nothing else standing between a stray prune and their data, so they stay on `Retain`. See
+[13_backups.md](13_backups.md) / [12_redis.md](12_redis.md).
 - `preUpgradeChecker.jobEnabled: false`: that Helm pre-upgrade hook Job can stall an ArgoCD sync waiting on
   completion; version control lives in git anyway.
 - `storageMinimalAvailablePercentage: 15`: leave headroom on the Pi NVMes; don't schedule onto a disk under

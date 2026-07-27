@@ -72,6 +72,7 @@ maindb:
   # renovate: datasource=docker depName=ghcr.io/cloudnative-pg/postgresql
   postgresVersion: "18"     # Postgres MAJOR (a key in pg-cluster's image map, which pins the patch+digest). Renovate proposes only MAJOR bumps here.
   highAvailability: true
+  deletionProtection: true  # holds the app's real data: a stray prune must orphan it, never delete it
   alertCritical: true       # the app can't function without it; a DB-pod crashloop pages `critical` (docs/09_monitoring.md)
   # Conservative footprint for the Pi 5s (8 GB RAM, lots already running). Per-instance.
   resources:
@@ -92,6 +93,7 @@ analyticsdb:
   # renovate: datasource=docker depName=ghcr.io/cloudnative-pg/postgresql
   postgresVersion: "18"     # Postgres MAJOR (a key in pg-cluster's image map, which pins the patch+digest). Renovate proposes only MAJOR bumps here.
   highAvailability: false
+  deletionProtection: true  # a DB is a DB, even a demo one: orphan on prune, don't destroy
   resources:
     requests:
       cpu: 100m
@@ -106,9 +108,10 @@ analyticsdb:
 # Two standalone Redis instances, each an aliased instance of the shared redis-instance wrapper (file://
 # dependency; renders a `Redis` CR + ServiceMonitor + a default-deny CiliumNetworkPolicy). Everything else —
 # images, the 2-replica Longhorn storage class, AOF persistence, the exporter, maxmemory, non-root, no-auth — is
-# hardcoded in the wrapper; a workload sets name / resources / allowedClients plus optional persistence (durable
-# vs ephemeral cache) and the create-time initialFixedDiskSize (changing it later has NO effect). The two
-# instances below deliberately showcase BOTH persistence modes. See 12_redis.md.
+# hardcoded in the wrapper (one class for both modes: reclaim is not the prune guard, deletionProtection is); a
+# workload sets the REQUIRED name / redisVersion / resources / allowedClients / persistence (durable vs ephemeral
+# cache) / deletionProtection, plus the optional create-time initialFixedDiskSize (changing it later has NO
+# effect). The two instances below deliberately showcase BOTH persistence modes. See 12_redis.md.
 
 # Primary Redis: the manager's audit-log store (RPUSH per user UUID, 1h TTL; read back by GET /audit). EPHEMERAL.
 redis-cache:
@@ -116,10 +119,11 @@ redis-cache:
   # renovate: datasource=docker depName=quay.io/opstree/redis
   redisVersion: "v8.6.2"    # Redis server version, owned by this workload
   alertCritical: true   # the app's primary datastore -> outage rules page `critical` (see docs/09_monitoring.md)
-  # For the sake of the demo we treat the audit-log cache as EPHEMERAL: Delete class + RDB-only, no AOF. Real
+  # For the sake of the demo we treat the audit-log cache as EPHEMERAL: RDB-only, no AOF, no S3 backup. Real
   # audit logs might warrant durability, but these are 1h-TTL and regenerable — so this also exercises (and
   # showcases) the non-durable path. See 12_redis.md.
   persistence: false
+  deletionProtection: true    # always true in steady state, even for a cache; flip to false only to delete it
   initialFixedDiskSize: 1Gi   # create-time ONLY — changing this does NOT resize a live instance (see 12_redis.md)
   resources:
     requests: { cpu: 25m, memory: 64Mi }
@@ -133,7 +137,8 @@ redis-sessions:
   name: sample-user-manager-redis-sessions
   # renovate: datasource=docker depName=quay.io/opstree/redis
   redisVersion: "v8.6.2"      # Redis server version, owned by this workload
-  persistence: true           # durable: Retain class + AOF (crash-durable); showcases the persistent mode
+  persistence: true           # durable: AOF (crash-durable) + central S3 RDB backup; showcases the persistent mode
+  deletionProtection: true    # always true in steady state; flip to false only to delete it
   # Durable => labelled for backup + backed up automatically by the central 07_redis_backup job (see 12_redis.md).
   initialFixedDiskSize: 1Gi   # create-time ONLY — changing this does NOT resize a live instance (see 12_redis.md)
   resources:

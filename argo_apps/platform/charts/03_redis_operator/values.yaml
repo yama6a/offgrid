@@ -59,6 +59,6 @@ redis-operator:
                 app.kubernetes.io/name: redis-operator
             topologyKey: kubernetes.io/hostname
 
-# Storage: this app no longer ships its own StorageClasses. redis-instance selects between the shared Longhorn
-# classes owned by 02_longhorn — longhorn-r2-ephemeral (Delete) for caches, longhorn-r2-retained (Retain) for
-# durable instances — via its `persistence` flag. See 08_storage.md + 12_redis.md.
+# Storage: this app ships no StorageClasses. Every redis-instance PVC uses longhorn-r2-ephemeral (2-replica,
+# reclaim Delete), owned by 02_longhorn; `persistence` picks AOF + S3 backup enrollment, not a class (reclaim isn't
+# the prune guard, deletionProtection is). See 08_storage.md + 12_redis.md.

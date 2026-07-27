@@ -20,6 +20,10 @@ kind: ConfigMap
 metadata:
   name: {{ .Values.name }}-ext-config
   namespace: {{ .Release.Namespace }}
+  {{- with (include "redis-instance.protectAnnotations" .) }}
+  annotations:
+    {{- . | nindent 4 }}
+  {{- end }}
   labels:
     {{- include "redis-instance.labels" . | nindent 4 }}
 data:

@@ -7,10 +7,11 @@ Field shape mirrors the upstream ot-helm/redis chart's standalone template (veri
 A workload sets name / redisVersion / resources / allowedClients / persistence (+ optional initialFixedDiskSize).
 redisVersion is the Redis SERVER image tag, owned per-workload. EVERYTHING ELSE IS PINNED HERE, once, for every
 instance at once (the server image REPO, and the exporter's full ref):
-  storage class    persistence=true -> longhorn-r2-retained (Retain); false -> longhorn-r2-ephemeral (Delete);
-                   both 2-replica, from the platform 02_longhorn app. initialFixedDiskSize is the only storage
-                   knob, create-time only, default 1Gi (see docs/12_redis.md "Resizing an instance")
-  persistence      REQUIRED (no default). true: AOF appendfsync everysec + RDB, crash-durable. false: RDB only, no AOF
+  storage class    longhorn-r2-ephemeral for BOTH modes (2-replica, reclaim Delete, from 02_longhorn);
+                   initialFixedDiskSize is the only storage knob, create-time only, default 1Gi
+                   (see docs/12_redis.md "Resizing an instance")
+  persistence      REQUIRED (no default). true: AOF appendfsync everysec + RDB, crash-durable. false: RDB only, no AOF.
+                   Drives AOF + S3 backup enrollment ONLY; it does NOT pick a storage class any more
   maxmemory        80% of the container memory limit (noeviction: writes fail at the cap, never drop data)
   security         non-root uid/gid 1000
   auth             OFF: access is gated by the CiliumNetworkPolicy (see networkpolicy.yaml), not requirepass
@@ -22,6 +23,10 @@ kind: Redis
 metadata:
   name: {{ .Values.name }}
   namespace: {{ .Release.Namespace }}
+  {{- with (include "redis-instance.protectAnnotations" .) }}
+  annotations:
+    {{- . | nindent 4 }}
+  {{- end }}
   labels:
     {{- include "redis-instance.labels" . | nindent 4 }}
     {{- if .Values.persistence }}
@@ -55,9 +60,10 @@ spec:
     volumeClaimTemplate:
       spec:
         accessModes: ["ReadWriteOnce"]
-        # persistence -> Retain class (volume survives a PVC delete); ephemeral -> Delete class. Both 2-replica,
-        # defined by the platform 02_longhorn app.
-        storageClassName: {{ if .Values.persistence }}longhorn-r2-retained{{ else }}longhorn-r2-ephemeral{{ end }}
+        # One class for BOTH modes (2-replica, reclaim Delete, from 02_longhorn). Reclaim is no longer a safety
+        # knob: deletionProtection stops an accidental prune (zero loss, restore the files), and an INTENTIONAL
+        # delete falls back to the S3 dump with its RPO window. A Retain class would only leak orphaned PVs.
+        storageClassName: longhorn-r2-ephemeral
         resources:
           requests:
             storage: {{ .Values.initialFixedDiskSize }}

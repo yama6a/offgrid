@@ -19,6 +19,9 @@ values.yaml.
 {{- if not .Values.allowedClients }}
 {{- fail "pg-cluster: allowedClients is required (who may reach Postgres on 5432); the DB policy is always enforced, so an empty list would wall off the database" }}
 {{- end }}
+{{- if not (kindIs "bool" .Values.deletionProtection) }}
+{{- fail "pg-cluster: deletionProtection is required and must be explicitly true (a GitOps prune orphans the DB unit instead of destroying it) or false (the DB is deletable); there is no default, because local-path reclaim is Delete and this is the only thing protecting the data" }}
+{{- end }}
 {{- /* allowedClients drives the client-egress CNP too (client-egress.yaml), a namespaced CNP that can only
       select same-ns clients. The DB always renders into the workload's namespace, so a cross-ns client would get
       ingress but no egress. Reject it rather than half-wire the edge. */ -}}

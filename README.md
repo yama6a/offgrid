@@ -270,14 +270,16 @@ Pi 5 Talos image builds on [talos-rpi5/talos-builder](https://github.com/talos-r
 
 - add a worker node (4th bay in the rack)
 - check cnpg backup accumulation, ensure it doesn't build up too much. consider extending WAL backup time.
+- migrate old pi stuff to cluster
+- fork my personal cluster project for OSS version
+- rewrite git history to remove secrets and email addresses and domains from past commits
+- 
 - look at all latest ntfy alerts, and check if they are actionable or just noise. if noise, change limits, or suggest how to deal with them.
 - look at all latest error logs in the last 24h. noise or actionable? if noise, or suggest how to deal with them.-
 - check all logs/hubble for network policies in audit more that are dropping traffic that should be allowed
 - check log accumulation and metrics cardinality, drop noise so storage doesn't grow meaninglessly
-- migrate old pi stuff to cluster
-- fork my personal cluster project for OSS version
-- rewrite git history to remove secrets and email addresses and domains from past commits
+- 
 - read and shorten all md files.
 - improve then apply comment rules from claude.md to all yaml and other code files.
 - disaster recovery exercise
-- put in claude.md to not bump helm versions of internal charts where the version makes no difference. and bring all back down to 0.1.0
+- move VM, VL, ntfy and whatever else uses the longhorn-r2-retain SC to longhorn-r2-ephemeral and apply the same strategy (deletionPrevention) as in cnpg and redis with the admission hook or whatever that was, if possible, as in, we set a deletionPrevention flag in the values to false before we can kill the stuff. is that possible? and then move to the longhorn-r2-ephemeral SC for the same reason as the others?

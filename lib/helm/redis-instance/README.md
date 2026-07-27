@@ -9,13 +9,14 @@ Shared wrapper chart that renders **one** standalone OpsTree `Redis` instance fo
 
 First-party chart — no upstream dependency, no `Chart.lock`, no vendored tgz. The Redis CRD comes from the operator.
 
-A **REQUIRED `persistence`** flag (no default) picks the mode: `true` = durable (storage class
-`longhorn-r2-retained`, `reclaimPolicy: Retain`, + AOF `everysec`); `false` = ephemeral cache
-(`longhorn-r2-ephemeral`, `reclaimPolicy: Delete`, RDB-only, no AOF). Both classes are 2-replica and shipped by
-the platform's `02_longhorn` app. Almost everything else is **hardcoded in the templates** (single source of
+A **REQUIRED `persistence`** flag (no default) picks the mode: `true` = durable (AOF `everysec` + enrolled in the
+central S3 RDB backup); `false` = ephemeral cache (RDB-only, no AOF, no backup). It does **not** pick a storage
+class: both modes use `longhorn-r2-ephemeral` (2-replica, `reclaimPolicy: Delete`) from the platform's
+`02_longhorn` app, since `deletionProtection` rather than the reclaim policy is what makes a prune safe.
+Almost everything else is **hardcoded in the templates** (single source of
 truth, updated for every instance at once): the image repo, the redis-exporter's full ref, `maxmemory` (80% of the
-memory limit, `noeviction`), the non-root uid/gid 1000 security context, and no-auth. A workload sets five
-**required** knobs (`name`, `redisVersion`, `resources`, `allowedClients`, `persistence`), plus an optional create-time
+memory limit, `noeviction`), the non-root uid/gid 1000 security context, and no-auth. A workload sets six
+**required** knobs (`name`, `redisVersion`, `resources`, `allowedClients`, `persistence`, `deletionProtection`), plus an optional create-time
 `initialFixedDiskSize`. `redisVersion` is the Redis SERVER version, owned per-workload (no shared default). It is a
 single standalone instance, no HA/replication. **Durable** (`persistence: true`) instances are labelled
 `redis-backup.raspi-cluster/enabled` and backed up to S3 centrally by the platform's `07_redis_backup` app,
@@ -57,7 +58,8 @@ redis-cache:
   allowedClients:
     - namespace: sample-user-manager
       matchLabels: { app: sample-user-manager }
-  persistence: true                      # REQUIRED, no default: true = durable (Retain + AOF) | false = ephemeral cache (Delete, RDB-only)
+  persistence: true                      # REQUIRED, no default: true = durable (AOF + S3 backup) | false = ephemeral cache (RDB-only)
+  deletionProtection: true               # REQUIRED, no default: always true in steady state (a prune orphans, not deletes)
   # initialFixedDiskSize: 2Gi            # optional; default 1Gi; CREATE-TIME ONLY (see docs/12_redis.md)
 ```
 
@@ -71,7 +73,8 @@ No template is needed in the consumer.
 | `redisVersion`         | yes      | -       | Redis SERVER image tag (e.g. `v8.6.2`), owned per-workload; repo + exporter stay pinned in the chart                                                             |
 | `resources`            | yes      | -       | per-pod requests/limits (set a memory limit)                                                                                                                     |
 | `allowedClients`       | yes      | -       | who may reach `:6379`, the only access control                                                                                                                   |
-| `persistence`          | yes      | -       | `true` = durable (Retain class + AOF); `false` = ephemeral cache (Delete class, RDB-only)                                                                        |
+| `persistence`          | yes      | -       | `true` = durable (AOF + central S3 RDB backup); `false` = ephemeral cache (RDB-only). Does NOT pick a storage class: both use `longhorn-r2-ephemeral`             |
+| `deletionProtection`   | yes      | -       | `true` stamps `Prune=false,Delete=false` so a GitOps prune ORPHANS the instance instead of deleting it. Always `true` in steady state; flip to `false`, sync, then remove the alias to delete |
 | `initialFixedDiskSize` |          | `1Gi`   | PVC size **at creation only**; changing it on a live instance has no effect (the storage class is fixed); grow via manual PVC expansion, see `docs/12_redis.md`  |
 
 Everything else (the image repo, the redis-exporter's full ref, `maxmemory`, security context, no-auth) is pinned in

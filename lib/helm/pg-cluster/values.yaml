@@ -30,16 +30,19 @@ resources: {} # REQUIRED: per-instance requests/limits (no sane default for a Pi
 # Shape: [{ namespace: <ns>, matchLabels: { <k>: <v> } }, ...]
 allowedClients: []
 
+# REQUIRED bool, no default. Orphan-not-delete: true keeps the DB unit (Cluster + its
+# ObjectStore/ScheduledBackup/PodMonitor/NetworkPolicy/SealedSecret) alive when its manifests leave git, so
+# restoring them re-adopts the running cluster with no data loss. local-path reclaim is Delete, so this is the
+# ONLY thing standing between a stray prune and gone data. ALWAYS true in steady state. false is a TRANSIENT
+# state only: set it, commit+push, let Argo sync, THEN remove the DB in a follow-up commit. Never leave a DB
+# sitting on false. See _helpers.tpl / 13_backups.md.
+deletionProtection: # REQUIRED: true | false
+
 # Mark this DB app-critical: stamps alert-criticality=critical on the Cluster; CNPG INHERITED_LABELS
 # (02_cnpg_operator) copies it onto the pods, so the outage rules page `critical` (not `warning`) if a pod
 # crashloops. Default false (the label is always stamped, critical|warning, so the alert-severity template never
 # sees it absent). See docs/09_monitoring.md.
 alertCritical: false
-
-# Orphan-not-delete: keep the DB unit (Cluster + its ObjectStore/ScheduledBackup/PodMonitor/NetworkPolicy) alive
-# when its manifests leave git, so restoring them re-adopts the running cluster with no data loss. Set false only
-# to intentionally, permanently delete a DB (then remove the app). See _helpers.tpl / 13_backups.md.
-protectFromPrune: true
 
 # Tune Postgres to the per-instance memory; optional, defaulted (override only to diverge).
 postgresql:

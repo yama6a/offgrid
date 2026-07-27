@@ -1,10 +1,11 @@
 # The exporter, kept in Git and mounted read-only into the pod (run as python3 /app/exporter.py). Stdlib only
-# (urllib + http.server), so the base python image needs no pip install. Resolves each CNPG Cluster to its owning
-# ArgoCD Application via tracking metadata and reports orphaned / untracked. See docs/13_backups.md.
+# (urllib + http.server), so the base python image needs no pip install. Resolves each protected stateful CR (CNPG
+# Cluster, OpsTree Redis) to its owning ArgoCD Application via tracking metadata and reports orphaned / untracked.
+# See docs/13_backups.md + docs/12_redis.md.
 apiVersion: v1
 kind: ConfigMap
 metadata:
-  name: cnpg-orphan-exporter
+  name: orphan-exporter
   namespace: {{ .Release.Namespace }}
 data:
   exporter.py: |
@@ -45,35 +46,49 @@ data:
     def esc(v):
         return v.replace("\\", "\\\\").replace('"', '\\"')
 
+    # Every kind carrying orphan-not-delete (deletionProtection). Label key is NOT "instance": the PodMonitor
+    # scrape already sets that, so a metric label of the same name lands as exported_instance.
+    #   (api path, label key, orphaned metric, untracked metric)
+    KINDS = [
+        ("/apis/postgresql.cnpg.io/v1/clusters",           "cluster", "orphaned_cnpg_cluster",   "cnpg_cluster_untracked"),
+        ("/apis/redis.redis.opstreelabs.in/v1beta2/redis",  "redis",   "orphaned_redis_instance", "redis_instance_untracked"),
+    ]
+
     def collect():
         apps = items("/apis/argoproj.io/v1alpha1/namespaces/%s/applications" % ARGOCD_NS)
         names = {a["metadata"]["name"] for a in apps}
         argo_ns = {(a.get("spec") or {}).get("destination", {}).get("namespace") for a in apps}
         argo_ns.discard(None)
         out = [
-            "# HELP cnpg_orphan_exporter_up exporter heartbeat (1 = last scan ok)",
-            "# TYPE cnpg_orphan_exporter_up gauge",
+            "# HELP orphan_exporter_up exporter heartbeat (1 = last scan ok)",
+            "# TYPE orphan_exporter_up gauge",
             "# HELP orphaned_cnpg_cluster CNPG Cluster whose owning ArgoCD Application no longer exists",
             "# TYPE orphaned_cnpg_cluster gauge",
             "# HELP cnpg_cluster_untracked CNPG Cluster in an Argo-managed namespace with no tracking metadata",
             "# TYPE cnpg_cluster_untracked gauge",
+            "# HELP orphaned_redis_instance Redis instance whose owning ArgoCD Application no longer exists",
+            "# TYPE orphaned_redis_instance gauge",
+            "# HELP redis_instance_untracked Redis instance in an Argo-managed namespace with no tracking metadata",
+            "# TYPE redis_instance_untracked gauge",
         ]
-        for c in items("/apis/postgresql.cnpg.io/v1/clusters"):
-            m = c["metadata"]
-            ns, name = m["namespace"], m["name"]
-            app = owning_app(m)
-            if not app:
-                # Only for Clusters in an Argo-managed namespace; a manual cluster elsewhere is intentionally ignored.
-                if ns in argo_ns:
-                    out.append('cnpg_cluster_untracked{namespace="%s",cluster="%s"} 1' % (esc(ns), esc(name)))
-                continue
-            if app not in names:
-                out.append('orphaned_cnpg_cluster{namespace="%s",cluster="%s",app="%s"} 1'
-                           % (esc(ns), esc(name), esc(app)))
-        out.append("cnpg_orphan_exporter_up 1")
+        for path, key, orphaned_metric, untracked_metric in KINDS:
+            for c in items(path):
+                m = c["metadata"]
+                ns, name = m["namespace"], m["name"]
+                app = owning_app(m)
+                if not app:
+                    # Only in an Argo-managed namespace; a hand-made CR elsewhere is intentionally ignored.
+                    if ns in argo_ns:
+                        out.append('%s{namespace="%s",%s="%s"} 1'
+                                   % (untracked_metric, esc(ns), key, esc(name)))
+                    continue
+                if app not in names:
+                    out.append('%s{namespace="%s",%s="%s",app="%s"} 1'
+                               % (orphaned_metric, esc(ns), key, esc(name), esc(app)))
+        out.append("orphan_exporter_up 1")
         return "\n".join(out) + "\n"
 
-    _metrics = "cnpg_orphan_exporter_up 0\n"
+    _metrics = "orphan_exporter_up 0\n"
     _lock = threading.Lock()
 
     def scan():
@@ -82,7 +97,7 @@ data:
             try:
                 body = collect()
             except Exception as e:
-                body = "cnpg_orphan_exporter_up 0\n# scan error: %s\n" % str(e).replace("\n", " ")[:200]
+                body = "orphan_exporter_up 0\n# scan error: %s\n" % str(e).replace("\n", " ")[:200]
             with _lock:
                 _metrics = body
             time.sleep(INTERVAL)

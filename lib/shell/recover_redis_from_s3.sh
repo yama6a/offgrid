@@ -29,7 +29,6 @@ source "${SCRIPT_DIR}/common.sh"
 
 # ---- knobs ----
 RB_VALUES="${REPO_ROOT}/argo_apps/platform/charts/07_redis_backup/values.yaml"  # single source for bucket/prefix
-REDIS_TPL="${REPO_ROOT}/lib/helm/redis-instance/templates/redis.yaml"  # single source for the server image tag
 SEED_NS="redis-backup"                                            # the seed runs where the sealed creds live
 SECRET_NAME="redis-backup-s3"                                     # the sealed writer creds in SEED_NS
 # renovate: datasource=docker
@@ -61,11 +60,6 @@ BUCKET="$(yq -r '.bucket' "$RB_VALUES")"
 PREFIX="$(yq -r '.prefix' "$RB_VALUES")"
 [ -n "$BUCKET" ] && [ "$BUCKET" != "null" ] || die "bucket is unset in ${RB_VALUES} — run 15_redis_backup.sh first"
 
-# Seed image == the instance's server image (grepped from the CR template): an RDB is forward-only, so the seed
-# that loads it MUST match the instance major. Tracks renovate's bumps of redis.yaml automatically.
-SEED_IMAGE="$(grep -oE 'quay\.io/opstree/redis:[^"]+' "$REDIS_TPL" | head -1)"
-[ -n "$SEED_IMAGE" ] || die "could not read the redis image tag from ${REDIS_TPL}"
-
 say "Redis restore from S3 — seed pod + replication resync (in-place, non-destructive to the CR)"
 
 # ---- 1. gather inputs -------------------------------------------------------
@@ -77,6 +71,11 @@ kubectl -n "$NS" get redis "$INSTANCE" >/dev/null 2>&1 \
   || die "Redis CR ${NS}/${INSTANCE} not found — check the namespace/name"
 kubectl -n "$SEED_NS" get secret "$SECRET_NAME" >/dev/null 2>&1 \
   || die "sealed creds ${SEED_NS}/${SECRET_NAME} missing — enable backups first (make configure-redis-backup)"
+
+# Seed image == the image THIS instance actually runs, read off its live CR. An RDB is forward-only, so the seed
+# that loads it must match the instance's version, and redisVersion is per-workload (no global tag to grep).
+SEED_IMAGE="$(kubectl -n "$NS" get redis "$INSTANCE" -o jsonpath='{.spec.kubernetesConfig.image}')"
+[ -n "$SEED_IMAGE" ] || die "could not read .spec.kubernetesConfig.image from redis ${NS}/${INSTANCE}"
 
 DEST="s3://${BUCKET}/${PREFIX}${NS}/${INSTANCE}/"
 if [ "$TARGET" = "latest" ]; then
