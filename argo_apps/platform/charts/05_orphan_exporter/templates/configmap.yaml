@@ -48,16 +48,20 @@ data:
     def esc(v):
         return v.replace("\\", "\\\\").replace('"', '\\"')
 
-    # Every kind carrying orphan-not-delete (deletionProtection). Label key is NOT "instance": the PodMonitor
-    # scrape already sets that, so a metric label of the same name lands as exported_instance. The VM/VL stores
-    # share ONE metric pair with a `kind` label instead of three, so the alert file stays at two rules for them.
+    # Every emitted label is res_-prefixed, because a bare one gets CLOBBERED, not merged: the PodMonitor scrape
+    # stamps namespace/pod/instance/container/job from the exporter's OWN pod and the vmagent adds cluster, all of
+    # which win, demoting ours to exported_*. So `namespace` read "orphan-exporter" and `cluster` read
+    # "raspi-cluster" for every series, which both mislabelled the alerts and collapsed every orphaned CNPG
+    # cluster into ONE by(namespace,cluster) series. Never emit a bare namespace/cluster/pod/instance here.
+    # The VM/VL stores share ONE metric pair with a res_kind label instead of three, so the alert file stays at
+    # two rules for them.
     #   (api path, label key, orphaned metric, untracked metric, extra static labels)
     KINDS = [
-        ("/apis/postgresql.cnpg.io/v1/clusters",                    "cluster", "orphaned_cnpg_cluster",   "cnpg_cluster_untracked",   {}),
-        ("/apis/redis.redis.opstreelabs.in/v1beta2/redis",           "redis",   "orphaned_redis_instance", "redis_instance_untracked", {}),
-        ("/apis/operator.victoriametrics.com/v1/vlsingles",          "name",    "orphaned_vm_resource",    "vm_resource_untracked",    {"kind": "VLSingle"}),
-        ("/apis/operator.victoriametrics.com/v1beta1/vmsingles",     "name",    "orphaned_vm_resource",    "vm_resource_untracked",    {"kind": "VMSingle"}),
-        ("/apis/operator.victoriametrics.com/v1beta1/vmagents",      "name",    "orphaned_vm_resource",    "vm_resource_untracked",    {"kind": "VMAgent"}),
+        ("/apis/postgresql.cnpg.io/v1/clusters",                    "res_cluster", "orphaned_cnpg_cluster",   "cnpg_cluster_untracked",   {}),
+        ("/apis/redis.redis.opstreelabs.in/v1beta2/redis",           "res_redis",   "orphaned_redis_instance", "redis_instance_untracked", {}),
+        ("/apis/operator.victoriametrics.com/v1/vlsingles",          "res_name",    "orphaned_vm_resource",    "vm_resource_untracked",    {"res_kind": "VLSingle"}),
+        ("/apis/operator.victoriametrics.com/v1beta1/vmsingles",     "res_name",    "orphaned_vm_resource",    "vm_resource_untracked",    {"res_kind": "VMSingle"}),
+        ("/apis/operator.victoriametrics.com/v1beta1/vmagents",      "res_name",    "orphaned_vm_resource",    "vm_resource_untracked",    {"res_kind": "VMAgent"}),
     ]
 
     def labels(pairs):
@@ -93,12 +97,12 @@ data:
                 # chart stamps, else the failure would be invisible (no series at all reads as "fine").
                 name = (store["metadata"].get("labels") or {}).get("cnpg.io/cluster")
                 if name:
-                    lb = labels([("namespace", ns), ("cluster", name)])
+                    lb = labels([("res_namespace", ns), ("res_cluster", name)])
                     out.append("cnpg_backup_recoverable{%s} 0" % lb)
                     out.append("cnpg_backup_last_success_seconds{%s} 0" % lb)
                 continue
             for name, w in window.items():
-                lb = labels([("namespace", ns), ("cluster", name)])
+                lb = labels([("res_namespace", ns), ("res_cluster", name)])
                 frp = (w or {}).get("firstRecoverabilityPoint") or ""
                 out.append("cnpg_backup_recoverable{%s} %d" % (lb, 1 if frp else 0))
                 out.append("cnpg_backup_last_success_seconds{%s} %d"
@@ -130,7 +134,7 @@ data:
             for c in items(path):
                 m = c["metadata"]
                 ns, name = m["namespace"], m["name"]
-                base = [("namespace", ns)] + sorted(extra.items()) + [(key, name)]
+                base = [("res_namespace", ns)] + sorted(extra.items()) + [(key, name)]
                 app = owning_app(m)
                 if not app:
                     # Only in an Argo-managed namespace; a hand-made CR elsewhere is intentionally ignored.
@@ -138,7 +142,7 @@ data:
                         out.append("%s{%s} 1" % (untracked_metric, labels(base)))
                     continue
                 if app not in names:
-                    out.append("%s{%s} 1" % (orphaned_metric, labels(base + [("app", app)])))
+                    out.append("%s{%s} 1" % (orphaned_metric, labels(base + [("res_app", app)])))
         out += collect_recoverability()
         out.append("orphan_exporter_up 1")
         return "\n".join(out) + "\n"

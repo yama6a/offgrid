@@ -16,11 +16,11 @@ groups:
         for: 10m
         labels: {severity: warning}
         annotations:
-          summary: 'CNPG {{ $labels.namespace }}/{{ $labels.cluster }} is orphaned (owning Argo app {{ $labels.app }} gone)'
+          summary: 'CNPG {{ $labels.res_namespace }}/{{ $labels.res_cluster }} is orphaned (owning Argo app {{ $labels.res_app }} gone)'
           description: |
             - the DB is running but no ArgoCD app manages it: its manifests were pruned from git (data is safe)
             - restore the workload files in git to re-adopt it, OR if the removal was intentional finish it:
-            - kubectl -n {{ $labels.namespace }} get cluster {{ $labels.cluster }} ; then delete once data is elsewhere
+            - kubectl -n {{ $labels.res_namespace }} get cluster {{ $labels.res_cluster }} ; then delete once data is elsewhere
         noDataState: OK
         execErrState: Error
         data:
@@ -30,7 +30,7 @@ groups:
             model:
               refId: A
               instant: true
-              expr: 'max by (namespace, cluster, app) (orphaned_cnpg_cluster)'
+              expr: 'max by (res_namespace, res_cluster, res_app) (orphaned_cnpg_cluster)'
           - refId: B
             relativeTimeRange: {from: 600, to: 0}
             datasourceUid: __expr__
@@ -54,7 +54,7 @@ groups:
         for: 15m
         labels: {severity: warning}
         annotations:
-          summary: 'CNPG {{ $labels.namespace }}/{{ $labels.cluster }} carries no ArgoCD tracking metadata'
+          summary: 'CNPG {{ $labels.res_namespace }}/{{ $labels.res_cluster }} carries no ArgoCD tracking metadata'
           description: |
             - the orphan detector cannot resolve this Cluster to an Argo app, so orphan state is unknown
             - if Argo-managed: check why the tracking annotation/label is missing (manual kubectl apply? SSA field drop?)
@@ -68,7 +68,7 @@ groups:
             model:
               refId: A
               instant: true
-              expr: 'max by (namespace, cluster) (cnpg_cluster_untracked)'
+              expr: 'max by (res_namespace, res_cluster) (cnpg_cluster_untracked)'
           - refId: B
             relativeTimeRange: {from: 600, to: 0}
             datasourceUid: __expr__
@@ -132,11 +132,11 @@ groups:
         for: 10m
         labels: {severity: warning}
         annotations:
-          summary: 'Redis {{ $labels.namespace }}/{{ $labels.redis }} is orphaned (owning Argo app {{ $labels.app }} gone)'
+          summary: 'Redis {{ $labels.res_namespace }}/{{ $labels.res_redis }} is orphaned (owning Argo app {{ $labels.res_app }} gone)'
           description: |
             - the instance is running but no ArgoCD app manages it: its manifests were pruned from git (data is safe)
             - restore the workload files in git to re-adopt it, OR if the removal was intentional finish it:
-            - kubectl -n {{ $labels.namespace }} get redis {{ $labels.redis }} ; then delete once data is elsewhere
+            - kubectl -n {{ $labels.res_namespace }} get redis {{ $labels.res_redis }} ; then delete once data is elsewhere
         noDataState: OK
         execErrState: Error
         data:
@@ -146,7 +146,7 @@ groups:
             model:
               refId: A
               instant: true
-              expr: 'max by (namespace, redis, app) (orphaned_redis_instance)'
+              expr: 'max by (res_namespace, res_redis, res_app) (orphaned_redis_instance)'
           - refId: B
             relativeTimeRange: {from: 600, to: 0}
             datasourceUid: __expr__
@@ -170,10 +170,10 @@ groups:
         for: 15m
         labels: {severity: warning}
         annotations:
-          summary: 'Redis {{ $labels.namespace }}/{{ $labels.redis }} carries no ArgoCD tracking metadata'
+          summary: 'Redis {{ $labels.res_namespace }}/{{ $labels.res_redis }} carries no ArgoCD tracking metadata'
           description: |
             - cannot tell whether this instance is orphaned; it is unmanaged as far as the exporter can see
-            - kubectl -n {{ $labels.namespace }} get redis {{ $labels.redis }} -o yaml | grep -A3 'annotations:'
+            - kubectl -n {{ $labels.res_namespace }} get redis {{ $labels.res_redis }} -o yaml | grep -A3 'annotations:'
             - expected argocd.argoproj.io/tracking-id or the app.kubernetes.io/instance label
         noDataState: OK
         execErrState: Error
@@ -184,7 +184,7 @@ groups:
             model:
               refId: A
               instant: true
-              expr: 'max by (namespace, redis) (redis_instance_untracked)'
+              expr: 'max by (res_namespace, res_redis) (redis_instance_untracked)'
           - refId: B
             relativeTimeRange: {from: 600, to: 0}
             datasourceUid: __expr__
@@ -209,11 +209,11 @@ groups:
         for: 10m
         labels: {severity: warning}
         annotations:
-          summary: '{{ $labels.kind }} {{ $labels.namespace }}/{{ $labels.name }} is orphaned (owning Argo app {{ $labels.app }} gone)'
+          summary: '{{ $labels.res_kind }} {{ $labels.res_namespace }}/{{ $labels.res_name }} is orphaned (owning Argo app {{ $labels.res_app }} gone)'
           description: |
             - the store is running but no ArgoCD app manages it: its manifests were pruned from git (data is safe)
             - restore the app files in git to re-adopt it, OR if the removal was intentional finish it:
-            - kubectl -n {{ $labels.namespace }} delete {{ $labels.kind }} {{ $labels.name }} ; then its PVC
+            - kubectl -n {{ $labels.res_namespace }} delete {{ $labels.res_kind }} {{ $labels.res_name }} ; then its PVC
         noDataState: OK
         execErrState: Error
         data:
@@ -223,7 +223,7 @@ groups:
             model:
               refId: A
               instant: true
-              expr: 'max by (namespace, kind, name, app) (orphaned_vm_resource)'
+              expr: 'max by (res_namespace, res_kind, res_name, res_app) (orphaned_vm_resource)'
           - refId: B
             relativeTimeRange: {from: 600, to: 0}
             datasourceUid: __expr__
@@ -247,10 +247,10 @@ groups:
         for: 15m
         labels: {severity: warning}
         annotations:
-          summary: '{{ $labels.kind }} {{ $labels.namespace }}/{{ $labels.name }} carries no ArgoCD tracking metadata'
+          summary: '{{ $labels.res_kind }} {{ $labels.res_namespace }}/{{ $labels.res_name }} carries no ArgoCD tracking metadata'
           description: |
             - cannot tell whether this store is orphaned; it is unmanaged as far as the exporter can see
-            - kubectl -n {{ $labels.namespace }} get {{ $labels.kind }} {{ $labels.name }} -o yaml | grep -A3 'annotations:'
+            - kubectl -n {{ $labels.res_namespace }} get {{ $labels.res_kind }} {{ $labels.res_name }} -o yaml | grep -A3 'annotations:'
             - expected argocd.argoproj.io/tracking-id or the app.kubernetes.io/instance label
         noDataState: OK
         execErrState: Error
@@ -261,7 +261,7 @@ groups:
             model:
               refId: A
               instant: true
-              expr: 'max by (namespace, kind, name) (vm_resource_untracked)'
+              expr: 'max by (res_namespace, res_kind, res_name) (vm_resource_untracked)'
           - refId: B
             relativeTimeRange: {from: 600, to: 0}
             datasourceUid: __expr__

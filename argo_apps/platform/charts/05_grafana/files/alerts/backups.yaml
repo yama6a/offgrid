@@ -334,11 +334,11 @@ groups:
         for: 1h
         labels: {severity: critical}
         annotations:
-          summary: 'CNPG {{ $labels.namespace }}/{{ $labels.cluster }}: object store has NO recovery point'
+          summary: 'CNPG {{ $labels.res_namespace }}/{{ $labels.res_cluster }}: object store has NO recovery point'
           description: |
-            - no base backup in the catalog for {{ $labels.namespace }}/{{ $labels.cluster }}, so restore is IMPOSSIBLE
+            - no base backup in the catalog for {{ $labels.res_namespace }}/{{ $labels.res_cluster }}, so restore is IMPOSSIBLE
             - WAL archiving may still look OK; WAL alone has no recovery point
-            - check the path actually written: kubectl -n {{ $labels.namespace }} get objectstore {{ $labels.cluster }}-backups -o jsonpath='{.spec.configuration.destinationPath}{"\n"}{.status.serverRecoveryWindow}'
+            - check the path actually written: kubectl -n {{ $labels.res_namespace }} get objectstore {{ $labels.res_cluster }}-backups -o jsonpath='{.spec.configuration.destinationPath}{"\n"}{.status.serverRecoveryWindow}'
             - force one: apply a Backup CR (method plugin) for this cluster, then re-check the recovery window
         noDataState: OK
         execErrState: Error
@@ -349,7 +349,7 @@ groups:
             model:
               refId: A
               instant: true
-              expr: 'min by (namespace, cluster) (cnpg_backup_recoverable)'
+              expr: 'min by (res_namespace, res_cluster) (cnpg_backup_recoverable)'
           - refId: B
             relativeTimeRange: {from: 600, to: 0}
             datasourceUid: __expr__
