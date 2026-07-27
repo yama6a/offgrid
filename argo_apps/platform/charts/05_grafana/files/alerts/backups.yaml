@@ -321,3 +321,47 @@ groups:
               conditions:
                 - type: query
                   evaluator: {type: gt, params: [129600]}
+      # The one that actually catches an unrestorable DB, and the reason the two rules above are not enough:
+      # WAL archiving can be green and cnpg-backup-too-old permanently silent (its metric stays 0 under the
+      # plugin) while the catalog holds no base backup at all. That is exactly what a destinationPath change
+      # did: WAL kept flowing to the new prefix, every base backup stayed behind at the old one, nothing fired.
+      # Sourced from orphan-exporter reading ObjectStore.status.serverRecoveryWindow, since
+      # Cluster.status.firstRecoverabilityPoint stays empty under the plugin. The 1h grace covers a genuinely
+      # new cluster whose first backup has not run yet. See docs/13_backups.md.
+      - uid: cnpg-no-recoverable-backup
+        title: CNPG database has no recovery point
+        condition: C
+        for: 1h
+        labels: {severity: critical}
+        annotations:
+          summary: 'CNPG {{ $labels.namespace }}/{{ $labels.cluster }}: object store has NO recovery point'
+          description: |
+            - no base backup in the catalog for {{ $labels.namespace }}/{{ $labels.cluster }}, so restore is IMPOSSIBLE
+            - WAL archiving may still look OK; WAL alone has no recovery point
+            - check the path actually written: kubectl -n {{ $labels.namespace }} get objectstore {{ $labels.cluster }}-backups -o jsonpath='{.spec.configuration.destinationPath}{"\n"}{.status.serverRecoveryWindow}'
+            - force one: apply a Backup CR (method plugin) for this cluster, then re-check the recovery window
+        noDataState: OK
+        execErrState: Error
+        data:
+          - refId: A
+            relativeTimeRange: {from: 600, to: 0}
+            datasourceUid: VictoriaMetrics
+            model:
+              refId: A
+              instant: true
+              expr: 'min by (namespace, cluster) (cnpg_backup_recoverable)'
+          - refId: B
+            relativeTimeRange: {from: 600, to: 0}
+            datasourceUid: __expr__
+            model: {refId: B, type: reduce, expression: A, reducer: last, datasource: {type: __expr__, uid: __expr__}}
+          - refId: C
+            relativeTimeRange: {from: 600, to: 0}
+            datasourceUid: __expr__
+            model:
+              refId: C
+              type: threshold
+              expression: B
+              datasource: {type: __expr__, uid: __expr__}
+              conditions:
+                - type: query
+                  evaluator: {type: lt, params: [1]}

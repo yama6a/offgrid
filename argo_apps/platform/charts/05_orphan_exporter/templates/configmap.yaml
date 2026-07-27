@@ -1,7 +1,8 @@
 # The exporter, kept in Git and mounted read-only into the pod (run as python3 /app/exporter.py). Stdlib only
-# (urllib + http.server), so the base python image needs no pip install. Resolves each protected stateful CR (CNPG
-# Cluster, OpsTree Redis, VM/VL stores) to its owning ArgoCD Application via tracking metadata and reports
-# orphaned / untracked.
+# (urllib + http.server), so the base python image needs no pip install. Two jobs: resolve each protected stateful
+# CR (CNPG Cluster, OpsTree Redis, VM/VL stores) to its owning ArgoCD Application via tracking metadata and report
+# orphaned / untracked; and report per-CNPG-server backup recoverability off the ObjectStore status (the only
+# place that populates under the barman plugin).
 # See docs/13_backups.md + docs/12_redis.md.
 apiVersion: v1
 kind: ConfigMap
@@ -10,7 +11,7 @@ metadata:
   namespace: {{ .Release.Namespace }}
 data:
   exporter.py: |
-    import json, os, ssl, threading, time, urllib.request, urllib.error
+    import calendar, json, os, ssl, threading, time, urllib.request, urllib.error
     from http.server import BaseHTTPRequestHandler, HTTPServer
 
     API = "https://%s:%s" % (os.environ["KUBERNETES_SERVICE_HOST"],
@@ -62,6 +63,48 @@ data:
     def labels(pairs):
         return ",".join('%s="%s"' % (k, esc(v)) for k, v in pairs)
 
+    def rfc3339(s):
+        # "2026-07-27T20:13:45Z", sometimes with fractional seconds. 0 = absent or unparseable.
+        if not s:
+            return 0
+        s = s.split(".", 1)[0].rstrip("Z")
+        try:
+            return calendar.timegm(time.strptime(s, "%Y-%m-%dT%H:%M:%S"))
+        except ValueError:
+            return 0
+
+    # Backup RECOVERABILITY, per barman server (= CNPG cluster name), read off each ObjectStore's status.
+    # Deliberately NOT from the Cluster: under the Barman Cloud plugin, Cluster.status.firstRecoverabilityPoint
+    # stays empty even with a completed base backup in S3, and cnpg_collector_last_available_backup_timestamp
+    # stays 0 (which is why cnpg-backup-too-old can't fire). The ObjectStore is the only source that populates.
+    # Catches the failure that WAL-archive health cannot: archiving green, catalog empty, restore impossible.
+    def collect_recoverability():
+        out = [
+            "# HELP cnpg_backup_recoverable 1 = the object store has a recovery point for this server (restorable)",
+            "# TYPE cnpg_backup_recoverable gauge",
+            "# HELP cnpg_backup_last_success_seconds unix ts of the last successful base backup (0 = never)",
+            "# TYPE cnpg_backup_last_success_seconds gauge",
+        ]
+        for store in items("/apis/barmancloud.cnpg.io/v1/objectstores"):
+            ns = store["metadata"]["namespace"]
+            window = ((store.get("status") or {}).get("serverRecoveryWindow") or {})
+            if not window:
+                # Store exists but the plugin has reported nothing yet: attribute it to the cluster label the
+                # chart stamps, else the failure would be invisible (no series at all reads as "fine").
+                name = (store["metadata"].get("labels") or {}).get("cnpg.io/cluster")
+                if name:
+                    lb = labels([("namespace", ns), ("cluster", name)])
+                    out.append("cnpg_backup_recoverable{%s} 0" % lb)
+                    out.append("cnpg_backup_last_success_seconds{%s} 0" % lb)
+                continue
+            for name, w in window.items():
+                lb = labels([("namespace", ns), ("cluster", name)])
+                frp = (w or {}).get("firstRecoverabilityPoint") or ""
+                out.append("cnpg_backup_recoverable{%s} %d" % (lb, 1 if frp else 0))
+                out.append("cnpg_backup_last_success_seconds{%s} %d"
+                           % (lb, rfc3339((w or {}).get("lastSuccessfulBackupTime"))))
+        return out
+
     def collect():
         apps = items("/apis/argoproj.io/v1alpha1/namespaces/%s/applications" % ARGOCD_NS)
         names = {a["metadata"]["name"] for a in apps}
@@ -96,6 +139,7 @@ data:
                     continue
                 if app not in names:
                     out.append("%s{%s} 1" % (orphaned_metric, labels(base + [("app", app)])))
+        out += collect_recoverability()
         out.append("orphan_exporter_up 1")
         return "\n".join(out) + "\n"
 

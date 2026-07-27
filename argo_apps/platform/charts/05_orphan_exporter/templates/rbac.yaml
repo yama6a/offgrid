@@ -1,5 +1,6 @@
-# Cluster-wide READ on the protected stateful CRs (CNPG Clusters, OpsTree Redis) + Argo Applications only, the
-# least needed to resolve each CR to its owning Application and decide orphaned / untracked. No write, nothing else.
+# Cluster-wide READ on the protected stateful CRs (CNPG Clusters, OpsTree Redis) + Argo Applications, plus the
+# barman ObjectStores whose status carries backup recoverability. The least needed to resolve each CR to its
+# owning Application and decide orphaned / untracked / unrecoverable. No write, nothing else.
 apiVersion: rbac.authorization.k8s.io/v1
 kind: ClusterRole
 metadata:
@@ -7,6 +8,9 @@ metadata:
 rules:
   - apiGroups: ["postgresql.cnpg.io"]
     resources: ["clusters"]
+    verbs: ["get", "list"]
+  - apiGroups: ["barmancloud.cnpg.io"]
+    resources: ["objectstores"]
     verbs: ["get", "list"]
   - apiGroups: ["redis.redis.opstreelabs.in"]
     resources: ["redis"]
