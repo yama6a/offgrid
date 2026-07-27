@@ -17,10 +17,6 @@ dependencies:
   # once, so N databases == N aliases; each alias is a values key (maindb/analyticsdb) and carries its own
   # explicit name. Add another alias block to add another DB.
   - name: pg-cluster
-    alias: maindb
-    version: "*"
-    repository: "file://../../../../lib/helm/pg-cluster"
-  - name: pg-cluster
     alias: analyticsdb
     version: "*"
     repository: "file://../../../../lib/helm/pg-cluster"
