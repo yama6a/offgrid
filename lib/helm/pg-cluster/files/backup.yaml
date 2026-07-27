@@ -1,9 +1,9 @@
 # pg-cluster backup overlay: the per-DEPLOYMENT backup facts, populated by lib/shell/14_cnpg_backup.sh
 # Safe to commit: bucket/region aren't secret; the two creds are sealed-secret ciphertext.
-bucket: ""            # S3_BACKUP_BUCKET
-region: ""            # AWS_REGION
-retentionPolicy: ""   # "<S3_BACKUP_RETENTION_DAYS>d", e.g. "180d"
-archiveTimeout: ""    # CNPG_BACKUP_RPO, e.g. "15min"
+bucket: "my-cluster-backups" # S3_BACKUP_BUCKET
+region: "eu-central-1" # AWS_REGION
+retentionPolicy: "180d" # "<S3_BACKUP_RETENTION_DAYS>d", e.g. "180d"
+archiveTimeout: "15min" # CNPG_BACKUP_RPO, e.g. "15min"
 sealed:
-  ACCESS_KEY_ID: ""      # cluster-wide sealed S3 writer key id
-  ACCESS_SECRET_KEY: ""  # cluster-wide sealed S3 writer secret
+  ACCESS_KEY_ID: "AgBTdLJSrfFiCn6Jt5SI/jT0l9NdhD+CQOFrbN0kBTRkcxCq5Tveuj2YvU5m8Jmrt2zOjeQz+AMXGmmEpvFJWQ7E0HhpjcsuMj6mowKF89vbcG1Nzq7Yzpp7s+XqSL1GOaC+XnYh0TeTwJEVy1IopuoABa1LEA5XqJx7tmKYLqd+hI+tIifMHKECqC8z5wtMPEA7JpAU7tNOmNexNLKAmgVmgRIcBrIxaxzVu15R7TOJJ+nYj8sWKitKaHUZXUd8biC004EInmjeoG5ZTpqSfICLp2vfDV/M1cURJu9cG0qJ6TXyo0GExPFoS2rUSFvQgjPwmRAQEciSeCLHcQKArOIMd51xnsmKyx4YYcJJnB0iI86/7XBQkZv5zSVDzvpyoRP4j1dZUKiJhMXKLfSvW7K/MaUFqEhbmSynpsH+k7twrcW55mBJ3oa85JWJFpMvIZ3l582jRSDfDQ8FF86oUxFs8B1oP5njwEGwuzo8FnjyvHizfsDZvAp92oSZiJwmZzQ9iWaUa26bcI8WL+r+NNNpy+to42M1c7uY0japxhJgnA7nK/U87WhoPwaPBqF1+TJJjudCq4gPo00ewbky9nVJqJ9uOphSm4ehXinhNdrnJGrE7KnzwIfWLuT+AMBu0fVdHrgL3T+te9mSa0Wyu31PvLWJcWWL7Q+N1D+jxTaVvdh8DcV2WeB1vOWxWXUXJsn3eKFfpwD1/HQ1JgAdzaAf2IuV3g==" # cluster-wide sealed S3 writer key id
+  ACCESS_SECRET_KEY: "AgCUyr5S1CahynKJVnUYq/xtUSzj4Y8I9jJvrIKQbDgh4ib0XRbLorBymT4HoiuMx7XQCTkuN2VCRQw2Mql8EUO4aT9LEDIhiL3UnjdlSQ9mmaGrYXhQZpVSBWYRJ692hQbE3JWIsq4W1qwv7xdanxtAWdOej1N1QaJDni7gaiaOvs/406QET1MLqVyaztZOwpzOGELKeMF10DmpA1q3P3jOKMWjky6ivT5stnIfVBfzu/LUlRo0F1tLLRxaIDiKGOqKk7/pf+GBUUIDeYOHhhZJ4ZOzc/2p4l7d4KJzvOiTRRDUpzd1uRPT6QWeWg1xAbXSgk4rrP3QyD7VNWgrholAcSlghlhpazzu4vHchEHA/ShQQPfndQHHjnlZaj3IihzzFilqmr8zaH+E6wqzl2FaX9rRv8zwZjSlm4dTt4QcXCTVzqUWCe6r8gpHmF8ZebLHjRH+d0a6DtZzzXXQS77fvkDAKkCDsUtfjYft31bpWk/DdR3JMIRajTPlmx7zu5ZH1xzoTRsSFovyU0ZaR2UuLofz9gtFKyvclOS4+AkQv9FhraiGSOBcSRofcSXyrSvLJ9AwGxH7ymOcRc/6tbIeJcRT2YU5FPSqQ7HWKE0smK106yHXz+g+SABzYcL0ZPsQ5irJYqo5gTUHGqlhfecjgMsZhDb+NpVJSF80rxjB3wpjZqrdDFkLaKxtEQTGsf3Pn3zSAUHI4nIgsIOSFj8GNRVf8mgsFfI5mJcG3BIQyBlzkWyQ9IUc" # cluster-wide sealed S3 writer secret
