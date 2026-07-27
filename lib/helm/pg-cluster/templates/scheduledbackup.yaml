@@ -12,9 +12,7 @@ metadata:
     {{- include "pg-cluster.labels" . | nindent 4 }}
 spec:
   immediate: true
-  # Daily base backup at 02:00 (6-field cron, seconds first; CNPG uses the Go cron spec). No target set: CNPG
-  # defaults to prefer-standby (most up-to-date replica, falling back to the primary), keeping IO off the primary.
-  schedule: "0 0 2 * * *"
+  schedule: "0 0 2 * * *" # sec, min, hour, DoM, MoY, DoW
   method: plugin
   backupOwnerReference: self
   cluster:

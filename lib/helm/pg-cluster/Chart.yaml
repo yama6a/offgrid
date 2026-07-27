@@ -29,4 +29,4 @@ description: >-
   aliased once per DB (a workload runs one or more); see argo_apps/workloads/charts/sample_user_manager. The
   Cluster + its services/secret are named off the REQUIRED `name` (e.g. `<name>-rw`, `<name>-app`).
 type: application               # renders CRs directly (like redis-instance); NOT a library, which renders nothing
-version: 0.6.0                  # this chart's own version
+version: 0.1.0                 # local chart, never bump version

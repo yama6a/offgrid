@@ -46,7 +46,7 @@ spec:
   postgresql:
     {{- $params := deepCopy (.Values.postgresql.parameters | default dict) }}
     {{- if eq (include "pg-cluster.backupsEnabled" .) "true" }}
-    {{- $b := include "pg-cluster.backupConfig" . | fromYaml }}
+    {{- $b := .Files.Get "files/backup.yaml" | fromYaml }}
     {{- if $b.archiveTimeout }}{{ $_ := set $params "archive_timeout" $b.archiveTimeout }}{{ end }}
     {{- end }}
     {{- with $params }}

@@ -20,20 +20,11 @@ alert-criticality: {{ if .Values.alertCritical }}critical{{ else }}warning{{ end
 {{- end -}}
 
 {{/*
-Per-deployment backup facts (files/backup.yaml): bucket/region/retentionPolicy/archiveTimeout + sealed creds,
-written by 14_cnpg_backup.sh. Callers pipe to `fromYaml`; a blank/absent file yields an empty map (nil-safe).
-Chart-scoped, so both aliases read the SAME file: single source, no per-consumer wiring.
-*/}}
-{{- define "pg-cluster.backupConfig" -}}
-{{- .Files.Get "files/backup.yaml" -}}
-{{- end -}}
-
-{{/*
-The S3-creds Secret name for THIS instance: `<name>-backup-s3`. Per-instance (not a single shared name) so N
-DBs in one namespace never collide on it, which is what lets each instance render its own SealedSecret with no
-cross-instance coordination. The one cluster-wide-sealed ciphertext (files/backup.yaml) unseals into any name in
-any namespace, so reusing it under a per-instance name is free. objectstore.yaml + backup-sealedsecret.yaml both
-key off this.
+The S3-creds Secret name for THIS instance: `<name>-backup-s3` (repo convention for sealed S3 backup creds, cf.
+redis/longhorn/vm-backup-s3). Defined ONCE because two resources must agree on it: the ObjectStore references it
+and backup-sealedsecret.yaml creates it. If they drift, the ObjectStore points at a missing Secret and backups
+fail silently (no render error). Per-instance (the `<name>-` prefix) so 2 DBs in one namespace don't collide; the
+cluster-wide ciphertext (files/backup.yaml) unseals under any name.
 */}}
 {{- define "pg-cluster.backupSecretName" -}}
 {{- include "pg-cluster.name" . }}-backup-s3
@@ -42,11 +33,13 @@ key off this.
 {{/*
 True when the Barman Cloud plugin backup path is active (drives the Cluster's .spec.plugins, the ObjectStore,
 the ScheduledBackup, the SealedSecret, and the S3 netpol egress). Gated on the opt-OUT flag AND a populated
-overlay: a blank files/backup.yaml (fresh clone, 14 not run) renders backups OFF even with enabled=true, so no
-half-configured ObjectStore leaks out. Returns the string "true"/"false" (use `eq ... "true"`).
+overlay: a blank files/backup.yaml (fresh clone, 14 not run) renders backups OFF even with backupsEnabled=true,
+so no half-configured ObjectStore leaks out. Returns the string "true"/"false" (use `eq ... "true"`).
+The per-deployment facts themselves are read inline where needed: `.Files.Get "files/backup.yaml" | fromYaml`
+(chart-scoped, so both aliases read the SAME file; fromYaml on a blank file is a nil-safe empty map).
 */}}
 {{- define "pg-cluster.backupsEnabled" -}}
-{{- $b := include "pg-cluster.backupConfig" . | fromYaml -}}
+{{- $b := .Files.Get "files/backup.yaml" | fromYaml -}}
 {{- if and .Values.backupsEnabled $b.bucket -}}true{{- else -}}false{{- end -}}
 {{- end -}}
 

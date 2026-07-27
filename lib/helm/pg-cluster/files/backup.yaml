@@ -1,11 +1,5 @@
-# pg-cluster backup overlay: the per-DEPLOYMENT backup facts, written by lib/shell/14_cnpg_backup.sh (yq) and
-# committed. Read by the templates via `.Files.Get "files/backup.yaml" | fromYaml` (see _helpers.tpl
-# backupConfig). One file, packaged with the subchart, so every aliased instance (maindb/analyticsdb) shares the
-# SAME facts: single source, no per-consumer wiring.
-#
-# Safe to commit: bucket/region aren't secret; the two creds are sealed ciphertext (kubeseal --raw --scope
-# cluster-wide), never plaintext. BLANK until 14 runs => backups render OFF (backupsEnabled gates on `bucket`).
-# The per-instance on/off switch does NOT belong here: backupsEnabled lives in values.yaml.
+# pg-cluster backup overlay: the per-DEPLOYMENT backup facts, populated by lib/shell/14_cnpg_backup.sh
+# Safe to commit: bucket/region aren't secret; the two creds are sealed-secret ciphertext.
 bucket: ""            # S3_BACKUP_BUCKET
 region: ""            # AWS_REGION
 retentionPolicy: ""   # "<S3_BACKUP_RETENTION_DAYS>d", e.g. "180d"

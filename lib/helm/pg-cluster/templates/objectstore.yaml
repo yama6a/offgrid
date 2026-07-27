@@ -1,5 +1,5 @@
 {{- if eq (include "pg-cluster.backupsEnabled" .) "true" -}}
-{{- $b := include "pg-cluster.backupConfig" . | fromYaml -}}
+{{- $b := .Files.Get "files/backup.yaml" | fromYaml -}}
 apiVersion: barmancloud.cnpg.io/v1
 kind: ObjectStore
 metadata:
@@ -32,7 +32,8 @@ spec:
     # Barman appends the serverName (= this cluster's name, unique per DB) under /cnpg/, so each cluster lands in
     # its own s3://<bucket>/cnpg/<name>/{wals,base}.
     destinationPath: "s3://{{ $b.bucket }}/cnpg/"
-    # bare-metal Talos has no instance role: static keys, sealed cluster-wide by 14 (this instance's own copy).
+    # bare-metal Talos has no instance role: static keys, sealed cluster-wide by 14. Name from the helper so it
+    # can't drift from the SealedSecret that creates it (drift => ObjectStore points at a missing Secret).
     s3Credentials:
       accessKeyId:
         name: {{ include "pg-cluster.backupSecretName" . }}

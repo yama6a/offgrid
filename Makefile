@@ -148,11 +148,6 @@ restore-longhorn: ## Restore a Longhorn volume from S3 into a new Volume + PV/PV
 restore-vm: ## Restore VictoriaMetrics/Logs from an S3 export — stream it into the live store via a temp pod (interactive; needs backups on).
 	bash lib/shell/recover_vm_from_s3.sh
 
-##@ Verify & chart tooling  (static; no cluster needed)
-.PHONY: verify-cnpg-protect
-verify-cnpg-protect: ## Assert every workload's CNPG DB unit carries the orphan-not-delete sync-options (helm template).
-	bash lib/shell/verify_cnpg_protect.sh
-
 .PHONY: fix-chart-locks
 fix-chart-locks: ## Regenerate any stale Chart.lock (out of sync with Chart.yaml) across all charts; no git.
 	bash lib/shell/fix_chart_locks.sh
