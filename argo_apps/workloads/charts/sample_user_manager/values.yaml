@@ -72,11 +72,8 @@ maindb:
   # renovate: datasource=docker depName=ghcr.io/cloudnative-pg/postgresql
   postgresVersion: "18"     # Postgres MAJOR (a key in pg-cluster's image map, which pins the patch+digest). Renovate proposes only MAJOR bumps here.
   highAvailability: true
-  deletionProtection: false # TRANSIENT (DR drill): goes back to true once the restore below is verified.
+  deletionProtection: true  # holds the app's real data: a stray prune must orphan it, never delete it
   alertCritical: true       # the app can't function without it; a DB-pod crashloop pages `critical` (docs/09_monitoring.md)
-  # TRANSIENT (DR drill): rebuild from S3 instead of initdb. Flip to false once the data is verified.
-  restore:
-    enabled: true           # latest: newest base backup + replay every WAL in the catalog
   # Conservative footprint for the Pi 5s (8 GB RAM, lots already running). Per-instance.
   resources:
     requests:
