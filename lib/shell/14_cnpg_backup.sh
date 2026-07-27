@@ -2,19 +2,18 @@
 #
 # 14_cnpg_backup.sh  (macOS)
 #
-# Turns ON CNPG S3 backups (after 13_s3_backup_bucket.sh has created the bucket + IAM writer). Two writes,
-# both committable, no plaintext secret in git:
-#   1. yq the .env scalars into the SHARED pg-cluster wrapper values (lib/helm/pg-cluster/values.yaml):
-#        backups.enabled=true, backups.s3.bucket, backups.s3.region, and archive_timeout (RPO). Every CNPG
-#        cluster in every workload inherits these (single source of truth), so this enables backups fleet-wide.
-#   2. seal the Terraform-generated writer creds into a SealedSecret `cnpg-backup-s3` (data keys ACCESS_KEY_ID
-#        + ACCESS_SECRET_KEY, the two keys the cnpg/cluster ObjectStore references) in EACH CNPG namespace,
-#        committed into that workload chart's templates/. The creds come from `terraform output`, never .env.
+# Turns ON CNPG S3 backups (after 13_s3_backup_bucket.sh has created the bucket + IAM writer). Two writes to the
+# SHARED pg-cluster wrapper values (lib/helm/pg-cluster/values.yaml), both committable, no plaintext in git:
+#   1. the .env scalars: backups.enabled=true, backups.s3.bucket, backups.s3.region, archive_timeout (RPO). Every
+#      CNPG cluster in every workload inherits these (single source of truth), so backups go on fleet-wide.
+#   2. the Terraform writer creds, sealed ONCE cluster-wide into backups.secret.sealed (keys ACCESS_KEY_ID +
+#      ACCESS_SECRET_KEY). pg-cluster's backup-sealedsecret.yaml then stamps the cnpg-backup-s3 SealedSecret into
+#      every CNPG namespace automatically (cluster-wide scope => one ciphertext works everywhere). Creds come from
+#      `terraform output`, never .env.
 #
 # Empty AWS_DEPLOY_ACCESS_KEY_ID => backups OFF: this no-ops (leaves values as-is), matching 13 and the repo's
-# "empty secret = feature off" contract. To ADD a CNPG workload to backups, add it to CNPG_BACKUP_TARGETS below.
-# The single-key seal_secret helper can't do a 2-key secret, so we inline the same kubeseal pipeline here.
-# See docs/13_backups.md.
+# "empty secret = feature off" contract. Adding a Postgres workload needs NO change here (the shared secret is
+# auto-added). See docs/13_backups.md.
 #
 set -uo pipefail
 
@@ -24,32 +23,13 @@ source "${SCRIPT_DIR}/common.sh"
 # ---- knobs ------------------------------------------------------------------
 TF_DIR="${REPO_ROOT}/terraform"
 PG_VALUES="${REPO_ROOT}/lib/helm/pg-cluster/values.yaml"    # the SHARED wrapper values (single source)
-SECRET_NAME="cnpg-backup-s3"                                # == pg-cluster values backups.secret.name
-SECRET_KEY_ID="ACCESS_KEY_ID"                               # == the keys the cnpg/cluster ObjectStore expects
-SECRET_KEY_SECRET="ACCESS_SECRET_KEY"
-# Each CNPG-consuming workload gets the sealed creds in ITS namespace, committed into ITS chart templates/.
-# Format "namespace:relative/path/to/sealedsecret.yaml". Add a line per new Postgres-backed workload.
-CNPG_BACKUP_TARGETS=(
-  "sample-user-manager:argo_apps/workloads/charts/sample_user_manager/templates/cnpg-backup-s3-sealedsecret.yaml"
-)
 # -----------------------------------------------------------------------------
 
-# 2-key SealedSecret (seal_secret in common.sh is single-key). Mirrors its controller/scope flags + checks.
-seal_s3_creds() { # <namespace> <out-file>
-  local ns="$1" out="$2"
-  mkdir -p "$(dirname "$out")"
-  if kubectl create secret generic "$SECRET_NAME" -n "$ns" --dry-run=client -o yaml \
-        --from-literal="${SECRET_KEY_ID}=${AKID}" \
-        --from-literal="${SECRET_KEY_SECRET}=${SAK}" \
-     | kubeseal --controller-namespace "$SS_CONTROLLER_NS" --controller-name "$SS_CONTROLLER_NAME" \
-         --format yaml --scope strict > "${out}.tmp" 2>/dev/null; then
-    mv "${out}.tmp" "$out"; ok "sealed ${SECRET_NAME} -> ${out} (ns ${ns})"
-  else
-    rm -f "${out}.tmp"; bad "kubeseal failed for ns ${ns} (controller sealed-secrets/${SS_CONTROLLER_NS} up?)"; return 1
-  fi
-  grep -q 'kind: SealedSecret' "$out" && ok "output is a SealedSecret" || bad "not a SealedSecret manifest"
-  grep -q "$SECRET_KEY_ID" "$out" && grep -q "$SECRET_KEY_SECRET" "$out" && ok "both keys present" || bad "a data key is missing"
-  { grep -qF "$AKID" "$out" || grep -qF "$SAK" "$out"; } && bad "PLAINTEXT creds in output, DO NOT COMMIT" || ok "no plaintext creds in output"
+# One cluster-wide raw ciphertext per value (controller flags mirror common.sh's seal_secret). Cluster-wide =>
+# the same blob unseals into cnpg-backup-s3 in ANY namespace, so we seal ONCE into the shared pg-cluster values.
+seal_raw() { # <plaintext> -> ciphertext on stdout
+  printf %s "$1" | kubeseal --controller-namespace "$SS_CONTROLLER_NS" --controller-name "$SS_CONTROLLER_NAME" \
+    --raw --scope cluster-wide 2>/dev/null
 }
 
 # === 0. prereqs ==============================================================
@@ -92,16 +72,27 @@ BUCKET="$S3_BACKUP_BUCKET" REGION="$AWS_REGION" RPO="$CNPG_BACKUP_RPO" RETENTION
 [ "$(yq -r '.backups.retentionPolicy' "$PG_VALUES")" = "$RETENTION" ]  && ok "retentionPolicy=${RETENTION}"  || bad "retentionPolicy not set"
 [ "$(yq -r '.postgresql.parameters.archive_timeout' "$PG_VALUES")" = "$CNPG_BACKUP_RPO" ] && ok "archive_timeout=${CNPG_BACKUP_RPO}" || bad "archive_timeout not set"
 
-# === 3. seal the creds into each CNPG namespace ==============================
-say "sealing S3 creds into each CNPG namespace"
+# === 3. seal the creds ONCE (cluster-wide) into the shared values ============
+say "sealing S3 creds (cluster-wide) into ${PG_VALUES}"
 use_kubeconfig
 assert_api
 kubectl get pods -n "$SS_CONTROLLER_NS" -l "$SS_POD_SELECTOR" >/dev/null 2>&1 \
   || die "sealed-secrets controller not reachable in ns/${SS_CONTROLLER_NS}, is step 02 synced?"
-for t in "${CNPG_BACKUP_TARGETS[@]}"; do
-  ns="${t%%:*}"; rel="${t#*:}"
-  seal_s3_creds "$ns" "${REPO_ROOT}/${rel}"
-done
+
+SEALED_AKID="$(seal_raw "$AKID")"
+SEALED_SAK="$(seal_raw "$SAK")"
+[ -n "$SEALED_AKID" ] && [ -n "$SEALED_SAK" ] || die "kubeseal --raw produced no ciphertext (controller sealed-secrets/${SS_CONTROLLER_NS} up?)"
+case "$SEALED_AKID" in Ag*) ok "ACCESS_KEY_ID sealed" ;; *) bad "ACCESS_KEY_ID ciphertext malformed (no Ag prefix)" ;; esac
+case "$SEALED_SAK"  in Ag*) ok "ACCESS_SECRET_KEY sealed" ;; *) bad "ACCESS_SECRET_KEY ciphertext malformed (no Ag prefix)" ;; esac
+
+CT_ID="$SEALED_AKID" CT_SAK="$SEALED_SAK" yq -i '
+  .backups.secret.sealed.ACCESS_KEY_ID = strenv(CT_ID)
+  | .backups.secret.sealed.ACCESS_SECRET_KEY = strenv(CT_SAK)
+' "$PG_VALUES"
+# verify the ciphertext landed, and NO plaintext creds leaked into the committed values
+[ "$(yq -r '.backups.secret.sealed.ACCESS_KEY_ID' "$PG_VALUES")" = "$SEALED_AKID" ]     && ok "sealed ACCESS_KEY_ID written"     || bad "ACCESS_KEY_ID not written"
+[ "$(yq -r '.backups.secret.sealed.ACCESS_SECRET_KEY' "$PG_VALUES")" = "$SEALED_SAK" ]  && ok "sealed ACCESS_SECRET_KEY written"  || bad "ACCESS_SECRET_KEY not written"
+{ grep -qF "$AKID" "$PG_VALUES" || grep -qF "$SAK" "$PG_VALUES"; } && bad "PLAINTEXT creds in ${PG_VALUES}, DO NOT COMMIT" || ok "no plaintext creds in values"
 
 # === 4. summary ==============================================================
 summary
@@ -110,7 +101,8 @@ if [ "$FAIL" -eq 0 ]; then
 CNPG S3 backups enabled (bucket ${S3_BACKUP_BUCKET}, RPO ${CNPG_BACKUP_RPO}, daily base backup from standby).
 Next:
   - git add -A && git commit && git push   # ArgoCD applies: the barman plugin (platform wave 3) + each
-                                            # workload's ObjectStore/ScheduledBackup + the sealed creds.
+                                            # workload's ObjectStore/ScheduledBackup + the cluster-wide sealed
+                                            # creds (auto-added to every CNPG ns by pg-cluster).
   - verify:  kubectl cnpg status <cluster> -n <ns>   # "Continuous Archiving: OK" + a recoverability point
   - restore drill:  make restore-cnpg
 EOF

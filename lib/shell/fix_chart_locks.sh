@@ -22,10 +22,13 @@ require helm
 # ---- knobs ----
 JOBS=12   # parallel `helm dependency build`s; network-bound, so more than cores is fine. Edit to change.
 
-# Charts with a `dependencies:` block, across both GitOps trees + the shared lib.
+# Charts that pin at least one REMOTE (https/oci) dependency. A file://-only chart is lockless (its deps live in
+# this repo, nothing to pin), so it commits no Chart.lock and there is nothing here to check or fix.
 mapfile -t CHARTS < <(
   grep -rl --include=Chart.yaml '^dependencies:' "${REPO_ROOT}/argo_apps" "${REPO_ROOT}/lib/helm" 2>/dev/null \
-  | while read -r f; do dirname "$f"; done | sort -u
+  | while read -r f; do
+      grep -qE '^[[:space:]]*repository:[[:space:]]*"?(https|oci)://' "$f" && dirname "$f"
+    done | sort -u
 )
 [[ ${#CHARTS[@]} -gt 0 ]] || { say "no charts pin dependencies"; exit 0; }
 

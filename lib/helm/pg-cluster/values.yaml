@@ -55,7 +55,8 @@ postgresql:
 # SECOND durability tier (the first is replication + orphan-not-delete). method=plugin makes cluster.yaml add the
 # barman plugin to the Cluster's .spec.plugins, objectstore.yaml render the ObjectStore, and scheduledbackup.yaml
 # render the daily ScheduledBackup. `lib/shell/14_cnpg_backup.sh` flips enabled=true and injects
-# s3.bucket/s3.region (+ archive_timeout above) from .env, and seals the S3 creds into each consumer ns.
+# s3.bucket/s3.region (+ archive_timeout above) from .env, and seals the S3 creds ONCE (cluster-wide) into
+# secret.sealed below; templates/backup-sealedsecret.yaml then stamps the SealedSecret into every CNPG ns.
 # See docs/13_backups.md.
 backups:
   enabled: true # 14_cnpg_backup.sh sets true when .env has AWS creds.
@@ -69,7 +70,14 @@ backups:
     path: "/cnpg/"
     inheritFromIAMRole: false # bare-metal Talos has no instance role; we use static keys (sealed).
   secret:
-    name: cnpg-backup-s3 # SealedSecret (keys ACCESS_KEY_ID + ACCESS_SECRET_KEY) sealed by 14 into the ns.
+    name: cnpg-backup-s3 # the Secret the ObjectStore reads (keys ACCESS_KEY_ID + ACCESS_SECRET_KEY).
+    owner: true # render the shared SealedSecret from THIS instance; set false on extra pg instances sharing a ns.
+    # cluster-wide sealed S3 writer creds (kubeseal --raw --scope cluster-wide), injected ONCE by 14_cnpg_backup.sh.
+    # Same creds for every CNPG workload => one ciphertext, unseals into cnpg-backup-s3 in each namespace.
+    # Empty => backup-sealedsecret.yaml renders nothing (creds not sealed yet).
+    sealed:
+      ACCESS_KEY_ID: ""
+      ACCESS_SECRET_KEY: ""
   wal:
     compression: gzip # shrink WAL before upload (also shrinks near-empty idle segments).
     encryption: AES256 # request SSE-S3 on upload; matches the bucket's AWS-managed SSE.

@@ -177,14 +177,19 @@ live in `cnpg-system`.
 # .env: set the deployer creds + bucket. Empty AWS_DEPLOY_ACCESS_KEY_ID => backups stay OFF (13/14 no-op).
 #   AWS_REGION, S3_BACKUP_BUCKET, AWS_DEPLOY_ACCESS_KEY_ID, AWS_DEPLOY_SECRET_ACCESS_KEY_SECRET
 make s3-backup-bucket        # 13: Terraform -> bucket + lifecycle + IAM writer
-make configure-cnpg-backup   # 14: yq bucket/region/RPO into pg-cluster values + seal writer creds per namespace
+make configure-cnpg-backup   # 14: yq bucket/region/RPO into pg-cluster values + seal writer creds ONCE (cluster-wide)
 git add -A && git commit && git push   # ArgoCD applies the plugin + each ObjectStore/ScheduledBackup + sealed creds
 ```
 
-`14` edits the **shared** `lib/helm/pg-cluster/values.yaml` (`backups.enabled: true`, `s3.bucket`, `s3.region`,
-`archive_timeout`), so **every** CNPG cluster in every workload gets backups. Each Postgres-backed namespace
-needs the sealed `cnpg-backup-s3` Secret (keys `ACCESS_KEY_ID` / `ACCESS_SECRET_KEY`); the list of namespaces to
-seal into is `CNPG_BACKUP_TARGETS` in `14_cnpg_backup.sh` — **add a line there when you add a Postgres workload.**
+`14` edits only the **shared** `lib/helm/pg-cluster/values.yaml`: the scalars (`backups.enabled: true`, `s3.bucket`,
+`s3.region`, `archive_timeout`) plus the writer creds, sealed **once** cluster-wide into `backups.secret.sealed`
+(`ACCESS_KEY_ID` / `ACCESS_SECRET_KEY`). So **every** CNPG cluster in every workload gets backups, and pg-cluster's
+`backup-sealedsecret.yaml` auto-stamps the `cnpg-backup-s3` SealedSecret into each CNPG namespace. **Adding a
+Postgres workload needs nothing extra here.** Cluster-wide scope (not the repo's usual `strict`) is the deliberate
+trade that lets one ciphertext work in every namespace: any namespace could unseal a secret named `cnpg-backup-s3`,
+accepted because it's the same S3 writer for all CNPG workloads. Two DBs in one namespace: exactly one instance
+keeps `backups.secret.owner: true` (the default) and the others set it `false`, so the shared secret renders once
+per namespace.
 
 `13`/`14` are wired best-effort into `DANGEROUS_bootstrap_cluster.sh` (guarded on the deployer key), so a full
 bootstrap runs `terraform apply` + seals automatically. **Rebuild** runs `13 wipe` — it discards the old

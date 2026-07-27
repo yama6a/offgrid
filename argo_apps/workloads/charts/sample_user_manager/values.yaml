@@ -92,6 +92,9 @@ analyticsdb:
   # renovate: datasource=docker depName=ghcr.io/cloudnative-pg/postgresql
   postgresVersion: "18"     # Postgres version, owned by this workload
   highAvailability: false
+  backups:
+    secret:
+      owner: false          # maindb already stamps the shared cnpg-backup-s3 in this namespace
   resources:
     requests:
       cpu: 100m
