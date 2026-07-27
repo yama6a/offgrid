@@ -1,8 +1,8 @@
 apiVersion: 1
 groups:
   # Orphan-not-delete monitoring (docs/13_backups.md, docs/12_redis.md). A workload's manifests leaving Git
-  # ORPHANS every CR carrying deletionProtection (CNPG Cluster, OpsTree Redis) instead of deleting it: it keeps
-  # running, unmanaged, so the data survives a restore. These alerts make that silent state loud. Vector 1 (CR
+  # ORPHANS every CR carrying deletionProtection (CNPG Cluster, OpsTree Redis, VLSingle/VMSingle/VMAgent) instead
+  # of deleting it: it keeps running, unmanaged, so the data survives a restore. These alerts make that silent state loud. Vector 1 (CR
   # removed from a live app, app stays OutOfSync) is covered by the general rule in argocd-health.yaml; here are
   # vector 2 (owning app gone) + the untracked guard + the exporter deadman. Fed by 05_orphan_exporter.
   - orgId: 1
@@ -97,7 +97,7 @@ groups:
           description: |
             - no heartbeat from the exporter, so the orphaned_* alerts cannot fire and orphans go undetected
             - kubectl -n orphan-exporter get pods ; kubectl -n orphan-exporter logs deploy/orphan-exporter
-            - check the ClusterRole/binding (get,list on clusters + redis + applications) and the PodMonitor scrape
+            - check the ClusterRole/binding (get,list on clusters + redis + vm/vl stores + applications) and the PodMonitor scrape
         noDataState: Alerting
         execErrState: Alerting
         data:
@@ -124,8 +124,8 @@ groups:
                 - type: query
                   evaluator: {type: lt, params: [1]}
       # Same two vectors for Redis. The label key is `redis` (not `instance`, which the scrape already owns).
-      # A durable instance's data is on a Retain volume, so an orphan is recoverable either way; this makes the
-      # unmanaged state visible. See docs/12_redis.md.
+      # A durable instance has a daily S3 RDB dump, so an orphan is recoverable; this makes the unmanaged state
+      # visible. See docs/12_redis.md.
       - uid: redis-instance-orphaned
         title: Redis instance orphaned
         condition: C
@@ -185,6 +185,83 @@ groups:
               refId: A
               instant: true
               expr: 'max by (namespace, redis) (redis_instance_untracked)'
+          - refId: B
+            relativeTimeRange: {from: 600, to: 0}
+            datasourceUid: __expr__
+            model: {refId: B, type: reduce, expression: A, reducer: last, datasource: {type: __expr__, uid: __expr__}}
+          - refId: C
+            relativeTimeRange: {from: 600, to: 0}
+            datasourceUid: __expr__
+            model:
+              refId: C
+              type: threshold
+              expression: B
+              datasource: {type: __expr__, uid: __expr__}
+              conditions:
+                - type: query
+                  evaluator: {type: gt, params: [0]}
+      # Same two vectors for the VM/VL stores (VLSingle / VMSingle / VMAgent), which share one metric pair with a
+      # `kind` label. Both stores have a daily S3 export (08_vm_backup) so an orphan is recoverable; these make the
+      # unmanaged state visible. See docs/08_storage.md.
+      - uid: vm-resource-orphaned
+        title: VM/VL store orphaned
+        condition: C
+        for: 10m
+        labels: {severity: warning}
+        annotations:
+          summary: '{{ $labels.kind }} {{ $labels.namespace }}/{{ $labels.name }} is orphaned (owning Argo app {{ $labels.app }} gone)'
+          description: |
+            - the store is running but no ArgoCD app manages it: its manifests were pruned from git (data is safe)
+            - restore the app files in git to re-adopt it, OR if the removal was intentional finish it:
+            - kubectl -n {{ $labels.namespace }} delete {{ $labels.kind }} {{ $labels.name }} ; then its PVC
+        noDataState: OK
+        execErrState: Error
+        data:
+          - refId: A
+            relativeTimeRange: {from: 600, to: 0}
+            datasourceUid: VictoriaMetrics
+            model:
+              refId: A
+              instant: true
+              expr: 'max by (namespace, kind, name, app) (orphaned_vm_resource)'
+          - refId: B
+            relativeTimeRange: {from: 600, to: 0}
+            datasourceUid: __expr__
+            model: {refId: B, type: reduce, expression: A, reducer: last, datasource: {type: __expr__, uid: __expr__}}
+          - refId: C
+            relativeTimeRange: {from: 600, to: 0}
+            datasourceUid: __expr__
+            model:
+              refId: C
+              type: threshold
+              expression: B
+              datasource: {type: __expr__, uid: __expr__}
+              conditions:
+                - type: query
+                  evaluator: {type: gt, params: [0]}
+      # A VM/VL store CR in an Argo-managed namespace with no tracking metadata: the exporter cannot tell whether
+      # it is orphaned, so it says so loudly rather than reading as healthy.
+      - uid: vm-resource-untracked
+        title: VM/VL store untracked by ArgoCD
+        condition: C
+        for: 15m
+        labels: {severity: warning}
+        annotations:
+          summary: '{{ $labels.kind }} {{ $labels.namespace }}/{{ $labels.name }} carries no ArgoCD tracking metadata'
+          description: |
+            - cannot tell whether this store is orphaned; it is unmanaged as far as the exporter can see
+            - kubectl -n {{ $labels.namespace }} get {{ $labels.kind }} {{ $labels.name }} -o yaml | grep -A3 'annotations:'
+            - expected argocd.argoproj.io/tracking-id or the app.kubernetes.io/instance label
+        noDataState: OK
+        execErrState: Error
+        data:
+          - refId: A
+            relativeTimeRange: {from: 600, to: 0}
+            datasourceUid: VictoriaMetrics
+            model:
+              refId: A
+              instant: true
+              expr: 'max by (namespace, kind, name) (vm_resource_untracked)'
           - refId: B
             relativeTimeRange: {from: 600, to: 0}
             datasourceUid: __expr__

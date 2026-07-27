@@ -1,6 +1,6 @@
 # ArgoCD Application for the orphan-exporter (argo_apps/platform/charts/05_orphan_exporter/). Detects every
-# deletionProtection-carrying CR (CNPG Clusters, OpsTree Redis) orphaned by a GitOps prune (owning Argo app gone)
-# or lacking Argo tracking metadata, the monitoring half of the orphan-not-delete design.
+# deletionProtection-carrying CR (CNPG Clusters, OpsTree Redis, VLSingle/VMSingle/VMAgent) orphaned by a GitOps
+# prune (owning Argo app gone) or lacking Argo tracking metadata, the monitoring half of orphan-not-delete.
 # See docs/13_backups.md + docs/12_redis.md.
 #
 # AUTOMATED (prune + selfHeal): a safe read-only leaf.

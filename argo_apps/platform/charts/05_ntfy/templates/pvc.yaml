@@ -4,6 +4,12 @@ kind: PersistentVolumeClaim
 metadata:
   name: ntfy
   namespace: {{ .Release.Namespace }}
+  {{- if .Values.deletionProtection }}
+  annotations:
+    # Orphan-not-delete: a GitOps prune leaves ntfy running on its PVC instead of destroying it, and restoring the
+    # files re-adopts it. See values.yaml for the flip-then-remove deletion flow.
+    argocd.argoproj.io/sync-options: Prune=false,Delete=false
+  {{- end }}
   labels:
     app.kubernetes.io/name: ntfy
 spec:

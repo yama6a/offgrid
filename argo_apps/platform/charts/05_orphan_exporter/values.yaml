@@ -1,6 +1,6 @@
 # Exporter for the orphan-not-delete design (docs/13_backups.md, docs/12_redis.md). Covers every CR carrying
-# deletionProtection: CNPG Clusters and OpsTree Redis instances. Emits orphaned_<kind> when a CR's owning ArgoCD
-# Application no longer exists (the data-safe outcome of a GitOps prune under Prune=false,Delete=false), and
+# deletionProtection: CNPG Clusters, OpsTree Redis instances, and the VM/VL stores (VLSingle/VMSingle/VMAgent).
+# Emits orphaned_<kind> when a CR's owning ArgoCD Application no longer exists (the data-safe outcome of a GitOps prune under Prune=false,Delete=false), and
 # <kind>_untracked when a CR in an Argo-managed namespace carries no tracking metadata (unknown must not read as
 # healthy). Reads the k8s API directly (CR + Application), so it survives a pruned PodMonitor. Add a kind by
 # appending to KINDS in templates/configmap.yaml. The alerts live in 05_grafana/files/alerts/orphan.yaml.

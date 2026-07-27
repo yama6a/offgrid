@@ -50,16 +50,15 @@ pods come up but every node's disk shows unschedulable.
   anti-affinity, one replica per node**. 2 replicas on 3 nodes survives the single node loss we design for AND
   leaves a spare node to rebuild the lost replica onto (at 3 replicas there's no spare → the volume stays degraded
   until the dead node returns). A global fallback only — every class below sets `numberOfReplicas: 2` explicitly.
-- `persistence.defaultClass: false`: there is **no default StorageClass**. Every PVC must name one of the three
+- `persistence.defaultClass: false`: there is **no default StorageClass**. Every PVC must name one of the two
   classes below; a PVC that omits a class stays `Pending` rather than silently landing on Longhorn.
 
-**The three StorageClasses** (rendered by `templates/storageclasses.yaml`, all `numberOfReplicas: 2`; the only
-Longhorn classes in the cluster). They differ in reclaim + off-cluster backup:
+**The two StorageClasses** (rendered by `templates/storageclasses.yaml`, both `numberOfReplicas: 2`; the only
+Longhorn classes in the cluster). They differ only in off-cluster backup:
 
 | Class | reclaimPolicy | S3 backup | Use for |
 |---|---|---|---|
-| `longhorn-r2-ephemeral` | Delete | — | the general-purpose tier: anything whose prune-safety comes from `deletionProtection` + an app-level backup rather than from Retain (ALL redis, durable included) |
-| `longhorn-r2-retained` | Retain | — | zero-RPO recovery of an accidental delete, for apps with NO deletion-protection annotations (VM, VL, ntfy) |
+| `longhorn-r2-ephemeral` | Delete | — | the general-purpose tier, and the only one in use: prune safety comes from `deletionProtection`, total-loss coverage from each app's own backup (CNPG, all redis, VM, VL, ntfy) |
 | `longhorn-r2-retained-with-backups` | Retain | daily + weekly | precious data with no app-level backup (sqlite / config) |
 
 `Retain` means a PVC/app delete leaves the volume intact — recover an accidental delete with **zero data loss** by
@@ -68,14 +67,14 @@ interval). The cost is orphaned `Released` PVs + their Longhorn volumes on delet
 `-with-backups` class adds off-cluster S3 backups via `recurringJobSelector`; see [13_backups.md](13_backups.md)
 ("Longhorn volume backups").
 
-**Which class to pick comes down to whether the app has `deletionProtection`.** An app that stamps
-`Prune=false,Delete=false` on its stateful CRs (CNPG via `pg-cluster`, Redis via `redis-instance`) is already
-immune to the accidental case: a prune can't delete the CR, so restoring the files brings it back with zero loss
-and nothing is ever `Released`. For those, `Retain` protects nothing a deliberate deletion wouldn't have meant,
-and only leaks orphaned PVs, so they use a **Delete** class (`longhorn-r2-ephemeral`; `local-path` for CNPG) and
-accept the backup's RPO window if a deliberate delete is later regretted. Apps with **no** such annotations (VM,
-VL, ntfy) have nothing else standing between a stray prune and their data, so they stay on `Retain`. See
-[13_backups.md](13_backups.md) / [12_redis.md](12_redis.md).
+**Why there is no plain Retain class.** Every stateful app here stamps `deletionProtection`
+(`Prune=false,Delete=false`) on the CR or PVC that owns its storage, so it is already immune to the accidental
+case: a prune can't delete the object, restoring the files brings it back with zero loss, and nothing is ever
+`Released`. Given that, `Retain` protects nothing a deliberate deletion didn't mean and only leaks orphaned PVs,
+so everything uses a **Delete** class (`longhorn-r2-ephemeral`, or `local-path` for CNPG) and accepts that
+regretting a deliberate delete costs that store's backup RPO. The one exception is
+`longhorn-r2-retained-with-backups`, kept for data with no app-level backup at all (it is also the restore target
+in `recover_longhorn_from_s3.sh`). See [13_backups.md](13_backups.md) / [12_redis.md](12_redis.md).
 - `preUpgradeChecker.jobEnabled: false`: that Helm pre-upgrade hook Job can stall an ArgoCD sync waiting on
   completion; version control lives in git anyway.
 - `storageMinimalAvailablePercentage: 15`: leave headroom on the Pi NVMes; don't schedule onto a disk under
@@ -97,10 +96,10 @@ are in [13_backups.md](13_backups.md).
 talosctl -n 192.168.10.201 read /proc/mounts | grep longhorn   # /var/mnt/longhorn present (after the patch)
 kubectl -n longhorn-system get pods                            # manager on all 3 nodes + CSI Running
 kubectl -n longhorn-system get nodes.longhorn.io -o wide       # each node's disk Schedulable
-kubectl get storageclass                                       # the three longhorn-r2-* classes, NO default
+kubectl get storageclass                                       # the two longhorn-r2-* classes, NO default
 ```
 
-Smoke test: apply a 1Gi PVC with `storageClassName: longhorn-r2-retained` + a pod, confirm it `Bound` and the
+Smoke test: apply a 1Gi PVC with `storageClassName: longhorn-r2-ephemeral` + a pod, confirm it `Bound` and the
 volume shows 2 healthy replicas on two distinct nodes.
 
 **Caveat.** Deliberately deleting the app/CRDs destroys the volumes — back up before any teardown. Selected

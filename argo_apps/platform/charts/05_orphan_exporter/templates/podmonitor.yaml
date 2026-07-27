@@ -1,6 +1,6 @@
 # The VM operator converts this PodMonitor to a VMPodScrape; vmagent discovers it cluster-wide. Feeds
 # orphaned_cnpg_cluster / cnpg_cluster_untracked / orphaned_redis_instance / redis_instance_untracked /
-# orphan_exporter_up to VictoriaMetrics.
+# orphaned_vm_resource / vm_resource_untracked / orphan_exporter_up to VictoriaMetrics.
 apiVersion: monitoring.coreos.com/v1
 kind: PodMonitor
 metadata:

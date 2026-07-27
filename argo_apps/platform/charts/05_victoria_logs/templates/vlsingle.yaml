@@ -7,6 +7,12 @@ kind: VLSingle
 metadata:
   name: {{ .Values.vlsingle.name }}
   namespace: {{ .Values.vlsingle.namespace }}
+  {{- if .Values.deletionProtection }}
+  annotations:
+    # Orphan-not-delete: a GitOps prune leaves this CR (and the PVC the operator made from it) running, and
+    # restoring the files re-adopts it. See values.yaml for the flip-then-remove deletion flow.
+    argocd.argoproj.io/sync-options: Prune=false,Delete=false
+  {{- end }}
 spec:
   retentionPeriod: {{ .Values.vlsingle.retentionPeriod | quote }}
   storage:

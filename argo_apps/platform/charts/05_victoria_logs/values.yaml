@@ -6,6 +6,12 @@
 #                              standalone VM operator (01_victoria_metrics_operator).
 #   2. victoria-logs-collector.* -> the upstream collector DaemonSet (key == dependency name).
 
+# Orphan-not-delete, same guard CNPG and Redis use: stamps Prune=false,Delete=false on the VLSingle CR, so a
+# GitOps prune leaves the store RUNNING (and restoring the files re-adopts it) instead of destroying its PVC.
+# ALWAYS true in steady state. false is a TRANSIENT state only: set it, commit+push, let Argo sync, THEN remove
+# the app in a follow-up commit. See docs/08_storage.md.
+deletionProtection: true
+
 # ---- VLSingle (the logs store) ---------------------------------------------------------------------
 vlsingle:
   # CR name -> the operator names the Service `vlsingle-<name>` on :9428 (the collector remoteWrite target
@@ -16,7 +22,9 @@ vlsingle:
   # Logs are bulkier than metrics, so they get their OWN, shorter window (metrics are 180d). 60d here.
   retentionPeriod: "60d"
   storage:
-    storageClassName: longhorn-r2-retained   # Retain r2 (02_longhorn): survives an accidental delete; VL has no off-cluster backup
+    storageClassName: longhorn-r2-ephemeral  # Delete r2 (02_longhorn): deletionProtection below is the prune guard, so
+                                             # Retain would only leak orphaned PVs. Total-loss coverage is the daily
+                                             # S3 export CronJob (platform app 08_vm_backup, logs leg).
     size: 30Gi
   resources:
     requests: {cpu: 10m, memory: 96Mi}

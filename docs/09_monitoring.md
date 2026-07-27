@@ -55,8 +55,13 @@ OUTSIDE ArgoCD** — they're machine-level, not a chart — and scraped by stati
 dropped via `metricRelabelConfigs`.
 
 ### Other decisions
-Both VMSingle and VLSingle PVCs use the `longhorn-r2-retained` class (r2, `Retain` — survives an accidental
-delete, but not a total loss). Off-cluster S3 backup of both stores is opt-in via `make configure-vm-backup`
+Both VMSingle and VLSingle PVCs use the `longhorn-r2-ephemeral` class (r2, `Delete`); a stray GitOps prune can't
+reach them because both CRs carry `deletionProtection` (`Prune=false,Delete=false`), and total loss is covered by
+the S3 export. **To intentionally delete a store**, drop the protection first, then remove it in a follow-up commit:
+for VL that is `deletionProtection: false` in `05_victoria_logs/values.yaml`; for VMSingle/VMAgent it is deleting
+the `annotations:` block under each in `05_victoria_metrics_k8s_stack/values.yaml` (that block IS the flag, since
+`values.yaml` can't be templated). Never leave a store sitting unprotected.
+Off-cluster S3 backup of both stores is opt-in via `make configure-vm-backup`
 (a daily native-export CronJob, `08_vm_backup`); mechanism + disaster recovery are in
 [13_backups.md](13_backups.md) ("VictoriaMetrics / VictoriaLogs backups"). Metrics retention 180d, logs 60d
 (logs are bulkier, their own shorter window). Metrics start fresh (no `vmctl` backfill). The logs store is

@@ -4,8 +4,8 @@
 #
 # Restore VictoriaMetrics (metrics) or VictoriaLogs (logs) from the off-cluster S3 exports written by the central
 # backup CronJob (08_vm_backup / 17_vm_backup.sh). Use it after a total loss of the monitoring volumes (both
-# Longhorn replicas / cluster / off-site) — the day-to-day `longhorn-r2-retained` class only survives an accidental
-# delete, not that. See docs/13_backups.md and docs/09_monitoring.md.
+# Longhorn replicas / cluster / off-site). `deletionProtection` on the VMSingle/VLSingle CRs covers an accidental
+# GitOps prune, not that. See docs/13_backups.md and docs/09_monitoring.md.
 #
 # Streams the chosen gzip'd export straight back into the LIVE store's import endpoint via a TEMPORARY pod in ns
 # monitoring (where the sealed S3 creds live), so nothing touches a PVC or the operator's VLSingle/VMSingle CRs:

@@ -18,6 +18,12 @@ victoria-metrics-k8s-stack:
   # ---- metrics store -------------------------------------------------------------------------------
   vmsingle:
     enabled: true
+    # Orphan-not-delete, the same guard CNPG/Redis/VL use: a GitOps prune leaves this CR (and the PVC the operator
+    # made from it) running, and restoring the files re-adopts it. The upstream chart writes `annotations` straight
+    # into the CR metadata. This BLOCK is the flag (values.yaml can't be templated, so there is no bool here):
+    # to intentionally delete the store, remove these two lines, commit+push, let Argo sync, THEN remove the app.
+    annotations:
+      argocd.argoproj.io/sync-options: Prune=false,Delete=false
     spec:
       revisionHistoryLimitCount: 0    # roll-forward only; no old ReplicaSets on the VMSingle Deployment (05_gitops.md)
       retentionPeriod: "180d"        # 180 days of metrics. Bump together with the PVC size below.
@@ -26,7 +32,9 @@ victoria-metrics-k8s-stack:
         # 60s halves sample volume vs 30s for negligible loss at homelab cardinality (vmagent also 60s).
         dedup.minScrapeInterval: 60s
       storage:
-        storageClassName: longhorn-r2-retained   # Retain r2 (02_longhorn): survives an accidental delete; total-loss coverage is the daily S3 export CronJob (platform app 08_vm_backup)
+        storageClassName: longhorn-r2-ephemeral  # Delete r2 (02_longhorn): the annotation above is the prune guard, so Retain
+                                                 # would only leak orphaned PVs. Total-loss coverage is the daily S3 export
+                                                 # CronJob (platform app 08_vm_backup, metrics leg).
         accessModes: ["ReadWriteOnce"]
         resources:
           requests:
@@ -51,6 +59,9 @@ victoria-metrics-k8s-stack:
   # ---- scraper -------------------------------------------------------------------------------------
   vmagent:
     enabled: true
+    # Same guard as vmsingle above (this block is the flag; see there).
+    annotations:
+      argocd.argoproj.io/sync-options: Prune=false,Delete=false
     spec:
       revisionHistoryLimitCount: 0    # roll-forward only; no old ReplicaSets on the VMAgent Deployment (05_gitops.md)
       # Discover ALL VMServiceScrape/VMPodScrape/VMProbe across every namespace, regardless of labels,      # so the per-component scrapes (cilium, argocd, cert-manager, longhorn, sealed-secrets) AND the
@@ -66,7 +77,7 @@ victoria-metrics-k8s-stack:
       statefulStorage:
         volumeClaimTemplate:
           spec:
-            storageClassName: longhorn-r2-retained   # small buffer PVC; Retain r2 like the other monitoring stores
+            storageClassName: longhorn-r2-ephemeral  # Delete r2: a remote-write buffer, nothing to preserve; guard is the annotation above
             accessModes: ["ReadWriteOnce"]
             resources:
               requests:

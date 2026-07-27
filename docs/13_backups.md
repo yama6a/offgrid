@@ -259,7 +259,7 @@ workloads that keep state on a Longhorn PVC with no backup mechanism of its own 
 app data). It is **opt-in per volume via the StorageClass**: `02_longhorn` ships three classes (all r2 —
 `longhorn-r2-ephemeral` / `longhorn-r2-retained` / `longhorn-r2-retained-with-backups`; see
 [08_storage.md](08_storage.md)). Only PVCs on **`longhorn-r2-retained-with-backups`** are backed up off-cluster.
-The monitoring volumes (VM/VL, on `longhorn-r2-retained`) and Redis (all on `longhorn-r2-ephemeral`) are
+The monitoring volumes (VM/VL) and Redis, all on `longhorn-r2-ephemeral`, are
 deliberately **not** Longhorn-backed-up — each backs up off-cluster via its own logical path instead (Redis RDB
 dumps; VM/VL native exports, see "VictoriaMetrics / VictoriaLogs backups" below), which is app-consistent and far
 cheaper than block-level backup of large, churny stores. A workload opts in simply by naming the `-with-backups`
@@ -281,8 +281,8 @@ Pieces, all under `argo_apps/platform/charts/02_longhorn/`:
 - **`templates/recurringjobs.yaml`** — two `RecurringJob`s (`task: backup`) in the shared `backup` group: `backup-daily`
   (03:00 UTC, `retain 7`) + `backup-weekly` (Sun 04:00 UTC, `retain 8`, ~2 months). No snapshot job (local snapshots
   cost scarce Pi NVMe).
-- **`templates/storageclasses.yaml`** — the three classes (`longhorn-r2-ephemeral` Delete, `longhorn-r2-retained`
-  Retain, `longhorn-r2-retained-with-backups` Retain). The `-with-backups` class carries
+- **`templates/storageclasses.yaml`** — the two classes (`longhorn-r2-ephemeral` Delete, and
+  `longhorn-r2-retained-with-backups` Retain, no consumer yet). The `-with-backups` class carries
   `recurringJobSelector: '[{"name":"backup","isGroup":true}]'`, so every volume it provisions joins the `backup`
   group and gets both tiers automatically.
 - **`templates/backup-s3-sealedsecret.yaml`** — the sealed `longhorn-backup-s3` (keys `AWS_ACCESS_KEY_ID` /
@@ -334,8 +334,8 @@ without it the S3 creds can't decrypt and the backups are unreachable.
 ## VictoriaMetrics / VictoriaLogs backups
 
 The metrics store (VMSingle) and logs store (VLSingle) back up to S3 under the `vm/` prefix, reusing this bucket +
-writer + lifecycle. Both sit on `longhorn-r2-retained` (r2, `Retain`) — that survives an *accidental delete* but
-NOT a total loss (both replicas / cluster / off-site). This closes that gap with an **app-consistent logical
+writer + lifecycle. Both sit on `longhorn-r2-ephemeral` (r2, `Delete`): `deletionProtection` on their CRs covers
+an accidental prune, but NOT a total loss (both replicas / cluster / off-site). This closes that gap with an **app-consistent logical
 export**, done by ONE **central** platform app — `08_vm_backup` (wave 8, ns `monitoring`): a single daily CronJob
 streams both stores to S3, no PVC access needed.
 

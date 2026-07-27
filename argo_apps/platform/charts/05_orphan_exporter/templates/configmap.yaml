@@ -1,6 +1,7 @@
 # The exporter, kept in Git and mounted read-only into the pod (run as python3 /app/exporter.py). Stdlib only
 # (urllib + http.server), so the base python image needs no pip install. Resolves each protected stateful CR (CNPG
-# Cluster, OpsTree Redis) to its owning ArgoCD Application via tracking metadata and reports orphaned / untracked.
+# Cluster, OpsTree Redis, VM/VL stores) to its owning ArgoCD Application via tracking metadata and reports
+# orphaned / untracked.
 # See docs/13_backups.md + docs/12_redis.md.
 apiVersion: v1
 kind: ConfigMap
@@ -47,12 +48,19 @@ data:
         return v.replace("\\", "\\\\").replace('"', '\\"')
 
     # Every kind carrying orphan-not-delete (deletionProtection). Label key is NOT "instance": the PodMonitor
-    # scrape already sets that, so a metric label of the same name lands as exported_instance.
-    #   (api path, label key, orphaned metric, untracked metric)
+    # scrape already sets that, so a metric label of the same name lands as exported_instance. The VM/VL stores
+    # share ONE metric pair with a `kind` label instead of three, so the alert file stays at two rules for them.
+    #   (api path, label key, orphaned metric, untracked metric, extra static labels)
     KINDS = [
-        ("/apis/postgresql.cnpg.io/v1/clusters",           "cluster", "orphaned_cnpg_cluster",   "cnpg_cluster_untracked"),
-        ("/apis/redis.redis.opstreelabs.in/v1beta2/redis",  "redis",   "orphaned_redis_instance", "redis_instance_untracked"),
+        ("/apis/postgresql.cnpg.io/v1/clusters",                    "cluster", "orphaned_cnpg_cluster",   "cnpg_cluster_untracked",   {}),
+        ("/apis/redis.redis.opstreelabs.in/v1beta2/redis",           "redis",   "orphaned_redis_instance", "redis_instance_untracked", {}),
+        ("/apis/operator.victoriametrics.com/v1/vlsingles",          "name",    "orphaned_vm_resource",    "vm_resource_untracked",    {"kind": "VLSingle"}),
+        ("/apis/operator.victoriametrics.com/v1beta1/vmsingles",     "name",    "orphaned_vm_resource",    "vm_resource_untracked",    {"kind": "VMSingle"}),
+        ("/apis/operator.victoriametrics.com/v1beta1/vmagents",      "name",    "orphaned_vm_resource",    "vm_resource_untracked",    {"kind": "VMAgent"}),
     ]
+
+    def labels(pairs):
+        return ",".join('%s="%s"' % (k, esc(v)) for k, v in pairs)
 
     def collect():
         apps = items("/apis/argoproj.io/v1alpha1/namespaces/%s/applications" % ARGOCD_NS)
@@ -70,21 +78,24 @@ data:
             "# TYPE orphaned_redis_instance gauge",
             "# HELP redis_instance_untracked Redis instance in an Argo-managed namespace with no tracking metadata",
             "# TYPE redis_instance_untracked gauge",
+            "# HELP orphaned_vm_resource VM/VL store CR whose owning ArgoCD Application no longer exists",
+            "# TYPE orphaned_vm_resource gauge",
+            "# HELP vm_resource_untracked VM/VL store CR in an Argo-managed namespace with no tracking metadata",
+            "# TYPE vm_resource_untracked gauge",
         ]
-        for path, key, orphaned_metric, untracked_metric in KINDS:
+        for path, key, orphaned_metric, untracked_metric, extra in KINDS:
             for c in items(path):
                 m = c["metadata"]
                 ns, name = m["namespace"], m["name"]
+                base = [("namespace", ns)] + sorted(extra.items()) + [(key, name)]
                 app = owning_app(m)
                 if not app:
                     # Only in an Argo-managed namespace; a hand-made CR elsewhere is intentionally ignored.
                     if ns in argo_ns:
-                        out.append('%s{namespace="%s",%s="%s"} 1'
-                                   % (untracked_metric, esc(ns), key, esc(name)))
+                        out.append("%s{%s} 1" % (untracked_metric, labels(base)))
                     continue
                 if app not in names:
-                    out.append('%s{namespace="%s",%s="%s",app="%s"} 1'
-                               % (orphaned_metric, esc(ns), key, esc(name), esc(app)))
+                    out.append("%s{%s} 1" % (orphaned_metric, labels(base + [("app", app)])))
         out.append("orphan_exporter_up 1")
         return "\n".join(out) + "\n"
 
