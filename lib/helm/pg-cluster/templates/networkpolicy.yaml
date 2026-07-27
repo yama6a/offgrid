@@ -106,7 +106,7 @@ spec:
       toPorts:
         - ports:
             - { port: "8000", protocol: TCP }
-    {{- if .Values.backups.enabled }}
+    {{- if eq (include "pg-cluster.backupsEnabled" .) "true" }}
     # (i) S3 egress for the Barman Cloud plugin sidecar: WAL archiving + base-backup upload/restore go to the
     # AWS S3 endpoint over HTTPS. Only rendered when backups are ON. Scoped to `world` on 443 — deliberately
     # broad (S3 is reached over the public internet and its address set is large/volatile); tighten to a

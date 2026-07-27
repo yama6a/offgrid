@@ -44,7 +44,12 @@ spec:
   # own guidance), given the default-deny CiliumNetworkPolicy.
   enableSuperuserAccess: false
   postgresql:
-    {{- with .Values.postgresql.parameters }}
+    {{- $params := deepCopy (.Values.postgresql.parameters | default dict) }}
+    {{- if eq (include "pg-cluster.backupsEnabled" .) "true" }}
+    {{- $b := include "pg-cluster.backupConfig" . | fromYaml }}
+    {{- if $b.archiveTimeout }}{{ $_ := set $params "archive_timeout" $b.archiveTimeout }}{{ end }}
+    {{- end }}
+    {{- with $params }}
     parameters:
       {{- toYaml . | nindent 6 }}
     {{- end }}

@@ -5,13 +5,13 @@
 # Static guard for the orphan-not-delete invariant (docs/13_backups.md): every CNPG DB unit a workload renders
 # must carry `argocd.argoproj.io/sync-options: Prune=false,Delete=false`, so a GitOps prune ORPHANS the database
 # (keeps it running on its PVCs) instead of destroying it. local-path reclaim is Delete, so the annotation is the
-# ONLY data-safety net. Five of the six protected resources come from the shared pg-cluster helper automatically;
-# the cnpg-backup-s3 SealedSecret is per-workload copy-paste and is the one that gets forgotten on a new DB
-# workload. Workloads are enumerated dynamically so a new one can't slip past a hardcoded list.
+# ONLY data-safety net. All six protected resources come from the shared pg-cluster helper automatically,
+# including the per-instance `<name>-backup-s3` SealedSecret (each DB stamps its own; nothing to forget on a new
+# DB). Workloads are enumerated dynamically so a new one can't slip past a hardcoded list.
 #
 # For each argo_apps/workloads/charts/* that renders a CNPG Cluster: assert the DB-unit resources it renders
 # (Cluster, ObjectStore, ScheduledBackup, the cnpg.io/cluster PodMonitor) carry both sync-options, and that a
-# chart with backups on (ObjectStore present) also renders a cnpg-backup-s3 SealedSecret carrying them. The
+# chart with backups on (ObjectStore present) also renders a `<name>-backup-s3` SealedSecret carrying them. The
 # CiliumNetworkPolicy is covered transitively (same helper as the Cluster). No cluster needed; non-zero exit on
 # any gap.
 
@@ -45,13 +45,13 @@ for d in docs:
     # netpol egress, which would false-positive a substring match.
     cnpg = k in ('Cluster','ObjectStore','ScheduledBackup') \
         or (k=='PodMonitor' and 'cnpg.io/cluster' in d) \
-        or (k=='SealedSecret' and nm(d)=='cnpg-backup-s3')
+        or (k=='SealedSecret' and nm(d).endswith('-backup-s3'))
     if not cnpg: continue
     if k=='ObjectStore': has_objectstore=True
     if k=='SealedSecret': has_sealed=True
     if SYNC not in d: fails.append(f"{k}/{nm(d)}")
 if has_objectstore and not has_sealed:
-    fails.append("cnpg-backup-s3 SealedSecret missing (backups on, creds Secret would be pruned)")
+    fails.append("<name>-backup-s3 SealedSecret missing (backups on, creds Secret would be pruned)")
 print('; '.join(fails))
 PY
 )"

@@ -3,15 +3,16 @@
 # 14_cnpg_backup.sh  (macOS)
 #
 # Turns ON CNPG S3 backups (after 13_s3_backup_bucket.sh has created the bucket + IAM writer). Two writes to the
-# SHARED pg-cluster wrapper values (lib/helm/pg-cluster/values.yaml), both committable, no plaintext in git:
-#   1. the .env scalars: backups.enabled=true, backups.s3.bucket, backups.s3.region, archive_timeout (RPO). Every
-#      CNPG cluster in every workload inherits these (single source of truth), so backups go on fleet-wide.
-#   2. the Terraform writer creds, sealed ONCE cluster-wide into backups.secret.sealed (keys ACCESS_KEY_ID +
-#      ACCESS_SECRET_KEY). pg-cluster's backup-sealedsecret.yaml then stamps the cnpg-backup-s3 SealedSecret into
-#      every CNPG namespace automatically (cluster-wide scope => one ciphertext works everywhere). Creds come from
+# SHARED pg-cluster backup overlay (lib/helm/pg-cluster/files/backup.yaml), both committable, no plaintext in git:
+#   1. the .env scalars: bucket, region, retentionPolicy, archiveTimeout (RPO). Every CNPG cluster in every
+#      workload reads this one file (single source of truth), so backups go on fleet-wide. A populated overlay is
+#      the opt-in: pg-cluster's backupsEnabled helper gates on `bucket` (values backups.enabled=true by default).
+#   2. the Terraform writer creds, sealed ONCE cluster-wide into sealed.ACCESS_KEY_ID / sealed.ACCESS_SECRET_KEY.
+#      pg-cluster's backup-sealedsecret.yaml then stamps each DB's own <name>-backup-s3 SealedSecret automatically
+#      (cluster-wide scope => the one ciphertext unseals into any name in any namespace). Creds come from
 #      `terraform output`, never .env.
 #
-# Empty AWS_DEPLOY_ACCESS_KEY_ID => backups OFF: this no-ops (leaves values as-is), matching 13 and the repo's
+# Empty AWS_DEPLOY_ACCESS_KEY_ID => backups OFF: this no-ops (leaves the overlay as-is), matching 13 and the repo's
 # "empty secret = feature off" contract. Adding a Postgres workload needs NO change here (the shared secret is
 # auto-added). See docs/13_backups.md.
 #
@@ -22,11 +23,11 @@ source "${SCRIPT_DIR}/common.sh"
 
 # ---- knobs ------------------------------------------------------------------
 TF_DIR="${REPO_ROOT}/terraform"
-PG_VALUES="${REPO_ROOT}/lib/helm/pg-cluster/values.yaml"    # the SHARED wrapper values (single source)
+OVERLAY="${REPO_ROOT}/lib/helm/pg-cluster/files/backup.yaml"    # the SHARED backup overlay (single source)
 # -----------------------------------------------------------------------------
 
 # One cluster-wide raw ciphertext per value (controller flags mirror common.sh's seal_secret). Cluster-wide =>
-# the same blob unseals into cnpg-backup-s3 in ANY namespace, so we seal ONCE into the shared pg-cluster values.
+# the same blob unseals into ANY name in ANY namespace, so we seal ONCE into the shared overlay.
 seal_raw() { # <plaintext> -> ciphertext on stdout
   printf %s "$1" | kubeseal --controller-namespace "$SS_CONTROLLER_NS" --controller-name "$SS_CONTROLLER_NAME" \
     --raw --scope cluster-wide 2>/dev/null
@@ -35,10 +36,10 @@ seal_raw() { # <plaintext> -> ciphertext on stdout
 # === 0. prereqs ==============================================================
 say "prerequisites"
 require yq kubeseal kubectl terraform
-[ -f "$PG_VALUES" ] || die "missing ${PG_VALUES}"
+[ -f "$OVERLAY" ] || die "missing ${OVERLAY}"
 
 if [ -z "$AWS_DEPLOY_ACCESS_KEY_ID" ]; then
-  warn "AWS_DEPLOY_ACCESS_KEY_ID empty in .env -> S3 backups disabled; skipping (pg-cluster values left as-is)."
+  warn "AWS_DEPLOY_ACCESS_KEY_ID empty in .env -> S3 backups disabled; skipping (overlay left as-is)."
   exit 0
 fi
 [ -n "$AWS_REGION" ]       || die "AWS_REGION is empty in .env"
@@ -53,27 +54,25 @@ SAK="$(terraform -chdir="$TF_DIR" output -raw backup_secret_access_key 2>/dev/nu
 [ -n "$AKID" ] && [ -n "$SAK" ] || die "no Terraform outputs — run 13_s3_backup_bucket.sh first (and it must have applied)"
 ok "got writer access key id + secret from terraform"
 
-# === 2. inject the scalars into the shared pg-cluster values =================
-say "enabling backups + injecting bucket/region/RPO into ${PG_VALUES}"
+# === 2. inject the scalars into the shared backup overlay ====================
+say "injecting bucket/region/RPO into ${OVERLAY}"
 # Barman's ObjectStore retentionPolicy must be a non-empty duration (the CRD rejects null/empty); align it to the
 # S3 lifecycle expiry so the two agree. Format: "<days>d" (e.g. 180d).
 RETENTION="${S3_BACKUP_RETENTION_DAYS}d"
 BUCKET="$S3_BACKUP_BUCKET" REGION="$AWS_REGION" RPO="$CNPG_BACKUP_RPO" RETENTION="$RETENTION" yq -i '
-  .backups.enabled = true
-  | .backups.s3.bucket = strenv(BUCKET)
-  | .backups.s3.region = strenv(REGION)
-  | .backups.retentionPolicy = strenv(RETENTION)
-  | .postgresql.parameters.archive_timeout = strenv(RPO)
-' "$PG_VALUES"
+  .bucket = strenv(BUCKET)
+  | .region = strenv(REGION)
+  | .retentionPolicy = strenv(RETENTION)
+  | .archiveTimeout = strenv(RPO)
+' "$OVERLAY"
 # verify the writes round-tripped
-[ "$(yq -r '.backups.enabled' "$PG_VALUES")" = "true" ]         && ok "backups.enabled=true"          || bad "enabled not set"
-[ "$(yq -r '.backups.s3.bucket' "$PG_VALUES")" = "$S3_BACKUP_BUCKET" ] && ok "s3.bucket=${S3_BACKUP_BUCKET}" || bad "bucket not set"
-[ "$(yq -r '.backups.s3.region' "$PG_VALUES")" = "$AWS_REGION" ]       && ok "s3.region=${AWS_REGION}"       || bad "region not set"
-[ "$(yq -r '.backups.retentionPolicy' "$PG_VALUES")" = "$RETENTION" ]  && ok "retentionPolicy=${RETENTION}"  || bad "retentionPolicy not set"
-[ "$(yq -r '.postgresql.parameters.archive_timeout' "$PG_VALUES")" = "$CNPG_BACKUP_RPO" ] && ok "archive_timeout=${CNPG_BACKUP_RPO}" || bad "archive_timeout not set"
+[ "$(yq -r '.bucket' "$OVERLAY")" = "$S3_BACKUP_BUCKET" ] && ok "bucket=${S3_BACKUP_BUCKET}" || bad "bucket not set"
+[ "$(yq -r '.region' "$OVERLAY")" = "$AWS_REGION" ]       && ok "region=${AWS_REGION}"       || bad "region not set"
+[ "$(yq -r '.retentionPolicy' "$OVERLAY")" = "$RETENTION" ]  && ok "retentionPolicy=${RETENTION}"  || bad "retentionPolicy not set"
+[ "$(yq -r '.archiveTimeout' "$OVERLAY")" = "$CNPG_BACKUP_RPO" ] && ok "archiveTimeout=${CNPG_BACKUP_RPO}" || bad "archiveTimeout not set"
 
-# === 3. seal the creds ONCE (cluster-wide) into the shared values ============
-say "sealing S3 creds (cluster-wide) into ${PG_VALUES}"
+# === 3. seal the creds ONCE (cluster-wide) into the shared overlay ===========
+say "sealing S3 creds (cluster-wide) into ${OVERLAY}"
 use_kubeconfig
 assert_api
 kubectl get pods -n "$SS_CONTROLLER_NS" -l "$SS_POD_SELECTOR" >/dev/null 2>&1 \
@@ -86,13 +85,13 @@ case "$SEALED_AKID" in Ag*) ok "ACCESS_KEY_ID sealed" ;; *) bad "ACCESS_KEY_ID c
 case "$SEALED_SAK"  in Ag*) ok "ACCESS_SECRET_KEY sealed" ;; *) bad "ACCESS_SECRET_KEY ciphertext malformed (no Ag prefix)" ;; esac
 
 CT_ID="$SEALED_AKID" CT_SAK="$SEALED_SAK" yq -i '
-  .backups.secret.sealed.ACCESS_KEY_ID = strenv(CT_ID)
-  | .backups.secret.sealed.ACCESS_SECRET_KEY = strenv(CT_SAK)
-' "$PG_VALUES"
-# verify the ciphertext landed, and NO plaintext creds leaked into the committed values
-[ "$(yq -r '.backups.secret.sealed.ACCESS_KEY_ID' "$PG_VALUES")" = "$SEALED_AKID" ]     && ok "sealed ACCESS_KEY_ID written"     || bad "ACCESS_KEY_ID not written"
-[ "$(yq -r '.backups.secret.sealed.ACCESS_SECRET_KEY' "$PG_VALUES")" = "$SEALED_SAK" ]  && ok "sealed ACCESS_SECRET_KEY written"  || bad "ACCESS_SECRET_KEY not written"
-{ grep -qF "$AKID" "$PG_VALUES" || grep -qF "$SAK" "$PG_VALUES"; } && bad "PLAINTEXT creds in ${PG_VALUES}, DO NOT COMMIT" || ok "no plaintext creds in values"
+  .sealed.ACCESS_KEY_ID = strenv(CT_ID)
+  | .sealed.ACCESS_SECRET_KEY = strenv(CT_SAK)
+' "$OVERLAY"
+# verify the ciphertext landed, and NO plaintext creds leaked into the committed overlay
+[ "$(yq -r '.sealed.ACCESS_KEY_ID' "$OVERLAY")" = "$SEALED_AKID" ]     && ok "sealed ACCESS_KEY_ID written"     || bad "ACCESS_KEY_ID not written"
+[ "$(yq -r '.sealed.ACCESS_SECRET_KEY' "$OVERLAY")" = "$SEALED_SAK" ]  && ok "sealed ACCESS_SECRET_KEY written"  || bad "ACCESS_SECRET_KEY not written"
+{ grep -qF "$AKID" "$OVERLAY" || grep -qF "$SAK" "$OVERLAY"; } && bad "PLAINTEXT creds in ${OVERLAY}, DO NOT COMMIT" || ok "no plaintext creds in overlay"
 
 # === 4. summary ==============================================================
 summary

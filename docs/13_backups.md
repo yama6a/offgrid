@@ -17,8 +17,8 @@ Pieces (Terraform is out-of-cluster; the plugin is platform; backups are configu
 |-------------------------|--------------------------------------------------------------------|-----------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------|
 | **the bucket + IAM**    | `terraform/`                                                       | one S3 bucket + a **per-prefix** lifecycle (`cnpg/`+`redis/`: Standard → Glacier IR @30d → expire @180d; `longhorn/`: Standard, never expires), SSE, public-access block, and a scoped IAM writer. Local state (gitignored — holds the IAM secret). |
 | **the plugin**          | `argo_apps/platform/{apps,charts}/03_barman_cloud_plugin` (wave 3) | the `ObjectStore` CRD + the Barman Cloud plugin Deployment/Service/RBAC + its cert-manager mTLS certs, in `cnpg-system`. Vendored release manifest (no upstream Helm chart).                                                                        |
-| **per-cluster backups** | `lib/helm/pg-cluster` (`backups.method: plugin`)                   | every CNPG cluster inherits WAL archiving + a daily `ScheduledBackup` + its own `ObjectStore`, all rendered directly by the first-party `pg-cluster` chart from values (no upstream chart).                                                         |
-| **wiring scripts**      | `lib/shell/13_s3_backup_bucket.sh`, `14_cnpg_backup.sh`            | 13 runs Terraform; 14 seals the writer creds into each CNPG namespace + flips backups on in the chart values.                                                                                                                                       |
+| **per-cluster backups** | `lib/helm/pg-cluster`                                              | every CNPG cluster inherits WAL archiving + a daily `ScheduledBackup` + its own `ObjectStore`, all rendered directly by the first-party `pg-cluster` chart (static wiring hardcoded in the templates; per-deployment facts in `files/backup.yaml`).  |
+| **wiring scripts**      | `lib/shell/13_s3_backup_bucket.sh`, `14_cnpg_backup.sh`            | 13 runs Terraform; 14 writes the bucket/region/RPO + the cluster-wide sealed writer creds into `lib/helm/pg-cluster/files/backup.yaml`.                                                                                                              |
 | **recovery**            | `lib/shell/recover_cnpg_from_s3.sh`                                | restore (latest or PITR) into a fresh cluster from the object store.                                                                                                                                                                                |
 
 ## The mental model: WAL + base, not a snapshot
@@ -41,7 +41,7 @@ That's why the WAL-archive alert below is `critical`.
 - **ARM64.** Both the CNPG operand images and the plugin **sidecar** image
   (`ghcr.io/cloudnative-pg/plugin-barman-cloud-sidecar`) ship multi-arch manifests incl. `linux/arm64` — they
   run on the Pi 5s (the usual Pi gate, cf. the Redis exporter in [12_redis.md](12_redis.md)).
-- **RPO 15 min.** `archive_timeout: "15min"` (pg-cluster values, from `.env CNPG_BACKUP_RPO`) forces a WAL
+- **RPO 15 min.** `archive_timeout: "15min"` (`files/backup.yaml` `archiveTimeout`, from `.env CNPG_BACKUP_RPO`) forces a WAL
   segment switch — and thus an archive — at most every 15 min, so a primary failure loses ≤15 min of writes.
   It only *binds* in the low-but-nonzero write regime (a busy DB fills segments and archives faster; a truly
   idle DB writes no WAL and archives nothing, correctly). RPO down = more, smaller WAL objects.
@@ -177,19 +177,20 @@ live in `cnpg-system`.
 # .env: set the deployer creds + bucket. Empty AWS_DEPLOY_ACCESS_KEY_ID => backups stay OFF (13/14 no-op).
 #   AWS_REGION, S3_BACKUP_BUCKET, AWS_DEPLOY_ACCESS_KEY_ID, AWS_DEPLOY_SECRET_ACCESS_KEY_SECRET
 make s3-backup-bucket        # 13: Terraform -> bucket + lifecycle + IAM writer
-make configure-cnpg-backup   # 14: yq bucket/region/RPO into pg-cluster values + seal writer creds ONCE (cluster-wide)
+make configure-cnpg-backup   # 14: yq bucket/region/RPO into pg-cluster files/backup.yaml + seal writer creds ONCE (cluster-wide)
 git add -A && git commit && git push   # ArgoCD applies the plugin + each ObjectStore/ScheduledBackup + sealed creds
 ```
 
-`14` edits only the **shared** `lib/helm/pg-cluster/values.yaml`: the scalars (`backups.enabled: true`, `s3.bucket`,
-`s3.region`, `archive_timeout`) plus the writer creds, sealed **once** cluster-wide into `backups.secret.sealed`
-(`ACCESS_KEY_ID` / `ACCESS_SECRET_KEY`). So **every** CNPG cluster in every workload gets backups, and pg-cluster's
-`backup-sealedsecret.yaml` auto-stamps the `cnpg-backup-s3` SealedSecret into each CNPG namespace. **Adding a
-Postgres workload needs nothing extra here.** Cluster-wide scope (not the repo's usual `strict`) is the deliberate
-trade that lets one ciphertext work in every namespace: any namespace could unseal a secret named `cnpg-backup-s3`,
-accepted because it's the same S3 writer for all CNPG workloads. Two DBs in one namespace: exactly one instance
-keeps `backups.secret.owner: true` (the default) and the others set it `false`, so the shared secret renders once
-per namespace.
+`14` edits only the **shared** `lib/helm/pg-cluster/files/backup.yaml`: the scalars (`bucket`, `region`,
+`retentionPolicy`, `archiveTimeout`) plus the writer creds, sealed **once** cluster-wide into `sealed.ACCESS_KEY_ID` /
+`sealed.ACCESS_SECRET_KEY`. The static wiring (plugin, provider, bucket path, wal/data compression, the daily cron)
+is hardcoded in the templates, not in the overlay. `backupsEnabled` defaults `true` in `values.yaml`, so a
+**populated** overlay is the opt-in: the moment `14` fills in `bucket`, **every** CNPG cluster in every workload gets
+backups, and each pg-cluster instance stamps its OWN `<name>-backup-s3` SealedSecret + creds Secret from that one
+blob. **Adding a Postgres workload needs nothing extra here.** Cluster-wide scope (not the repo's usual `strict`) is
+the deliberate trade that lets one ciphertext unseal into any name in any namespace: that's exactly what lets every
+instance reuse the same blob under its own per-instance secret name, so N DBs in one namespace never collide and
+there's no shared secret to elect an owner for. Accepted because it's the same S3 writer for all CNPG workloads.
 
 `13`/`14` are wired best-effort into `DANGEROUS_bootstrap_cluster.sh` (guarded on the deployer key), so a full
 bootstrap runs `terraform apply` + seals automatically. **Rebuild** runs `13 wipe` — it discards the old

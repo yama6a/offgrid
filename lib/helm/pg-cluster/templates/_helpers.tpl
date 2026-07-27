@@ -20,11 +20,34 @@ alert-criticality: {{ if .Values.alertCritical }}critical{{ else }}warning{{ end
 {{- end -}}
 
 {{/*
+Per-deployment backup facts (files/backup.yaml): bucket/region/retentionPolicy/archiveTimeout + sealed creds,
+written by 14_cnpg_backup.sh. Callers pipe to `fromYaml`; a blank/absent file yields an empty map (nil-safe).
+Chart-scoped, so both aliases read the SAME file: single source, no per-consumer wiring.
+*/}}
+{{- define "pg-cluster.backupConfig" -}}
+{{- .Files.Get "files/backup.yaml" -}}
+{{- end -}}
+
+{{/*
+The S3-creds Secret name for THIS instance: `<name>-backup-s3`. Per-instance (not a single shared name) so N
+DBs in one namespace never collide on it, which is what lets each instance render its own SealedSecret with no
+cross-instance coordination. The one cluster-wide-sealed ciphertext (files/backup.yaml) unseals into any name in
+any namespace, so reusing it under a per-instance name is free. objectstore.yaml + backup-sealedsecret.yaml both
+key off this.
+*/}}
+{{- define "pg-cluster.backupSecretName" -}}
+{{- include "pg-cluster.name" . }}-backup-s3
+{{- end -}}
+
+{{/*
 True when the Barman Cloud plugin backup path is active (drives the Cluster's .spec.plugins, the ObjectStore,
-and the ScheduledBackup). Returns the string "true"/"false" (use `eq ... "true"`).
+the ScheduledBackup, the SealedSecret, and the S3 netpol egress). Gated on the opt-OUT flag AND a populated
+overlay: a blank files/backup.yaml (fresh clone, 14 not run) renders backups OFF even with enabled=true, so no
+half-configured ObjectStore leaks out. Returns the string "true"/"false" (use `eq ... "true"`).
 */}}
 {{- define "pg-cluster.backupsEnabled" -}}
-{{- and .Values.backups.enabled (eq .Values.backups.method "plugin") -}}
+{{- $b := include "pg-cluster.backupConfig" . | fromYaml -}}
+{{- if and .Values.backupsEnabled $b.bucket -}}true{{- else -}}false{{- end -}}
 {{- end -}}
 
 {{/*

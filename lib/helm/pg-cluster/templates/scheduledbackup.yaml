@@ -1,28 +1,24 @@
 {{- if eq (include "pg-cluster.backupsEnabled" .) "true" -}}
-{{- $ctx := . -}}
-{{- range .Values.backups.scheduledBackups }}
----
 apiVersion: postgresql.cnpg.io/v1
 kind: ScheduledBackup
 metadata:
-  name: {{ include "pg-cluster.name" $ctx }}-{{ .name }}
-  namespace: {{ $ctx.Release.Namespace }}
-  {{- with (include "pg-cluster.protectAnnotations" $ctx) }}
+  name: {{ include "pg-cluster.name" . }}-daily
+  namespace: {{ .Release.Namespace }}
+  {{- with (include "pg-cluster.protectAnnotations" .) }}
   annotations:
     {{- . | nindent 4 }}
   {{- end }}
   labels:
-    {{- include "pg-cluster.labels" $ctx | nindent 4 }}
+    {{- include "pg-cluster.labels" . | nindent 4 }}
 spec:
   immediate: true
-  schedule: {{ .schedule | quote }}
-  method: {{ .method }}
-  backupOwnerReference: {{ .backupOwnerReference }}
+  # Daily base backup at 02:00 (6-field cron, seconds first; CNPG uses the Go cron spec). No target set: CNPG
+  # defaults to prefer-standby (most up-to-date replica, falling back to the primary), keeping IO off the primary.
+  schedule: "0 0 2 * * *"
+  method: plugin
+  backupOwnerReference: self
   cluster:
-    name: {{ include "pg-cluster.name" $ctx }}
-  {{- with .pluginConfiguration }}
+    name: {{ include "pg-cluster.name" . }}
   pluginConfiguration:
-    {{- toYaml . | nindent 4 }}
-  {{- end }}
-{{- end }}
+    name: barman-cloud.cloudnative-pg.io
 {{- end }}

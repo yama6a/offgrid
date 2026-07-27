@@ -271,13 +271,11 @@ Pi 5 Talos image builds on [talos-rpi5/talos-builder](https://github.com/talos-r
 - add a worker node (4th bay in the rack)
 - check cnpg backup accumulation, ensure it doesn't build up too much. consider extending WAL backup time.
 - check all logs/hubble for network policies in audit more that are dropping traffic that should be allowed
-- check log and metric accumulation, drop noise to storage doesn't grow meaninglessly
+- check log accumulation and metrics cardinality, drop noise so storage doesn't grow meaninglessly
 - migrate old pi stuff to cluster
 - fork my personal cluster project for OSS version
 - rewrite git history to remove secrets and email addresses and domains from past commits
 - read and shorten all md files.
 - improve then apply comment rules from claude.md to all yaml and other code files.
 - disaster recovery exercise
-- make cnpg s3 sealed secret part of cnpg lib
-- replace .tgz gitignore files with one rule in the global file. 
 - put in claude.md to not bump helm versions of internal charts where the version makes no difference. and bring all back down to 0.1.0

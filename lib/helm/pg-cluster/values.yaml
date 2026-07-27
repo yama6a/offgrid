@@ -46,56 +46,11 @@ postgresql:
     # Planner hint only (no memory cost): PG defaults this to 4GB, which badly misleads the planner on a shared
     # 8GB Pi into assuming cache that isn't there. Sized conservatively for these 256-512Mi instances.
     effective_cache_size: "256MB"
-    # RPO ceiling for WAL archiving: force a segment switch (segment gets archived to S3) at most this long after
-    # the last one, so at most this much committed data is un-archived when a primary dies. Only binds when backups
-    # are ON; harmless otherwise. Set from .env CNPG_BACKUP_RPO by 14_cnpg_backup.sh. See docs/13_backups.md.
-    archive_timeout: "15min"
 
 # Off-cluster S3 backups via the Barman Cloud CNPG-I plugin: continuous WAL archiving + a daily base backup. The
-# SECOND durability tier (the first is replication + orphan-not-delete). method=plugin makes cluster.yaml add the
-# barman plugin to the Cluster's .spec.plugins, objectstore.yaml render the ObjectStore, and scheduledbackup.yaml
-# render the daily ScheduledBackup. `lib/shell/14_cnpg_backup.sh` flips enabled=true and injects
-# s3.bucket/s3.region (+ archive_timeout above) from .env, and seals the S3 creds ONCE (cluster-wide) into
-# secret.sealed below; templates/backup-sealedsecret.yaml then stamps the SealedSecret into every CNPG ns.
-# See docs/13_backups.md.
-backups:
-  enabled: true # 14_cnpg_backup.sh sets true when .env has AWS creds.
-  method: plugin # the CNPG-I Barman Cloud plugin (NOT the deprecated in-tree barmanObjectStore).
-  provider: s3
-  s3:
-    region: "eu-central-1" # 14 injects from .env AWS_REGION (required by the chart when enabled).
-    bucket: "my-cluster-backups" # 14 injects from .env S3_BACKUP_BUCKET (the shared bucket, Terraform-created).
-    # Base path in the bucket. Barman appends the serverName (= this cluster's name, unique per DB in this repo)
-    # under it, so each cluster lands in its own s3://<bucket>/cnpg/<name>/{wals,base}.
-    path: "/cnpg/"
-    inheritFromIAMRole: false # bare-metal Talos has no instance role; we use static keys (sealed).
-  secret:
-    name: cnpg-backup-s3 # the Secret the ObjectStore reads (keys ACCESS_KEY_ID + ACCESS_SECRET_KEY).
-    owner: true # render the shared SealedSecret from THIS instance; set false on extra pg instances sharing a ns.
-    # cluster-wide sealed S3 writer creds (kubeseal --raw --scope cluster-wide), injected ONCE by 14_cnpg_backup.sh.
-    # Same creds for every CNPG workload => one ciphertext, unseals into cnpg-backup-s3 in each namespace.
-    # Empty => backup-sealedsecret.yaml renders nothing (creds not sealed yet).
-    sealed:
-      ACCESS_KEY_ID: ""
-      ACCESS_SECRET_KEY: ""
-  wal:
-    compression: gzip # shrink WAL before upload (also shrinks near-empty idle segments).
-    encryption: AES256 # request SSE-S3 on upload; matches the bucket's AWS-managed SSE.
-    maxParallel: 1
-  data:
-    compression: gzip
-    encryption: AES256
-    jobs: 2
-  # Barman's recovery window. The ObjectStore CRD REQUIRES a non-empty string matching ^[1-9][0-9]*[dwm]$, so we
-  # always emit it, aligned to the S3 lifecycle expiry (S3_BACKUP_RETENTION_DAYS, default 180d) so Barman prunes
-  # its catalog coherently and the S3 expiry is the backstop. 14_cnpg_backup.sh injects "<retention>d" from .env.
-  retentionPolicy: "180d"
-  scheduledBackups:
-    # Daily base backup at 02:00 (6-field cron, seconds first; CNPG uses the Go cron spec). CNPG's default target
-    # is prefer-standby (runs on the most up-to-date replica, falling back to the primary), which is what we want.
-    - name: daily
-      schedule: "0 0 2 * * *"
-      backupOwnerReference: self
-      method: plugin
-      pluginConfiguration:
-        name: barman-cloud.cloudnative-pg.io
+# SECOND durability tier (the first is replication + orphan-not-delete). Everything is automatic: the static
+# wiring (plugin, provider, bucket path, wal/data compression, the daily cron) is HARDCODED in the templates, the
+# per-DEPLOYMENT facts (bucket/region/retention/archive_timeout + the sealed S3 creds) live in files/backup.yaml
+# (written by lib/shell/14_cnpg_backup.sh, read via .Files.Get), and each instance stamps its own creds Secret. So
+# the ONLY per-instance knob is the on/off switch below. See docs/13_backups.md.
+backupsEnabled: true # opt-OUT switch; actual rendering also needs a populated files/backup.yaml (14 must have run).
