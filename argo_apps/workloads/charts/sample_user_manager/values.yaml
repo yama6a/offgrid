@@ -66,6 +66,29 @@ rabbitmq-topology:
 # routes values; each instance sets its REQUIRED knobs (explicit `name`, `postgresVersion`, `highAvailability`,
 # `resources`) plus its own DB-lockdown allowlist. See 10_sample_workload.md.
 
+# Primary DB: the manager's users store. highAvailability -> 2 instances (primary + streaming replica, 2 nodes).
+maindb:
+  name: sample-user-manager-db
+  # renovate: datasource=docker depName=ghcr.io/cloudnative-pg/postgresql
+  postgresVersion: "18"     # Postgres MAJOR (a key in pg-cluster's image map, which pins the patch+digest). Renovate proposes only MAJOR bumps here.
+  highAvailability: true
+  deletionProtection: false # TRANSIENT (DR drill): goes back to true once the restore below is verified.
+  alertCritical: true       # the app can't function without it; a DB-pod crashloop pages `critical` (docs/09_monitoring.md)
+  # TRANSIENT (DR drill): rebuild from S3 instead of initdb. Flip to false once the data is verified.
+  restore:
+    enabled: true           # latest: newest base backup + replay every WAL in the catalog
+  # Conservative footprint for the Pi 5s (8 GB RAM, lots already running). Per-instance.
+  resources:
+    requests:
+      cpu: 250m
+      memory: 256Mi
+    limits:
+      cpu: "1"
+      memory: 512Mi
+  allowedClients:
+    - namespace: sample-user-manager
+      matchLabels: { app: sample-user-manager }
+
 # Second DB: demonstrates multiple DBs per workload (the manager binary doesn't dial it). Single-instance:
 # highAvailability=false collapses instances:1 + PDB-off + in-place-restart into the one bool.
 analyticsdb:
