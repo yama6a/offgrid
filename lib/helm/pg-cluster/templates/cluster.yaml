@@ -59,9 +59,34 @@ spec:
       enabled: false
   # Bootstrap an `app` db + `app` role; the operator writes the owner creds into `<name>-app` (the app's PG_PASSWORD).
   bootstrap:
+  {{- if .Values.restore.enabled }}
+    # DR path (values.yaml `restore`): rebuild this instance from its own S3 catalog instead of empty.
+    recovery:
+      source: barman-origin
+      # NOT cosmetic: without database/owner CNPG leaves the restored `app` role on its pre-deletion password
+      # while minting a fresh `<name>-app` Secret -> the app can't log in. These make it realign the two.
+      database: app
+      owner: app
+      {{- with .Values.restore.targetTime }}
+      recoveryTarget:
+        targetTime: {{ . | quote }}
+      {{- end }}
+  {{- else }}
     initdb:
       database: app
       owner: app
+  {{- end }}
+  {{- if .Values.restore.enabled }}
+  # Read-only pull source for the recovery above; same ObjectStore this instance archives INTO, so an in-place
+  # restore needs no second store. serverName defaults to our own name (see values.yaml `restore.serverName`).
+  externalClusters:
+    - name: barman-origin
+      plugin:
+        name: barman-cloud.cloudnative-pg.io
+        parameters:
+          barmanObjectName: {{ include "pg-cluster.name" . }}-backups
+          serverName: {{ .Values.restore.serverName | default (include "pg-cluster.name" .) }}
+  {{- end }}
   {{- if eq (include "pg-cluster.backupsEnabled" .) "true" }}
   # Barman Cloud CNPG-I plugin as the WAL archiver; the ObjectStore it points at is rendered by
   # templates/objectstore.yaml (barmanObjectName = <name>-backups). See docs/13_backups.md.

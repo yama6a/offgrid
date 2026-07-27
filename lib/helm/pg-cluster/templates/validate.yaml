@@ -42,3 +42,14 @@ values.yaml.
 {{- fail "pg-cluster: files/backup.yaml has a bucket but no retentionPolicy; re-run 14_cnpg_backup.sh" }}
 {{- end }}
 {{- end }}
+{{- /* A recovery bootstrap pulls from the instance's OWN ObjectStore, which only exists when backups are on;
+      without it the render would emit an externalClusters entry pointing at a nonexistent store and the
+      cluster would hang mid-bootstrap with no error in the manifest. */ -}}
+{{- if and .Values.restore.enabled (ne (include "pg-cluster.backupsEnabled" .) "true") }}
+{{- fail "pg-cluster: restore.enabled needs backups on (backupsEnabled + a populated files/backup.yaml); there is no object store to recover from" }}
+{{- end }}
+{{- /* Catch the config that reads as intent but does nothing: bootstrap is only consulted at create time, so a
+      target/serverName with enabled=false is silently ignored rather than deferred. */ -}}
+{{- if and (not .Values.restore.enabled) (or .Values.restore.targetTime .Values.restore.serverName) }}
+{{- fail "pg-cluster: restore.targetTime/serverName are set but restore.enabled is false; they would be silently ignored (set enabled, or clear them)" }}
+{{- end }}
