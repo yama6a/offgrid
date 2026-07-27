@@ -13,6 +13,11 @@ spec:
       app.kubernetes.io/name: orphan-exporter
   template:
     metadata:
+      annotations:
+        # exporter.py lives in the ConfigMap and is mounted, so editing it does NOT restart the running python
+        # process (a mounted ConfigMap updates in place). Without this the script silently keeps running the old
+        # code after a sync. The checksum rolls the pod whenever the ConfigMap changes.
+        checksum/config: {{ include (print $.Template.BasePath "/configmap.yaml") . | sha256sum }}
       labels:
         app.kubernetes.io/name: orphan-exporter
     spec:
