@@ -1,0 +1,40 @@
+{{- /*
+POD-SCOPED default-deny for the orphan exporter. Listing ingress AND egress makes these endpoints
+deny-by-default each way; allow only what it needs. It was the one pod-running platform app with NO policy and
+no entry on the deliberately-unpoliced list, so it was an accidental exception rather than a decided one.
+Its whole job is READING the kube API (CR inventory + the redis backup-status ConfigMap) and serving /metrics,
+so the surface is tiny: apiserver + DNS out, vmagent in. No S3, no other pods. Same audit-first rollout as the
+other lockdowns (Cilium PolicyAuditMode + `hubble observe --verdict DROPPED,AUDIT` until clean, then enforce).
+See 04_networking.md / 09_monitoring.md.
+*/ -}}
+apiVersion: cilium.io/v2
+kind: CiliumNetworkPolicy
+metadata:
+  name: orphan-exporter
+  namespace: {{ .Release.Namespace }}
+spec:
+  endpointSelector:
+    matchLabels:
+      app.kubernetes.io/name: orphan-exporter
+  ingress:
+    # (a) The scrape. vmagent is the only thing that talks to this pod at all.
+    - fromEndpoints:
+        - matchLabels:
+            k8s:io.kubernetes.pod.namespace: monitoring
+            app.kubernetes.io/name: vmagent
+      toPorts:
+        - ports:
+            - { port: "{{ .Values.port }}", protocol: TCP }
+  egress:
+    # (b) DNS (CoreDNS), needed to resolve the in-cluster apiserver Service.
+    - toEndpoints:
+        - matchLabels:
+            k8s:io.kubernetes.pod.namespace: kube-system
+            k8s-app: kube-dns
+      toPorts:
+        - ports:
+            - { port: "53", protocol: UDP }
+            - { port: "53", protocol: TCP }
+    # (c) The kube API: every metric this exporter emits comes from a GET against it. Nothing else outbound,
+    # deliberately: it has no S3 credentials and reads backup state via the ConfigMap instead.
+    - toEntities: [kube-apiserver]
