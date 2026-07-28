@@ -1,18 +1,25 @@
 # Values for the 00_priorityclass wrapper chart. SINGLE SOURCE OF TRUTH, ArgoCD (and any local
-# `helm template`) consume this. First-party chart (no upstream dependency); renders one PriorityClass
-# (templates/priorityclass.yaml). See docs/09_monitoring.md (eviction / criticality).
-
-# The shared class name platform components set as `priorityClassName`. Changing it means changing every
-# consumer's priorityClassName too — treat as stable.
-name: platform-critical
-
-# Priority value. Above normal workloads (0) so platform infra preempts them under pressure, but BELOW the
-# built-in system-cluster-critical (2000000000) / system-node-critical (2000001000) so kube-system + the CNI
-# always outrank it.
-value: 1000000000
-
-# Never the cluster-wide default (that would silently bump EVERY pod that omits priorityClassName).
-globalDefault: false
-
-# Shown by `kubectl describe priorityclass`; explains what it's for.
-description: "Platform control-plane components (protected from eviction ahead of user workloads)."
+# `helm template`) consume this. First-party chart (no upstream dependency); renders one PriorityClass per
+# entry below (templates/priorityclass.yaml). See docs/09_monitoring.md (eviction / criticality).
+#
+# Both values sit ABOVE normal workloads (0) and BELOW the built-in system-cluster-critical (2000000000) /
+# system-node-critical (2000001000), so kube-system + the CNI always outrank both. Consumers reference the
+# names verbatim as `priorityClassName`, so treat them as stable: a rename means editing every consumer.
+# Neither is globalDefault (hardcoded false in the template).
+#
+# Priority affects kubelet node-pressure EVICTION order (second sort key, after "is the pod over its
+# requests") and scheduler PREEMPTION. It does NOT affect the kernel OOM killer: oom_score_adj comes from
+# QoS class + memory request alone, so a pod hitting its own memory limit dies regardless of its class.
+classes:
+  - name: platform-critical
+    value: 1000000000
+    # Control plane only. The built-in system-* classes are admission-restricted to kube-system, so
+    # components in their OWN namespaces (cert-manager, sealed-secrets, cnpg, vm-operator, envoy-gateway)
+    # can't use them; this fills that gap. Cilium (kube-system) uses the built-ins directly.
+    description: "Platform control-plane components (protected from eviction ahead of user workloads)."
+  - name: data-critical
+    value: 900000000
+    # Workload DATA pods (the pg-cluster + redis-instance wrappers set it for every instance). Below
+    # platform-critical on purpose: losing cert-manager or the CNI takes out more than any one database
+    # does, so the control plane outranks the data plane. Above stateless app pods, which are replaceable.
+    description: "Workload data pods (databases, caches: evicted after the platform, before stateless apps)."

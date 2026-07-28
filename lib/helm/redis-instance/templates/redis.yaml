@@ -35,6 +35,9 @@ metadata:
     redis-backup.raspi-cluster/enabled: "true"   # discovered by the central 07_redis_backup job (durable only)
     {{- end }}
 spec:
+  # Same class as the CNPG instances: a durable store outranks the stateless app pods it serves under node
+  # memory pressure. No effect on a cgroup OOM kill (oom_score_adj ignores priority). See 00_priorityclass.
+  priorityClassName: data-critical
   kubernetesConfig:
     image: "quay.io/opstree/redis:{{ .Values.redisVersion }}"
     imagePullPolicy: IfNotPresent

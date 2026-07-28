@@ -1,6 +1,7 @@
-# ArgoCD Application for the shared platform PriorityClass (argo_apps/platform/charts/00_priorityclass/):
-# one cluster-scoped `platform-critical` PriorityClass that platform components reference so they aren't
-# the first evicted under memory pressure on the 8GB Pi 5s. See that chart's Chart.yaml + docs/09_monitoring.md.
+# ArgoCD Application for the shared PriorityClasses (argo_apps/platform/charts/00_priorityclass/): two
+# cluster-scoped classes, `platform-critical` (control plane) and `data-critical` (workload DBs/caches, one
+# notch lower), so neither is first evicted under memory pressure on the 8GB Pi 5s. Consumers span both
+# argo_apps trees. See that chart's Chart.yaml + docs/09_monitoring.md.
 #
 # sync-wave "0": foundational, alongside cilium + the CRD apps. The class MUST exist before any consumer
 # pod that sets priorityClassName is admitted (a pod referencing a missing PriorityClass fails admission),
