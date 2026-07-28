@@ -282,4 +282,3 @@ Pi 5 Talos image builds on [talos-rpi5/talos-builder](https://github.com/talos-r
 - read and shorten all md files.
 - improve then apply comment rules from claude.md to all yaml and other code files.
 - disaster recovery exercise
-- move VM, VL, ntfy and whatever else uses the longhorn-r2-retain SC to longhorn-r2-ephemeral and apply the same strategy (deletionPrevention) as in cnpg and redis with the admission hook or whatever that was, if possible, as in, we set a deletionPrevention flag in the values to false before we can kill the stuff. is that possible? and then move to the longhorn-r2-ephemeral SC for the same reason as the others?
