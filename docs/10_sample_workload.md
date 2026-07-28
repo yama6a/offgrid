@@ -164,8 +164,8 @@ endpoints deny-by-default in each), then allow only what's needed:
 `allowedClients` is validated (render fails on an empty list, you'd wall off the database). It is now the single
 source of truth for the app-to-DB edge: besides the 5432 ingress on the DB pods, it renders a companion
 client-egress CNP (`lib/helm/pg-cluster/templates/client-egress.yaml`) opening the app pod's egress to this DB,
-so the workload never re-lists its DBs. Same-ns only (a namespaced CNP can't select a cross-ns client, and
-validate.yaml rejects one). The fixed platform selectors (Envoy, CoreDNS, the CNPG operator, vmagent) are
+so the workload never re-lists its DBs. Same-ns only (a namespaced CNP can't select a cross-ns client), so an
+entry is just its `matchLabels` and the namespace is implicit; a stray `namespace:` key fails the render. The fixed platform selectors (Envoy, CoreDNS, the CNPG operator, vmagent) are
 hardcoded in the templates: they're cluster constants, not per-workload knobs; values carry only the one real
 decision (the DB's `allowedClients`).
 **Rollout is audit-first**: put the app + DB endpoints in Cilium

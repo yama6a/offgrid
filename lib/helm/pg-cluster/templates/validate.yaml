@@ -22,12 +22,17 @@ values.yaml.
 {{- if not (kindIs "bool" .Values.deletionProtection) }}
 {{- fail "pg-cluster: deletionProtection is required and must be explicitly true (a GitOps prune orphans the DB unit instead of destroying it) or false (the DB is deletable); there is no default, because local-path reclaim is Delete and this is the only thing protecting the data" }}
 {{- end }}
-{{- /* allowedClients drives the client-egress CNP too (client-egress.yaml), a namespaced CNP that can only
-      select same-ns clients. The DB always renders into the workload's namespace, so a cross-ns client would get
-      ingress but no egress. Reject it rather than half-wire the edge. */ -}}
+{{- /* An entry is just its matchLabels: the namespace is implicit (the release's). allowedClients drives the
+      client-egress CNP too (client-egress.yaml), a namespaced CNP that can only select same-ns clients, so a
+      cross-ns client would get ingress but no egress. Hence no per-entry namespace at all. A leftover
+      `namespace:` key would silently do nothing, and empty matchLabels would render a selector matching
+      everything; fail both. */ -}}
 {{- range .Values.allowedClients }}
-{{- if and .namespace (ne .namespace $.Release.Namespace) }}
-{{- fail (printf "pg-cluster: allowedClients namespace %q must equal the release namespace %q (client-egress is same-ns only; a cross-ns client needs the clusterwide-CNP variant)" .namespace $.Release.Namespace) }}
+{{- if .namespace }}
+{{- fail (printf "pg-cluster: allowedClients entries take no `namespace` (it is always the release namespace %q; a cross-ns client needs the clusterwide-CNP variant), drop the key" $.Release.Namespace) }}
+{{- end }}
+{{- if not .matchLabels }}
+{{- fail "pg-cluster: every allowedClients entry needs a non-empty matchLabels (the client pod labels); an empty selector would open 5432 to the whole namespace" }}
 {{- end }}
 {{- end }}
 {{- /* Backups turn ON only when files/backup.yaml is populated (backupsEnabled gates on `bucket`). A

@@ -33,7 +33,7 @@ spec:
     {{- range .Values.allowedClients }}
     - fromEndpoints:
         - matchLabels:
-            k8s:io.kubernetes.pod.namespace: {{ .namespace }}
+            k8s:io.kubernetes.pod.namespace: {{ $.Release.Namespace }} # same-ns only, enforced by validate.yaml
             {{- range $k, $v := .matchLabels }}
             {{ $k }}: {{ $v | quote }}
             {{- end }}

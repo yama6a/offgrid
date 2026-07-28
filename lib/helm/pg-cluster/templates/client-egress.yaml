@@ -3,7 +3,7 @@ Client-side egress companion to networkpolicy.yaml's ingress. `allowedClients` i
 the app<->DB edge: it opens 5432 ingress on the DB pods (networkpolicy.yaml) AND, here, the matching egress on
 each client pod, so a consuming workload never re-lists its DBs in its own netpol. One CNP per client (each has
 its own endpointSelector). SAME-NS ONLY: a namespaced CNP selects only pods in its own namespace, and the DB
-always renders into the workload's namespace, so validate.yaml fails a cross-ns allowedClients entry. Egress
+always renders into the workload's namespace, which is why an allowedClients entry carries no namespace. Egress
 targets the DB pods by identity (covers the -rw Service backend; kube-proxy replacement enforces on the backend,
 not the ClusterIP). Adding this flips the client to default-deny egress, which is a no-op here since every app
 pod already carries its own egress policy (DNS etc.).

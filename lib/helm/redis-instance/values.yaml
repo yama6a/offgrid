@@ -29,7 +29,7 @@ resources: {}
 
 # REQUIRED: who may open a Redis connection on :6379. The CiliumNetworkPolicy is ALWAYS enforced and is the only
 # access control (there is no password), so an empty list would wall the instance off from everyone.
-# Shape: [{ namespace: <ns>, matchLabels: { <k>: <v> } }, ...]
+# Shape: [{ matchLabels: { <k>: <v> } }, ...]. Same-ns only, so the namespace is implicit (the release's).
 allowedClients: []
 
 # REQUIRED: persistence mode — NO default; each instance must choose explicitly (durability is a deliberate call).

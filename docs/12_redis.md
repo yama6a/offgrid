@@ -73,7 +73,7 @@ redis-cache:
   redisVersion: "v8.6.2"                  # REQUIRED: Redis server version, owned per-workload
   persistence: false                      # REQUIRED, no default: true = explicit appendfsync + S3 backup | false = neither (NB the operator runs AOF either way)
   resources: { requests: { cpu: 25m, memory: 64Mi }, limits: { memory: 96Mi } }
-  allowedClients: [ { namespace: sample-user-manager, matchLabels: { app: sample-user-manager } } ]
+  allowedClients: [ { matchLabels: { app: sample-user-manager } } ]   # same-ns only, so no namespace key
   # initialFixedDiskSize: 2Gi   # optional; default 1Gi; create-time only (see "Resizing an instance")
 ```
 

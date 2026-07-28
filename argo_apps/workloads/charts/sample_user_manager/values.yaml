@@ -83,8 +83,7 @@ maindb:
       cpu: "1"
       memory: 512Mi
   allowedClients:
-    - namespace: sample-user-manager
-      matchLabels: { app: sample-user-manager }
+    - matchLabels: { app: sample-user-manager }
 
 # Second DB: demonstrates multiple DBs per workload (the manager binary doesn't dial it). Single-instance:
 # highAvailability=false collapses instances:1 + PDB-off + in-place-restart into the one bool.
@@ -102,8 +101,7 @@ analyticsdb:
       cpu: "500m"
       memory: 256Mi
   allowedClients:
-    - namespace: sample-user-manager
-      matchLabels: { app: sample-user-manager }
+    - matchLabels: { app: sample-user-manager }
 
 # Two standalone Redis instances, each an aliased instance of the shared redis-instance wrapper (file://
 # dependency; renders a `Redis` CR + ServiceMonitor + a default-deny CiliumNetworkPolicy). Everything else —
@@ -129,8 +127,7 @@ redis-cache:
     requests: { cpu: 25m, memory: 64Mi }
     limits:   { memory: 96Mi }
   allowedClients:
-    - namespace: sample-user-manager
-      matchLabels: { app: sample-user-manager }
+    - matchLabels: { app: sample-user-manager }
 
 # Second Redis: demonstrates multiple instances per workload AND the DURABLE mode (the manager doesn't dial it).
 redis-sessions:
@@ -145,5 +142,4 @@ redis-sessions:
     requests: { cpu: 25m, memory: 64Mi }
     limits:   { memory: 96Mi }
   allowedClients:
-    - namespace: sample-user-manager
-      matchLabels: { app: sample-user-manager }
+    - matchLabels: { app: sample-user-manager }

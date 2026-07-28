@@ -27,7 +27,7 @@ resources: {} # REQUIRED: per-instance requests/limits (no sane default for a Pi
 # REQUIRED (validate.yaml fails an empty list): who may open a 5432 connection. SAME-NS ONLY: a cross-ns entry is
 # rejected (client-egress is a namespaced CNP). The DB pods go default-deny both directions; this is the ONLY
 # per-consumer netpol knob (every other peer (replication, operator, kubelet, vmagent, DNS, S3) is baked in).
-# Shape: [{ namespace: <ns>, matchLabels: { <k>: <v> } }, ...]
+# Shape: [{ matchLabels: { <k>: <v> } }, ...]
 allowedClients: []
 
 # REQUIRED bool, no default. Orphan-not-delete: true keeps the DB unit (Cluster + its
