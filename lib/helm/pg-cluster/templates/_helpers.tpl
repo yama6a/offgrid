@@ -1,16 +1,9 @@
-{{/*
-Instance name: the consumer's explicit `name` (validated non-empty). Used VERBATIM as the Cluster name and
-stamped on the cnpg.io/cluster label the operator copies onto the pods. No release derivation, so it stays
-unique when a workload aliases this wrapper more than once.
-*/}}
 {{- define "pg-cluster.name" -}}
 {{- .Values.name -}}
 {{- end -}}
 
 {{/*
 Resolve postgresVersion (a major, e.g. "18") to the pinned image (tag@digest) from files/postgres-images.yaml.
-The chart owns the repo/flavor/OS/digest; a consumer picks only a supported major. Fails with the supported list
-if the major isn't a key, so an unsupported/EOL version can't render. See docs/13_backups.md.
 */}}
 {{- define "pg-cluster.image" -}}
 {{- $images := .Files.Get "files/postgres-images.yaml" | fromYaml -}}
@@ -22,11 +15,6 @@ if the major isn't a key, so an unsupported/EOL version can't render. See docs/1
 {{- $img -}}
 {{- end -}}
 
-{{/*
-Common labels. alert-criticality is ALWAYS stamped (critical|warning) so the label is never absent: the CNPG
-operator's INHERITED_LABELS (02_cnpg_operator) copies it onto the pods, and the alert-severity template keys on
-it (a missing field would break that template). See docs/09_monitoring.md.
-*/}}
 {{- define "pg-cluster.labels" -}}
 app.kubernetes.io/name: pg-cluster
 app.kubernetes.io/instance: {{ .Release.Name }}
@@ -34,24 +22,12 @@ app.kubernetes.io/part-of: cloudnative-pg
 alert-criticality: {{ if .Values.alertCritical }}critical{{ else }}warning{{ end }}
 {{- end -}}
 
-{{/*
-The S3-creds Secret name for THIS instance: `<name>-backup-s3` (repo convention for sealed S3 backup creds, cf.
-redis/longhorn/vm-backup-s3). Defined ONCE because two resources must agree on it: the ObjectStore references it
-and backup-sealedsecret.yaml creates it. If they drift, the ObjectStore points at a missing Secret and backups
-fail silently (no render error). Per-instance (the `<name>-` prefix) so 2 DBs in one namespace don't collide; the
-cluster-wide ciphertext (files/backup.yaml) unseals under any name.
-*/}}
 {{- define "pg-cluster.backupSecretName" -}}
 {{- include "pg-cluster.name" . }}-backup-s3
 {{- end -}}
 
 {{/*
-True when the Barman Cloud plugin backup path is active (drives the Cluster's .spec.plugins, the ObjectStore,
-the ScheduledBackup, the SealedSecret, and the S3 netpol egress). Gated on the opt-OUT flag AND a populated
-overlay: a blank files/backup.yaml (fresh clone, 14 not run) renders backups OFF even with backupsEnabled=true,
-so no half-configured ObjectStore leaks out. Returns the string "true"/"false" (use `eq ... "true"`).
-The per-deployment facts themselves are read inline where needed: `.Files.Get "files/backup.yaml" | fromYaml`
-(chart-scoped, so both aliases read the SAME file; fromYaml on a blank file is a nil-safe empty map).
+Enabled if backupsEnabled is true and the backup.yaml has a bucket defined (not empty).
 */}}
 {{- define "pg-cluster.backupsEnabled" -}}
 {{- $b := .Files.Get "files/backup.yaml" | fromYaml -}}
@@ -59,12 +35,7 @@ The per-deployment facts themselves are read inline where needed: `.Files.Get "f
 {{- end -}}
 
 {{/*
-Orphan-not-delete guard. Prune=false spares the resource when it leaves the rendered manifests (git edit);
-Delete=false spares it from the Application's resources-finalizer cascade (whole workload removed from git). So a
-GitOps prune ORPHANS the DB unit (keeps it running on its PVCs) instead of destroying it, and restoring the files
-re-adopts the live resource. local-path reclaim is Delete, so this is the ONLY data-safety mechanism: it goes on
-every resource the surviving Cluster needs. Cost: the app reports OutOfSync forever (argo-cd#17188); that is the
-intended orphan signal, do NOT add compare-options IgnoreExtraneous. See docs/13_backups.md.
+Setting these labels prevents ArgoCD from pruning/deleting the resources.
 */}}
 {{- define "pg-cluster.protectAnnotations" -}}
 {{- if .Values.deletionProtection -}}

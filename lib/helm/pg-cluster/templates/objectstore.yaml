@@ -6,10 +6,7 @@ metadata:
   name: {{ include "pg-cluster.name" . }}-backups
   namespace: {{ .Release.Namespace }}
   annotations:
-    # sync-wave -1: apply the ObjectStore BEFORE the Cluster. The upstream cnpg/cluster chart annotated this a
-    # Helm hook (pre-install,...), which ArgoCD turns into an ephemeral PreSync resource -> it got deleted and
-    # WAL archiving broke. Rendering the CR ourselves lets it be a normal, persistent resource. See docs/13_backups.md.
-    argocd.argoproj.io/sync-wave: "-1"
+    argocd.argoproj.io/sync-wave: "-1" # apply the ObjectStore BEFORE the Cluster.
     {{- with (include "pg-cluster.protectAnnotations" .) }}
     {{- . | nindent 4 }}
     {{- end }}
@@ -17,7 +14,6 @@ metadata:
     cnpg.io/cluster: {{ include "pg-cluster.name" . }}
     {{- include "pg-cluster.labels" . | nindent 4 }}
 spec:
-  # aligned to the S3 lifecycle expiry so Barman's catalog and the S3 expiry agree (14 injects "<days>d").
   retentionPolicy: {{ required "pg-cluster: files/backup.yaml retentionPolicy missing but backups on; run 14_cnpg_backup.sh" $b.retentionPolicy | quote }}
   configuration:
     wal:
@@ -29,12 +25,7 @@ spec:
       encryption: AES256
       jobs: 2
     endpointURL: "https://s3.{{ required "pg-cluster: files/backup.yaml region missing but backups on; run 14_cnpg_backup.sh" $b.region }}.amazonaws.com"
-    # Namespace in the prefix + Barman appending the serverName (= this cluster's name) => each cluster lands in
-    # its own s3://<bucket>/cnpg/<ns>/<name>/{wals,base}. The <ns> makes the path globally unique on just the
-    # per-namespace name uniqueness validate.yaml already enforces (no cross-namespace name collision in S3).
-    destinationPath: "s3://{{ $b.bucket }}/cnpg/{{ .Release.Namespace }}/"
-    # bare-metal Talos has no instance role: static keys, sealed cluster-wide by 14. Name from the helper so it
-    # can't drift from the SealedSecret that creates it (drift => ObjectStore points at a missing Secret).
+    destinationPath: "s3://{{ $b.bucket }}/cnpg/{{ .Release.Namespace }}/" # s3://<bucket>/cnpg/<ns>/<name>/{wals,base}
     s3Credentials:
       accessKeyId:
         name: {{ include "pg-cluster.backupSecretName" . }}

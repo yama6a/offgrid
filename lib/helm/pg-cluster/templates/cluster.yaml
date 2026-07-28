@@ -11,18 +11,12 @@ metadata:
     {{- . | nindent 4 }}
     {{- end }}
     {{- if $sameCatalog }}
-    # MANDATORY for an in-place restore, not optional tuning: the plugin runs barman-cloud-check-wal-archive
-    # before recovery and aborts with "Expected empty archive" because we are recovering FROM the very catalog
-    # we will archive back into. The check exists to stop two clusters sharing one catalog, so it is only safe
-    # to skip because the source is gone. Deliberately NOT stamped when restore.serverName names a DIFFERENT
-    # source: there the target catalog is our own and the check is genuinely protective. See docs/13_backups.md.
-    cnpg.io/skipEmptyWalArchiveCheck: enabled
+    cnpg.io/skipEmptyWalArchiveCheck: enabled # MANDATORY for an in-place restore
     {{- end }}
   {{- end }}
   labels:
     {{- include "pg-cluster.labels" . | nindent 4 }}
 spec:
-  # highAvailability drives instances + enablePDB + primaryUpdateMethod together (see values.yaml).
   instances: {{ if .Values.highAvailability }}2{{ else }}1{{ end }}
   imageName: {{ include "pg-cluster.image" . }}
   imagePullPolicy: IfNotPresent
@@ -31,31 +25,23 @@ spec:
   postgresGID: 26
   storage:
     # Node-local /var/mnt/localpath partition (02_local_path_provisioner), isolated from Longhorn; Postgres
-    # replication is the only data-path redundancy. size is a NO-OP under local-path (just makes a dir; Postgres
-    # statfs's the whole partition) but the CR requires it, so set the honest partition budget. See 08_storage.md.
-    size: 45Gi
+    # replication is the only data-path redundancy. , so set the honest partition budget. See 08_storage.md.
+    size: 45Gi # size is a NO-OP under local-path, but the CR requires it. Kindof a dummy value.
     storageClass: local-path
   {{- with .Values.resources }}
   resources:
     {{- toYaml . | nindent 4 }}
   {{- end }}
-  # Bare Pi nodes have no zone label; spread primary + replica across 2 distinct nodes by hostname (node-loss HA,
-  # required for node-local storage). Moot but harmless at a single instance.
   affinity:
-    topologyKey: kubernetes.io/hostname
-  # Evicted after the platform control plane but before stateless apps, under node memory pressure on the
-  # shared 8GB nodes. No effect on a cgroup OOM kill (oom_score_adj ignores priority). See 00_priorityclass.
-  priorityClassName: data-critical
-  # HA: switchover to the replica. Single: restart in place (no replica to switch to).
-  primaryUpdateMethod: {{ if .Values.highAvailability }}switchover{{ else }}restart{{ end }}
+    topologyKey: kubernetes.io/hostname # Don't put recplica and primary on the same node (default was zone, which we don't have)
+  priorityClassName: data-critical # Evicted after the platform control plane but before stateless apps, under node memory pressure
+  primaryUpdateMethod: {{ if .Values.highAvailability }}switchover{{ else }}restart{{ end }} # single-node: short down-time
   primaryUpdateStrategy: unsupervised
-  # HA: PDB on. Single: PDB off, else a 1-pod minAvailable:1 blocks EVERY eviction (Talos node drains).
-  enablePDB: {{ if .Values.highAvailability }}true{{ else }}false{{ end }}
+  enablePDB: {{ if .Values.highAvailability }}true{{ else }}false{{ end }} # PDB on single-node would block node-upgrades (e.g. talos-upgrades)
   stopDelay: 1800
   logLevel: info
-  # Blank the `postgres` superuser secret: apps connect only via the `app` role. Attack-surface reduction (CNPG's
-  # own guidance), given the default-deny CiliumNetworkPolicy.
-  enableSuperuserAccess: false
+  enableSuperuserAccess: false # apps connect only via the `app` role
+
   postgresql:
     {{- $params := deepCopy (.Values.postgresql.parameters | default dict) }}
     {{- if eq (include "pg-cluster.backupsEnabled" .) "true" }}
@@ -66,18 +52,17 @@ spec:
     parameters:
       {{- toYaml . | nindent 6 }}
     {{- end }}
+
   monitoring:
     disableDefaultQueries: false
     tls:
-      enabled: false
-  # Bootstrap an `app` db + `app` role; the operator writes the owner creds into `<name>-app` (the app's PG_PASSWORD).
+      enabled: false # podmonitor scrapes http, and cross-node pod traffic is wireguard-encrypted.
+
   bootstrap:
   {{- if .Values.restore.enabled }}
     # DR path (values.yaml `restore`): rebuild this instance from its own S3 catalog instead of empty.
     recovery:
       source: barman-origin
-      # NOT cosmetic: without database/owner CNPG leaves the restored `app` role on its pre-deletion password
-      # while minting a fresh `<name>-app` Secret -> the app can't log in. These make it realign the two.
       database: app
       owner: app
       {{- with .Values.restore.targetTime }}
@@ -89,9 +74,8 @@ spec:
       database: app
       owner: app
   {{- end }}
+
   {{- if .Values.restore.enabled }}
-  # Read-only pull source for the recovery above; same ObjectStore this instance archives INTO, so an in-place
-  # restore needs no second store. serverName defaults to our own name (see values.yaml `restore.serverName`).
   externalClusters:
     - name: barman-origin
       plugin:
@@ -100,9 +84,8 @@ spec:
           barmanObjectName: {{ include "pg-cluster.name" . }}-backups
           serverName: {{ .Values.restore.serverName | default (include "pg-cluster.name" .) }}
   {{- end }}
+
   {{- if eq (include "pg-cluster.backupsEnabled" .) "true" }}
-  # Barman Cloud CNPG-I plugin as the WAL archiver; the ObjectStore it points at is rendered by
-  # templates/objectstore.yaml (barmanObjectName = <name>-backups). See docs/13_backups.md.
   plugins:
     - name: barman-cloud.cloudnative-pg.io
       enabled: true

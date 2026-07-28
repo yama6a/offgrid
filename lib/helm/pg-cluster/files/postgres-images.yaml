@@ -1,11 +1,5 @@
-# Supported Postgres major -> pinned CNPG image (minimal flavor, Debian trixie), as tag@digest. This file IS the
-# version recipe: Renovate keeps each digest fresh as the rolling <major>-minimal-trixie tag moves onto new patch
-# builds (see renovate.json5), and never changes the tag itself. Consumers set only `postgresVersion` (the major,
-# e.g. "18"); templates/_helpers.tpl `pg-cluster.image` resolves it here and FAILS on any key not listed.
-#
-# Add a major = add a line by hand (a NEW PG major is a pg_upgrade, not a digest bump); drop a line when a major
-# goes EOL. minimal = no in-image Barman (we use the Barman Cloud plugin) and the smallest image. See
-# docs/13_backups.md.
+# versions below are auto-renovated.
+# Minor and patch bumps incur none-to-minimal downtime and are rolled out to all instances automatically.
 "15": "ghcr.io/cloudnative-pg/postgresql:15-minimal-trixie@sha256:cb269d467aa046056e851aab7b1401c9ada07a0b5835eebc6b561b559f723c7b"
 "16": "ghcr.io/cloudnative-pg/postgresql:16-minimal-trixie@sha256:f10e421bfb635b9c3f314093eed540142c94db1dc723cb7a934b10081cc8bf6d"
 "17": "ghcr.io/cloudnative-pg/postgresql:17-minimal-trixie@sha256:b09dc735793bf50834240ff2fb044e4d9055420d9b73db544a599779506dbc54"

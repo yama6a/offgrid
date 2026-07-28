@@ -1,32 +1,5 @@
 apiVersion: v2
 name: pg-cluster
-description: >-
-  Shared wrapper chart that renders the CloudNativePG resources for one Postgres instance (the `Cluster` CR
-  + its `PodMonitor` + a default-deny CiliumNetworkPolicy pair, and when backups are on the Barman Cloud
-  `ObjectStore` + `ScheduledBackup`) as a small, curated interface for workloads. It pre-bakes every boilerplate
-  value a workload should never think about (node-local local-path storage, hostname anti-affinity, monitoring on,
-  an `app`/`app` initdb, non-root UID, the barman WAL-archiver plugin wiring) and exposes only the knobs a
-  workload actually decides: REQUIRED `name`, `postgresVersion` (the tag on ghcr.io/cloudnative-pg/postgresql,
-  owned per-workload), `highAvailability` (one bool: true = 2 instances + PDB + switchover, false = single
-  instance), `resources`, `allowedClients`, plus OPTIONAL `alertCritical` and the defaulted postgresql params.
-
-  Postgres only, no postgis: the image repo is fixed and only `postgresVersion` (the tag) varies. Off-cluster S3
-  backups (continuous WAL archiving + daily base backups via the Barman Cloud CNPG-I plugin): the static wiring is
-  hardcoded in the templates, the per-deployment facts (bucket/region/retention + sealed S3 creds) live in
-  `files/backup.yaml` (written by `lib/shell/14_cnpg_backup.sh`), and rendering turns on once that file is
-  populated (per-instance opt-out via `backupsEnabled`). See docs/13_backups.md.
-
-  FIRST-PARTY templates, NO upstream dependency: like `lib/helm/redis-instance`, this chart templates the
-  operator's CRs directly (the CNPG CRDs come from `02_cnpg_operator`; the Barman plugin + ObjectStore CRD from
-  `03_barman_cloud_plugin`). It used to wrap the upstream `cnpg/cluster` chart, but that forced a vendored +
-  hand-PATCHED `charts/*.tgz` (the chart annotates the ObjectStore as a Helm hook, which ArgoCD turns ephemeral,
-  so archiving breaks). Rendering the CRs ourselves kills the vendored tarball (Renovate manages everything
-  hands-off) and lets us annotate the ObjectStore with `sync-wave: "-1"` natively. See CLAUDE.md's shared-charts
-  paragraph + docs/13_backups.md.
-
-  Required fields: templates/validate.yaml fails the render with a clear message if
-  name/postgresVersion/highAvailability/resources/allowedClients are unset. Consumed via a file:// dependency,
-  aliased once per DB (a workload runs one or more); see argo_apps/workloads/charts/sample_user_manager. The
-  Cluster + its services/secret are named off the REQUIRED `name` (e.g. `<name>-rw`, `<name>-app`).
-type: application               # renders CRs directly (like redis-instance); NOT a library, which renders nothing
-version: 0.1.0                 # local chart, never bump version
+description: Shared wrapper chart that renders the CloudNativePG resources for one Postgres instance
+type: application
+version: 0.1.0 # local chart, never bump version

@@ -1,9 +1,4 @@
-{{- /*
-Validation only, renders to empty (all branches either fail or produce nothing). Enforces the REQUIRED fields,
-which values.yaml seeds with invalid sentinels (name="", version="", resources={}, highAvailability unset) so a
-naive `required` wouldn't catch them. Runs in this chart's scope, so it sees the consumer's overrides merged over
-values.yaml.
-*/ -}}
+{{- /* Validation only, renders to empty, Enforces the REQUIRED fields. */ -}}
 {{- if not .Values.name }}
 {{- fail "pg-cluster: name is required (the explicit Postgres instance name; no release-name derivation, and it must be unique across a workload's DBs)" }}
 {{- end }}
@@ -22,11 +17,6 @@ values.yaml.
 {{- if not (kindIs "bool" .Values.deletionProtection) }}
 {{- fail "pg-cluster: deletionProtection is required and must be explicitly true (a GitOps prune orphans the DB unit instead of destroying it) or false (the DB is deletable); there is no default, because local-path reclaim is Delete and this is the only thing protecting the data" }}
 {{- end }}
-{{- /* An entry is just its matchLabels: the namespace is implicit (the release's). allowedClients drives the
-      client-egress CNP too (client-egress.yaml), a namespaced CNP that can only select same-ns clients, so a
-      cross-ns client would get ingress but no egress. Hence no per-entry namespace at all. A leftover
-      `namespace:` key would silently do nothing, and empty matchLabels would render a selector matching
-      everything; fail both. */ -}}
 {{- range .Values.allowedClients }}
 {{- if .namespace }}
 {{- fail (printf "pg-cluster: allowedClients entries take no `namespace` (it is always the release namespace %q; a cross-ns client needs the clusterwide-CNP variant), drop the key" $.Release.Namespace) }}
@@ -35,9 +25,7 @@ values.yaml.
 {{- fail "pg-cluster: every allowedClients entry needs a non-empty matchLabels (the client pod labels); an empty selector would open 5432 to the whole namespace" }}
 {{- end }}
 {{- end }}
-{{- /* Backups turn ON only when files/backup.yaml is populated (backupsEnabled gates on `bucket`). A
-      half-populated overlay (bucket but no region/retention) would fail deep in the ObjectStore render; catch it
-      here with a message that points at the .env-driven writer. */ -}}
+{{- /* Backups turn ON only when files/backup.yaml is populated */ -}}
 {{- if eq (include "pg-cluster.backupsEnabled" .) "true" }}
 {{- $b := .Files.Get "files/backup.yaml" | fromYaml }}
 {{- if not $b.region }}
@@ -47,14 +35,11 @@ values.yaml.
 {{- fail "pg-cluster: files/backup.yaml has a bucket but no retentionPolicy; re-run 14_cnpg_backup.sh" }}
 {{- end }}
 {{- end }}
-{{- /* A recovery bootstrap pulls from the instance's OWN ObjectStore, which only exists when backups are on;
-      without it the render would emit an externalClusters entry pointing at a nonexistent store and the
-      cluster would hang mid-bootstrap with no error in the manifest. */ -}}
+{{- /* A recovery bootstrap pulls from the instance's OWN ObjectStore, which only exists when backups are on. */ -}}
 {{- if and .Values.restore.enabled (ne (include "pg-cluster.backupsEnabled" .) "true") }}
 {{- fail "pg-cluster: restore.enabled needs backups on (backupsEnabled + a populated files/backup.yaml); there is no object store to recover from" }}
 {{- end }}
-{{- /* Catch the config that reads as intent but does nothing: bootstrap is only consulted at create time, so a
-      target/serverName with enabled=false is silently ignored rather than deferred. */ -}}
+{{- /* disabling restore, but setting restore config makes no sense. Probably a user misake. */ -}}
 {{- if and (not .Values.restore.enabled) (or .Values.restore.targetTime .Values.restore.serverName) }}
 {{- fail "pg-cluster: restore.targetTime/serverName are set but restore.enabled is false; they would be silently ignored (set enabled, or clear them)" }}
 {{- end }}

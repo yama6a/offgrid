@@ -1,71 +1,16 @@
-# Curated CNPG Postgres interface. Renders the CNPG CRs directly (no upstream dependency). A consumer sets the
-# REQUIRED knobs (+ optionally the postgresql params); everything else is pre-baked in the templates.
-# See 10_sample_workload.md / 08_storage.md / 13_backups.md.
+name: ""             # REQUIRED: (string) Must be unique per namespace.
+postgresVersion: ""  # REQUIRED: (string) The Postgres MAJOR, e.g. "18".
+highAvailability:    # REQUIRED: (bool); true = 2 instances, false = 1 instance.
+resources: {}        # REQUIRED: Per-instance requests/limits.
+allowedClients: []   # REQUIRED: SAME-NS ONLY , e.g. [{matchLabels: {app: my-app}}]
+deletionProtection:  # REQUIRED: (bool) To delete: set to false in a first commit, delete the DB in a follow-up commit.
 
-# REQUIRED: seeded with invalid sentinels (empty name/version, resources={}, highAvailability unset) so
-# templates/validate.yaml fails the render with a clear message until the consumer overrides them. No real defaults.
+postgresql: { parameters: { max_connections: "50", shared_buffers: "128MB", effective_cache_size: "256MB" } }
+alertCritical: false # OPTIONAL: (bool); true = alert-severity = critical; false = alert-severity = warning
+backupsEnabled: true # OPTIONAL: (bool); Off-cluster S3 backups (daily base + 15min RPO WAL archiving).
 
-# REQUIRED: the Postgres instance name, used VERBATIM (Cluster CR, <name>-rw/-ro/-r services, <name>-app owner
-# Secret, PodMonitor, ObjectStore, CiliumNetworkPolicy). No suffix, no `.Release.Name` derivation. You name it.
-# Two DBs in one workload are aliased instances of THIS wrapper, so each MUST carry a distinct name. Unique per
-# NAMESPACE is enough (all resources are namespaced, and the S3 backup path is namespace-qualified); no global-
-# uniqueness requirement.
-name: "" # REQUIRED: e.g. sample-user-manager-db
-
-# REQUIRED: the Postgres MAJOR, e.g. "18". NOT a raw tag: it's a key into files/postgres-images.yaml, which the
-# chart resolves to a pinned minimal image (tag@digest). Renovate digest-tracks that file, so the consumer owns
-# only the major and can't pick an unpinned/unsupported tag. An unlisted major fails the render (validate.yaml).
-postgresVersion: "" # e.g. "18" (must be a key in files/postgres-images.yaml)
-
-# REQUIRED bool. true = 2 instances (primary + streaming replica on 2 nodes; PDB on; switchover updates). false =
-# single instance (PDB off, so a 1-pod minAvailable:1 can't block Talos node drains; in-place restart updates).
-# One bool drives instances + enablePDB + primaryUpdateMethod together; there is no separate knob for each.
-highAvailability: # REQUIRED: true | false
-
-resources: {} # REQUIRED: per-instance requests/limits (no sane default for a Pi; force a choice).
-
-# REQUIRED (validate.yaml fails an empty list): who may open a 5432 connection. SAME-NS ONLY: a cross-ns entry is
-# rejected (client-egress is a namespaced CNP). The DB pods go default-deny both directions; this is the ONLY
-# per-consumer netpol knob (every other peer (replication, operator, kubelet, vmagent, DNS, S3) is baked in).
-# Shape: [{ matchLabels: { <k>: <v> } }, ...]
-allowedClients: []
-
-# REQUIRED bool, no default. Orphan-not-delete: true keeps the DB unit (Cluster + its
-# ObjectStore/ScheduledBackup/PodMonitor/NetworkPolicy/SealedSecret) alive when its manifests leave git, so
-# restoring them re-adopts the running cluster with no data loss. local-path reclaim is Delete, so this is the
-# ONLY thing standing between a stray prune and gone data. ALWAYS true in steady state. false is a TRANSIENT
-# state only: set it, commit+push, let Argo sync, THEN remove the DB in a follow-up commit. Never leave a DB
-# sitting on false. See _helpers.tpl / 13_backups.md.
-deletionProtection: # REQUIRED: true | false
-
-# Mark this DB app-critical: stamps alert-criticality=critical on the Cluster; CNPG INHERITED_LABELS
-# (02_cnpg_operator) copies it onto the pods, so the outage rules page `critical` (not `warning`) if a pod
-# crashloops. Default false (the label is always stamped, critical|warning, so the alert-severity template never
-# sees it absent). See docs/09_monitoring.md.
-alertCritical: false
-
-# Tune Postgres to the per-instance memory; optional, defaulted (override only to diverge).
-postgresql:
-  parameters:
-    max_connections: "50" # keep the connection cap small; matched to the modest per-instance memory.
-    shared_buffers: "128MB" # sized for a ~512Mi-class instance.
-    # Planner hint only (no memory cost): PG defaults this to 4GB, which badly misleads the planner on a shared
-    # 8GB Pi into assuming cache that isn't there. Sized conservatively for these 256-512Mi instances.
-    effective_cache_size: "256MB"
-
-# Off-cluster S3 backups via the Barman Cloud CNPG-I plugin: continuous WAL archiving + a daily base backup. The
-# SECOND durability tier (the first is replication + orphan-not-delete). Everything is automatic: the static
-# wiring (plugin, provider, bucket path, wal/data compression, the daily cron) is HARDCODED in the templates, the
-# per-DEPLOYMENT facts (bucket/region/retention/archive_timeout + the sealed S3 creds) live in files/backup.yaml
-# (written by lib/shell/14_cnpg_backup.sh, read via .Files.Get), and each instance stamps its own creds Secret. So
-# the ONLY per-instance knob is the on/off switch below. See docs/13_backups.md.
-backupsEnabled: true # opt-OUT switch; actual rendering also needs a populated files/backup.yaml (14 must have run).
-
-# DR bootstrap: build this instance by RESTORING its S3 catalog (base backup + WAL replay) instead of an empty
-# initdb. TRANSIENT: on, let Argo build it, verify, off again. Only read at CREATE time, so flipping it back is
-# inert; leaving it on would make a future re-create silently restore. Driven by `make restore-cnpg` (mode
-# in-place), which is the runbook. See docs/13_backups.md.
+#  Restore from S3 backup catalog (base + WAL replay) instead of initdb. See `make restore-cnpg` and docs/13_backups.md.
 restore:
-  enabled: false
-  serverName: "" # catalog to read; empty = our own name (in-place). A DIFFERENT name keeps the empty-archive check on.
-  targetTime: "" # PITR target, RFC3339 (e.g. "2026-07-13 14:30:00+00"); empty = latest, replay every WAL there is
+  enabled: false  # SET TO FALSE AFTER RESTORE WAS COMPLETED!!
+  serverName: ""  # catalog to read; empty = our own name (in-place).
+  targetTime: ""  # PITR target, RFC3339 (e.g. "2026-07-13 14:30:00+00"); empty = replay everything

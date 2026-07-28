@@ -1,16 +1,5 @@
 {{- /*
-DB lockdown for the CNPG instance pods. Default-deny both directions (a CiliumNetworkPolicy that lists
-ingress AND egress makes the selected endpoints deny-by-default in each direction), then allow only the
-flows Postgres + CNPG actually need. Always enforced, not disableable; the only per-consumer knob is
-allowedClients (who may reach 5432) — every other peer here is fixed platform topology, hardcoded.
-
-Fixed selectors below are cluster constants for this repo (their namespaces/labels/ports don't vary between
-workloads): the CNPG operator (cnpg-system), vmagent (monitoring), CoreDNS (kube-system). If a platform
-component is ever relabelled, fix it here. Ports: 5432 Postgres, 8000 CNPG instance-manager API, 9187 CNPG
-metrics, 53 DNS. Cluster name is the consumer's explicit `name` (validated non-empty), the
-same name the official chart stamps on the `cnpg.io/cluster` pod label; no `.Release.Name` derivation, so the
-CNP name is unique per DB even when a workload aliases this wrapper more than once. Namespace peers use Cilium's
-`k8s:io.kubernetes.pod.namespace` label. Always rendered — not disableable; only knob is allowedClients.
+DB lockdown for the CNPG instance pods. Default-deny both directions, then allow only the flows Postgres + CNPG need.
 */ -}}
 {{- $cluster := .Values.name }}
 apiVersion: cilium.io/v2
@@ -28,8 +17,7 @@ spec:
       cnpg.io/cluster: {{ $cluster }}
       cnpg.io/podRole: instance
   ingress:
-    # (a) DB clients: the app(s) allowed to open Postgres connections. Same list drives the client-side egress
-    # CNP (client-egress.yaml), so a consuming workload never re-lists its DBs in its own netpol.
+    # DB clients
     {{- range .Values.allowedClients }}
     - fromEndpoints:
         - matchLabels:
@@ -41,17 +29,14 @@ spec:
         - ports:
             - { port: "5432", protocol: TCP }
     {{- end }}
-    # (b) Intra-cluster 5432: streaming replication (instance<->instance) AND bootstrap/join Job pods
-    # (pg_basebackup, e.g. sample-workload-db-2-join). Matched by cnpg.io/cluster ALONE — deliberately not
-    # podRole:instance, because CNPG's join/initdb pods carry cnpg.io/jobRole (not podRole), and a replica can't
-    # bootstrap without pg_basebackup'ing the primary. All same-cluster pods are trusted DB components.
+    # Streaming replication (instance<->instance) AND bootstrap/join for multi-node clusters.
     - fromEndpoints:
         - matchLabels:
             cnpg.io/cluster: {{ $cluster }}
       toPorts:
         - ports:
             - { port: "5432", protocol: TCP }
-    # (c) CNPG operator -> instance-manager status/pgctl API (reconciliation, failover).
+    # CNPG operator -> instance-manager status/pgctl API (reconciliation, failover).
     - fromEndpoints:
         - matchLabels:
             k8s:io.kubernetes.pod.namespace: cnpg-system
@@ -59,20 +44,19 @@ spec:
       toPorts:
         - ports:
             - { port: "8000", protocol: TCP }
-    # (c2) Intra-cluster 8000: instances query each other's instance-manager API (peer WAL/replication status
-    # for the failover/switchover logic). Same cnpg.io/cluster selector as (b); symmetric egress in (h2).
+    # Intra-cnpg-cluster 8000: instances query each other's instance-manager API for the failover/switchover logic.
     - fromEndpoints:
         - matchLabels:
             cnpg.io/cluster: {{ $cluster }}
       toPorts:
         - ports:
             - { port: "8000", protocol: TCP }
-    # (d) Kubelet liveness/readiness/startup probes hit the instance-manager (same port) from the node.
+    # Kubelet liveness/readiness/startup probes hit the instance-manager from the node.
     - fromEntities: [host, remote-node]
       toPorts:
         - ports:
             - { port: "8000", protocol: TCP }
-    # (e) Metrics scrape (vmagent -> CNPG PodMonitor).
+    # Metrics scrape (vmagent -> CNPG PodMonitor).
     - fromEndpoints:
         - matchLabels:
             k8s:io.kubernetes.pod.namespace: monitoring
@@ -81,7 +65,7 @@ spec:
         - ports:
             - { port: "9187", protocol: TCP }
   egress:
-    # (f) DNS to CoreDNS.
+    # DNS to CoreDNS.
     - toEndpoints:
         - matchLabels:
             k8s:io.kubernetes.pod.namespace: kube-system
@@ -90,16 +74,16 @@ spec:
         - ports:
             - { port: "53", protocol: UDP }
             - { port: "53", protocol: TCP }
-    # (g) The instance-manager watches its own Cluster CR / reports status via the API server.
+    # The instance-manager watches its own Cluster CR / reports status via the API server.
     - toEntities: [kube-apiserver]
-    # (h) Intra-cluster 5432 egress: replication + bootstrap/join to any same-cluster pod (symmetric with (b)).
+    # Intra-cnpg-cluster 5432 egress: replication + bootstrap/join to any same-cluster pod.
     - toEndpoints:
         - matchLabels:
             cnpg.io/cluster: {{ $cluster }}
       toPorts:
         - ports:
             - { port: "5432", protocol: TCP }
-    # (h2) Intra-cluster 8000 egress: instance-manager peer status queries (symmetric with (c2)).
+    # Intra-cnpg-cluster 8000 egress: instance-manager peer status queries.
     - toEndpoints:
         - matchLabels:
             cnpg.io/cluster: {{ $cluster }}
@@ -107,11 +91,9 @@ spec:
         - ports:
             - { port: "8000", protocol: TCP }
     {{- if eq (include "pg-cluster.backupsEnabled" .) "true" }}
-    # (i) S3 egress for the Barman Cloud plugin sidecar: WAL archiving + base-backup upload/restore go to the
-    # AWS S3 endpoint over HTTPS. Only rendered when backups are ON. Scoped to `world` on 443 — deliberately
-    # broad (S3 is reached over the public internet and its address set is large/volatile); tighten to a
-    # toFQDNs `*.amazonaws.com` rule if the DNS proxy is ever enabled. Without this, default-deny egress would
-    # silently fail every archive/backup. See docs/13_backups.md.
+    # (i) S3 egress for the Barman Cloud plugin sidecar: WAL archiving + base-backup upload/restore to AWS S3 via HTTPS.
+    # deliberately broad (S3's IP address set is large/volatile);
+    # Tighten to a toFQDNs `*.amazonaws.com` rule if the DNS proxy is ever enabled.
     - toEntities: [world]
       toPorts:
         - ports:
