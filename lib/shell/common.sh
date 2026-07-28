@@ -21,6 +21,10 @@
 #   talosctl                          dockerized talosctl against that talosconfig
 #   seal_secret <name> <ns> <key> <value> <out>  seal + sanity-check a SealedSecret (07/09)
 #   step / run_step                   numbered step runner for the DANGEROUS_* orchestrators
+#   confirm <prompt>                  y/N gate, auto-yes on ASSUME_YES=true
+#   wl_find_alias <instance> <verKey> locate the workload chart + alias owning a pg/redis instance
+#   vy_read <file> <alias> <key>      read one knob out of that alias block
+#   vy_protect_on <file> <alias>      flip its deletionProtection to true (line-surgical, not yq -i)
 #   verify_ingress <ns> <secs> [host] best-effort: poll that the ingress serves LE certs over HTTP/2
 
 [[ -n "${_COMMON_SH:-}" ]] && return
@@ -89,6 +93,7 @@ SS_CONTROLLER_NAME="sealed-secrets"                          # kubeseal --contro
 SS_POD_SELECTOR="app.kubernetes.io/name=sealed-secrets"     # the controller pods (readiness probe)
 SS_KEY_LABEL="sealedsecrets.bitnami.com/sealed-secrets-key"  # label on its key Secrets (06 backup/restore)
 MONITORING_NS="monitoring"                                   # the monitoring-stack namespace (09/krr)
+WORKLOAD_CHARTS="${REPO_ROOT}/argo_apps/workloads/charts"    # the workloads tree the recover_* scripts edit
 
 # ---- derived config (computed from the .env scalars; not user-editable) ---------------------------
 # These can't live in a flat .env (arrays, interpolation, a shasum-keyed path), so they're computed here.
@@ -141,6 +146,60 @@ require() {
       *)        die "$t not found on PATH" ;;
     esac
   done
+}
+
+# ---- workload values.yaml: find + edit one instance's block (the recover_* scripts) ----------
+# Shared by recover_cnpg_from_s3.sh and recover_redis_from_s3.sh so the awk surgery exists ONCE.
+#
+# Edits are line-surgical, NOT `yq -i`. yq rewrites the whole document (collapses comment alignment, drops blank
+# lines, re-flows inline maps), which turned a 2-line change into a 68-line diff on these hand-formatted,
+# heavily commented workload values. `yq` stays fine for READS. (The `yq -i` in 14/15/16/17 is fine too: those
+# write a small generated overlay, not this.) Every edit is scoped between `^<alias>:` and the next top-level key.
+# Safe under both `set -e` and `set -uo`: nothing here returns non-zero on a normal path, all vars are defaulted.
+
+# confirm <prompt>: y/N gate, auto-yes when the caller set ASSUME_YES=true.
+confirm() {
+  [ "${ASSUME_YES:-false}" = "true" ] && return 0
+  local a; read -rp "$1 [y/N]: " a; [[ "$a" =~ ^[Yy]$ ]]
+}
+
+# wl_find_alias <instance-name> <versionKey>: locate the workload chart + dependency alias owning an instance.
+# Prints "<values-file>\t<alias>" and returns 0, or prints nothing and returns 1.
+#
+# versionKey is the REQUIRED knob that identifies the chart kind: postgresVersion for pg-cluster, redisVersion
+# for redis-instance. Each is absent from the other chart, so it is an exact kind discriminator. It is not
+# cosmetic: matching on `name` alone would let the CNPG script hand a REDIS alias to its restore-block writer,
+# which redis-instance has no knob for and would silently ignore.
+wl_find_alias() {
+  local src="$1" vkey="$2" f a
+  for f in "${WORKLOAD_CHARTS}"/*/values.yaml; do
+    [ -f "$f" ] || continue
+    a="$(SRC="$src" VKEY="$vkey" yq -r \
+      '[to_entries[] | select(.value | type == "!!map")
+        | select(.value.name == strenv(SRC)) | select(.value[strenv(VKEY)] != null) | .key] | .[0] // ""' \
+      "$f" 2>/dev/null)"
+    if [ -n "$a" ] && [ "$a" != "null" ]; then printf '%s\t%s\n' "$f" "$a"; return 0; fi
+  done
+  return 1
+}
+
+# vy_read <file> <alias> <key>: read a value under the alias. Callers test emptiness, so this works for scalars
+# and for maps alike (an absent key and an empty one both read as "").
+vy_read() { ALIAS="$2" K="$3" yq -r '.[strenv(ALIAS)][strenv(K)] // ""' "$1" 2>/dev/null; }
+
+# vy_protect_on <file> <alias>: flip deletionProtection to true inside the alias block. SUBSTITUTES an existing
+# line rather than inserting one, which is safe because both pg-cluster and redis-instance make the knob
+# REQUIRED; callers still assert with vy_read afterwards.
+vy_protect_on() {
+  local f="$1" alias="$2" tmp; tmp="$(mktemp)"
+  awk -v alias="$alias" '
+    $0 ~ "^"alias":" { inb=1; print; next }
+    inb && /^[^[:space:]#]/ { inb=0 }
+    inb && /^  deletionProtection:/ {
+      print "  deletionProtection: true  # holds real data: a stray prune must orphan it, never delete it"; next
+    }
+    { print }
+  ' "$f" > "$tmp" && mv "$tmp" "$f"
 }
 
 # ---- cluster credentials (written by 03d to the gitignored secrets/ symlink at the repo root) ----

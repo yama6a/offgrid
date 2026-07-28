@@ -31,7 +31,6 @@ source "${SCRIPT_DIR}/common.sh"
 STORAGE_CLASS="local-path"        # side mode: same node-local class the pg-cluster wrapper uses
 STORAGE_SIZE="45Gi"               # side mode: matches the wrapper (a no-op under local-path; it statfs's the partition)
 PLUGIN="barman-cloud.cloudnative-pg.io"
-WORKLOAD_CHARTS="${REPO_ROOT}/argo_apps/workloads/charts"
 SYNC_WAIT=600                     # in-place: seconds to wait for Argo to sync the pushed commit
 READY_WAIT=1200                   # in-place: seconds to wait for the recovered cluster to reach full readiness
 POLL=10
@@ -53,20 +52,10 @@ require kubectl yq
 use_kubeconfig
 assert_api
 
-confirm() {  # confirm <prompt>
-  [ "$ASSUME_YES" = "true" ] && return 0
-  local a; read -rp "$1 [y/N]: " a; [[ "$a" =~ ^[Yy]$ ]]
-}
-
-# ---- values.yaml editing -----------------------------------------------------
-# Line-surgical, NOT `yq -i`. yq rewrites the whole document: it collapses comment alignment, drops blank lines
-# and re-flows inline maps, which turns a 2-line change into a 70-line diff on these hand-formatted, heavily
-# commented workload values. Everything below touches only the alias's own block, so the commit stays
-# reviewable. (The `yq -i` in 14/15/16/17 is fine: those write a small generated overlay, not this.)
-# Each edit is scoped between `^<alias>:` and the next top-level key.
-
-# vy_read <file> <alias> <key>: read a scalar under the alias (yq is safe for READS)
-vy_read() { ALIAS="$2" K="$3" yq -r '.[strenv(ALIAS)][strenv(K)] // ""' "$1" 2>/dev/null; }
+# ---- values.yaml editing (CNPG-specific; the shared pieces live in common.sh) ----------------
+# vy_read / vy_protect_on / wl_find_alias / confirm are in common.sh, along with the reasoning for the
+# line-surgical awk (yq -i reformats the whole hand-written document). The two below stay here because they
+# are specific to the pg-cluster `restore` knob and its marker comment; redis-instance has no equivalent.
 
 # vy_restore_on <file> <alias> [targetTime]: append a `restore:` block at the end of the alias block.
 # Buffers the block so the insert goes after its last INDENTED line, not after the column-0 comment block that
@@ -109,18 +98,6 @@ vy_restore_off() {
   ' "$f" > "$tmp" && mv "$tmp" "$f"
 }
 
-# vy_protect_on <file> <alias>: flip deletionProtection to true inside the alias block
-vy_protect_on() {
-  local f="$1" alias="$2" tmp; tmp="$(mktemp)"
-  awk -v alias="$alias" '
-    $0 ~ "^"alias":" { inb=1; print; next }
-    inb && /^[^[:space:]#]/ { inb=0 }
-    inb && /^  deletionProtection:/ {
-      print "  deletionProtection: true  # holds real data: a stray prune must orphan it, never delete it"; next
-    }
-    { print }
-  ' "$f" > "$tmp" && mv "$tmp" "$f"
-}
 
 # === 1. pick a mode ==========================================================
 if [ -z "$MODE" ]; then
@@ -254,14 +231,12 @@ fi
 
 # === 3b. mode: in-place ======================================================
 # Find the workload chart + the dependency alias that owns this database, so we can drive its `restore` knob.
-VALUES=""; ALIAS=""
-for f in "${WORKLOAD_CHARTS}"/*/values.yaml; do
-  [ -f "$f" ] || continue
-  a="$(SRC="$SOURCE" yq -r '[to_entries[] | select(.value | type == "!!map") | select(.value.name == env(SRC)) | select(has("postgresVersion") | not) | .key] | .[0] // ""' "$f" 2>/dev/null)"
-  [ -z "$a" ] || [ "$a" = "null" ] && a="$(SRC="$SOURCE" yq -r '[to_entries[] | select(.value | type == "!!map") | select(.value.name == env(SRC)) | select(.value.postgresVersion != null) | .key] | .[0] // ""' "$f" 2>/dev/null)"
-  if [ -n "$a" ] && [ "$a" != "null" ]; then VALUES="$f"; ALIAS="$a"; break; fi
-done
-[ -n "$VALUES" ] || die "no workload chart under ${WORKLOAD_CHARTS} has a pg-cluster instance named ${SOURCE}. In-place restore drives that chart's values; add the instance back to git first, or use --mode side."
+# Find the workload chart + the dependency alias that owns this database, so we can drive its `restore` knob.
+# postgresVersion is the kind discriminator: it keeps this from ever matching a redis alias, whose chart has no
+# restore knob and would silently swallow the block.
+FOUND="$(wl_find_alias "$SOURCE" postgresVersion || true)"
+VALUES="${FOUND%%	*}"; ALIAS="${FOUND##*	}"
+[ -n "$FOUND" ] || die "no workload chart under ${WORKLOAD_CHARTS} has a pg-cluster instance named ${SOURCE}. In-place restore drives that chart's values; add the instance back to git first, or use --mode side."
 ok "owning chart: ${VALUES#${REPO_ROOT}/} (alias '${ALIAS}')"
 
 GIT_RESTORE="$(yq -r ".${ALIAS}.restore.enabled // false" "$VALUES")"
