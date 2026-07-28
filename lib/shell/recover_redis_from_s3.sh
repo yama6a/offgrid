@@ -4,25 +4,28 @@
 #
 # Restore a standalone OpsTree Redis instance from its off-cluster S3 RDB dumps (written by the central backup
 # CronJob, 07_redis_backup / 15_redis_backup.sh). Second DR tier: use it when the data is genuinely gone
-# (disk/cluster loss, corruption, or a bad write you want to rewind). See docs/12_redis.md.
+# (disk/cluster loss, corruption, a bad write you want to rewind, or a deliberate two-commit delete).
 #
-# Live, in-place, full-fidelity restore that NEVER deletes the Redis CR or touches its PVC/AOF files, so the
-# OpsTree operator is left alone:
-#   1. lists every dump for the instance with size + age, so an EMPTY or ancient one cannot be picked blind.
-#      An empty RDB (<250 bytes) takes an explicit confirm: restoring one FLUSHALLs the instance and puts
-#      nothing back, which is data loss that reads as a successful run.
-#   2. a TEMPORARY seed pod (in ns redis-backup, where the sealed S3 creds live) downloads the chosen RDB and
-#      boots a plain redis-server from it (appendonly off) so it holds the dataset. Its image is read off the
-#      target's LIVE CR (.spec.kubernetesConfig.image), since an RDB is forward-only.
-#   3. break-glass CiliumNetworkPolicies open target(ns) <-> seed(redis-backup ns) on 6379 for the duration.
-#   4. the target is FLUSHALLed then made a replica of the seed (REPLICAOF), so a full resync pulls the whole
-#      dataset (all types + TTLs), then REPLICAOF NO ONE promotes it back to a standalone master.
-#   5. reports keys-before vs keys-after plus a type/TTL sample, and FAILS on a 0-key restore.
-#   6. the trap PROMOTES THE TARGET BACK before tearing down the seed + netpols, so bailing out mid-restore
-#      cannot leave it a read-only replica of a deleted pod.
+# Resolves state first (what git declares vs what the cluster has), prints it, then runs three phases:
 #
-# It restores INTO a running instance and cannot create one. If the instance itself is gone, restore its values
-# block + Chart.yaml alias in git first, let Argo bring it up empty, then run this.
+#   PHASE 1  get an instance to restore into. This replays a dump INTO a running instance and cannot create
+#            one, but when the alias is still in git the instance is already on its way back, so it WAITS for
+#            Argo + the operator rather than making you poll. If nothing in git declares it, it says which two
+#            files to put back (the Chart.yaml alias is not recoverable from values.yaml alone) and stops.
+#            Refuses on an uncommitted values.yaml: Argo syncs the pushed remote, not your working tree.
+#   PHASE 2  pick a dump and replay it. Lists every dump with size + age; an RDB under 250 bytes is EMPTY and
+#            takes an explicit yes, because restoring one FLUSHALLs the instance and puts nothing back, which
+#            is data loss that reads as a successful run. Then: a temporary seed pod in redis-backup loads the
+#            RDB (image taken from the target's live CR, an RDB being forward-only), break-glass
+#            CiliumNetworkPolicies open target <-> seed on 6379, the target is FLUSHALLed and made a REPLICAOF
+#            of the seed so a full resync carries every type, TTL and score, then it is promoted back.
+#            Reports keys-before vs keys-after plus a type/TTL sample, and FAILS a 0-key restore.
+#   PHASE 3  re-protect. A restore usually follows a delete that set deletionProtection false, so it puts that
+#            back and prints the commit.
+#
+# The trap promotes the target back BEFORE tearing the seed down, so bailing out mid-restore cannot leave it a
+# read-only replica of a deleted pod. Follows the repo rule that a script never runs git: it edits values.yaml
+# and prints the commit for you. See docs/12_redis.md.
 #
 # Usage (flags optional, prompts for anything missing):
 #   bash recover_redis_from_s3.sh [--namespace NS] [--instance NAME] [--target latest|<N>|<s3-key>] [--apply]
@@ -39,6 +42,8 @@ SEED_NS="redis-backup"                                            # the seed run
 SECRET_NAME="redis-backup-s3"                                     # the sealed writer creds in SEED_NS
 # renovate: datasource=docker
 AWSCLI_IMAGE="public.ecr.aws/aws-cli/aws-cli:2.36.5"             # the seed's S3-download initContainer
+REBUILD_WAIT=600                  # phase 1: seconds to wait for Argo + the operator to rebuild a deleted instance
+POLL=10
 
 NS=""; INSTANCE=""; TARGET="latest"; DO_APPLY="false"
 while [ $# -gt 0 ]; do
@@ -81,13 +86,71 @@ redis_keycount() {  # redis_keycount <namespace> <pod> <container>
 [ -n "$INSTANCE" ] || read -rp "Redis instance name (the CR / Service name): " INSTANCE
 [ -n "$NS" ] && [ -n "$INSTANCE" ] || die "namespace and instance are required"
 
-kubectl -n "$NS" get redis "$INSTANCE" >/dev/null 2>&1 || die "$(printf 'Redis CR %s/%s not found.\n' "$NS" "$INSTANCE")
-Either the name/namespace is wrong (check: kubectl get redis -A), or the instance is genuinely gone. This
-script loads a dump INTO a running instance and cannot create one, so if it is gone, bring it back empty
-first: restore its values block + Chart.yaml alias in git, push, let Argo build it, then re-run.
-See docs/12_redis.md."
 kubectl -n "$SEED_NS" get secret "$SECRET_NAME" >/dev/null 2>&1 \
-  || die "sealed creds ${SEED_NS}/${SECRET_NAME} missing — enable backups first (make configure-redis-backup)"
+  || die "sealed creds ${SEED_NS}/${SECRET_NAME} missing: enable backups first (make configure-redis-backup)"
+
+# ---- state: git says what SHOULD exist, the cluster says what DOES --------------------------------------
+# Same shape as recover_cnpg_from_s3.sh: resolve everything first, print it, then decide. redisVersion is the
+# kind discriminator so this can never bind to a pg-cluster alias of the same name.
+FOUND="$(wl_find_alias "$INSTANCE" redisVersion || true)"
+VALUES=""; ALIAS=""; IFS=$'\t' read -r VALUES ALIAS <<< "$FOUND" || true   # tab-separated, split explicitly
+GIT_PROTECT="no"; DIRTY="no"
+if [ -n "$FOUND" ]; then
+  [ "$(vy_read "$VALUES" "$ALIAS" deletionProtection)" = "true" ] && GIT_PROTECT="yes"
+  git -C "$REPO_ROOT" diff --quiet -- "$VALUES" 2>/dev/null || DIRTY="yes"
+fi
+CR_EXISTS="no"; kubectl -n "$NS" get redis "$INSTANCE" >/dev/null 2>&1 && CR_EXISTS="yes"
+
+say "State"
+echo "    instance            : ${NS}/${INSTANCE}"
+echo "    live Redis CR       : ${CR_EXISTS}"
+if [ -n "$FOUND" ]; then
+  echo "    owning chart        : ${VALUES#${REPO_ROOT}/} (alias '${ALIAS}')"
+  echo "    git deletionProtection: ${GIT_PROTECT}"
+  echo "    uncommitted edits to that values.yaml: ${DIRTY}"
+else
+  echo "    owning chart        : NOT IN GIT"
+fi
+
+# ---- PHASE 1/3: get an instance to restore into --------------------------------------------------------
+# This script replays a dump INTO a running instance; it cannot create one. But when the alias is still in git
+# the instance is already on its way back, so wait for Argo instead of making the operator poll by hand.
+say "PHASE 1/3, target instance"
+if [ -z "$FOUND" ] && [ "$CR_EXISTS" = "no" ]; then
+  die "$(printf 'no Redis instance %s/%s, and no workload chart in git declares it.\n' "$NS" "$INSTANCE")
+Restore it in git FIRST, then re-run this and it will wait for Argo to build it:
+  1. put back its values block AND its Chart.yaml alias entry (the alias is not recoverable from values alone)
+  2. git add/commit/push
+  3. make restore-redis
+It comes back EMPTY on a fresh PVC; this script then loads the dump into it. See docs/12_redis.md."
+fi
+if [ "$DIRTY" = "yes" ]; then
+  warn "${VALUES#${REPO_ROOT}/} has uncommitted changes: ArgoCD syncs the pushed remote, not your working tree."
+  die "commit + push first, then re-run."
+fi
+if [ "$CR_EXISTS" = "no" ]; then
+  say "alias '${ALIAS}' is in git but the instance is not up yet; waiting up to ${REBUILD_WAIT}s for Argo"
+  DEADLINE=$(( $(date +%s) + REBUILD_WAIT ))
+  while :; do
+    kubectl -n "$NS" get redis "$INSTANCE" >/dev/null 2>&1 && { ok "Redis CR ${INSTANCE} exists"; break; }
+    [ "$(date +%s)" -ge "$DEADLINE" ] && die "no Redis CR ${NS}/${INSTANCE} after ${REBUILD_WAIT}s. Did the commit get pushed? Check: kubectl -n argocd get app"
+    printf '    waiting for the CR...\n'; sleep "$POLL"
+  done
+fi
+
+# The pod is what we exec into, and it lags the CR by the time the operator needs to build the StatefulSet.
+TARGET_POD=""
+DEADLINE=$(( $(date +%s) + REBUILD_WAIT ))
+while :; do
+  TARGET_POD="$(kubectl -n "$NS" get pod -l "app=${INSTANCE}" \
+    --field-selector=status.phase=Running -o jsonpath='{.items[0].metadata.name}' 2>/dev/null || true)"
+  if [ -n "$TARGET_POD" ] \
+     && [ "$(kubectl -n "$NS" get pod "$TARGET_POD" -o jsonpath='{.status.conditions[?(@.type=="Ready")].status}' 2>/dev/null)" = "True" ]; then
+    ok "pod ${TARGET_POD} is Ready"; break
+  fi
+  [ "$(date +%s)" -ge "$DEADLINE" ] && die "no Ready pod with label app=${INSTANCE} in ${NS} after ${REBUILD_WAIT}s; inspect: kubectl -n ${NS} get pods -l app=${INSTANCE}"
+  printf '    waiting for a Ready pod...\n'; sleep "$POLL"
+done
 
 # Seed image == the image THIS instance actually runs, read off its live CR. An RDB is forward-only, so the seed
 # that loads it must match the instance's version, and redisVersion is per-workload (no global tag to grep).
@@ -100,6 +163,7 @@ EMPTY_RDB_BYTES=250   # an empty RDB is ~90-200 bytes (header + metadata, no key
 
 # Show what is restorable, with size and age. `latest` on its own hides both an ancient dump and an EMPTY one,
 # and the next step FLUSHALLs the instance, so the choice needs evidence in front of it.
+say "PHASE 2/3, pick a dump and replay it"
 say "dumps available under ${DEST}"
 # `|| true`: no matching objects makes grep exit 1, and under `set -e` a failing command substitution kills the
 # script silently, before the die below can explain what is wrong.
@@ -155,16 +219,6 @@ if [ -n "${SIZE:-}" ] && [ "$SIZE" -lt "$EMPTY_RDB_BYTES" ] 2>/dev/null; then
   [[ "$EOK" =~ ^[Yy]$ ]] || { warn "Aborted."; exit 0; }
   EMPTY_OK="true"
 fi
-
-TARGET_POD="$(kubectl -n "$NS" get pod -l "app=${INSTANCE}" -o jsonpath='{.items[0].metadata.name}' 2>/dev/null)"
-[ -n "$TARGET_POD" ] || die "$(printf 'no running pod with label app=%s in %s.\n' "$INSTANCE" "$NS")
-This restore replays a dump INTO a running instance (FLUSHALL + REPLICAOF); it cannot create one. If the
-instance is genuinely gone (a prune got past deletionProtection, or the cluster was rebuilt), bring it back
-empty FIRST, then re-run:
-  1. restore the instance's values block + its Chart.yaml alias in git, and push
-  2. wait for Argo: kubectl -n ${NS} get redis ${INSTANCE}   (it comes up EMPTY on a fresh PVC)
-  3. re-run this script to load the dump into it
-See docs/12_redis.md."
 
 # The pod runs the redis container alongside a redis-exporter sidecar and carries no default-container
 # annotation, so a bare `exec` silently depends on container ordering. Name it: anything but the exporter.
@@ -361,6 +415,35 @@ if [ "$TGT_DBSIZE" != "0" ]; then
     || warn "could not sample keys"
 fi
 
-# ---- 5. done (trap tears down the seed + netpols) ---------------------------
+# ---- PHASE 3/3: re-protect ----------------------------------------------------------------------------
+# A restore usually follows a deliberate two-commit delete, which left deletionProtection false. Put it back the
+# same way the CNPG script does: edit, assert, print the commit. No script here runs git.
+say "PHASE 3/3, re-protect"
+if [ -z "$FOUND" ]; then
+  warn "instance is not declared in any workload chart, so there is no deletionProtection to restore"
+elif [ "$GIT_PROTECT" = "yes" ]; then
+  ok "${ALIAS}.deletionProtection is already true in git, nothing to do"
+elif [ "$FAIL" -ne 0 ]; then
+  warn "restore reported failures, so NOT re-protecting; fix the data first, then set ${ALIAS}.deletionProtection=true"
+else
+  vy_protect_on "$VALUES" "$ALIAS" || die "edit failed"
+  [ "$(vy_read "$VALUES" "$ALIAS" deletionProtection)" = "true" ] \
+    && ok "set ${ALIAS}.deletionProtection=true in ${VALUES#${REPO_ROOT}/} (it was false; never leave an instance unprotected)" \
+    || die "post-edit check failed: ${ALIAS}.deletionProtection is not true"
+  git -C "$REPO_ROOT" --no-pager diff --stat -- "$VALUES" | sed 's/^/    /'
+  cat <<NEXT
+
+Last step, commit and push:
+
+    git add ${VALUES#${REPO_ROOT}/}
+    git commit -m "${INSTANCE}: restore done, re-protect"
+    git push
+
+NB this flip is NOT inert: the operator copies the CR's annotations onto its StatefulSet pod template, so adding
+the sync-options back RESTARTS the pod (~20s). The data survives on the AOF. See docs/12_redis.md.
+NEXT
+fi
+
+# ---- done (trap tears down the seed + netpols) ------------------------------
 summary
 [ "$FAIL" -eq 0 ]

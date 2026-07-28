@@ -235,7 +235,7 @@ fi
 # postgresVersion is the kind discriminator: it keeps this from ever matching a redis alias, whose chart has no
 # restore knob and would silently swallow the block.
 FOUND="$(wl_find_alias "$SOURCE" postgresVersion || true)"
-VALUES="${FOUND%%	*}"; ALIAS="${FOUND##*	}"
+VALUES=""; ALIAS=""; IFS=$'\t' read -r VALUES ALIAS <<< "$FOUND" || true   # tab-separated, split explicitly
 [ -n "$FOUND" ] || die "no workload chart under ${WORKLOAD_CHARTS} has a pg-cluster instance named ${SOURCE}. In-place restore drives that chart's values; add the instance back to git first, or use --mode side."
 ok "owning chart: ${VALUES#${REPO_ROOT}/} (alias '${ALIAS}')"
 
