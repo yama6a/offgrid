@@ -32,10 +32,6 @@ dependencies:
     alias: redis-cache
     version: "*"
     repository: "file://../../../../lib/helm/redis-instance"
-  - name: redis-instance
-    alias: redis-sessions
-    version: "*"
-    repository: "file://../../../../lib/helm/redis-instance"
   - name: ingress
     version: "*"              # shared edge library; renders this workload's ingress from values below
     repository: "file://../../../../lib/helm/ingress"
