@@ -68,6 +68,14 @@ PREFIX="$(yq -r '.prefix' "$RB_VALUES")"
 
 say "Redis restore from S3 — seed pod + replication resync (in-place, non-destructive to the CR)"
 
+# Total keys across ALL databases. DBSIZE counts only the currently selected db, but FLUSHALL clears every db
+# and the seed loads every db the RDB contains, so a dump using db1+ would be under-counted on BOTH sides and
+# the equality check would still "match". Sums the keys=N fields of INFO keyspace; prints 0 when empty.
+redis_keycount() {  # redis_keycount <namespace> <pod> <container>
+  kubectl -n "$1" exec "$2" -c "$3" -- redis-cli INFO keyspace 2>/dev/null \
+    | tr -d '\r' | sed -n 's/^db[0-9][0-9]*:keys=\([0-9][0-9]*\),.*/\1/p' | awk '{s+=$1} END {print s+0}'
+}
+
 # ---- 1. gather inputs -------------------------------------------------------
 [ -n "$NS" ]       || read -rp "Namespace: " NS
 [ -n "$INSTANCE" ] || read -rp "Redis instance name (the CR / Service name): " INSTANCE
@@ -127,7 +135,12 @@ case "$TARGET" in
      KEY="$(printf '%s' "$KEYS" | sed -n "${TARGET}p")"; SIZE="$(printf '%s' "$SIZES" | sed -n "${TARGET}p")"
      OBJECT="${DEST}${KEY}" ;;
 esac
-aws s3 ls "$OBJECT" >/dev/null 2>&1 || die "object not found: ${OBJECT}"
+# head-object, not `s3 ls`: ls is a PREFIX listing, so a truncated or mistyped key that happens to prefix a real
+# object would pass. This also returns the authoritative size for the empty-dump guard below.
+OBJ_KEY="${OBJECT#s3://${BUCKET}/}"
+HEAD="$(aws s3api head-object --bucket "$BUCKET" --key "$OBJ_KEY" 2>/dev/null || true)"
+[ -n "$HEAD" ] || die "no such object: ${OBJECT} (exact key match; pick one from the list above)"
+SIZE="$(printf '%s' "$HEAD" | sed -n 's/.*"ContentLength"[[:space:]]*:[[:space:]]*\([0-9][0-9]*\).*/\1/p' | head -1)"
 ok "restoring from: ${OBJECT} (${SIZE:-?} bytes)"
 
 # The one guard that matters: this sits in front of a FLUSHALL. Restoring an empty dump is a data-loss event
@@ -300,11 +313,11 @@ kubectl -n "$SEED_NS" wait --for=condition=Ready "pod/${SEED_POD}" --timeout=180
   || die "seed pod ${SEED_NS}/${SEED_POD} did not become Ready (check: kubectl -n ${SEED_NS} logs ${SEED_POD})"
 SEED_IP="$(kubectl -n "$SEED_NS" get pod "$SEED_POD" -o jsonpath='{.status.podIP}')"
 [ -n "$SEED_IP" ] || die "could not read seed pod IP"
-SEED_DBSIZE="$(kubectl -n "$SEED_NS" exec "$SEED_POD" -c seed -- redis-cli DBSIZE | tr -dc '0-9')"
+SEED_DBSIZE="$(redis_keycount "$SEED_NS" "$SEED_POD" seed)"
 ok "seed serving on ${SEED_IP}, loaded ${SEED_DBSIZE} keys from the dump"
 
 # ---- 4. resync the target from the seed -------------------------------------
-BEFORE_DBSIZE="$(kubectl -n "$NS" exec "$TARGET_POD" -c "$TARGET_CTR" -- redis-cli DBSIZE | tr -dc '0-9')"
+BEFORE_DBSIZE="$(redis_keycount "$NS" "$TARGET_POD" "$TARGET_CTR")"
 say "FLUSHALL + REPLICAOF on the target (${TARGET_POD}); it currently holds ${BEFORE_DBSIZE} keys"
 kubectl -n "$NS" exec "$TARGET_POD" -c "$TARGET_CTR" -- redis-cli FLUSHALL >/dev/null
 kubectl -n "$NS" exec "$TARGET_POD" -c "$TARGET_CTR" -- redis-cli REPLICAOF "$SEED_IP" 6379 >/dev/null
@@ -323,7 +336,7 @@ ok "resync complete"
 say "promoting the target back to a standalone master (REPLICAOF NO ONE)"
 kubectl -n "$NS" exec "$TARGET_POD" -c "$TARGET_CTR" -- redis-cli REPLICAOF NO ONE >/dev/null
 PROMOTED="yes"   # past here the trap no longer needs to rescue the target
-TGT_DBSIZE="$(kubectl -n "$NS" exec "$TARGET_POD" -c "$TARGET_CTR" -- redis-cli DBSIZE | tr -dc '0-9')"
+TGT_DBSIZE="$(redis_keycount "$NS" "$TARGET_POD" "$TARGET_CTR")"
 # ---- 5. verdict -------------------------------------------------------------
 # Key COUNT equality alone is not a pass: 0 == 0 is equal, so wiping an instance with an empty dump used to
 # report success. Judge the outcome, not just the arithmetic.
