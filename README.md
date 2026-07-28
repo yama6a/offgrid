@@ -281,4 +281,3 @@ Pi 5 Talos image builds on [talos-rpi5/talos-builder](https://github.com/talos-r
 - 
 - read and shorten all md files.
 - improve then apply comment rules from claude.md to all yaml and other code files.
-- disaster recovery exercise
