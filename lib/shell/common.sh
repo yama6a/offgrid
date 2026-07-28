@@ -196,7 +196,7 @@ vy_protect_on() {
     $0 ~ "^"alias":" { inb=1; print; next }
     inb && /^[^[:space:]#]/ { inb=0 }
     inb && /^  deletionProtection:/ {
-      print "  deletionProtection: true  # holds real data: a stray prune must orphan it, never delete it"; next
+      print "  deletionProtection: true    # always true in steady state; flip to false only to delete it"; next
     }
     { print }
   ' "$f" > "$tmp" && mv "$tmp" "$f"

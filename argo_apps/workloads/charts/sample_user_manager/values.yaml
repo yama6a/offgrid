@@ -138,7 +138,7 @@ redis-sessions:
   # renovate: datasource=docker depName=quay.io/opstree/redis
   redisVersion: "v8.6.2"      # Redis server version, owned by this workload
   persistence: true           # durable: AOF (crash-durable) + central S3 RDB backup; showcases the persistent mode
-  deletionProtection: true  # holds real data: a stray prune must orphan it, never delete it
+  deletionProtection: true    # always true in steady state; flip to false only to delete it
   # Durable => labelled for backup + backed up automatically by the central 07_redis_backup job (see 12_redis.md).
   initialFixedDiskSize: 1Gi   # create-time ONLY — changing this does NOT resize a live instance (see 12_redis.md)
   resources:
@@ -147,4 +147,3 @@ redis-sessions:
   allowedClients:
     - namespace: sample-user-manager
       matchLabels: { app: sample-user-manager }
-
