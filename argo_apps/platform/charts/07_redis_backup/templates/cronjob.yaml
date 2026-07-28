@@ -100,20 +100,41 @@ spec:
                 - |
                   set -u
                   ts="$(date -u +%Y%m%dT%H%M%SZ)"
+                  now="$(date -u +%s)"
+                  : > /work/status.txt
                   while read -r ns name; do
                     [ -n "$ns" ] || continue
                     f="/work/${ns}__${name}.rdb"
                     [ -f "$f" ] || { echo "no dump for $ns/$name (already recorded as failed)"; continue; }
                     key="${PREFIX}${ns}/${name}/${ts}.rdb"
                     echo "uploading $ns/$name -> s3://${BUCKET}/${key}"
-                    if aws s3 cp "$f" "s3://${BUCKET}/${key}"; then echo "  ok"; else echo "  UPLOAD FAILED $ns/$name"; echo "$ns/$name upload" >> /work/failed.txt; fi
+                    if aws s3 cp "$f" "s3://${BUCKET}/${key}"; then
+                      echo "  ok"
+                      # Per-instance outcome for the recoverability metric. Size is the whole point: an upload
+                      # can succeed with a keyless RDB, and only the byte count distinguishes that from a real
+                      # backup. Recorded per instance, so a partial run still reports the ones that worked.
+                      echo "${ns}_${name}=${now} $(wc -c < "$f" | tr -d ' ')" >> /work/status.txt
+                    else
+                      echo "  UPLOAD FAILED $ns/$name"; echo "$ns/$name upload" >> /work/failed.txt
+                    fi
                   done < /work/instances.txt
+                  # Publish the outcome where something without S3 access can read it: nothing in-cluster
+                  # otherwise knows whether a dump exists, so orphan-exporter reads this ConfigMap to export
+                  # redis_backup_recoverable. Written even on a failed run, so the surviving instances still
+                  # report. Deliberately NOT annotations on the Redis CRs: those are Argo-managed with selfHeal,
+                  # which would strip them and make the metric flap.
+                  kubectl -n "$NAMESPACE" create configmap redis-backup-status \
+                    --from-env-file=/work/status.txt --dry-run=client -o yaml \
+                    | kubectl apply -f - >/dev/null \
+                    && echo "recorded per-instance status for $(grep -c . /work/status.txt || echo 0) instance(s)" \
+                    || echo "WARNING could not write the redis-backup-status ConfigMap (metric will go stale)"
                   if [ -s /work/failed.txt ]; then echo "FAILURES:"; cat /work/failed.txt; exit 1; fi
                   echo "all backups ok"
               env:
                 - { name: HOME,   value: /work }
                 - { name: BUCKET, value: {{ .Values.bucket | quote }} }
                 - { name: PREFIX, value: {{ .Values.prefix | quote }} }
+                - { name: NAMESPACE, value: {{ .Release.Namespace | quote }} }   # where the status ConfigMap lands
                 - { name: AWS_DEFAULT_REGION, value: {{ .Values.region | quote }} }
                 - name: AWS_ACCESS_KEY_ID
                   valueFrom:

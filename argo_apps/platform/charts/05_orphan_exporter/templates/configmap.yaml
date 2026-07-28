@@ -17,6 +17,10 @@ data:
     API = "https://%s:%s" % (os.environ["KUBERNETES_SERVICE_HOST"],
                              os.environ.get("KUBERNETES_SERVICE_PORT", "443"))
     ARGOCD_NS = os.environ.get("ARGOCD_NS", "argocd")
+    REDIS_BACKUP_NS = os.environ.get("REDIS_BACKUP_NS", "redis-backup")
+    REDIS_STATUS_CM = "redis-backup-status"                        # written by the 07_redis_backup CronJob
+    REDIS_BACKUP_LABEL = "redis-backup.raspi-cluster/enabled"      # stamped by redis-instance on persistence:true
+    EMPTY_RDB_BYTES = 250   # under this an RDB holds no keys; same threshold recover_redis_from_s3.sh guards on
     INTERVAL = int(os.environ.get("INTERVAL", "60"))
     PORT = int(os.environ.get("PORT", "9100"))
     SA = "/var/run/secrets/kubernetes.io/serviceaccount"
@@ -109,6 +113,46 @@ data:
                            % (lb, rfc3339((w or {}).get("lastSuccessfulBackupTime"))))
         return out
 
+    # Redis backup recoverability. Redis has no in-cluster object describing its backup state (the Redis CR has
+    # no backup stanza and the only artefact is the S3 object), so the central 07_redis_backup CronJob publishes
+    # what it knows into ConfigMap redis-backup/redis-backup-status, one key per instance,
+    # `<ns>_<name>: "<unix_ts> <bytes>"`. `_` is a safe separator: k8s names cannot contain it.
+    # The set of instances comes from the CRs, NOT from that ConfigMap, which is the point: an instance that the
+    # job never discovered (label lost, persistence flipped, renamed) has no entry, and the job still exits 0
+    # and "all backups ok". Keying off the labelled CRs turns that silence into a 0.
+    def collect_redis_recoverability():
+        out = [
+            "# HELP redis_backup_recoverable 1 = a non-empty RDB dump was uploaded for this instance",
+            "# TYPE redis_backup_recoverable gauge",
+            "# HELP redis_backup_last_success_seconds unix ts of the last successful dump upload (0 = never)",
+            "# TYPE redis_backup_last_success_seconds gauge",
+            "# HELP redis_backup_last_size_bytes size of the last uploaded RDB (an empty dump is ~90-200)",
+            "# TYPE redis_backup_last_size_bytes gauge",
+        ]
+        try:
+            data = get("/api/v1/namespaces/%s/configmaps/%s" % (REDIS_BACKUP_NS, REDIS_STATUS_CM)).get("data") or {}
+        except urllib.error.HTTPError as e:
+            if e.code != 404:
+                raise
+            data = {}   # backups never ran, or the feature is off; every labelled instance then reports 0
+        for r in items("/apis/redis.redis.opstreelabs.in/v1beta2/redis"):
+            m = r["metadata"]
+            if (m.get("labels") or {}).get(REDIS_BACKUP_LABEL) != "true":
+                continue    # ephemeral instance, deliberately not backed up
+            ns, name = m["namespace"], m["name"]
+            ts, size = 0, 0
+            parts = (data.get("%s_%s" % (ns, name)) or "").split()
+            if len(parts) == 2:
+                try:
+                    ts, size = int(parts[0]), int(parts[1])
+                except ValueError:
+                    ts, size = 0, 0
+            lb = labels([("res_namespace", ns), ("res_redis", name)])
+            out.append("redis_backup_recoverable{%s} %d" % (lb, 1 if (ts and size >= EMPTY_RDB_BYTES) else 0))
+            out.append("redis_backup_last_success_seconds{%s} %d" % (lb, ts))
+            out.append("redis_backup_last_size_bytes{%s} %d" % (lb, size))
+        return out
+
     def collect():
         apps = items("/apis/argoproj.io/v1alpha1/namespaces/%s/applications" % ARGOCD_NS)
         names = {a["metadata"]["name"] for a in apps}
@@ -144,6 +188,7 @@ data:
                 if app not in names:
                     out.append("%s{%s} 1" % (orphaned_metric, labels(base + [("res_app", app)])))
         out += collect_recoverability()
+        out += collect_redis_recoverability()
         out.append("orphan_exporter_up 1")
         return "\n".join(out) + "\n"
 

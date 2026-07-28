@@ -22,3 +22,30 @@ subjects:
   - kind: ServiceAccount
     name: redis-backup
     namespace: {{ .Release.Namespace }}
+---
+# Namespaced write for the ONE ConfigMap the job publishes its per-instance outcome into (read by
+# orphan-exporter for redis_backup_recoverable). Deliberately a Role, not a ClusterRole: the job has no reason
+# to touch anything outside its own namespace.
+apiVersion: rbac.authorization.k8s.io/v1
+kind: Role
+metadata:
+  name: redis-backup-status
+  namespace: {{ .Release.Namespace }}
+rules:
+  - apiGroups: [""]
+    resources: ["configmaps"]
+    verbs: ["get", "create", "update", "patch"]
+---
+apiVersion: rbac.authorization.k8s.io/v1
+kind: RoleBinding
+metadata:
+  name: redis-backup-status
+  namespace: {{ .Release.Namespace }}
+roleRef:
+  apiGroup: rbac.authorization.k8s.io
+  kind: Role
+  name: redis-backup-status
+subjects:
+  - kind: ServiceAccount
+    name: redis-backup
+    namespace: {{ .Release.Namespace }}

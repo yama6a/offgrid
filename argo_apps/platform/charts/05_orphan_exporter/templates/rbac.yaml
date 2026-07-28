@@ -21,6 +21,11 @@ rules:
   - apiGroups: ["argoproj.io"]
     resources: ["applications"]
     verbs: ["get", "list"]
+  # The redis-backup-status ConfigMap the 07_redis_backup CronJob publishes: Redis has no in-cluster object
+  # describing backup state, so this is the only source for redis_backup_recoverable. Read-only, and NOT secrets.
+  - apiGroups: [""]
+    resources: ["configmaps"]
+    verbs: ["get", "list"]
 ---
 apiVersion: rbac.authorization.k8s.io/v1
 kind: ClusterRoleBinding

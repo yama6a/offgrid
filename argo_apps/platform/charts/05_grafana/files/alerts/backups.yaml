@@ -321,6 +321,52 @@ groups:
               conditions:
                 - type: query
                   evaluator: {type: gt, params: [129600]}
+      # The per-instance Redis equivalent, and the reason the two redis rules above are not enough: both key on
+      # the CronJob/Job name, so they only see the whole job. An instance the job never DISCOVERED (backup label
+      # lost, persistence flipped to false, CR renamed) contributes nothing to failed.txt, the job exits 0 and
+      # prints "all backups ok", and neither rule fires. Zero durable instances discovered is equally silent.
+      # Sourced from orphan-exporter, which keys off the labelled Redis CRs rather than the backup job's own
+      # output, so a missing instance reads as 0 instead of an absent series. Also 0 when the last dump was
+      # empty: an upload can succeed with a keyless RDB, and restoring one wipes the instance.
+      # 2h grace covers a freshly created instance whose first nightly dump has not run.
+      - uid: redis-no-recoverable-backup
+        title: Redis instance has no usable backup
+        condition: C
+        for: 2h
+        labels: {severity: critical}
+        annotations:
+          summary: 'Redis {{ $labels.res_namespace }}/{{ $labels.res_redis }} has no usable dump in S3'
+          description: |
+            - durable Redis {{ $labels.res_namespace }}/{{ $labels.res_redis }} has no non-empty dump, so it is NOT restorable
+            - the nightly job may not be discovering it, or its dump is empty; the job still exits 0 either way
+            - check it is discovered: kubectl get redis -A -l redis-backup.raspi-cluster/enabled=true
+            - check what was recorded: kubectl -n redis-backup get cm redis-backup-status -o yaml
+            - check S3: aws s3 ls s3://<bucket>/redis/{{ $labels.res_namespace }}/{{ $labels.res_redis }}/
+        noDataState: OK
+        execErrState: Error
+        data:
+          - refId: A
+            relativeTimeRange: {from: 600, to: 0}
+            datasourceUid: VictoriaMetrics
+            model:
+              refId: A
+              instant: true
+              expr: 'min by (res_namespace, res_redis) (redis_backup_recoverable)'
+          - refId: B
+            relativeTimeRange: {from: 600, to: 0}
+            datasourceUid: __expr__
+            model: {refId: B, type: reduce, expression: A, reducer: last, datasource: {type: __expr__, uid: __expr__}}
+          - refId: C
+            relativeTimeRange: {from: 600, to: 0}
+            datasourceUid: __expr__
+            model:
+              refId: C
+              type: threshold
+              expression: B
+              datasource: {type: __expr__, uid: __expr__}
+              conditions:
+                - type: query
+                  evaluator: {type: lt, params: [1]}
       # The one that actually catches an unrestorable DB, and the reason the two rules above are not enough:
       # WAL archiving can be green and cnpg-backup-too-old permanently silent (its metric stays 0 under the
       # plugin) while the catalog holds no base backup at all. That is exactly what a destinationPath change
