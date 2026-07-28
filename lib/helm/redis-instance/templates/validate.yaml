@@ -27,5 +27,5 @@ wouldn't catch them. Runs in this chart's scope, so it sees the consumer's overr
 {{- fail "redis-instance: deletionProtection is required and must be explicitly true (a GitOps prune orphans the running instance instead of deleting it) or false (the instance is deletable); there is no default" }}
 {{- end }}
 {{- if not (kindIs "bool" .Values.persistence) }}
-{{- fail "redis-instance: persistence is required and must be explicitly true (durable: AOF + S3 backup) or false (ephemeral cache: RDB-only); there is no default. It does not pick a storage class" }}
+{{- fail "redis-instance: persistence is required and must be explicitly true (durable: AOF + S3 backup) or false (ephemeral cache: no explicit appendfsync, no S3 backup); there is no default. It picks neither the storage class nor whether AOF runs at all" }}
 {{- end }}

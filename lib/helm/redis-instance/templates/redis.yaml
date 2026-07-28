@@ -10,12 +10,14 @@ instance at once (the server image REPO, and the exporter's full ref):
   storage class    longhorn-r2-ephemeral for BOTH modes (2-replica, reclaim Delete, from 02_longhorn);
                    initialFixedDiskSize is the only storage knob, create-time only, default 1Gi
                    (see docs/12_redis.md "Resizing an instance")
-  persistence      REQUIRED (no default). true: AOF appendfsync everysec + RDB, crash-durable. false: RDB only, no AOF.
+  persistence      REQUIRED (no default). true: explicit appendfsync everysec + S3 backup. false: neither.
+                   It does NOT disable AOF: the operator's base redis.conf enables it for both modes.
                    Drives AOF + S3 backup enrollment ONLY; it does NOT pick a storage class any more
   maxmemory        80% of the container memory limit (noeviction: writes fail at the cap, never drop data)
   security         non-root uid/gid 1000
   auth             OFF: access is gated by the CiliumNetworkPolicy (see networkpolicy.yaml), not requirepass
-Single standalone instance by design: no HA / replication / sentinel / cluster, and no off-cluster backups.
+Single standalone instance by design: no HA / replication / sentinel / cluster. Durable instances are backed up
+off-cluster by the central 07_redis_backup job.
 Bump the server REPO or the exporter here and every instance picks it up; the server tag is per-workload (redisVersion).
 */ -}}
 apiVersion: redis.redis.opstreelabs.in/v1beta2

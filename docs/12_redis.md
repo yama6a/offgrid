@@ -66,12 +66,12 @@ more Redis" is just "one or more aliases". Each alias is a values key carrying i
 - { name: redis-instance, alias: redis-sessions, version: "*", repository: "file://../../../../lib/helm/redis-instance" }
 ```
 ```yaml
-# values.yaml: the five REQUIRED knobs (+ optional initialFixedDiskSize); rest is hardcoded in the templates
+# values.yaml: the six REQUIRED knobs (+ optional initialFixedDiskSize); rest is hardcoded in the templates
 redis-cache:
   name: sample-user-manager-redis-cache   # also the Service DNS clients dial
   # renovate: datasource=docker depName=quay.io/opstree/redis
   redisVersion: "v8.6.2"                  # REQUIRED: Redis server version, owned per-workload
-  persistence: false                      # REQUIRED, no default: true = durable (AOF + S3 backup) | false = ephemeral (RDB-only)
+  persistence: false                      # REQUIRED, no default: true = explicit appendfsync + S3 backup | false = neither (NB the operator runs AOF either way)
   resources: { requests: { cpu: 25m, memory: 64Mi }, limits: { memory: 96Mi } }
   allowedClients: [ { namespace: sample-user-manager, matchLabels: { app: sample-user-manager } } ]
   # initialFixedDiskSize: 2Gi   # optional; default 1Gi; create-time only (see "Resizing an instance")
@@ -81,7 +81,7 @@ Everything a workload shouldn't decide is **hardcoded in `templates/redis.yaml`*
 instance at once): the image repo, the redis-exporter's full ref, non-root uid/gid 1000, `maxmemory` = 80% of the
 memory limit (so Redis can't OOM its cgroup), and no-auth (the storage class + AOF follow the `persistence` flag).
 The server image TAG is the exception, a per-workload knob (`redisVersion`) so each workload owns its Redis version. The
-workload interface is deliberately just five required knobs, plus an optional create-time `initialFixedDiskSize`
+workload interface is deliberately just six required knobs, plus an optional create-time `initialFixedDiskSize`
 (default 1Gi; see "Resizing an instance" for why it's create-time). See `lib/helm/redis-instance/README.md`.
 
 ## Storage & persistence
@@ -169,26 +169,42 @@ the step no-ops and the CronJob doesn't render (the repo's "empty = off" contrac
 runs step 15 automatically, so a fresh cluster comes up with backups on. Schedule lives in the app's `values.yaml`
 (default daily `0 2 * * *`).
 
-Monitoring is two Grafana alerts (`redis-backup-failed`, `redis-backup-stale`) — see `docs/13_backups.md`.
+Monitoring is three Grafana alerts: `redis-backup-failed` and `redis-backup-stale` (job-level, warning) plus
+`redis-no-recoverable-backup` (per instance, critical), which is the only one that catches a single instance
+silently going unbacked or a dump that uploaded empty — see `docs/13_backups.md`.
 
 ### Restore from S3
 
-`make restore-redis` (`recover_redis_from_s3.sh <namespace> <instance> [latest|<s3-key>]`) does a live, in-place,
-full-fidelity restore that **never deletes the CR or touches the PVC/AOF files** (the operator is left alone):
+`make restore-redis` is the runbook, executable (`lib/shell/recover_redis_from_s3.sh`; flags
+`--namespace --instance [--target latest|<N>|<s3-key>] [--apply]`, prompting for whatever is missing). Pick by
+symptom:
 
-1. a temporary **seed pod** in the `redis-backup` namespace (where the sealed creds live) downloads the chosen RDB
-   and boots a plain `redis-server` from it (`appendonly no`) → holds the dataset. Its image is read from
-   `redis.yaml` at runtime, so it always matches the instance's major (an RDB is forward-only — a v7 seed can't
-   load a v8 dump);
-2. **break-glass** CiliumNetworkPolicies open target↔seed on `6379` across the two namespaces for the duration;
-3. the target is `FLUSHALL`ed (a **clean replace**, prompted) then made a replica of the seed (`REPLICAOF`) → a full
-   resync pulls the whole dataset (all types + TTLs, exact fidelity), then `REPLICAOF NO ONE` promotes it back to a
-   standalone master. Its `appendonly yes` rebuilds the AOF from the restored data automatically;
-4. the seed pod + break-glass policies are torn down (a cleanup trap runs even on failure).
+| Symptom | What to do |
+|---|---|
+| Instance running, data wrong or gone (bad write, corruption, a rewind) | `make restore-redis`. It replays a dump into the live instance. |
+| Instance itself is gone (prune past `deletionProtection`, cluster rebuild) | Restore its values block + `Chart.yaml` alias in git and push FIRST. It comes back EMPTY on a fresh PVC. Then `make restore-redis`. |
+| Instance running, app permanently OutOfSync | Restore the files in git. Argo re-adopts it, no data moves, nothing to run. |
 
-Replication is chosen over an offline PVC swap (which fights the operator + AOF) or `redis-rdb-tools` (unmaintained,
-fragile on new RDB versions). The offline path is possible but not scripted. Caveat: the OpsTree operator may
-reconcile the `Redis` CR during the window — the manual `REPLICAOF` holds long enough to sync; re-run if it races.
+What the script does, and why this shape:
+
+1. lists every dump with size and age, and flags any under 250 bytes as EMPTY. An empty RDB restored over live
+   data is a wipe that reports success, so it takes an explicit confirm (and is refused under `--apply`).
+2. a temporary **seed pod** in `redis-backup` (where the sealed creds live) downloads the chosen RDB and boots a
+   plain `redis-server` on it. Its image comes from the target's live CR, since an RDB is forward-only.
+3. **break-glass** CiliumNetworkPolicies open target to seed on `6379` across the two namespaces.
+4. the target is `FLUSHALL`ed, made a replica of the seed (`REPLICAOF`), then promoted back
+   (`REPLICAOF NO ONE`). A full resync carries every type, TTL and score exactly.
+5. reports keys-before vs keys-after plus a type/TTL sample, and FAILS a 0-key restore.
+6. the trap promotes the target back BEFORE tearing the seed down, so bailing out cannot leave it a read-only
+   replica of a deleted pod.
+
+Replication rather than an offline PVC swap (which fights the operator + AOF) or `redis-rdb-tools`
+(unmaintained, fragile on new RDB versions). The offline path is possible but not scripted. It restores INTO a
+running instance and cannot create one, hence row 2 above. Caveat: the operator may reconcile the CR during the
+window; the manual `REPLICAOF` holds long enough to sync, so re-run if it races.
+
+Per-instance backup health is `redis_backup_recoverable` (see [13_backups.md](13_backups.md)): the job-level
+alerts cannot see one instance silently going unbacked.
 
 ## Resizing an instance
 
@@ -243,15 +259,16 @@ simpler than migrating at all.
 `deletionProtection: true` means removing an alias from git ORPHANS the instance (it keeps running, unmanaged) and
 leaves the app permanently OutOfSync. Deleting is deliberately a two-step, pure-GitOps flow, no `kubectl delete`:
 
-1. Set `deletionProtection: false` on that alias. Commit + push, let ArgoCD sync. This only drops the
-   `Prune=false,Delete=false` annotations; the instance keeps running.
+1. Set `deletionProtection: false` on that alias. Commit + push, let ArgoCD sync. The data is untouched, but the
+   POD DOES RESTART: the operator copies the CR's annotations onto its StatefulSet pod template, so adding or
+   removing the sync-options rolls it. AOF on the PVC carries the data across (measured: ~20s, no loss). This is
+   unlike CNPG, where the same flip is inert.
 2. Remove the alias (its values block + the `Chart.yaml` dependency entry). Commit + push. The next sync prunes it
    for real, and the PVC goes with it (its volume then obeys the class reclaim policy: gone for `-ephemeral`,
    reclaim Delete, so it is removed for good; the off-cluster S3 dump is the only copy left).
 
 Never leave an instance sitting on `false`: that is a transient state between those two commits, not a config
 choice. Same flow as CNPG (see [13_backups.md](13_backups.md)).
-
 ## Security: no password, gated by network policy
 
 **Redis runs without `requirepass` by default.** Access is enforced entirely at the network layer by each instance's

@@ -111,7 +111,7 @@ configure-cnpg-backup: ## 14: enable CNPG S3 backups — seal the writer creds +
 	bash lib/shell/14_cnpg_backup.sh
 
 .PHONY: configure-redis-backup
-configure-redis-backup: ## 15: enable Redis RDB S3 backups — seal the writer creds + write bucket/region into redis-instance.
+configure-redis-backup: ## 15: enable Redis RDB S3 backups: seal the writer creds + write bucket/region into 07_redis_backup.
 	bash lib/shell/15_redis_backup.sh
 
 .PHONY: configure-longhorn-backup
@@ -137,7 +137,7 @@ restore-cnpg: ## Restore a CNPG database from S3, latest or PITR: in-place under
 	bash lib/shell/recover_cnpg_from_s3.sh
 
 .PHONY: restore-redis
-restore-redis: ## Restore a Redis instance from its S3 RDB dump — in-place via a seed pod + replication (interactive, destructive).
+restore-redis: ## Restore a Redis instance from its S3 RDB dump: pick a dump, replay in-place via a seed pod + replication (interactive, destructive).
 	bash lib/shell/recover_redis_from_s3.sh
 
 .PHONY: restore-longhorn

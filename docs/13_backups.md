@@ -226,7 +226,7 @@ backup-timestamp metric populates) against the live cluster — see the verify s
 (arbitrary pod/job labels aren't exported; the name always is):
 
 - **`redis-backup-failed`** (`warning`):
-  `kube_job_failed{condition="true", namespace="redis-backup", job_name=~"redis-backup-.+"} > 0`
+  `kube_job_status_failed{namespace="redis-backup", job_name=~"redis-backup-.+"} > 0` (this kube-state-metrics has no `kube_job_failed{condition=...}`)
   — the central backup Job failed (one or more instances failed to dump/upload; the job's stdout says which).
 - **`redis-backup-stale`** (`warning`):
   `time() - kube_cronjob_status_last_successful_time{namespace="redis-backup", cronjob="redis-backup"} > 36h`,

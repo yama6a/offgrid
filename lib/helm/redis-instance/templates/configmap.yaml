@@ -13,7 +13,8 @@ See docs/12_redis.md.
 
 `appendonly yes` (persistent only) replays every write since the last rewrite on restart — at most ~1s lost on a
 hard crash (`appendfsync everysec`), vs the whole window back to the last RDB snapshot. AOF (and RDB) land on the
-PVC (operator sets dir=/data). Ephemeral (persistence: false) runs RDB-only.
+PVC (operator sets dir=/data). Ephemeral (persistence: false) just omits these lines; the operator's base
+redis.conf still enables AOF, so it is not RDB-only in practice.
 */ -}}
 apiVersion: v1
 kind: ConfigMap

@@ -10,7 +10,8 @@
 # (REQUIRED, no default) selects the storage class + whether AOF is on. The REQUIRED knobs are seeded with invalid
 # sentinels so templates/validate.yaml hard-fails until a consumer overrides them.
 #
-# Single standalone instance by design (no HA / replication / sentinel / cluster) and no off-cluster backups.
+# Single standalone instance by design (no HA / replication / sentinel / cluster). Durable instances DO get
+# off-cluster S3 backups, via the central 07_redis_backup job (see `persistence` below).
 
 # REQUIRED: the explicit instance name — also the ClusterIP Service DNS clients dial
 # (<name>.<namespace>.svc.cluster.local:6379). Unique per workload; aliasing this chart twice yields two
@@ -33,7 +34,9 @@ allowedClients: []
 
 # REQUIRED: persistence mode — NO default; each instance must choose explicitly (durability is a deliberate call).
 #   true  = DURABLE: AOF (appendfsync everysec, crash-durable to ~1s) + enrolled in the central S3 RDB backup.
-#   false = EPHEMERAL cache: NO AOF (RDB only, less write overhead), no backup.
+#   false = EPHEMERAL cache: no explicit appendfsync, and NOT backed up off-cluster.
+# NB it does NOT turn AOF off. The operator's own /etc/redis/redis.conf sets `appendonly yes` and this chart
+# only supplies an ADDITIONAL overlay, so BOTH modes run AOF. Verified on a live instance.
 # It does NOT pick a storage class: both modes use `longhorn-r2-ephemeral` (2-replica, reclaim Delete, from
 # 02_longhorn). Reclaim stopped being a safety knob when deletionProtection landed, see that knob below.
 # See docs/12_redis.md.
