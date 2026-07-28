@@ -176,32 +176,28 @@ silently going unbacked or a dump that uploaded empty — see `docs/13_backups.m
 ### Restore from S3
 
 `make restore-redis` is the runbook, executable (`lib/shell/recover_redis_from_s3.sh`; flags
-`--namespace --instance [--target latest|<N>|<s3-key>] [--apply]`, prompting for whatever is missing). Pick by
-symptom:
+`--namespace --instance [--target latest|<N>|<s3-key>] [--apply]`, prompting for whatever is missing). It
+resolves what git declares against what the cluster has, prints that state, then runs three phases: get an
+instance to restore into, pick a dump and replay it, re-protect. Run it and read what it prints; the phases are
+not repeated here.
+
+Pick by symptom:
 
 | Symptom | What to do |
 |---|---|
-| Instance running, data wrong or gone (bad write, corruption, a rewind) | `make restore-redis`. It replays a dump into the live instance. |
-| Instance itself is gone (prune past `deletionProtection`, cluster rebuild) | Restore its values block + `Chart.yaml` alias in git and push FIRST. It comes back EMPTY on a fresh PVC. Then `make restore-redis`. |
+| Instance running, data wrong or gone (bad write, corruption, a rewind) | `make restore-redis`. |
+| Instance gone, its alias STILL in git (node/PVC loss, cluster rebuild) | `make restore-redis`. Phase 1 waits for Argo to rebuild it empty, then loads the dump. |
+| Instance gone AND removed from git (a deliberate two-commit delete) | Put back its values block **and** its `Chart.yaml` alias, push, then `make restore-redis`. The alias cannot be recovered from `values.yaml` alone, which is the one thing the script cannot do for you. |
 | Instance running, app permanently OutOfSync | Restore the files in git. Argo re-adopts it, no data moves, nothing to run. |
 
-What the script does, and why this shape:
+Two things the script cannot tell you at runtime:
 
-1. lists every dump with size and age, and flags any under 250 bytes as EMPTY. An empty RDB restored over live
-   data is a wipe that reports success, so it takes an explicit confirm (and is refused under `--apply`).
-2. a temporary **seed pod** in `redis-backup` (where the sealed creds live) downloads the chosen RDB and boots a
-   plain `redis-server` on it. Its image comes from the target's live CR, since an RDB is forward-only.
-3. **break-glass** CiliumNetworkPolicies open target to seed on `6379` across the two namespaces.
-4. the target is `FLUSHALL`ed, made a replica of the seed (`REPLICAOF`), then promoted back
-   (`REPLICAOF NO ONE`). A full resync carries every type, TTL and score exactly.
-5. reports keys-before vs keys-after plus a type/TTL sample, and FAILS a 0-key restore.
-6. the trap promotes the target back BEFORE tearing the seed down, so bailing out cannot leave it a read-only
-   replica of a deleted pod.
-
-Replication rather than an offline PVC swap (which fights the operator + AOF) or `redis-rdb-tools`
-(unmaintained, fragile on new RDB versions). The offline path is possible but not scripted. It restores INTO a
-running instance and cannot create one, hence row 2 above. Caveat: the operator may reconcile the CR during the
-window; the manual `REPLICAOF` holds long enough to sync, so re-run if it races.
+- **Why replication.** The dump is replayed by making the target a `REPLICAOF` of a throwaway seed pod, not by
+  swapping the PVC (which fights the operator and the AOF) or by `redis-rdb-tools` (unmaintained, fragile on new
+  RDB versions). A full resync carries every type, TTL and score exactly. The offline path is possible but not
+  scripted.
+- **The operator may reconcile the `Redis` CR mid-restore.** The manual `REPLICAOF` holds long enough to sync;
+  re-run if it races.
 
 Per-instance backup health is `redis_backup_recoverable` (see [13_backups.md](13_backups.md)): the job-level
 alerts cannot see one instance silently going unbacked.
