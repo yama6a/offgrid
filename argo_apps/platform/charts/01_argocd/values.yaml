@@ -66,6 +66,13 @@ argo-cd:
       # Raise it to match the 24h default-cache-expiration so the key survives between recomputes (also
       # less recompute churn on these low-power nodes). Doesn't hide drift: watch events + selfHeal still reconcile.
       controller.app.state.cache.expiration: "24h0m0s"
+      # Cap concurrent manifest generations per repo-server. Unset (the default) means UNLIMITED, and every
+      # app here shares ONE repoURL, so a single push refreshes all of them at once. Rendering is not cheap:
+      # ~10MB of YAML across the fleet, and prometheus-operator-crds alone is 4.4MB, which costs an order of
+      # magnitude more once parsed into objects and re-serialized for gRPC. That OOMKilled both replicas at
+      # 512Mi during a run of rapid pushes. 4 bounds the peak instead of guessing a bigger limit; the cost is
+      # that a full refresh queues rather than stampedes.
+      reposerver.parallelism.limit: "4"
     # Don't let the chart create argocd-secret: we ship the GitHub webhook.github.secret into it out of
     # band as a sealed Secret that MERGES in (patch-mode). If the chart also owned argocd-secret, ArgoCD
     # self-heal would fight the merged-in webhook key. Trade-off: with createSecret:false nothing creates
@@ -138,7 +145,9 @@ argo-cd:
       minAvailable: 1
     resources:
       requests: {cpu: 250m, memory: 128Mi}
-      limits: {memory: 512Mi}
+      # Headroom above the parallelism cap above, not a substitute for it. Idle is ~50Mi; the spikes come from
+      # concurrent renders of the CRD-heavy charts.
+      limits: {memory: 768Mi}
   # --- API/UI: 2 replicas on 2 nodes + PDB ---------------------------------------------------
   server:
     replicas: 2
