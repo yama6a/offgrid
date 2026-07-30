@@ -45,27 +45,28 @@ upgrade path, and that combination doesn't exist as a published image anywhere:
   device tree).
 - The only prebuilt Talos Pi 5 image is the community one, which is old.
 
-So we drive the `talos-rpi5` pipeline but rebase it onto latest Talos. The recent Pi kernel is the whole point: it
-carries the upstream RP1 patches that allow step 04 to disable EEE on the NIC.
+So we drive the `talos-rpi5` pipeline but rebase it onto latest Talos. A recent Pi kernel is the reason the whole
+build exists: it carries the upstream RP1 patches, and without them step 04 cannot disable EEE on the NIC.
 
 ## Versions
 
 Every pin lives in the committed `versions.env`; Renovate opens PRs to bump them, grouped as the "talos
-build recipe" and PR-only — merging changes only `versions.env`, a real bump needs a manual image rebuild (below). What
-each is, and the constraints that matter:
+build recipe" and PR-only: merging one changes only `versions.env`, and a real bump needs a manual image
+rebuild (below). What each is, and the constraints that matter:
 
-- **Talos** (`TALOS_VERSION`, `siderolabs/talos`) — the release we rebase onto.
-- **Kubernetes** (`KUBERNETES_VERSION`) — the pin `03d` passes to `gen config` and `03g` upgrades to. Ceiling =
-  the Talos release's own k8s default; raise it only after bumping Talos.
-- **pkgs** (`PKG_VERSION`, `siderolabs/pkgs`) — ships a stock arm64 kernel config (already 4K pages).
-- **Kernel** (no pin — *derived from `TALOS_VERSION`*) — the kernel line is the whole point: it carries the RP1
-  patches step 04 needs to disable EEE on the NIC. There is deliberately no kernel version to pin: `03a` reads the
-  version Talos expects (`DefaultKernelVersion`) from the pinned Talos and resolves the exact `raspberrypi/linux`
-  commit at build time — via `raspberrypi/firmware`'s `extra/git_hash` (see "The kernel version must match Talos"
-  below). So the kernel follows `TALOS_VERSION` by construction, and that's the only knob Renovate manages for it.
-- **Overlay** (`SBCOVERLAY_VERSION`, `talos-rpi5/sbc-raspberrypi5`@`main`) — u-boot + rpi firmware + the Pi 5 boot
-  chain; ported to the pinned Talos machinery at build time.
-- **Extensions** (`ISCSI_EXT`, `UTIL_EXT`) — digest-pinned system extensions from the Image Factory.
+- Talos (`TALOS_VERSION`, `siderolabs/talos`): the release we rebase onto.
+- Kubernetes (`KUBERNETES_VERSION`): the pin `03d` passes to `gen config` and `03g` upgrades to. Capped by the Talos
+  release's own k8s default, so raise it only after bumping Talos.
+- pkgs (`PKG_VERSION`, `siderolabs/pkgs`): ships a stock arm64 kernel config, already 4K pages.
+- Kernel: no pin, derived from `TALOS_VERSION`. This is the reason for the custom build, because the kernel line
+  carries the RP1 patches step 04 needs to disable the NIC's power-saving mode. There is deliberately no kernel
+  version to pin: `03a` reads the version Talos expects (`DefaultKernelVersion`) from the pinned Talos and resolves
+  the exact `raspberrypi/linux` commit at build time via `raspberrypi/firmware`'s `extra/git_hash`. See "The kernel
+  version must match Talos" below. So the kernel follows `TALOS_VERSION` by construction, and that is the only knob
+  Renovate manages for it.
+- Overlay (`SBCOVERLAY_VERSION`, `talos-rpi5/sbc-raspberrypi5`@`main`): u-boot, rpi firmware and the Pi 5 boot
+  chain, ported to the pinned Talos machinery at build time.
+- Extensions (`ISCSI_EXT`, `UTIL_EXT`): digest-pinned system extensions from the Image Factory.
 
 ## The build
 
@@ -85,18 +86,19 @@ What it does:
 7. raw image
 8. runs offline validation
 
-**The kernel version must match Talos.** Talos hardcodes the kernel version it expects (`DefaultKernelVersion` in
-`pkg/machinery/constants`), and the imager stamps THAT onto the UKI's `.uname` regardless of the kernel we actually
-compile — so if they differ, the image ships mislabeled (the running kernel is real and correct, but the UKI, and
-anything reading it like `kubectl`/`talosctl`, reports Talos's version). We avoid that by *deriving* the kernel from
-Talos rather than pinning it: in REBASE 1, `03a` reads `DefaultKernelVersion` from the pinned Talos, finds the exact
-`raspberrypi/linux` commit for that version, and builds it — so it matches by construction. It resolves the commit
-by scanning `raspberrypi/firmware` (whose `extra/git_hash` at each ref = the linux commit that ref's kernel was
-built from): first the channel HEADs (`master`/`stable`/`next`/`oldstable` — `master` usually matches), then, as a
-failsafe, `master`'s `extra/git_hash` *history* (a dense index of every recent 6.18.x). The offline validation
-re-checks the built kernel against the UKI label at the end.
+**The kernel version must match Talos.** Talos hardcodes the version it expects (`DefaultKernelVersion` in
+`pkg/machinery/constants`), and the imager stamps THAT onto the UKI's `.uname` regardless of what we compile.
 
-**If kernel resolution fails** (`03a` found no firmware ref carrying the version Talos wants — a very old Talos
+- If they differ the image ships mislabeled: the running kernel is real and correct, but the UKI, and anything
+  reading it like `kubectl` or `talosctl`, reports Talos's version.
+- So the kernel is DERIVED, not pinned. In REBASE 1 `03a` reads `DefaultKernelVersion` from the pinned Talos, finds
+  the exact `raspberrypi/linux` commit for that version, and builds it. It matches by construction.
+- It resolves the commit by scanning `raspberrypi/firmware`, whose `extra/git_hash` at each ref is the linux commit
+  that ref's kernel was built from. First the channel HEADs (`master`, `stable`, `next`, `oldstable`, and `master`
+  usually matches), then as a failsafe `master`'s `extra/git_hash` history, a dense index of every recent 6.18.x.
+- The offline validation re-checks the built kernel against the UKI label at the end.
+
+**If kernel resolution fails** (`03a` found no firmware ref carrying the version Talos wants, so a very old Talos
 rebuild, or a patch RPi skipped): inspect by hand, then either wait for a firmware channel to ship that version or
 align `TALOS_VERSION`. Channel HEADs, and (for older versions) master's `git_hash` history:
 
@@ -168,50 +170,57 @@ no-op). The nodes pull the installer using the `read:packages` auth `03d` baked 
 
 **Draining during the upgrade (why `03f` cordons/drains itself).** Talos's upgrade sequence cordons the node and
 drains it (honoring the eviction API / PodDisruptionBudgets) before the reboot. On this cluster that drain used to
-*hang* — three pods it can't gracefully evict, each for a different reason:
+*hang*, three pods it cannot gracefully evict, each for a different reason:
 
-- **CNPG single-instance DB** (`analyticsdb`, `highAvailability: false`): the operator's PDB is `minAvailable: 1`, so
-  with one instance *any* eviction violates it, a hard block unrelated to storage. The wrapper turns the PDB off
-  automatically for a non-HA instance (`highAvailability: false` drives `enablePDB: false`); `maindb`
-  (`highAvailability: true`, 2 instances) is left alone, it switches over and its PDB permits the eviction.
-- **Longhorn `instance-manager`**: Longhorn's PDB blocks the drain only while the node holds a volume's **last healthy
-  replica** — i.e. when a volume is already `degraded` (common here, the NICs are flaky, so a replica is often down).
-- **RabbitMQ broker** (`rabbitmq-server-0`): no PDB and no finalizer — just slow to terminate (quorum preStop) and
+- CNPG single-instance DB (`highAvailability: false`): the operator's PDB is `minAvailable: 1`, so with one instance
+  ANY eviction violates it. A hard block, unrelated to storage. The wrapper turns the PDB off automatically for a
+  non-HA instance, driving `enablePDB: false`. An HA instance is left alone: it switches over, and its PDB permits
+  the eviction.
+- Longhorn `instance-manager`: Longhorn's PDB blocks the drain only while the node holds a volume's LAST HEALTHY
+  replica, meaning when a volume is already `degraded`. Common here, since the NICs are flaky so a replica is often
+  down.
+- RabbitMQ broker (`rabbitmq-server-0`): no PDB and no finalizer, just slow to terminate (quorum preStop) and
   unable to reschedule (hard one-per-node anti-affinity on 3 nodes + node-local storage), so Talos's bounded drain
   times out waiting for it.
 
-None of these pods can *relocate* (node-local storage / a per-node storage engine / hard anti-affinity), so a graceful
-drain can only kill them; they come back on the same node after the reboot. So `03f` takes the drain into its own hands
-(native `kubectl`): per node it (1) waits until every **replicated store** is healthy + in sync (see below); (2) cordons
-+ does a bounded graceful drain, then force-deletes any straggler so the node can always reboot. Talos's own in-upgrade
-drain then finds an empty node and completes instantly. We deliberately **leave Longhorn's `nodeDrainPolicy` at its
-default** — `block-for-eviction` (evict/rebuild replicas off the node first) needs a spare node and is slow, exactly
-what times out on a 3-node / replica-2 layout; the health gate is the lighter, self-correcting equivalent (Longhorn
-auto-rebuilds a degraded volume onto the spare node on its own while we wait).
+None of these pods can relocate, because of node-local storage, a per-node storage engine, or hard anti-affinity. So
+a graceful drain can only kill them, and they come back on the same node after the reboot.
+
+`03f` therefore takes the drain into its own hands, with native `kubectl`. Per node it:
+
+1. Waits until every replicated store is healthy and in sync (see below).
+2. Cordons, runs a bounded graceful drain, then force-deletes any straggler so the node can always reboot.
+
+Talos's own in-upgrade drain then finds an empty node and completes instantly.
+
+Longhorn's `nodeDrainPolicy` deliberately stays at its default. `block-for-eviction` evicts and rebuilds replicas
+off the node first, which needs a spare node and is slow, and that is exactly what times out on a 3-node,
+replica-2 layout. The health gate is the lighter, self-correcting equivalent: Longhorn auto-rebuilds a degraded
+volume onto the spare node on its own while we wait.
 
 **The replication-health gate (run before draining *each* node).** A node reboot is a replication event for every
 replicated store that has data on it, so before taking a node down `03f` blocks until they're all healthy *and* in
-sync — which, crucially, also waits out the PREVIOUS node's post-reboot resync before we touch the next one. Gated:
+sync, which crucially also waits out the PREVIOUS node's post-reboot resync before we touch the next one. Gated:
 
-- **Longhorn volumes** — no volume `degraded`/`faulted`. `healthy` *is* Longhorn's all-replicas-in-sync signal (it
+- Longhorn volumes: no volume `degraded` or `faulted`. `healthy` IS Longhorn's all-replicas-in-sync signal (it
   drops to `degraded` while a replica rebuilds), so this both avoids a last-replica reboot and waits for rebuilds.
-- **CNPG clusters** — `phase == "Cluster in healthy state"`, `readyInstances == spec.instances` (the streaming
+- CNPG clusters: `phase == "Cluster in healthy state"`, `readyInstances == spec.instances` (the streaming
   standby is up + caught up), and `currentPrimary == targetPrimary` (no switchover/failover mid-flight). So we never
   reboot the node hosting a primary while its standby is still catching up (`maindb` is 2 instances on node-local
-  storage — the standby must be current before we can safely switch over to it).
-- **RabbitMQ** — `AllReplicasReady` + `ClusterAvailable` (all three brokers up, so quorum queues have full membership
-  before we take one down). The `NoWarnings` condition is intentionally ignored — it's `False` for a benign reason
-  (memory request≠limit) and would block forever.
-- **etcd** — not in this gate: `talosctl upgrade` already refuses to reboot if it would break etcd quorum, and the
+  storage, so the standby must be current before we can safely switch over to it).
+- RabbitMQ: `AllReplicasReady` + `ClusterAvailable`, so all three brokers are up and quorum queues have full
+  membership before we take one down. The `NoWarnings` condition is intentionally ignored: it is `False` for a
+  benign reason (memory request not equal to limit) and would block forever.
+- etcd: not in this gate. `talosctl upgrade` already refuses to reboot if it would break etcd quorum, and the
   existing `talosctl health` gate between nodes covers full quorum restore.
-- **Redis** — nothing to gate: the `redis-instance` wrapper is a single standalone instance (no replication), its
+- Redis: nothing to gate. The `redis-instance` wrapper is a single standalone instance with no replication, its
   data lives on Longhorn (covered above), and it simply restarts after the reboot.
 
 A store that isn't installed (its CRD absent) is treated as healthy, so the gate is a no-op where it doesn't apply.
-Each check waits up to `REPLICATION_HEALTH_TIMEOUT`; on timeout `03f` aborts naming the laggards (fix, then re-run —
+Each check waits up to `REPLICATION_HEALTH_TIMEOUT`. On timeout `03f` aborts naming the laggards, so fix and re-run;
 idempotent, done nodes are no-ops) rather than reboot into a degraded store. (Caveat: CNPG "in sync" here means the
 standby is *ready/streaming*, not zero-lag; the operator does a controlled switchover on drain, which needs a
-caught-up standby — `readyInstances` is the practical proxy, we don't query `pg_stat_replication` lag.)
+caught-up standby. `readyInstances` is the practical proxy; we do not query `pg_stat_replication` lag.)
 
 **Upgrading Kubernetes (separate from the OS).** The Talos OS version and the Kubernetes version upgrade independently.
 `03g_k8s_upgrade.sh` updates the k8s control plane (`talosctl upgrade-k8s --to "$KUBERNETES_VERSION"`). So bump *only*
@@ -284,7 +293,7 @@ and kube-proxy is off (`proxy.disabled: true`), both replaced by Cilium in [step
 are control-plane and schedulable. Nodes come up NotReady until Cilium lands, that's expected, not a fault.
 
 > The cluster name, VIP, and the node list (hostname + IP per node) live in `.env`; the install disk + NIC are fixed
-> constants in `common.sh` (Pi 5 hardware). Nothing is hardcoded in the script — edit `.env` to match your network.
+> constants in `common.sh` (Pi 5 hardware). Nothing is hardcoded in the script: edit `.env` to match your network.
 
 ### Router reservations (manual, once)
 
@@ -314,7 +323,7 @@ so I picked `192.168.100.1` for the VIP (inside the subnet, outside the DHCP ran
 
 1. Reads cluster name, install disk, EPHEMERAL cap, NIC, the VIP, and each node's hostname + IP from
    `.env`, prints a summary, and waits for a `YES` confirmation.
-2. Prepares the config. The **durable secrets bundle** (`secrets.yaml` — the cluster PKI: CA, service-account
+2. Prepares the config. The durable secrets bundle (`secrets.yaml`, the cluster PKI: CA, service-account
    key, bootstrap/join tokens) is generated **once** and never rotated, so the cluster identity survives every
    re-run and rebuild. Everything else is **disposable scratch re-rendered each run**: `talosctl gen config
    --with-secrets secrets.yaml --force` regenerates the base machine config from that bundle + the *current*
@@ -333,19 +342,20 @@ so I picked `192.168.100.1` for the VIP (inside the subnet, outside the DHCP ran
    `NODE_INSTANCE_TYPE` knob in `03d`), and the Cilium prep: `cluster.network.cni.name: none`,
    `cluster.proxy.disabled: true` (Cilium does kube-proxy replacement), and `machine.features.kubePrism.enabled: true`
    (Cilium's API endpoint at `localhost:7445`; default-on in recent Talos, set explicitly here to document the dependency).
-   Finally it raises etcd's timeouts — `cluster.etcd.extraArgs: {heartbeat-interval: "500", election-timeout: "5000"}`,
+   Finally it raises etcd's timeouts (`cluster.etcd.extraArgs: {heartbeat-interval: "500", election-timeout: "5000"}`),
    5x etcd's 100ms/1000ms defaults. All three nodes are control-plane + worker and etcd shares the single NVMe with
    Longhorn + CNPG, so during the cold-boot I/O storm etcd's fsyncs stall past the default 1000ms election window and
-   trigger a burst of spurious leader elections — which disrupts apiserver watches and lags the controllers (e.g.
+   trigger a burst of spurious leader elections, which disrupts apiserver watches and lags the controllers (e.g.
    cert-manager's HTTP-01 solver endpoints fail to program in time, wedging cert issuance). The 5s election timeout
-   rides out the stalls; the only cost is ~5s vs ~1s failover if a leader truly dies, a non-issue on this cluster.
+   rides out the stalls. The only cost is ~5s instead of ~1s failover when a leader really is gone, which does not
+   matter on this cluster.
 4. Appends the partition layout: `EPHEMERAL` capped (default 64 GiB) + a fixed-size `localpath` user volume
    (default 50 GiB, `min == max`, at `/var/mnt/localpath`, node-local storage for CNPG + RabbitMQ via
    [local-path-provisioner](08_storage.md)) + a `longhorn` user volume taking the rest of the NVMe
    (`/var/mnt/longhorn`). Both `/var/mnt` paths also get a `kubelet.extraMounts` bind so the containerized kubelet
    can see them. Sit empty until their apps sync (step 04+).
 5. `apply-config` to each node (only the hostname differs), then deletes the rendered scratch (`cp.yaml`,
-   `controlplane.yaml`, and their inputs `cp-patch.yaml` + `volumes.yaml`) — the nodes now hold their own
+   `controlplane.yaml`, and their inputs `cp-patch.yaml` + `volumes.yaml`), so the nodes now hold their own
    live config, so the only config left on disk is the durable `secrets.yaml` (plus the
    `talosconfig`/`kubeconfig` creds). On an apply failure the script aborts before the cleanup, leaving the
    files for inspection.
@@ -366,11 +376,10 @@ so I picked `192.168.100.1` for the VIP (inside the subnet, outside the DHCP ran
 > and namespace-agnostic; the cost is that the token lives in the machine config (in the gitignored
 > `secrets/cp-patch.yaml`, never committed) rather than in the sealed-secrets pipeline, and rotating it means
 > editing `.env` and re-running `03d`. The username is plain `.env` config (`GHCR_USER`); the registry host
-> (`GHCR_SERVER`) is a fixed constant in `common.sh`. Leave
-> `GITHUB_GHCR_PULL_TOKEN_SECRET` empty to skip (the auth block is simply omitted). This is the **pull** token —
-> distinct
-> from the `write:packages` `GITHUB_GHCR_PUSH_TOKEN_SECRET` `03a` uses to publish, which never touches node config. GHCR
-> only accepts a classic token; fine-grained tokens do not work for package pulls.
+> (`GHCR_SERVER`) is a fixed constant in `common.sh`. Leave `GITHUB_GHCR_PULL_TOKEN_SECRET` empty to skip, which
+> simply omits the auth block. This is the PULL token, distinct from the `write:packages`
+> `GITHUB_GHCR_PUSH_TOKEN_SECRET` that `03a` uses to publish, which never touches node config. GHCR only accepts a
+> classic token; fine-grained tokens do not work for package pulls.
 
 ### Run
 
@@ -475,7 +484,7 @@ means the VIP/API didn't steady within `SETTLE_WAIT`, let the NIC/control-plane 
 The wedge itself is assumed tolerable, so runtime recovery lives in GitOps (ArgoCD), not
 machine-config: the three triggers below have no `EthernetConfig` field and need a live agent.
 That agent is `nic-keeper`, one DaemonSet pod per rpi5 node (namespace `kube-system`,
-hostNetwork), delivered by ArgoCD ([05_gitops.md](05_gitops.md)) at sync-wave 2 — no imperative
+hostNetwork), delivered by ArgoCD ([05_gitops.md](05_gitops.md)) at sync-wave 2. No imperative
 step. Chart: `argo_apps/platform/charts/02_nic_keeper/`; Application:
 `argo_apps/platform/apps/02_nic_keeper.yaml`.
 
@@ -490,9 +499,9 @@ the [table above](#nic-hardening-the-macb-wedge)):
 
 On each node the single consolidated loop:
 
-1. Asserts EEE off on start (and after every bounce — a bounce can re-enable it).
+1. Asserts the NIC's power-saving mode off on start, and after every bounce, since a bounce can re-enable it.
 2. Probes link health every `checkIntervalSeconds` (5s): pings the default gateway and reads
-   `/sys/class/net/end0/carrier`. The ping is the real signal — a wedge keeps carrier up, so
+   `/sys/class/net/end0/carrier`. The ping is the real signal, because a wedge keeps carrier up, so
    carrier alone misses it.
 3. On `failThreshold` (4) consecutive failures: `ip link set end0 down` -> brief sleep -> `up`,
    re-assert EEE off, `ss -K dport = :6443` to drop stale API-server sockets, then honours
@@ -506,12 +515,12 @@ Decisions:
 
 | decision                       | why                                                                                                                                                                                                                                                                                                                                                                                                                 |
 |--------------------------------|---------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------|
-| DaemonSet                      | the fix is per-node, on the host's NIC + netns — one pod per node.                                                                                                                                                                                                                                                                                                                                                  |
+| DaemonSet                      | the fix is per-node, on the host's NIC + netns, so one pod per node.                                                                                                                                                                                                                                                                                                                                                  |
 | One consolidated agent         | EEE, link-watchdog and socket-drop share state (one wedge -> all three react); one loop beats three pods racing.                                                                                                                                                                                                                                                                                                    |
 | Runtime, not machine-config    | no Talos `EthernetConfig` field for EEE; wedge detection is reactive; socket-drop is post-recovery.                                                                                                                                                                                                                                                                                                                 |
 | Active ping, not carrier       | the wedge is link-up-no-traffic; carrier reads healthy, only a probe catches it.                                                                                                                                                                                                                                                                                                                                    |
 | `NET_ADMIN` + `NET_RAW`        | NET_ADMIN covers `ethtool` EEE / `ip link` / `ss -K`; NET_RAW is required for `ping`'s ICMP socket. Still least-privilege, beats `privileged: true`.                                                                                                                                                                                                                                                                |
-| Auto-sync (prune + selfHeal)   | safe leaf — it can't cut the cluster off its own network, so drift just auto-corrects. Cilium (wave 0) runs the SAME prune+selfHeal even though it CAN cut the cluster off its own network — a convenience trade-off, knowingly accepted.                                                                                                                                                                                                                                |
+| Auto-sync (prune + selfHeal)   | safe leaf: it cannot cut the cluster off its own network, so drift just auto-corrects. Cilium (wave 0) runs the SAME prune+selfHeal even though it CAN cut the cluster off its own network: a convenience trade-off, knowingly accepted.                                                                                                                                                                                                                                |
 | `instance-type: rpi5` selector | the macb wedge is Pi 5-only. Stamped by Talos `machine.nodeLabels` in [`03d`](#what-03d_talos_cluster_configsh-does) (`NODE_INSTANCE_TYPE` knob in `03d`); that key works because it's on the kubelet NodeRestriction allowlist (an arbitrary `kubernetes.io/*` label is rejected by admission). Not `os: linux` (too broad) nor `control-plane:DoesNotExist` (every node here is control-plane -> matches zero nodes). |
 
 Caveats / preconditions:

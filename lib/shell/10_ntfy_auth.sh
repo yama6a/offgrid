@@ -1,26 +1,9 @@
 #!/usr/bin/env bash
-#
-# 10_ntfy_auth.sh  (macOS)
-#
-# Seeds the self-hosted ntfy notification server's auth (users + ACLs + the Grafana write token), so the project
-# stays reusable with no personal credentials in git. ntfy is a deny-all PRIVATE instance (05_ntfy) with NO
-# declarative user/token config, so users/tokens are created imperatively here, INSIDE the running pod (against
-# its SQLite auth DB). Two users on the single topic `cluster-alerts`:
-#   - phone   (read-only)  — the Android app subscribes; password from .env (NTFY_PHONE_PASSWORD_SECRET).
-#   - grafana (write-only) — Grafana's webhook contact point publishes; authenticates with a minted TOKEN, sealed
-#                            into the `grafana-ntfy` Secret (key `token`) that 05_grafana reads as GF_NTFY_TOKEN
-#                            (envValueFrom, optional). Neither the token nor the password ever land in git plaintext.
-#
-# Runs AFTER 05_ntfy is synced (needs the pod up to exec `ntfy user/access/token`). Idempotent: re-run to rotate
-# the phone password or the Grafana token. Empty NTFY_PHONE_PASSWORD_SECRET => DISABLE path (drops the sealed
-# token; Grafana keeps running, just can't publish, GF_NTFY_TOKEN is optional).
-#
-# Written by this script (committable, no secrets in the values file):
-#   - argo_apps/platform/charts/05_grafana/templates/grafana-ntfy-sealedsecret.yaml   (the sealed write token)
-#
-# Native kubeseal + kubectl (hard-fails if missing); apply-to-cluster work is native, like 04/05/09. Talks to the
-# cluster via the step-03 kubeconfig (kubeseal fetches the controller's cert). See docs/09_monitoring.md.
-#
+# Seeds the self-hosted ntfy server's users, ACLs and the Grafana write token. Imperative and run INSIDE the
+# pod because ntfy has NO declarative user or token config. Two users on the `cluster-alerts` topic: `phone`
+# read-only (the Android app), `grafana` write-only (a minted token, sealed for 05_grafana to read).
+# Runs AFTER 05_ntfy is synced, it needs the pod up. Empty NTFY_PHONE_PASSWORD_SECRET takes the disable path.
+# Idempotent: re-run to rotate the password or the token.
 set -uo pipefail
 
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
@@ -35,14 +18,12 @@ SECRET_KEY="token"                                                              
 TOPIC="cluster-alerts"                                                            # the single alert topic (matches 05_grafana webhook + 05_ntfy)
 PHONE_USER="phone"                                                                # Android subscriber (read-only)
 GRAFANA_USER="grafana"                                                            # webhook publisher (write-only, token auth)
-# -----------------------------------------------------------------------------
 
 # Run an ntfy admin subcommand inside the ntfy pod (operates on the pod's /var/lib/ntfy/user.db via /etc/ntfy/server.yml).
 nexec()    { kubectl -n "$NTFY_NS" exec deploy/ntfy -- ntfy "$@"; }
 # Same, injecting NTFY_PASSWORD (ntfy's documented non-interactive password input for `user add` / `user change-pass`).
 nexec_pw() { local pw="$1"; shift; kubectl -n "$NTFY_NS" exec deploy/ntfy -- env NTFY_PASSWORD="$pw" ntfy "$@"; }
 
-# === 0. prereqs ==============================================================
 say "prerequisites"
 require kubeseal kubectl
 [ -d "$GRAFANA_CHART" ] || die "missing ${GRAFANA_CHART}, the 05_grafana chart should ship it"
@@ -50,13 +31,11 @@ use_kubeconfig
 assert_api
 ok "kubeseal/kubectl present, cluster reachable"
 
-# === 1. ntfy must be up (we exec into it) ====================================
 say "waiting for ntfy (05_ntfy must be synced first)"
 kubectl -n "$NTFY_NS" rollout status deploy/ntfy --timeout=120s \
   || die "ntfy not ready in ns/${NTFY_NS}; sync the 05_ntfy app first (ArgoCD wave 5)"
 ok "ntfy pod is running"
 
-# === 2a. DISABLE path: empty phone password ==================================
 # NTFY_PHONE_PASSWORD_SECRET comes from the gitignored .env (defaulted empty in common.sh); nothing is prompted.
 if [ -z "$NTFY_PHONE_PASSWORD_SECRET" ]; then
   say "no NTFY_PHONE_PASSWORD_SECRET -> DISABLE ntfy alerting (no phone user, drop the sealed token)"
@@ -77,7 +56,6 @@ if [ -z "$NTFY_PHONE_PASSWORD_SECRET" ]; then
   exit
 fi
 
-# === 2b. SEAL path: seed users + ACLs, mint + seal the Grafana token =========
 say "seeding ntfy users + ACLs on topic '${TOPIC}'"
 
 # phone user (read-only): create, or rotate its password if it already exists (add fails when the user exists).
@@ -105,13 +83,11 @@ TOKEN="$(nexec token add "$GRAFANA_USER" 2>/dev/null | grep -oE 'tk_[A-Za-z0-9]+
 [ -n "$TOKEN" ] || die "failed to mint an ntfy token for ${GRAFANA_USER} (try: kubectl -n ${NTFY_NS} exec deploy/ntfy -- ntfy token add ${GRAFANA_USER})"
 ok "token minted"
 
-# === 3. seal the token -> grafana-ntfy (committable) =========================
 say "sealing the token into ${SECRET_NAME} (ns ${NTFY_NS})"
 kubectl get pods -n "$SS_CONTROLLER_NS" -l "$SS_POD_SELECTOR" >/dev/null 2>&1 \
   || die "sealed-secrets controller not reachable in ns/${SS_CONTROLLER_NS}, is step 02 synced?"
 seal_secret "$SECRET_NAME" "$NTFY_NS" "$SECRET_KEY" "$TOKEN" "$SEALED_OUT"
 
-# === 4. summary ==============================================================
 summary
 if [ "$FAIL" -eq 0 ]; then
   cat <<EOF

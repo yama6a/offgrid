@@ -1,36 +1,17 @@
-# ArgoCD Application for the CENTRAL Google-SSO (argo_apps/charts/04_google_sso/): per domain, ONE
-# SecurityPolicy that gates every listed host (per-host email allowlist matched by :authority) + completes
-# the OAuth flow on the shared google-sso.<domain> callback host (targetRefs the app routes + the callback
-# route). Ships the callback hosts' edges, the shared whoami, and the sealed OAuth client secret. Which
-# hosts are gated lives in this chart's `domains[].hosts`; workloads configure nothing SSO. See 07_ingress.md.
-#
-# AUTOMATED (prune + selfHeal): a safe leaf, it owns no CRDs and can't cut the cluster off its network.
-# Its only secret (the OAuth client secret) comes from a committed SealedSecret (unsealed by the wave-2
-# controller); the raw Secret is not in git, so prune never touches it.
-#
-# sync-wave "4": after the gateway (wave 3, the shared :80 Gateway + ClusterIssuers the callback certs
-# solve through), sealed-secrets (wave 2, unseals the client secret) and Envoy Gateway (wave 1, owns the
-# SecurityPolicy CRD). The policy targetRefs app routes that don't exist until their charts sync
-# (platform-ingress wave 6, workloads later); EG attaches it when they appear. Until 07_google_sso.sh seals
-# the client secret and you commit it, the policy references a missing Secret and login fails. Per CLAUDE.md
-# the NN prefix IS the wave.
+# Central Google-SSO: one SecurityPolicy per domain with per-host allowlists, plus the callback edges and the sealed OAuth secret.
 apiVersion: argoproj.io/v1alpha1
 kind: Application
 metadata:
   name: google-sso
   namespace: argocd
-  # Cascade-delete this app's own resources on Application deletion instead of orphaning them; see 05_gitops.md.
   finalizers:
     - resources-finalizer.argocd.argoproj.io
   annotations:
     argocd.argoproj.io/sync-wave: "4"
-    # Diff via a server-side-apply dry-run so server-defaulted Gateway API fields (parentRefs/backendRefs
-    # group+kind, rules.matches, weight, ...) don't show as perpetual OutOfSync. Pairs with ServerSideApply
-    # below. Needs ArgoCD >= 2.10. See 12_google_sso.md.
-    argocd.argoproj.io/compare-options: ServerSideDiff=true
+    argocd.argoproj.io/compare-options: ServerSideDiff=true # else server-defaulted Gateway API fields read as perpetual OutOfSync
 spec:
   project: default
-  revisionHistoryLimit: 0  # roll-forward only; no Argo rollback history (05_gitops.md)
+  revisionHistoryLimit: 0
   source:
     repoURL: https://github.com/yama6a/offgrid
     targetRevision: HEAD
@@ -43,8 +24,8 @@ spec:
       prune: true
       selfHeal: true
     retry:
-      limit: -1  # unbounded; only retry re-drives a failed sync (see 05_gitops.md)
-      refresh: true  # retry the latest revision so a fix commit lands mid-loop
+      limit: -1
+      refresh: true
       backoff:
         duration: 5s
         factor: 2

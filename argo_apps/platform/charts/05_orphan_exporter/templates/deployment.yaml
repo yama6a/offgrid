@@ -7,7 +7,7 @@ metadata:
     app.kubernetes.io/name: orphan-exporter
 spec:
   replicas: 1
-  revisionHistoryLimit: 0  # roll-forward only; no Argo rollback history (05_gitops.md)
+  revisionHistoryLimit: 0  # recovery is a git revert, never a rollback, so kept history is dead weight
   selector:
     matchLabels:
       app.kubernetes.io/name: orphan-exporter

@@ -1,9 +1,7 @@
 {{- /*
-Shared, reusable wildcard certs — ONE per Cloudflare zone (host tier), minted CENTRALLY here (not per
-ingress) so the ingress library can point every listener on that tier at the same secret without two
-ArgoCD apps fighting over one Certificate. Each covers *.<zone> + the apex; issued DNS-01 (wildcards
-can't use HTTP-01) via the dns01.cloudflare solver on wildcardIssuer. Empty zones => none rendered
-(HTTP-01 per-host, unchanged). Secret name matches the ingress lib's `wildcard-<domain-dashed>-tls`.
+ONE wildcard cert per Cloudflare zone, minted centrally rather than per ingress, so every listener on that tier
+points at the same Secret and no two ArgoCD apps fight over one Certificate. Wildcards cannot use HTTP-01,
+hence DNS-01. Empty zones renders none. The Secret name matches what the ingress chart expects.
 */}}
 {{- with .Values.acme.cloudflare }}
 {{- range $zone := .zones }}

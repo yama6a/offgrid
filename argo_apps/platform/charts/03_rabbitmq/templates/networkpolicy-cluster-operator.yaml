@@ -1,14 +1,7 @@
-# POD-SCOPED default-deny for the RabbitMQ Cluster Operator (reconciles the RabbitmqCluster broker; watches all
-# namespaces). The broker's own policy (networkpolicy.yaml) is pod-scoped to the broker and does NOT cover this
-# operator pod, hence a separate policy. Selected by the operator's component label (release-independent).
-#
-# The upstream subchart ALSO ships a vanilla NetworkPolicy for this operator, but it's allow-all-egress; we
-# DISABLE it in values (clusterOperator.networkPolicy.enabled:false). Cilium enforces vanilla NPs and UNIONs
-# them with CNPs, so an allow-all NP would blow this default-deny wide open — the same reason argocd pins
-# global.networkPolicy.create:false (see 05_gitops.md).
-#
-# Audit-first rollout like every netpol here (Cilium PolicyAuditMode + `hubble observe --verdict DROPPED,AUDIT`,
-# then enforce). Ports: 9782 metrics, 8081 health probe, 53 DNS, 15672 broker mgmt. See 04_networking.md / 11_messaging.md.
+# Default-deny both ways for the RabbitMQ Cluster Operator. The broker's own policy is pod-scoped to the
+# broker and does not cover this pod, hence a separate policy.
+# The subchart's own vanilla NetworkPolicy for this operator is allow-all-egress and is disabled in values:
+# Cilium enforces vanilla NPs and UNIONs them with CNPs, so it would blow this default-deny open.
 apiVersion: cilium.io/v2
 kind: CiliumNetworkPolicy
 metadata:
@@ -20,7 +13,7 @@ spec:
       app.kubernetes.io/component: rabbitmq-operator
       app.kubernetes.io/part-of: rabbitmq
   ingress:
-    # (a) vmagent scrapes the operator /metrics :9782 (PodMonitor on — values clusterOperator.metrics.podMonitor).
+    # vmagent scrapes the operator.
     - fromEndpoints:
         - matchLabels:
             k8s:io.kubernetes.pod.namespace: monitoring
@@ -28,13 +21,13 @@ spec:
       toPorts:
         - ports:
             - { port: "9782", protocol: TCP }
-    # (b) Kubelet /healthz + /readyz probes hit :8081 from the node.
+    # Kubelet /healthz and /readyz probes, from the node.
     - fromEntities: [host, remote-node]
       toPorts:
         - ports:
             - { port: "8081", protocol: TCP }
   egress:
-    # (c) DNS (CoreDNS).
+    # DNS.
     - toEndpoints:
         - matchLabels:
             k8s:io.kubernetes.pod.namespace: kube-system
@@ -43,11 +36,9 @@ spec:
         - ports:
             - { port: "53", protocol: UDP }
             - { port: "53", protocol: TCP }
-    # (d) Reconciles the RabbitmqCluster (StatefulSet/Service/Secrets/pod status) via the API server. The
-    # admission webhook is OFF by default (clusterOperator.webhook.enabled:false).
+    # Reconciles the RabbitmqCluster's StatefulSet, Service, Secrets and pod status.
     - toEntities: [kube-apiserver]
-    # (e) Dials the broker mgmt API :15672 post-formation (feature-flag enable / setup). Same-ns broker
-    # selector; broker ingress (c) already admits :15672 from any pod in this namespace.
+    # Dials the broker management API post-formation, for feature-flag enable and setup.
     - toEndpoints:
         - matchLabels:
             app.kubernetes.io/name: rabbitmq

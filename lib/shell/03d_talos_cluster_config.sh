@@ -1,20 +1,9 @@
 #!/usr/bin/env bash
+# Brings up the Talos control-plane cluster from NVMes already flashed (03b) and booted into maintenance at
+# their router-reserved IPs. Generated configs land in secrets/, which the talosctl container mounts as
+# /work so every call sees the same files.
 #
-# 03d_talos_cluster_config.sh  (macOS)
-#
-# Brings up the Talos control-plane cluster from NVMes already flashed (03b) and
-# booted into maintenance mode at their (router-reserved) IPs.
-#
-# Self-contained: talosctl runs as a pinned Docker image, no host talosctl, no
-# shell functions, no PATH games. Generated configs land in ./secrets next
-# to this script; the container mounts that dir as /work so every talosctl call
-# (generate, apply, config, bootstrap, kubeconfig) sees the same files.
-#
-# Requires: docker, with host networking enabled in Docker Desktop
-#           (Settings -> Resources -> Network -> Enable host networking).
-#
-# Cluster name, VIP, and the node list come from .env; disk/NIC are fixed constants in common.sh.
-#
+# Requires: docker with host networking enabled.
 set -euo pipefail
 
 # Config (CLUSTER_*, CLUSTER_NODES) in .env; EXPECT_*/INSTALL_DISK/IFACE/TALOSCTL_VERSION in lib/shell/common.sh.
@@ -23,19 +12,15 @@ source "${SCRIPT_DIR}/common.sh"
 
 require docker
 
-# Durable creds (secrets.yaml + talosconfig + kubeconfig) live in the canonical secrets dir (CLUSTER_DIR,
-# from the lib). The lib's talosctl() mounts it as /work, so /work == ${OUTDIR} on the host.
+# Durable creds live in CLUSTER_DIR, which the lib's talosctl() mounts as /work, so /work == ${OUTDIR}.
 OUTDIR="${CLUSTER_DIR}"
 mkdir -p "${OUTDIR}"
 
-# Throwaway render scratch (base config + patches) goes to an OS temp dir instead of the secrets dir, so
-# there's nothing to clean up (the OS reaps it) and it never lingers next to the durable creds. The lib's
-# talosctl() mounts it at /scratch when TALOS_SCRATCH is set; host paths use ${TALOS_SCRATCH}, container
-# args use /scratch. On a mid-run failure it survives here for inspection (path printed below).
+# Throwaway render scratch goes to an OS temp dir, so nothing lingers next to the durable creds and there is
+# nothing to clean up. talosctl() mounts it at /scratch. It survives a mid-run failure for inspection.
 TALOS_SCRATCH="$(mktemp -d)"
 echo "Scratch:  ${TALOS_SCRATCH}   (throwaway render files; OS-reaped)"
 
-# Working vars from shared config (IFACE is used directly).
 CLUSTER="$CLUSTER_NAME"; DISK="$INSTALL_DISK"; EPHEMERAL="$EPHEMERAL_SIZE"; VIP="$CLUSTER_VIP"; LOCALPATH_SIZE="$LOCALPATH_VOLUME_SIZE"; KVER="$KUBERNETES_VERSION"
 NODE_INSTANCE_TYPE="rpi5"   # node.kubernetes.io/instance-type label (nic-keeper selector); fixed to the hardware
 HOSTNAMES=(); IPS=()
@@ -47,13 +32,11 @@ echo "Disk:     ${DISK}        EPHEMERAL cap: ${EPHEMERAL}"
 for i in "${!IPS[@]}"; do echo "  ${HOSTNAMES[$i]}  ->  ${IPS[$i]}"; done
 echo "Output:   ${OUTDIR}"
 
-# 0. GHCR registry auth (OPTIONAL, global). Bake a machine.registries auth into the CP patch so the
-#    kubelet/CRI authenticates EVERY pull from ${GHCR_SERVER} on every node, cluster-wide, no
-#    per-namespace imagePullSecrets. The token (GITHUB_GHCR_PULL_TOKEN_SECRET) comes from the gitignored .env;
-#    it's the PULL token (classic, read:packages) — NOT the write:packages push token 03a uses, so a
-#    compromised node can't push. It lands only in cp-patch.yaml under the gitignored secrets dir,
-#    never in git. Empty => no auth block (fine if every image is PUBLIC). GitHub Packages ONLY
-#    authenticates with a CLASSIC token scoped read:packages.
+# Bakes a machine.registries auth into the CP patch, so the kubelet authenticates EVERY pull from GHCR on
+# every node, with no per-namespace imagePullSecrets. It is the read:packages PULL token, NOT the
+# write:packages one 03a uses, so a compromised node cannot push. It lands only in the gitignored
+# secrets dir, never in git. Empty means no auth block, which is fine if every image is public.
+# GitHub Packages only authenticates with a CLASSIC token.
 echo
 REGISTRIES_BLOCK=""
 if [ -n "${GITHUB_GHCR_PULL_TOKEN_SECRET}" ]; then
@@ -71,36 +54,31 @@ else
   echo "  -> GITHUB_GHCR_PULL_TOKEN_SECRET empty in .env; skipping registry auth (fine if every image is PUBLIC)."
 fi
 
-# 1. Durable secrets bundle (secrets.yaml): the cluster's PKI — CA, service-account key, bootstrap/join
-#    tokens. This is the ONE sticky artifact in this dir; everything below is disposable scratch re-rendered
-#    from it each run. It's generated ONCE and never rotated, so the cluster identity (and thus the
-#    talosconfig/kubeconfig that authenticate to it) survives every re-run and rebuild. Migration: if there
-#    is no secrets.yaml yet but a controlplane.yaml from before this split exists, EXTRACT the bundle from it
-#    so the RUNNING cluster's existing PKI is preserved — a plain `gen secrets` would mint a NEW PKI that no
-#    longer matches the live nodes and would lock us out.
+# The cluster's PKI, and the ONE sticky artifact here: everything else is disposable scratch re-rendered
+# from it each run. Generated once and never rotated, so the cluster identity survives every re-run.
+# Migration: with no secrets.yaml but a pre-split controlplane.yaml present, EXTRACT the bundle from it. A
+# plain `gen secrets` would mint a NEW PKI that no longer matches the live nodes and would lock us out.
 if [ ! -f "${OUTDIR}/secrets.yaml" ]; then
   if [ -f "${OUTDIR}/controlplane.yaml" ]; then
     say "extracting secrets.yaml from the existing controlplane.yaml (preserves the running cluster's PKI)"
     talosctl gen secrets --from-controlplane-config controlplane.yaml -o secrets.yaml
   else
-    say "generating a fresh secrets.yaml (new cluster PKI — created once, never rotated)"
+    say "generating a fresh secrets.yaml (new cluster PKI, created once, never rotated)"
     talosctl gen secrets -o secrets.yaml
   fi
 fi
 
-# 1b. Render the base control-plane config FRESH each run from the durable secrets + the CURRENT versions.env/.env
-#     values (k8s version, VIP endpoint, install disk). Regenerating every run (--force) is the whole point of the
-#     split: a version bump in versions.env actually lands here, instead of being frozen into a preserved
-#     controlplane.yaml. --with-secrets reuses secrets.yaml so the re-render never rotates PKI; worker.yaml
-#     is skipped (every node here is control-plane); talosconfig is re-issued off the same CA (still valid).
+# Rendered FRESH each run from the durable secrets plus the CURRENT versions.env and .env values. That is why
+# the config is split from the secrets: a version bump actually reaches the nodes, instead of being frozen
+# into a controlplane.yaml we kept from last time. --with-secrets reuses secrets.yaml, so the re-render never rotates PKI.
 talosctl gen config "${CLUSTER}" "https://${VIP}:6443" \
   --with-secrets secrets.yaml \
   --install-disk "${DISK}" \
   --kubernetes-version "${KVER}" \
   --output-types controlplane,talosconfig \
   --force
-# gen config emits BOTH into /work: talosconfig (durable, stays) and controlplane.yaml (throwaway base for
-# cp.yaml below). Move the throwaway one into the scratch dir so the secrets dir keeps only durable creds.
+# gen config emits talosconfig (durable) and controlplane.yaml (throwaway) into the same dir. Move the
+# throwaway one to scratch so the secrets dir keeps only durable creds.
 mv "${OUTDIR}/controlplane.yaml" "${TALOS_SCRATCH}/controlplane.yaml"
 
 # 2. Cluster-wide control-plane patch: VIP on the wired NIC, schedulable CP, certSANs
@@ -111,14 +89,11 @@ ${REGISTRIES_BLOCK}
   nodeLabels:
     node.kubernetes.io/instance-type: ${NODE_INSTANCE_TYPE}   # nic-keeper DaemonSet selector (03_operating_system.md)
   kubelet:
-    # Longhorn's data path lives on the dedicated 'longhorn' user volume (see volumes.yaml below),
-    # mounted at /var/mnt/longhorn on the host. Talos runs the kubelet in a container and does NOT
-    # auto-propagate /var/mnt mounts into it, so Longhorn's pods can't see the disk without this
-    # explicit bind. rshared lets Longhorn's per-replica sub-mounts propagate back to the host.
-    # The 'localpath' mount is the same idea for the local-path-provisioner (off Longhorn; backs CNPG + RabbitMQ):
-    # its helper pods + the hostPath PVs both resolve /var/mnt/localpath against the kubelet's view, so the
-    # bind is required too; plain rw suffices (no sub-mount propagation like Longhorn).
-    # See 08_storage.md and 08_storage.md.
+    # Talos runs the kubelet in a container and does NOT auto-propagate /var/mnt mounts into it, so without
+    # these binds Longhorn's pods and local-path's helper pods cannot see their disks.
+    # longhorn gets rshared, which means mounts made inside the bind are visible on the host too. Longhorn
+    # creates one sub-mount per replica and the host has to see them. localpath creates none, so plain rw is
+    # enough there. See 08_storage.md.
     extraMounts:
       - destination: /var/mnt/longhorn
         type: bind
@@ -140,10 +115,9 @@ ${REGISTRIES_BLOCK}
           ip: ${VIP}
 cluster:
   allowSchedulingOnControlPlanes: true
-  # etcd election tuning: defaults (heartbeat 100ms / election 1000ms) trigger spurious leader elections during
-  # the cold-boot I/O storm (Longhorn+CNPG+image-pulls saturate the single NVMe -> etcd fsync stalls >1s ->
-  # followers time out -> election burst -> watch/informer lag -> flaky bring-up). Raised 5x (election stays
-  # 10x heartbeat) to ride out multi-sec fsync stalls; identical on all 3 CP nodes (one patch). See 03_operating_system.md.
+  # The defaults trigger spurious leader elections during the cold-boot I/O storm: Longhorn, CNPG and image
+  # pulls saturate the single NVMe, etcd fsync stalls past a second, followers time out, and the election
+  # burst lags every watch and informer. Raised 5x, keeping election at 10x heartbeat.
   etcd:
     extraArgs:
       heartbeat-interval: "500"    # ms (etcd default 100)
@@ -158,10 +132,9 @@ cluster:
 ${CERTSANS}
 EOF
 
-# 3. Partition layout (extra config documents): cap EPHEMERAL, carve a fixed-size 'localpath' volume,
-#    then 'longhorn' takes the remainder. The 'localpath' volume is min==max (a fixed slice) so the
-#    local-path storage can't grow into Longhorn's space; 'longhorn' has no maxSize so it grows once
-#    at provision time to claim whatever is left. See 08_storage.md / 08_storage.md.
+# Cap EPHEMERAL, carve a fixed-size 'localpath' volume, then let 'longhorn' take the remainder. localpath is
+# min==max so it cannot grow into Longhorn's space; longhorn has no maxSize so it claims what is left, once,
+# at provision time. See 08_storage.md.
 cat > "${TALOS_SCRATCH}/volumes.yaml" <<EOF
 ---
 apiVersion: v1alpha1
@@ -220,7 +193,7 @@ done
 
 # 5. Apply to each node. cp.yaml/cp-patch.yaml live in the scratch dir, mounted at /scratch in the
 #    container (the rest of the paths are relative to /work). Hostname goes through the HostnameConfig
-#    document (Talos 1.12+), not the legacy machine.network.hostname, gen config now ships HostnameConfig
+#    document (needs Talos >= 1.12), not machine.network.hostname: gen config already ships a HostnameConfig
 #    (auto: stable), and setting both errors with "static hostname is already set in v1alpha1 config".
 for i in "${!IPS[@]}"; do
   ip="${IPS[$i]}"; host="${HOSTNAMES[$i]}"
@@ -232,7 +205,7 @@ done
 
 # The rendered scratch (cp.yaml + controlplane.yaml + cp-patch.yaml + volumes.yaml) has now been applied to
 # every node; the nodes hold their own live config from here on. It lives in ${TALOS_SCRATCH} (an OS temp
-# dir), so there's nothing to clean up — the OS reaps it, and it never sat next to the durable creds.
+# dir), so there's nothing to clean up: the OS reaps it, and it never sat next to the durable creds.
 
 # 6. Point talosctl at the real node IPs (NOT the VIP)
 talosctl config endpoint "${IPS[@]}"

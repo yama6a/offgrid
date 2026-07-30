@@ -1,9 +1,6 @@
 # The shared OIDC callback BACKEND: one tiny whoami behind every domain's google-sso.<domain> host. Envoy
-# Gateway intercepts /oauth2/callback (via each callback host's SecurityPolicy) before it reaches this, so
-# this whoami only ever answers non-callback paths, and only to someone who cleared the callback host's
-# own gate. ONE shared Deployment+Service for every domain's callback host. The per-domain callback host
-# itself (Gateway + :443 listener + Certificate + HTTPRoute + SecurityPolicy) is rendered by the
-# ingress library, one per `domains[]` entry (templates/ingress.yaml). See 07_ingress.md.
+# intercepts /oauth2/callback before it reaches this, so the whoami only ever answers non-callback paths, and
+# only to someone who already cleared that host's gate. One Deployment and Service for every domain.
 apiVersion: apps/v1
 kind: Deployment
 metadata:
@@ -13,7 +10,7 @@ metadata:
     app: gateway-sso-callback
 spec:
   replicas: 1
-  revisionHistoryLimit: 0  # roll-forward only; no old ReplicaSets kept (05_gitops.md)
+  revisionHistoryLimit: 0  # recovery is a git revert, never a rollback, so kept history is dead weight
   selector:
     matchLabels:
       app: gateway-sso-callback

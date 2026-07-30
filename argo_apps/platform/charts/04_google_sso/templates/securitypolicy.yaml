@@ -1,9 +1,8 @@
 {{/*
-ONE Google-OIDC SecurityPolicy per domain. It attaches (targetRefs) to the domain's callback route AND
-every gated app route, so a single OAuth flow (one cookie identity) completes on the shared callback host.
-Login gate = oidc; authorization is per-host: each rule allows a host (matched by `:authority`) only for
-its own email allowlist (both must match). A host with no rule -> Deny (e.g. the callback whoami itself).
-See 07_ingress.md.
+ONE Google-OIDC SecurityPolicy per domain, attached to the domain's callback route AND every gated app route,
+so a single OAuth flow completes on the shared callback host under one cookie identity.
+Login gate is oidc; authorization is per-host, each rule allowing a host only for its own allowlist. A host
+with no rule is denied, which includes the callback whoami itself.
 */}}
 {{- $oidc := .Values.oidc -}}
 {{- $ns := .Values.namespace -}}
@@ -16,8 +15,8 @@ metadata:
   name: sso-{{ $slug }}
   namespace: {{ $ns }}
 spec:
-  # The callback route + every gated host route on this domain. Route names are the full host with dots ->
-  # dashes (the ingress library's naming), so they resolve whichever chart created the route.
+  # Route names are the full host with dots turned to dashes, the ingress chart's naming, so they resolve
+  # whichever chart created the route.
   targetRefs:
     - group: gateway.networking.k8s.io
       kind: HTTPRoute
@@ -37,8 +36,7 @@ spec:
     # The one callback host for this domain (register it on the Google OAuth client).
     redirectURL: {{ printf "https://%s.%s/oauth2/callback" $oidc.authSubdomain $d.domain | quote }}
     logoutPath: {{ $oidc.logoutPath | quote }}
-    # Domain-scoped session cookie so one login covers every host on the domain (each host still re-checks
-    # its own allowlist below).
+    # Domain-scoped, so one login covers every host on the domain. Each host still re-checks its allowlist.
     cookieDomain: {{ $d.domain | quote }}
     cookieNames:
       idToken: {{ $oidc.idTokenCookie | quote }}
@@ -69,15 +67,15 @@ spec:
             - {{ $oidc.idTokenCookie | quote }}
 
   authorization:
-    # Deny by default: the callback host (no rule) and any host not listed are denied; the OAuth
-    # /oauth2/callback path is handled by the oidc filter BEFORE authorization, so login still works.
+    # Deny by default: the callback host and any unlisted host are denied. /oauth2/callback is handled by the
+    # oidc filter BEFORE authorization, so login still works.
     defaultAction: Deny
     rules:
       {{- range $h := $d.hosts }}
       - name: allow-{{ $h.host | replace "." "-" }}
         action: Allow
         principal:
-          # BOTH must match: the request host is {{ $h.host }} AND the email is in its allowlist.
+          # BOTH must match: the request host AND an email in that host's allowlist.
           headers:
             - name: ":authority"
               values:

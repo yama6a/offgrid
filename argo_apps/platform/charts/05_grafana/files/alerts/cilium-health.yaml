@@ -1,9 +1,9 @@
 apiVersion: 1
 groups:
-  # Cilium / CNI health. Static severity. Agent-down is warning (a hard node loss already pages node-not-ready
-  # critical; this is the CNI-specific angle: agent gone while the node is up = that node's pods lose networking).
-  # BPF-map pressure and unreachable-nodes are Cilium-only signals with no other coverage. Raw drop-count and
-  # policy-import-errors are omitted (policy-denies are normal drops; the import-errors metric isn't emitted here).
+  # Agent-down is warning, not critical: a hard node loss already pages node-not-ready. This is the CNI angle,
+  # an agent gone while the node is up, which costs that node's pods their networking.
+  # Raw drop-count and policy-import-errors are deliberately absent: policy denies are normal drops, and the
+  # import-errors metric is not emitted here.
   - orgId: 1
     name: cilium-health
     folder: raspi-cluster
@@ -15,11 +15,11 @@ groups:
         for: 5m
         labels: {severity: warning}
         annotations:
-          summary: 'Fewer than 3 Cilium agents are up — a node has lost its CNI dataplane'
+          summary: 'Fewer than 3 Cilium agents are up: a node has lost its CNI dataplane'
           description: |
-            • a node's cilium-agent is down — its pods lose networking
-            • check: kubectl -n kube-system get pods -l k8s-app=cilium -o wide
-            • logs: kubectl -n kube-system logs ds/cilium
+            - a node's cilium-agent is down: its pods lose networking
+            - check: kubectl -n kube-system get pods -l k8s-app=cilium -o wide
+            - logs: kubectl -n kube-system logs ds/cilium
         noDataState: OK
         execErrState: Error
         data:
@@ -45,7 +45,7 @@ groups:
               conditions:
                 - type: query
                   evaluator: {type: lt, params: [3]}
-      # A BPF map filling up -> new endpoints / policies / connections start failing. >80% = act before it wedges.
+      # A full BPF map makes new endpoints, policies and connections start failing. Act before it wedges.
       - uid: cilium-bpf-map-pressure
         title: Cilium BPF map pressure high
         condition: C
@@ -54,9 +54,9 @@ groups:
         annotations:
           summary: 'Cilium BPF map {{ $labels.map_name }} above 80% full'
           description: |
-            • BPF map {{ $labels.map_name }} >80% full — new endpoints/policies/conns start failing
-            • check: kubectl -n kube-system exec ds/cilium -- cilium bpf metrics list
-            • needs larger map sizing or fewer endpoints/policies
+            - BPF map {{ $labels.map_name }} >80% full: new endpoints/policies/conns start failing
+            - check: kubectl -n kube-system exec ds/cilium -- cilium bpf metrics list
+            - needs larger map sizing or fewer endpoints/policies
         noDataState: OK
         execErrState: Error
         data:
@@ -82,7 +82,7 @@ groups:
               conditions:
                 - type: query
                   evaluator: {type: gt, params: [0.8]}
-      # An agent can't reach peer nodes -> cross-node pod traffic / service routing breaks between them.
+      # Cross-node pod traffic and service routing break between the affected peers.
       - uid: cilium-unreachable-nodes
         title: Cilium unreachable nodes
         condition: C
@@ -91,9 +91,9 @@ groups:
         annotations:
           summary: 'A Cilium agent reports unreachable peer nodes (cross-node networking degraded)'
           description: |
-            • a cilium-agent can't reach peer nodes — cross-node pod/service traffic breaks
-            • check: kubectl -n kube-system exec ds/cilium -- cilium status --verbose
-            • verify node health + tunnels between nodes
+            - a cilium-agent can't reach peer nodes: cross-node pod/service traffic breaks
+            - check: kubectl -n kube-system exec ds/cilium -- cilium status --verbose
+            - verify node health + tunnels between nodes
         noDataState: OK
         execErrState: Error
         data:

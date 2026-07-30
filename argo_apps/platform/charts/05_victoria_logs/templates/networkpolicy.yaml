@@ -1,6 +1,5 @@
-# POD-SCOPED to the vlsingle logs store (60d of raw container logs — the most sensitive data at rest). NOT
-# namespace-wide: vmagent shares the monitoring namespace and must stay unrestricted. See 04_networking.md /
-# 09_monitoring.md.
+# POD-scoped to the vlsingle store, which holds 60d of raw container logs. Not namespace-wide: vmagent shares
+# the monitoring namespace and must stay unrestricted.
 apiVersion: cilium.io/v2
 kind: CiliumNetworkPolicy
 metadata:
@@ -12,7 +11,7 @@ spec:
       app.kubernetes.io/name: vlsingle
       app.kubernetes.io/instance: victoria-logs
   ingress:
-    # :9428 — the collector writes, grafana reads, the Envoy edge serves vlogs, vmagent self-scrapes, vm-backup exports.
+    # The collector writes, grafana reads, the Envoy edge serves vlogs, vmagent self-scrapes, vm-backup exports.
     - fromEndpoints:
         - matchLabels:
             k8s:io.kubernetes.pod.namespace: monitoring

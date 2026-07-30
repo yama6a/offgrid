@@ -1,30 +1,15 @@
 #!/usr/bin/env bash
-#
-# 13_s3_backup_bucket.sh  (macOS)
-#
-# Manages the shared S3 backup bucket via Terraform (terraform/): the bucket + a bucket-wide lifecycle (land
-# in Standard -> Glacier Instant Retrieval at S3_BACKUP_TRANSITION_DAYS -> delete at S3_BACKUP_RETENTION_DAYS),
-# SSE, public access blocked, and a scoped IAM writer whose access key is a Terraform output (14_cnpg_backup.sh
-# seals it into the cluster). General-purpose: CNPG backups land under cnpg/; longhorn/ + redis/ are reserved.
-# See docs/13_backups.md.
-#
-# Config comes ENTIRELY from the gitignored .env (nothing prompted): the DEPLOYER creds
-# (AWS_DEPLOY_ACCESS_KEY_ID / AWS_DEPLOY_SECRET_ACCESS_KEY_SECRET, need s3:* + iam:* to build the bucket/user)
-# are exported for the AWS provider + the aws CLI, and AWS_REGION / S3_BACKUP_BUCKET / *_DAYS as TF_VAR_*.
-# Empty AWS_DEPLOY_ACCESS_KEY_ID => backups are OFF: every action no-ops (like every secret-gated feature).
-#
-# Terraform state is LOCAL (terraform/) and holds the IAM secret key, so it is gitignored (repo is public).
-# Needs NO cluster (pure AWS).
+# Manages the shared S3 backup bucket via Terraform: the bucket, a bucket-wide lifecycle, encryption at rest,
+# public access blocked, and a scoped IAM writer whose access key is a Terraform output the 14-17 scripts seal.
+# Terraform state is LOCAL and holds the IAM secret key, so it is gitignored. Needs no cluster.
 #
 # Actions:
-#   apply    (default) : terraform apply — idempotent create/update of the bucket + lifecycle + IAM writer.
-#   wipe               : delete ALL objects in the bucket, KEEPING the bucket + IAM (used by a rebuild — a
-#                        fresh cluster starts a clean backup history). Does NOT touch Terraform.
-#   destroy            : empty the bucket THEN terraform destroy (bucket + IAM gone). Full teardown (reset).
+#   apply   (default) idempotent create/update of the bucket, lifecycle and IAM writer.
+#   wipe              delete ALL objects, KEEPING the bucket + IAM. Used by a rebuild, so a fresh cluster
+#                     starts a clean backup history. Does not touch Terraform.
+#   destroy           empty the bucket then terraform destroy. Full teardown.
 #
-# wipe/destroy prompt for a typed confirmation unless ASSUME_YES=1 (set by the DANGEROUS_* orchestrators,
-# which already took one up-front confirmation). Standalone `make s3-backup-wipe|destroy` prompt normally.
-#
+# wipe and destroy prompt for a typed confirmation unless ASSUME_YES=1.
 set -uo pipefail
 
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
@@ -33,7 +18,6 @@ source "${SCRIPT_DIR}/common.sh"
 # ---- knobs ------------------------------------------------------------------
 TF_DIR="${REPO_ROOT}/terraform"     # the Terraform root (versions/variables/main/outputs.tf)
 ACTION="${1:-apply}"                # apply (default) | wipe | destroy
-# -----------------------------------------------------------------------------
 
 confirm_or_die() { # <WORD> <warning message>
   [ "${ASSUME_YES:-0}" = 1 ] && return 0
@@ -51,7 +35,6 @@ empty_bucket() { # delete every object; tolerant of an already-gone bucket (vers
   fi
 }
 
-# === 0. prereqs + gate =======================================================
 say "prerequisites"
 [ -f "${TF_DIR}/main.tf" ] || die "no Terraform at ${TF_DIR}"
 # Gated on the deployer creds being present (same "empty secret = feature off" contract). No creds => no-op,
@@ -69,7 +52,6 @@ export AWS_ACCESS_KEY_ID="$AWS_DEPLOY_ACCESS_KEY_ID"
 export AWS_SECRET_ACCESS_KEY="$AWS_DEPLOY_SECRET_ACCESS_KEY_SECRET"
 export AWS_DEFAULT_REGION="$AWS_REGION"
 
-# === 1. dispatch =============================================================
 case "$ACTION" in
   apply)
     require terraform
@@ -98,7 +80,6 @@ case "$ACTION" in
     ;;
 esac
 
-# === 2. summary ==============================================================
 summary
 if [ "$FAIL" -eq 0 ] && [ "$ACTION" = apply ]; then
   cat <<EOF

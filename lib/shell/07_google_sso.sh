@@ -1,31 +1,9 @@
 #!/usr/bin/env bash
-#
-# 07_google_sso.sh  (macOS)
-#
-# Wires up the SHARED Google-OIDC client: reads the ONE OAuth client-id + client-secret from .env, writes
-# the (non-secret) client-id into the CENTRAL google-sso chart values, and seals the client SECRET into a
-# committable SealedSecret. The callback hosts + the one-per-domain SecurityPolicy are delivered by ArgoCD
-# (04_google_sso, wave 4). See 07_ingress.md.
-#
-# WHERE SSO LIVES NOW: everything google-sso is central in argo_apps/platform/charts/04_google_sso. Which
-# hosts are gated (and by which email allowlist) is the `domains[].hosts` map there — edit that to protect
-# a host; workloads configure nothing. This script only touches the shared client-id + the sealed secret.
-#
-# client-id + client-secret come from the gitignored .env (GOOGLE_SSO_CLIENT_ID / GOOGLE_SSO_CLIENT_SECRET).
-# Nothing is prompted, so a non-interactive re-run (DANGEROUS_bootstrap_cluster.sh piping </dev/null) just
-# re-writes the client-id and re-seals the secret. No cookie secret (Envoy Gateway signs its own cookies).
-#
-# SINGLE SOURCE OF TRUTH (read, not duplicated), all from the google-sso chart values
-# (argo_apps/platform/charts/04_google_sso/values.yaml):
-#   - the shared OIDC config (authSubdomain, clientSecretName) <- .oidc.*
-#   - the seal namespace <- .namespace ; the SSO domains <- .domains[].domain
-# Written by this script:
-#   - argo_apps/platform/charts/04_google_sso/values.yaml  (.oidc.clientID)
-#   - argo_apps/platform/charts/04_google_sso/templates/google-oauth-sealedsecret.yaml  (the sealed secret)
-#
-# Native kubeseal + kubectl + yq (hard-fails if missing), apply-to-cluster work is native, like 04/05/07.
-# Talks to the cluster via the step-03 kubeconfig (kubeseal fetches the controller's cert).
-#
+# Writes the shared Google OAuth client-id into the central google-sso chart values and seals the client
+# secret. Both come from .env, nothing is prompted, so a non-interactive re-run just rewrites and re-seals.
+# WHICH hosts are gated, and by which allowlist, is that chart's domains[].hosts map, not this script.
+# Workloads configure nothing.
+# No cookie secret: Envoy Gateway signs its own cookies.
 set -uo pipefail
 
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
@@ -35,10 +13,8 @@ source "${SCRIPT_DIR}/common.sh"
 SSO_CHART="${REPO_ROOT}/argo_apps/platform/charts/04_google_sso"                 # the central google-sso chart
 SSO_VALUES="${SSO_CHART}/values.yaml"                                            # oidc config + domains live here; clientID written here
 SEALED_OUT="${SSO_CHART}/templates/google-oauth-sealedsecret.yaml"              # sealed client secret (committed)
-CLIENT_SECRET_KEY="client-secret"   # Secret data key EG's OIDC clientSecret expects (fixed by Envoy Gateway)
-# -----------------------------------------------------------------------------
+CLIENT_SECRET_KEY="client-secret"   # the data key Envoy Gateway's OIDC clientSecret reads; not ours to choose
 
-# === 0. prereqs ==============================================================
 say "prerequisites"
 require kubeseal kubectl yq
 use_kubeconfig
@@ -48,7 +24,6 @@ kubectl get pods -n "$SS_CONTROLLER_NS" -l "$SS_POD_SELECTOR" >/dev/null 2>&1 \
   || die "sealed-secrets controller not reachable in ns/${SS_CONTROLLER_NS}, is step 06 synced? (kubectl -n ${SS_CONTROLLER_NS} get pods)"
 ok "kubeseal/kubectl/yq present, API + sealed-secrets controller reachable"
 
-# === 1. read the shared OIDC config + SSO domains (single source of truth) ==============
 say "reading OIDC config + domains from ${SSO_VALUES}"
 AUTH_SUBDOMAIN="$(yq -r '.oidc.authSubdomain' "$SSO_VALUES" 2>/dev/null)"
 SEAL_NAME="$(yq -r '.oidc.clientSecretName' "$SSO_VALUES" 2>/dev/null)"
@@ -62,7 +37,6 @@ while IFS= read -r d; do [ -n "$d" ] && [ "$d" != "null" ] && DOMAINS+=("$d"); d
 [ "${#DOMAINS[@]}" -ge 1 ] || die "no SSO domains (.domains[].domain) in ${SSO_VALUES}"
 ok "domains: ${DOMAINS[*]}  callback: ${AUTH_SUBDOMAIN}.<domain>  seal: ${SEAL_NAME}/${SEAL_NAMESPACE}"
 
-# === 2. how to set up the Google OAuth client (ONE client, all domains) ======
 say "Google OAuth client, ONE client covers all domains"
 echo "  In Google Cloud Console (https://console.cloud.google.com/apis/credentials):"
 echo "    1. OAuth consent screen: 'External', Published. Under 'Authorized domains' add each apex:"
@@ -73,7 +47,6 @@ for d in "${DOMAINS[@]}"; do echo "         https://${AUTH_SUBDOMAIN}.${d}/oauth
 echo "    4. Create -> copy the Client ID (...apps.googleusercontent.com) and Client secret."
 echo "  No service account needed (that's only for Google Workspace *group* restriction)."
 
-# === 3. read the shared client id + secret from .env =========================
 say "reading the shared Google OAuth client credentials from .env"
 CLIENT_ID="$GOOGLE_SSO_CLIENT_ID"
 CLIENT_SECRET="$GOOGLE_SSO_CLIENT_SECRET"
@@ -83,7 +56,6 @@ case "$CLIENT_ID" in *.apps.googleusercontent.com) ;; *)
   warn "client id does not end in .apps.googleusercontent.com, double-check it" ;;
 esac
 
-# === 4. write the shared clientID into the google-sso chart values ===========
 say "writing clientID into ${SSO_VALUES}"
 if CLIENT_ID="$CLIENT_ID" yq -i '.oidc.clientID = strenv(CLIENT_ID)' "$SSO_VALUES"; then
   [ "$(yq -r '.oidc.clientID' "$SSO_VALUES")" = "$CLIENT_ID" ] && ok "oidc.clientID set" || bad "clientID not written"
@@ -91,14 +63,12 @@ else
   bad "yq failed to write oidc.clientID"
 fi
 
-# === 5. seal the shared client secret (overwrite) ============================
 # One key: ${CLIENT_SECRET_KEY} (what Envoy Gateway's OIDC clientSecret reads). --dry-run=client builds the
 # manifest locally; kubeseal encrypts it against THIS cluster's controller key. Strict scope binds it to
 # exactly ${SEAL_NAME}/${SEAL_NAMESPACE}. Referenced by every domain's SecurityPolicy.
 say "sealing client secret -> ${SEALED_OUT}"
 seal_secret "$SEAL_NAME" "$SEAL_NAMESPACE" "$CLIENT_SECRET_KEY" "$CLIENT_SECRET" "$SEALED_OUT"
 
-# === 6. summary ==============================================================
 summary
 if [ "$FAIL" -eq 0 ]; then
   echo "Google SSO client wired for ${#DOMAINS[@]} domain(s). Register these redirect URIs on the OAuth client:"

@@ -1,8 +1,3 @@
-# Values for the 00_victoria_metrics_operator_crds wrapper chart. SINGLE SOURCE OF TRUTH, ArgoCD (and
-# any local `helm template`) consume this. Chart version pinned in Chart.yaml. See 15_monitoring.md.
-#
-# Everything under `victoria-metrics-operator-crds:` is passed to the upstream subchart (key == dependency
-# name). It installs the full VM* + VL* CRD set unconditionally — unlike prometheus-operator-crds this chart
-# has NO per-CRD enable/disable toggle, its ONLY knob is `crds.annotations` (stamped on every CRD). So this
-# block stays empty on purpose; there is nothing worth setting.
+# Empty on purpose: this chart installs the full VM*/VL* CRD set unconditionally, no per-CRD toggle exists.
+# Its only knob is crds.annotations.
 victoria-metrics-operator-crds: {}

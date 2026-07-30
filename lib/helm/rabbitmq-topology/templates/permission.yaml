@@ -1,11 +1,8 @@
-{{- /* The ONE per-user permission on the vhost (RabbitMQ has a single configure/write/read triple per
-       user+vhost). References the User CR by name (username is operator-GENERATED, unknown at render time).
-       write = every exchange this workload publishes to (publishEvents it owns + sendCommands it targets);
-       read = every queue it consumes (its command queues + its per-subscription event queues). configure
-       stays unset: the operator's admin user declares all topology, so an app user never creates/deletes.
-       Regex metachars (`.` in the auto queue names) are escaped so a name matches only itself. Only the
-       non-empty fields are emitted: the operator drops empty strings, so emitting write:"" / read:"" would
-       leave ArgoCD owning a field the live object lacks -> permanently OutOfSync. */ -}}
+{{- /* The ONE per-user permission on the vhost: RabbitMQ has a single configure/write/read triple per
+       user+vhost. References the User CR by name, the username is operator-GENERATED and unknown at render.
+       configure stays unset: the operator's admin user declares all topology, an app user never creates.
+       Only non-empty fields are emitted: the operator drops empty strings, so write:"" would leave ArgoCD
+       owning a field the live object lacks, and the app reads permanently OutOfSync. */ -}}
 {{- $user := include "rabbitmq-topology.user" . -}}
 {{- $writeSet := list -}}
 {{- range $e := (.Values.publishEvents | default list) -}}{{- $writeSet = append $writeSet $e.name -}}{{- end -}}

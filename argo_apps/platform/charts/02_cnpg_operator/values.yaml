@@ -1,48 +1,23 @@
-# Values for the 02_cnpg_operator wrapper chart. SINGLE SOURCE OF TRUTH, ArgoCD (and any local
-# `helm template`) consume this. Chart version pinned in Chart.yaml. See 08_storage.md for the why.
-#
-# The operator runs in its own `cnpg-system` namespace (CreateNamespace=true in the Application).
-# No privileged PSA needed, the controller and the Postgres pods it later spawns run non-root
-# (uid 26), so the namespace stays restricted-compatible (like cert-manager / sealed-secrets).
-#
-# Everything under `cloudnative-pg:` is passed to the upstream cnpg/cloudnative-pg subchart (key == dependency name).
 cloudnative-pg:
-  # The operator chart bundles + installs the CNPG CRDs (Cluster, Backup, ScheduledBackup, ...). No
-  # separate wave-0 CRD app is needed: the sample_workload workload is in the workloads tree, which the
-  # root-of-roots only creates after the whole platform is Healthy, so these CRDs are registered before
-  # the Cluster CR is ever applied. (ServerSideApply in the Application handles the large CRD manifests.)
   crds:
-    create: true
+    create: true # no separate wave-0 CRD app; a workload Cluster applied before the CRD just retries until it lands
 
-  # Propagate the `alert-criticality` label from each Cluster CR's metadata.labels onto the Postgres PODS the
-  # operator spawns (CNPG only inherits labels named here). This is how a labeled-critical DB (the pg-cluster
-  # wrapper always stamps `alert-criticality`, critical|warning, from its `alertCritical` bool) reaches
-  # kube_pod_labels, so the container-waiting-fatal outage alert can page `critical` for it. CNPG has no
-  # Deployment/StatefulSet the availability rules see. See 09_monitoring.md (alerting severity model).
+  # CNPG copies onto the Postgres pods only the labels named here. alert-criticality is how a DB reaches
+  # kube_pod_labels, so the outage alert can page critical for it. CNPG has no Deployment the rules see.
   config:
     data:
       INHERITED_LABELS: alert-criticality
 
-  # Emit the operator's PodMonitor so vmagent scrapes the controller's /metrics. The VM operator
-  # auto-converts PodMonitor -> VMPodScrape, and the k8s-stack discovers every scrape cluster-wide,
-  # so this wires into VictoriaMetrics with no extra config. CRDs exist from wave 0. See 09_monitoring.md.
   monitoring:
     podMonitorEnabled: true
-    # Ship the official CNPG operator Grafana dashboard as a `grafana_dashboard` ConfigMap; the 05_grafana
-    # sidecar (searchNamespace: ALL) auto-loads it, and we already scrape the operator PodMonitor. Free dashboard.
     grafanaDashboard:
       create: true
 
-  # Single replica: use Recreate so an image bump doesn't briefly run two operator pods (~2x the 96Mi limit)
-  # on a memory-tight node (RollingUpdate's 25% maxSurge rounds up to 1 surge pod).
   updateStrategy:
-    type: Recreate
+    type: Recreate # single replica, so avoid RollingUpdate briefly running two operator pods on a tight node
 
-  # Protect the operator from eviction under node memory pressure (own ns => our class, not kube-system built-in).
   priorityClassName: platform-critical
 
-  # Modest footprint for the single controller pod on the Pi 5s, it only reconciles, the DB work
-  # lives in the Postgres pods (the sample_workload workload).
   resources:
     requests:
       cpu: 10m
@@ -50,9 +25,8 @@ cloudnative-pg:
     limits:
       memory: 96Mi
 
-  # The operator is leader-elected (one active); if replicaCount is ever raised for faster failover, keep the
-  # standby off the active's node. PREFERRED + hostname: bare Pi nodes have no zone label, and soft so a
-  # scale-up never wedges as Pending on the 3-node cluster. No-op at the default single replica.
+  # Soft + hostname: bare Pi nodes have no zone label, and soft means raising replicaCount never wedges a
+  # pod Pending on 3 nodes. No-op at the default single replica.
   affinity:
     podAntiAffinity:
       preferredDuringSchedulingIgnoredDuringExecution:

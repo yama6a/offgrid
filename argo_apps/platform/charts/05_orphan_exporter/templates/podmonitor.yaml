@@ -1,9 +1,5 @@
-# The VM operator converts this PodMonitor to a VMPodScrape; vmagent discovers it cluster-wide. Feeds
-# orphaned_cnpg_cluster / cnpg_cluster_untracked / orphaned_redis_instance / redis_instance_untracked /
-# orphaned_vm_resource / vm_resource_untracked / cnpg_backup_recoverable / cnpg_backup_last_success_seconds /
-# orphan_exporter_up to VictoriaMetrics. This scrape is WHY the exporter's own labels are res_-prefixed: it
-# stamps namespace/pod/instance/container/job here and vmagent adds cluster, all of which beat the metric's
-# own (see exporter.py).
+# This scrape is WHY the exporter's own labels are res_-prefixed: it stamps namespace/pod/instance/container/
+# job here and vmagent adds cluster, all of which beat the metric's own. See the exporter in configmap.yaml.
 apiVersion: monitoring.coreos.com/v1
 kind: PodMonitor
 metadata:

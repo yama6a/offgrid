@@ -1,6 +1,5 @@
-# Single-replica ntfy server (RWO PVC + one small Go binary; Recreate so a redeploy releases the volume
-# before the new pod mounts it). Runs restricted: non-root, drops all caps, never calls the k8s API. Config
-# in templates/configmap.yaml (checksum-rolled); auth + cache DBs on the PVC. See 09_monitoring.md.
+# Single-replica ntfy. Recreate, not RollingUpdate: the RWO PVC must be released before the new pod mounts it.
+# Runs restricted (non-root, all caps dropped) and never calls the k8s API.
 apiVersion: apps/v1
 kind: Deployment
 metadata:
@@ -8,15 +7,14 @@ metadata:
   namespace: {{ .Release.Namespace }}
   {{- if .Values.deletionProtection }}
   annotations:
-    # Orphan-not-delete: a GitOps prune leaves ntfy running on its PVC instead of destroying it, and restoring the
-    # files re-adopts it. See values.yaml for the flip-then-remove deletion flow.
+    # Orphan-not-delete. See values.yaml for the flip-then-remove deletion flow.
     argocd.argoproj.io/sync-options: Prune=false,Delete=false
   {{- end }}
   labels:
     app.kubernetes.io/name: ntfy
 spec:
   replicas: 1
-  revisionHistoryLimit: 0  # roll-forward only; no old ReplicaSets kept (05_gitops.md)
+  revisionHistoryLimit: 0  # recovery is a git revert, never a rollback, so kept history is dead weight
   strategy:
     type: Recreate            # RWO PVC: the old pod must release the volume before the new one mounts it
   selector:

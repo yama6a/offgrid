@@ -1,17 +1,7 @@
 #!/usr/bin/env bash
-#
-# 03c_talos_boot_verify.sh  (macOS)
-#
-# Run AFTER flashing (03b_talos_image_flasher.sh) and booting each Pi from NVMe
-# with no SD card. Checks the nodes (CLUSTER_NODES in .env) in MAINTENANCE mode
-# (pre-cluster, so `--insecure`), and inspects the output for correctness,# printing PASS/FAIL per check and an overall summary.
-#
-# talosctl runs via the official container: the native macOS client can wrongly
-# report "no route to host" even when the node is fine (see 03_operating_system.md).
-# ping/nc run natively on the Mac.
-#
-# Last per-node check before cluster bring-up (03d_talos_cluster_config.sh).
-#
+# Verifies each node after flashing (03b) and booting from NVMe with no SD card: our image, Talos version,
+# rpi5 overlay, NVMe and wired NIC. Nodes are still in MAINTENANCE mode, hence `--insecure`.
+# The last per-node gate before cluster bring-up (03d).
 set -u
 
 # Config (API port, CLUSTER_NODES, the EXPECT_* checks) in .env; NODES/TALOSCTL_VERSION derived in lib/shell/common.sh.
@@ -21,7 +11,6 @@ source "${SCRIPT_DIR}/common.sh"
 # ---- 03c-only boot-verify expectations --------------------------------------
 EXPECT_TALOS="$TALOS_VERSION"                # our build's Talos version (a local "-dirty" build matches too)
 EXPECT_CMDLINE="console=ttyAMA0,115200"      # rpi5 overlay signature in the kernel cmdline
-# -----------------------------------------------------------------------------
 
 # talosctl via the official container, INSECURE + no talosconfig (maintenance mode, reliable on macOS).
 # Distinct from the lib's talosctl() (which mounts the cluster talosconfig), these nodes aren't a cluster yet.

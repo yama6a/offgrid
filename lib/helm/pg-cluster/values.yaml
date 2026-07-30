@@ -2,7 +2,7 @@ name: ""             # REQUIRED: (string) Must be unique per namespace.
 postgresVersion: ""  # REQUIRED: (string) The Postgres MAJOR, e.g. "18".
 highAvailability:    # REQUIRED: (bool); true = 2 instances, false = 1 instance.
 resources: {}        # REQUIRED: Per-instance requests/limits.
-allowedClients: []   # REQUIRED: SAME-NS ONLY , e.g. [{matchLabels: {app: my-app}}]
+allowedClients: []   # REQUIRED: SAME-NS ONLY, e.g. [{matchLabels: {app: my-app}}]
 deletionProtection:  # REQUIRED: (bool) To delete: set to false in a first commit, delete the DB in a follow-up commit.
 
 postgresql: { parameters: { max_connections: "50", shared_buffers: "128MB", effective_cache_size: "256MB" } }

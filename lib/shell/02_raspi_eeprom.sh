@@ -1,26 +1,19 @@
 #!/usr/bin/env bash
+# Builds a REUSABLE Pi 5 EEPROM-flashing SD card, baking BOOT_ORDER=0xf461 (SD, NVMe, USB, loop) and
+# PCIE_PROBE=1 (so 3rd-party NVMe boards are seen) into the bootloader.
+# Reusable because the image is written as pieeprom.bin, not .upd: recovery.bin flashes and then stops
+# without disabling the card, so one card does every node.
 #
-# build-rpi5-eeprom-card.sh  (macOS)
-#
-# Builds a REUSABLE Raspberry Pi 5 EEPROM-flashing SD card.
-# Bakes two settings into the latest stable Pi 5 (BCM2712) bootloader:
-#     BOOT_ORDER=0xf461     -> SD first, then NVMe, then USB, then loop
-#     PCIE_PROBE=1          -> force PCIe probe so 3rd-party NVMe boards are seen
-# Because the image is written as pieeprom.bin (not .upd), recovery.bin
-# flashes and then stops without disabling the card -> one card, every node.
-#
-# Requires: git + python3  (Xcode Command Line Tools, or: brew install python git)
-#
+# Requires: git + python3
 set -euo pipefail
 
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 source "${SCRIPT_DIR}/common.sh"
 
-# ---- knobs you might change -------------------------------------------------
+# ---- knobs ------------------------------------------------------------------
 WORKDIR="$(mktemp -d)/rpi-eeprom-build"   # build scratch dir
 BOOT_ORDER="0xf461"                  # SD -> NVMe -> USB -> retry
 SD_LABEL="RPIBOOT"                   # FAT32 volume name (<=11 chars, UPPERCASE)
-# -----------------------------------------------------------------------------
 
 # 1. Fresh workdir + shallow clone of the official firmware repo
 mkdir -p "${WORKDIR}"
@@ -53,7 +46,7 @@ echo "----- final EEPROM config -----"; cat boot.conf; echo "-------------------
 # 5. Embed the edited config into a new bootloader image
 python3 ./rpi-eeprom-config --config boot.conf --out pieeprom.bin "${PIEEPROM_SRC}"
 
-# 6. Create pieeprom.sig (first line = hex sha256 of the image) using macOS shasum
+# 6. pieeprom.sig: the boot ROM wants the image's hex sha256 on the first line, nothing else
 shasum -a 256 pieeprom.bin | cut -d' ' -f1 > pieeprom.sig
 
 # 7. Stage the three files the boot ROM looks for
@@ -61,7 +54,7 @@ mkdir -p ../card
 cp "${RECOVERY_SRC}" pieeprom.bin pieeprom.sig ../card/
 say "card payload ready:"; ls -l ../card
 
-# ===== DESTRUCTIVE FROM HERE: writing the SD card ============================
+# DESTRUCTIVE FROM HERE: writing the SD card
 
 # 8. Show disks so you can identify the SD card
 diskutil list

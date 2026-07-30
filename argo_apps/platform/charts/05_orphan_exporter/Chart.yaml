@@ -1,11 +1,8 @@
 apiVersion: v2
 name: orphan-exporter
-description: >-
-  Flags deletionProtection-carrying stateful CRs (CNPG Clusters, OpsTree Redis, VM/VL stores) orphaned by a GitOps
-  prune (owning Argo app gone) or lacking Argo tracking metadata. Also exports per-CNPG-server backup
-  recoverability from the barman ObjectStore status, the only field that populates under the plugin. That second
-  job outgrew the chart name; it stays anyway, because renaming a chart orphans its release-named resources
-  (docs/05_gitops.md) and a whole app for two gauges is not worth it.
+description: Flags deletionProtection CRs orphaned by a GitOps prune, and exports per-CNPG-server backup recoverability from the barman ObjectStore status.
+# Name is stale (it does the backup gauges too). Left alone because renaming a chart orphans its
+# release-named resources.
 type: application
-version: 0.1.0                 # local chart, never bump version
+version: 0.1.0 # local chart, never bump version
 appVersion: "1.0"

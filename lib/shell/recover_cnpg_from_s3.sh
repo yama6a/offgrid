@@ -1,27 +1,20 @@
 #!/usr/bin/env bash
+# The CNPG recovery runbook, executable. Restores a Postgres database from the S3 backups. Two modes:
 #
-# recover_cnpg_from_s3.sh  (macOS)
-#
-# THE CNPG recovery runbook, executable. Restores a Postgres database from the off-cluster S3 backups
-# (continuous WAL + daily base, written by the Barman Cloud plugin). Two modes, one entry point:
-#
-#   in-place  the DB is GONE and you want it back AS ITSELF: same name, same -rw Service, still GitOps-managed.
-#             Drives the pg-cluster `restore` knob, so it spans your git commits and is RESUMABLE: run it,
-#             commit+push what it edited, run it again. It prints the phase it is in every time.
-#   side      the DB is FINE (or you only want to look): bootstraps a SEPARATE, unmanaged single-instance
+#   in-place  the DB is GONE and you want it back AS ITSELF: same name, same -rw Service, still
+#             GitOps-managed. Drives the pg-cluster `restore` knob, so it spans your git commits and is
+#             RESUMABLE: run it, commit and push what it edited, run it again. It prints its phase each time.
+#   side      the DB is FINE, or you only want to look: bootstraps a SEPARATE, unmanaged single-instance
 #             cluster from the same catalog to verify a backup, read old rows, or test a PITR target.
 #
-# A Cluster merely removed from git is NOT deleted (orphan-not-delete): restore its files and Argo re-adopts the
-# running DB, no recovery needed. Use this script when the data is actually gone: disk/node loss, corruption, a
-# rewind, a deliberate two-commit delete, or a full rebuild. See docs/13_backups.md.
-#
-# Follows the repo rule that a script never runs git: it edits values.yaml and prints the commit for you.
+# A Cluster merely REMOVED from git is not deleted: restore its files and Argo re-adopts the running DB, no
+# recovery needed. Use this when the data is actually gone.
+# Never runs git: it edits values.yaml and prints the commit for you.
 #
 # Usage (flags optional, prompts for anything missing):
 #   bash recover_cnpg_from_s3.sh [--mode in-place|side] [--namespace NS] [--source CLUSTER]
 #                                [--target latest|"YYYY-MM-DD HH:MM:SS+ZZ"] [--name RECOVERY_NAME] [--yes]
 #   make restore-cnpg
-#
 set -uo pipefail
 
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
@@ -29,7 +22,8 @@ source "${SCRIPT_DIR}/common.sh"
 
 # ---- knobs ----
 STORAGE_CLASS="local-path"        # side mode: same node-local class the pg-cluster wrapper uses
-STORAGE_SIZE="45Gi"               # side mode: matches the wrapper (a no-op under local-path; it statfs's the partition)
+STORAGE_SIZE="45Gi"               # side mode: matches the wrapper. Ignored under local-path, which enforces no
+                                  # quota, so Postgres just sees the whole partition's free space
 PLUGIN="barman-cloud.cloudnative-pg.io"
 SYNC_WAIT=600                     # in-place: seconds to wait for Argo to sync the pushed commit
 READY_WAIT=1200                   # in-place: seconds to wait for the recovered cluster to reach full readiness
@@ -52,7 +46,6 @@ require kubectl yq
 use_kubeconfig
 assert_api
 
-# ---- values.yaml editing (CNPG-specific; the shared pieces live in common.sh) ----------------
 # vy_read / vy_protect_on / wl_find_alias / confirm are in common.sh, along with the reasoning for the
 # line-surgical awk (yq -i reformats the whole hand-written document). The two below stay here because they
 # are specific to the pg-cluster `restore` knob and its marker comment; redis-instance has no equivalent.
@@ -99,7 +92,6 @@ vy_restore_off() {
 }
 
 
-# === 1. pick a mode ==========================================================
 if [ -z "$MODE" ]; then
   say "CNPG recovery from S3"
   cat <<'MODES'
@@ -112,7 +104,6 @@ MODES
 fi
 case "$MODE" in in-place|side) ;; *) die "mode must be 'in-place' or 'side'" ;; esac
 
-# === 2. shared discovery + preflight ========================================
 kubectl get crd objectstores.barmancloud.cnpg.io >/dev/null 2>&1 \
   || die "ObjectStore CRD missing: is the barman plugin (platform app 03_barman_cloud_plugin) synced?"
 
@@ -177,7 +168,6 @@ if [ "$RECOVERABLE" = "no" ]; then
   confirm "Continue anyway?" || { summary; exit 1; }
 fi
 
-# === 3a. mode: side cluster ==================================================
 if [ "$MODE" = "side" ]; then
   [ -z "$RECOVERY_NAME" ] && RECOVERY_NAME="${SOURCE}-restore"
   kubectl -n "$NS" get cluster.postgresql.cnpg.io "$RECOVERY_NAME" >/dev/null 2>&1 \
@@ -229,8 +219,6 @@ INSTRUCTIONS
   summary; exit 0
 fi
 
-# === 3b. mode: in-place ======================================================
-# Find the workload chart + the dependency alias that owns this database, so we can drive its `restore` knob.
 # Find the workload chart + the dependency alias that owns this database, so we can drive its `restore` knob.
 # postgresVersion is the kind discriminator: it keeps this from ever matching a redis alias, whose chart has no
 # restore knob and would silently swallow the block.

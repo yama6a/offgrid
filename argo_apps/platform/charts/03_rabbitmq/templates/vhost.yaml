@@ -1,11 +1,9 @@
 {{- /*
-The ONE shared vhost every workload uses. Created centrally here (not per-workload) so there's a single place
-that owns it. The topology operator declares it as the broker's admin default-user, whose `administrator` tag
-lets it manage any vhost regardless of per-vhost grants. Workloads' Users get explicit per-vhost Permission on
-this vhost (rendered by lib/helm/rabbitmq-topology); the default `/` vhost stays admin-only.
-
-`SkipDryRunOnMissingResource=true`: like the RabbitmqCluster, the Vhost CRD is installed by this app's operator
-subchart, so skip the cold-boot server dry-run before the type is registered. See rabbitmqcluster.yaml.
+The ONE shared vhost every workload uses, created centrally so a single place owns it. The topology operator
+declares it as the broker's admin default-user, whose `administrator` tag lets it manage any vhost. Workload
+Users get explicit per-vhost Permission; the default `/` vhost stays admin-only.
+SkipDryRunOnMissingResource: the CRD ships with this app's own operator subchart, so skip the cold-boot server
+dry-run before the type is registered.
 */ -}}
 apiVersion: rabbitmq.com/v1beta1
 kind: Vhost

@@ -1,5 +1,4 @@
-{{- /* The exchanges this workload OWNS: one per publishEvents entry (its declared type) + one direct exchange
-       per consumeCommands entry. Subscribers/senders don't declare these (their owner does). */ -}}
+{{- /* The exchanges this workload OWNS. Subscribers and senders never declare these, their owner does. */ -}}
 {{- $ns := .Release.Namespace -}}
 {{- range $e := (.Values.publishEvents | default list) }}
 ---

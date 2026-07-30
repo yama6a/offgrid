@@ -1,28 +1,16 @@
-# ArgoCD Application for the VictoriaMetrics operator CRDs (argo_apps/charts/00_victoria_metrics_operator_crds/).
-# CRDs ONLY, no controller. The operator lands at wave 1 (01_victoria_metrics_operator, crds.enabled:false)
-# and the VM/VL custom resources at wave 5; this app owns their CRD lifecycle separately so they can be
-# upgraded independently and so the CRDs exist before ANY consumer.
-#
-# sync-wave "0": foundational, alongside cilium and the Prometheus operator CRDs. CRDs with no controller
-# are inert; VM*/VL* CRs created before the operator (wave 1) simply wait for it.
-#
-# AUTOMATED with prune:false, a CRD-only app must NEVER cascade-delete its CRDs (that would take every
-# VMSingle/VMAgent/VMServiceScrape/VMRule/VLSingle CR with them). selfHeal:true is safe: re-applying CRDs
-# can't cut the cluster off its network. ServerSideApply=true, the VM CRDs are huge and blow past the
-# client-side last-applied-annotation size limit. See 15_monitoring.md.
+# VictoriaMetrics operator CRDs only, no controller (the wave-1 operator sets crds.enabled: false).
 apiVersion: argoproj.io/v1alpha1
 kind: Application
 metadata:
   name: victoria-metrics-operator-crds
   namespace: argocd
-  # Cascade-delete this app's own resources on Application deletion instead of orphaning them; see 05_gitops.md.
   finalizers:
     - resources-finalizer.argocd.argoproj.io
   annotations:
     argocd.argoproj.io/sync-wave: "0"
 spec:
   project: default
-  revisionHistoryLimit: 0  # roll-forward only; no Argo rollback history (05_gitops.md)
+  revisionHistoryLimit: 0
   source:
     repoURL: https://github.com/yama6a/offgrid
     targetRevision: HEAD
@@ -32,15 +20,15 @@ spec:
     namespace: monitoring
   syncPolicy:
     automated:
-      prune: false   # CRD-only app: pruning a CRD cascade-deletes every CR of that kind cluster-wide
+      prune: false # pruning a CRD cascade-deletes every CR of that kind cluster-wide
       selfHeal: true
     retry:
-      limit: -1  # unbounded; only retry re-drives a failed sync (see 05_gitops.md)
-      refresh: true  # retry the latest revision so a fix commit lands mid-loop
+      limit: -1
+      refresh: true
       backoff:
         duration: 5s
         factor: 2
         maxDuration: 1m
     syncOptions:
       - CreateNamespace=true
-      - ServerSideApply=true   # VM operator CRDs are large, SSA avoids the last-applied-annotation limit
+      - ServerSideApply=true # these CRDs are too big for client-side apply's 256KiB manifest annotation

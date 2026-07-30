@@ -2,9 +2,9 @@ apiVersion: 1
 policies:
   - orgId: 1
     receiver: ntfy
-    # '...' = group by ALL labels -> one notification per faulty resource (not per alertname+namespace). So the
-    # ntfy title can name exactly one resource, and two instances of the same alert don't collapse into one nameless
-    # notification (the old [alertname, namespace] grouping dropped the per-pod summary from CommonAnnotations).
+    # '...' groups by ALL labels, so one notification per faulty resource rather than per alertname+namespace.
+    # That is what lets the ntfy title name exactly one resource, and stops two instances of the same alert
+    # collapsing into one nameless notification.
     group_by: ['...']
     group_wait: 30s
     group_interval: 5m

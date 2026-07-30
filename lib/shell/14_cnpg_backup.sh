@@ -1,21 +1,10 @@
 #!/usr/bin/env bash
-#
-# 14_cnpg_backup.sh  (macOS)
-#
-# Turns ON CNPG S3 backups (after 13_s3_backup_bucket.sh has created the bucket + IAM writer). Two writes to the
-# SHARED pg-cluster backup overlay (lib/helm/pg-cluster/files/backup.yaml), both committable, no plaintext in git:
-#   1. the .env scalars: bucket, region, retentionPolicy, archiveTimeout (RPO). Every CNPG cluster in every
-#      workload reads this one file (single source of truth), so backups go on fleet-wide. A populated overlay is
-#      the opt-in: pg-cluster's backupsEnabled helper gates on `bucket` (values backups.enabled=true by default).
-#   2. the Terraform writer creds, sealed ONCE cluster-wide into sealed.ACCESS_KEY_ID / sealed.ACCESS_SECRET_KEY.
-#      pg-cluster's backup-sealedsecret.yaml then stamps each DB's own <name>-backup-s3 SealedSecret automatically
-#      (cluster-wide scope => the one ciphertext unseals into any name in any namespace). Creds come from
-#      `terraform output`, never .env.
-#
-# Empty AWS_DEPLOY_ACCESS_KEY_ID => backups OFF: this no-ops (leaves the overlay as-is), matching 13 and the repo's
-# "empty secret = feature off" contract. Adding a Postgres workload needs NO change here (the shared secret is
-# auto-added). See docs/13_backups.md.
-#
+# Turns ON CNPG S3 backups, after 13 created the bucket and IAM writer. Writes the .env scalars and the
+# sealed Terraform writer creds into the SHARED pg-cluster overlay (lib/helm/pg-cluster/files/backup.yaml),
+# which every CNPG cluster in every workload reads, so backups go on fleet-wide.
+# A populated overlay IS the opt-in: pg-cluster gates on `bucket`. The creds are sealed cluster-wide ONCE,
+# so pg-cluster can stamp each DB's own Secret from the same ciphertext and a new Postgres workload needs no
+# change here.
 set -uo pipefail
 
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
@@ -24,7 +13,6 @@ source "${SCRIPT_DIR}/common.sh"
 # ---- knobs ------------------------------------------------------------------
 TF_DIR="${REPO_ROOT}/terraform"
 OVERLAY="${REPO_ROOT}/lib/helm/pg-cluster/files/backup.yaml"    # the SHARED backup overlay (single source)
-# -----------------------------------------------------------------------------
 
 # One cluster-wide raw ciphertext per value (controller flags mirror common.sh's seal_secret). Cluster-wide =>
 # the same blob unseals into ANY name in ANY namespace, so we seal ONCE into the shared overlay.
@@ -33,7 +21,6 @@ seal_raw() { # <plaintext> -> ciphertext on stdout
     --raw --scope cluster-wide 2>/dev/null
 }
 
-# === 0. prereqs ==============================================================
 say "prerequisites"
 require yq kubeseal kubectl terraform
 [ -f "$OVERLAY" ] || die "missing ${OVERLAY}"
@@ -46,15 +33,13 @@ fi
 [ -n "$S3_BACKUP_BUCKET" ] || die "S3_BACKUP_BUCKET is empty in .env"
 ok "tools present, values file found"
 
-# === 1. read the writer creds from Terraform output ==========================
 # 13 must have run (bucket + IAM writer created). The creds live in Terraform state, NOT .env.
 say "reading backup-writer creds from terraform output"
 AKID="$(terraform -chdir="$TF_DIR" output -raw backup_access_key_id 2>/dev/null)" || true
 SAK="$(terraform -chdir="$TF_DIR" output -raw backup_secret_access_key 2>/dev/null)" || true
-[ -n "$AKID" ] && [ -n "$SAK" ] || die "no Terraform outputs — run 13_s3_backup_bucket.sh first (and it must have applied)"
+[ -n "$AKID" ] && [ -n "$SAK" ] || die "no Terraform outputs: run 13_s3_backup_bucket.sh first (and it must have applied)"
 ok "got writer access key id + secret from terraform"
 
-# === 2. inject the scalars into the shared backup overlay ====================
 say "injecting bucket/region/RPO into ${OVERLAY}"
 # Barman's ObjectStore retentionPolicy must be a non-empty duration (the CRD rejects null/empty); align it to the
 # S3 lifecycle expiry so the two agree. Format: "<days>d" (e.g. 180d).
@@ -71,7 +56,6 @@ BUCKET="$S3_BACKUP_BUCKET" REGION="$AWS_REGION" RPO="$CNPG_BACKUP_RPO" RETENTION
 [ "$(yq -r '.retentionPolicy' "$OVERLAY")" = "$RETENTION" ]  && ok "retentionPolicy=${RETENTION}"  || bad "retentionPolicy not set"
 [ "$(yq -r '.archiveTimeout' "$OVERLAY")" = "$CNPG_BACKUP_RPO" ] && ok "archiveTimeout=${CNPG_BACKUP_RPO}" || bad "archiveTimeout not set"
 
-# === 3. seal the creds ONCE (cluster-wide) into the shared overlay ===========
 say "sealing S3 creds (cluster-wide) into ${OVERLAY}"
 use_kubeconfig
 assert_api
@@ -93,7 +77,6 @@ CT_ID="$SEALED_AKID" CT_SAK="$SEALED_SAK" yq -i '
 [ "$(yq -r '.sealed.ACCESS_SECRET_KEY' "$OVERLAY")" = "$SEALED_SAK" ]  && ok "sealed ACCESS_SECRET_KEY written"  || bad "ACCESS_SECRET_KEY not written"
 { grep -qF "$AKID" "$OVERLAY" || grep -qF "$SAK" "$OVERLAY"; } && bad "PLAINTEXT creds in ${OVERLAY}, DO NOT COMMIT" || ok "no plaintext creds in overlay"
 
-# === 4. summary ==============================================================
 summary
 if [ "$FAIL" -eq 0 ]; then
   cat <<EOF

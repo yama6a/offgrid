@@ -5,7 +5,6 @@ metadata:
   name: {{ $user }}
   namespace: {{ .Release.Namespace }}
 spec:
-  # No tags -> plain application user (AMQP only, no management-UI/admin). importCredentialsSecret is OMITTED,
-  # so the operator GENERATES username+password into Secret `{{ $user }}-user-credentials` here; the pod mounts
-  # it. Nothing secret in git, same model as CNPG's `<db>-app`. See 11_messaging.md / 06_secrets.md.
+  # importCredentialsSecret is OMITTED, so the operator GENERATES the username and password into Secret
+  # `{{ $user }}-user-credentials`, which the pod mounts. Nothing secret in git.
   {{- include "rabbitmq-topology.clusterRef" . | nindent 2 }}

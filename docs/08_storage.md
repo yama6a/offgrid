@@ -1,29 +1,34 @@
 # 08: Storage & database
 
-The cluster ships two storage classes and a database operator. [Longhorn](#longhorn) is the
-distributed, replicated default `StorageClass` for general PVCs; [local-path-provisioner](#local-path-provisioner)
-is a node-local class for [CloudNativePG](#cloudnativepg), whose Postgres already replicates at the DB layer
-so a replicated block store underneath would be redundant. All three are pure-GitOps wave-2 leaves (no
-imperative script); each needs one Talos host prerequisite that lives in [`03_operating_system.md`](03_operating_system.md).
+Two storage layers and a database operator, all pure-GitOps wave-2 leaves with no imperative script. Each needs
+one Talos host prerequisite from [`03_operating_system.md`](03_operating_system.md).
+
+| Layer | Class | Replicates at | Backs |
+|---|---|---|---|
+| [Longhorn](#longhorn) | `longhorn-r2-ephemeral`, `longhorn-r2-retained-with-backups` | the volume | Redis, the monitoring stores, ntfy |
+| [local-path-provisioner](#local-path-provisioner) | `local-path`, `local-path-ephemeral` | the app | [CloudNativePG](#cloudnativepg), RabbitMQ |
+
+There is **no default StorageClass**. Every PVC names one, or it stays `Pending`.
+
+Per-node NVMe layout, carved by [`03d`](03_operating_system.md): EPHEMERAL 64 GiB, then a fixed 50 GiB
+`localpath` slice, then `longhorn` takes the remainder.
 
 ## Longhorn
 
-[Longhorn](https://longhorn.io) is cloud-native distributed block storage that replicates each volume across
-nodes. It's the cluster's default `StorageClass` (nothing stateful could claim a PVC before it), wired to the
-dedicated XFS `longhorn` user volume that [`03d`](03_operating_system.md) carves out of each NVMe (the remainder
-after the 64 GiB EPHEMERAL cap and the fixed 50 GiB `localpath` slice), mounted at `/var/mnt/longhorn`.
+Distributed block storage that replicates each volume across nodes, on the dedicated XFS `longhorn` user volume
+mounted at `/var/mnt/longhorn`.
 
-Wrapper chart: `argo_apps/platform/charts/02_longhorn/` (`Chart.yaml` pins the Longhorn chart, all config under the
-`longhorn:` key in `values.yaml`).
+Chart: `argo_apps/platform/charts/02_longhorn/`.
 
-**V1 data engine (not V2/SPDK).** Longhorn's V2 (SPDK) engine has a known stuck-I/O bug on ARM64 + NVMe with
-2+ cores, which is exactly the Pi 5. Stay on the default V1 engine (lighter on low-power nodes anyway); revisit
-if the upstream issue is fixed.
+### V1 data engine, not V2/SPDK
 
-**Talos prerequisites.** The `iscsi-tools`/`util-linux-tools` extensions, 4K kernel pages (XFS won't mount on
-16K), and the dedicated `/var/mnt/longhorn` XFS volume all come from step 03 (see
-[`03_operating_system.md`](03_operating_system.md)). The one thing added for Longhorn is the kubelet
-bind-mount of `/var/mnt/longhorn`, in `03d`'s `cp-patch.yaml`:
+V2 (SPDK) has a known stuck-I/O bug on ARM64 + NVMe with 2+ cores, which is exactly the Pi 5. V1 is also lighter
+on low-power nodes. Revisit if upstream fixes it.
+
+### Talos prerequisites
+
+From step 03: the `iscsi-tools` and `util-linux-tools` extensions, 4K kernel pages (XFS will not mount on 16K),
+and the `/var/mnt/longhorn` XFS volume. Longhorn adds one thing, a kubelet bind-mount in `03d`'s `cp-patch.yaml`:
 
 ```yaml
 machine:
@@ -35,62 +40,61 @@ machine:
         options: [ bind, rshared, rw ]
 ```
 
-Talos runs the kubelet in a container, and a host mount under `/var/mnt` is not auto-propagated into it, so
-without the bind Longhorn's pods see an empty `/var/mnt/longhorn` and can't use the disk. `rshared` is required
-so Longhorn's per-replica sub-mounts propagate back to the host (matches the official Longhorn "Talos Linux
-Support" guidance). `03d` is the source of truth so any rebuild gets it; on a live cluster, apply just this
-patch per node (`talosctl patch machineconfig ... --mode=auto`) before the Longhorn app syncs, or the manager
-pods come up but every node's disk shows unschedulable.
+Talos runs the kubelet in a container and does not auto-propagate host mounts under `/var/mnt` into it, so
+without the bind Longhorn's pods see an empty directory. `rshared` is required so per-replica sub-mounts
+propagate back to the host, matching Longhorn's own Talos guidance.
 
-**Values worth calling out** (under `longhorn:` in `values.yaml`):
+`03d` is the source of truth, so any rebuild gets it. On a live cluster apply just this patch per node
+(`talosctl patch machineconfig ... --mode=auto`) BEFORE the Longhorn app syncs, or the manager pods come up with
+every node's disk unschedulable.
 
-- `defaultSettings.defaultDataPath: /var/mnt/longhorn`: the dedicated user volume, not the ephemeral
-  `/var/lib/longhorn`.
-- `defaultSettings.defaultReplicaCount: 2` with `replicaSoftAntiAffinity` left default (`false`) → **hard
-  anti-affinity, one replica per node**. 2 replicas on 3 nodes survives the single node loss we design for AND
-  leaves a spare node to rebuild the lost replica onto (at 3 replicas there's no spare → the volume stays degraded
-  until the dead node returns). A global fallback only — every class below sets `numberOfReplicas: 2` explicitly.
-- `persistence.defaultClass: false`: there is **no default StorageClass**. Every PVC must name one of the two
-  classes below; a PVC that omits a class stays `Pending` rather than silently landing on Longhorn.
+### Values worth calling out
 
-**The two StorageClasses** (rendered by `templates/storageclasses.yaml`, both `numberOfReplicas: 2`; the only
-Longhorn classes in the cluster). They differ only in off-cluster backup:
+| Value | Why |
+|---|---|
+| `defaultDataPath: /var/mnt/longhorn` | the dedicated user volume, not the ephemeral `/var/lib/longhorn` |
+| `defaultReplicaCount: 2` | with `replicaSoftAntiAffinity` at its default `false`, so hard anti-affinity, one replica per node |
+| `persistence.defaultClass: false` | no cluster-default class; a PVC that omits one stays `Pending` |
+| `storageMinimalAvailablePercentage: 15` | headroom on the Pi NVMes; do not schedule onto a disk under 15% free |
+| `preUpgradeChecker.jobEnabled: false` | that Helm pre-upgrade hook Job can stall an ArgoCD sync waiting on completion |
+
+Why 2 replicas and not 3: 2 on 3 nodes survives the single node loss we design for AND leaves a spare node to
+rebuild the lost replica onto. At 3 replicas with hard anti-affinity there is no spare, so a volume stays
+degraded until the dead node returns.
+
+### The two StorageClasses
+
+Rendered by `templates/storageclasses.yaml`, both `numberOfReplicas: 2`. They differ only in off-cluster backup.
 
 | Class | reclaimPolicy | S3 backup | Use for |
 |---|---|---|---|
-| `longhorn-r2-ephemeral` | Delete | — | the general-purpose tier, and the only one in use: prune safety comes from `deletionProtection`, total-loss coverage from each app's own backup (CNPG, all redis, VM, VL, ntfy) |
-| `longhorn-r2-retained-with-backups` | Retain | daily + weekly | precious data with no app-level backup (sqlite / config) |
+| `longhorn-r2-ephemeral` | Delete | none | the general-purpose tier, and the only one in use |
+| `longhorn-r2-retained-with-backups` | Retain | daily + weekly | precious data with no app-level backup (sqlite, config) |
 
-`Retain` means a PVC/app delete leaves the volume intact — recover an accidental delete with **zero data loss** by
-clearing the released PV's `claimRef` and rebinding (vs restoring from a backup, which costs up to the backup
-interval). The cost is orphaned `Released` PVs + their Longhorn volumes on delete, cleaned up manually. The
-`-with-backups` class adds off-cluster S3 backups via `recurringJobSelector`; see [13_backups.md](13_backups.md)
-("Longhorn volume backups").
+The `-with-backups` class adds off-cluster S3 backups via `recurringJobSelector`; see
+[13_backups.md](13_backups.md).
 
-**Why there is no plain Retain class.** Every stateful app here stamps `deletionProtection`
-(`Prune=false,Delete=false`) on the CR or PVC that owns its storage, so it is already immune to the accidental
-case: a prune can't delete the object, restoring the files brings it back with zero loss, and nothing is ever
-`Released`. Given that, `Retain` protects nothing a deliberate deletion didn't mean and only leaks orphaned PVs,
-so everything uses a **Delete** class (`longhorn-r2-ephemeral`, or `local-path` for CNPG) and accepts that
-regretting a deliberate delete costs that store's backup RPO. The one exception is
-`longhorn-r2-retained-with-backups`, kept for data with no app-level backup at all (it is also the restore target
-in `recover_longhorn_from_s3.sh`). See [13_backups.md](13_backups.md) / [12_redis.md](12_redis.md).
-- `preUpgradeChecker.jobEnabled: false`: that Helm pre-upgrade hook Job can stall an ArgoCD sync waiting on
-  completion; version control lives in git anyway.
-- `storageMinimalAvailablePercentage: 15`: leave headroom on the Pi NVMes; don't schedule onto a disk under
-  15% free.
+**Why there is no plain Retain class.** Every stateful app stamps `deletionProtection`
+(`Prune=false,Delete=false`) on the CR or PVC owning its storage, so it is already immune to the accidental
+case: a prune cannot delete the object, restoring the files brings it back with zero loss, and nothing is ever
+`Released`. Given that, `Retain` protects nothing a deliberate deletion did not mean and only leaks orphaned
+PVs. So everything uses a Delete class and accepts that regretting a deliberate delete costs that store's backup
+RPO. The one exception is `longhorn-r2-retained-with-backups`, for data with no app-level backup at all, which is
+also the restore target in `recover_longhorn_from_s3.sh`.
 
-Longhorn needs privileged Pod Security (Talos enforces `baseline` by default), so the Application stamps
-`pod-security.kubernetes.io/enforce: privileged` on the `longhorn-system` namespace via
-`managedNamespaceMetadata`. It uses `ServerSideApply` because its CRDs blow the client-side
-last-applied-annotation limit.
+### Operational notes
 
-`metrics.serviceMonitor.enabled: true` feeds `longhorn_*` to the monitoring stack, driving the `longhorn-health`
-Grafana alerts (manager-down, node NotReady, disk-unschedulable, node-storage >85%, volume degraded/faulted,
-volume near-full) — the storage layer's alerting. See [09_monitoring.md](09_monitoring.md); backup-health alerts
-are in [13_backups.md](13_backups.md).
+- Privileged Pod Security: Talos enforces `baseline`, so the Application stamps
+  `pod-security.kubernetes.io/enforce: privileged` on `longhorn-system` via `managedNamespaceMetadata`.
+- `ServerSideApply`, because the CRDs blow the client-side last-applied-annotation limit.
+- `metrics.serviceMonitor.enabled: true` feeds `longhorn_*` to the stack, driving the `longhorn-health` Grafana
+  alerts: manager-down, node NotReady, disk-unschedulable, node-storage over 85%, volume degraded or faulted,
+  volume near-full. See [09_monitoring.md](09_monitoring.md).
+- If a Longhorn-managed field flaps `OutOfSync` after first sync (it mutates its own StorageClass or a webhook
+  config), add a targeted `ignoreDifferences` rather than fighting `selfHeal`.
+- Deliberately deleting the app or its CRDs destroys the volumes. Back up before any teardown.
 
-**Verify:**
+### Verify
 
 ```bash
 talosctl -n 192.168.10.201 read /proc/mounts | grep longhorn   # /var/mnt/longhorn present (after the patch)
@@ -99,176 +103,178 @@ kubectl -n longhorn-system get nodes.longhorn.io -o wide       # each node's dis
 kubectl get storageclass                                       # the two longhorn-r2-* classes, NO default
 ```
 
-Smoke test: apply a 1Gi PVC with `storageClassName: longhorn-r2-ephemeral` + a pod, confirm it `Bound` and the
-volume shows 2 healthy replicas on two distinct nodes.
-
-**Caveat.** Deliberately deleting the app/CRDs destroys the volumes — back up before any teardown. Selected
-volumes can back up **off-cluster to S3** (opt-in via the `longhorn-r2-retained-with-backups` class; native
-Longhorn backups on a daily+weekly schedule) — see **[13_backups.md](13_backups.md)** ("Longhorn volume backups"). If a
-Longhorn-managed field flaps `OutOfSync` after first sync (it mutates its own StorageClass or a webhook config),
-add a targeted `ignoreDifferences` rather than fighting `selfHeal`.
+Smoke test: apply a 1Gi PVC with `storageClassName: longhorn-r2-ephemeral` plus a pod, confirm it goes `Bound`
+and the volume shows 2 healthy replicas on two distinct nodes.
 
 ## local-path-provisioner
 
-Longhorn is the right default for most workloads but the wrong layer for [CloudNativePG](#cloudnativepg):
-Postgres already replicates at the database layer, so replicated block storage underneath is redundant work
-(write amplification, the Longhorn engine/CSI in the hot path, and Postgres competing with Longhorn for the one
-big XFS partition). local-path-provisioner gives CNPG its own node-local storage on a dedicated partition, so
-Postgres streaming replication is the only replication layer. RabbitMQ shares this provisioner for the same
-reason — quorum queues replicate at the app layer — via a second `Delete`-reclaim class (see the two classes
-below and [11_messaging.md](11_messaging.md)).
+Longhorn is the wrong layer for anything that already replicates itself. Postgres has streaming replication and
+RabbitMQ has Raft quorum queues, so replicated block storage underneath is redundant work: write amplification,
+the Longhorn engine and CSI in the hot path, and the app competing with Longhorn for one big XFS partition.
 
-**Why local-path (not TopoLVM / OpenEBS-LVM).** The capacity-awareness and PVC-size enforcement those buy are
-moot here: hostname anti-affinity puts exactly one CNPG instance per node on a dedicated 50 GiB partition, so
-there's nothing to overcommit and a runaway DB is already bounded to that partition. LVM provisioners need a
-raw block device for a volume group plus an `lvmd` daemon — awkward on Talos' shell-less immutable OS.
-local-path is a single Deployment that creates a directory per PV; it's the pragmatic, thin fit. The trade:
-local-path does **not** reserve or enforce the PVC `size` (thin/grow-on-write), so a runaway DB can fill the
-50 GiB partition — contained to it; rely on CNPG's disk-usage alerts. Real reservation + online auto-grow would
-be the signal to revisit TopoLVM.
+local-path gives them node-local storage on a dedicated partition, so the app layer is the only replication
+layer.
 
-**`WaitForFirstConsumer` is mandatory.** The StorageClass keeps the chart default
-`volumeBindingMode: WaitForFirstConsumer`. For true node-local storage the volume physically exists on only one
-node, so the scheduler must place the Postgres pod first (honoring CNPG's `kubernetes.io/hostname`
-anti-affinity) and then provision the volume on whatever node it landed on. (`Immediate` binding is fine for
-network-reachable CSI like Longhorn, but wrong here — it'd bind a PV to an arbitrary node before the pod is
-scheduled.)
+### Why local-path, not TopoLVM or OpenEBS-LVM
 
-**Talos prerequisite.** Two things from [`03d`](03_operating_system.md): the dedicated fixed-size XFS volume at
-`/var/mnt/localpath` (50 GiB, `min == max` so it can't grow into Longhorn's space; the layout per node is EPHEMERAL
-64 GiB → `localpath` 50 GiB → `longhorn` remainder), and a kubelet bind-mount of `/var/mnt/localpath` in `cp-patch.yaml`.
-Same reason as Longhorn (host mounts under `/var/mnt` aren't auto-propagated into the kubelet container), but
-plain `[bind, rw]` suffices — no per-replica sub-mount propagation, so no `rshared`.
+The capacity-awareness and PVC-size enforcement those buy would do nothing for us: hostname anti-affinity puts one
+CNPG instance per node on a dedicated 50 GiB partition, so there is nothing to overcommit and a runaway DB is
+already bounded to that partition. LVM provisioners also need a raw block device for a volume group plus an
+`lvmd` daemon, which is awkward on Talos' shell-less immutable OS.
 
-**Wrapper chart: vendored, not a dependency pin.** There is no usable public Helm repo for
-local-path-provisioner (Rancher's registry is auth-gated, bad for ArgoCD's repo-server; the community mirror is
-stale), so `argo_apps/platform/charts/02_local_path_provisioner/` vendors the ~6 upstream manifests under
-`templates/`, parameterized from `values.yaml` and pinned to the `appVersion` in `Chart.yaml`. No
-`Chart.lock` (no dependencies to resolve). Bump = edit `image.tag`/`helperImage.tag` + `appVersion`, then
-re-diff `templates/` against the upstream `deploy/local-path-storage.yaml` at the new tag.
+local-path is a single Deployment that creates a directory per PV.
 
-Config worth calling out (`values.yaml`):
+The trade: it does **not** reserve or enforce the PVC `size` (thin, grow-on-write), so a runaway DB can fill the
+50 GiB partition. Contained to that partition, and CNPG's disk-usage alerts cover it. Real reservation plus
+online auto-grow would be the signal to revisit TopoLVM.
 
-- `dataPath: /var/mnt/localpath`: the dedicated partition; node-local (the `DEFAULT_PATH_FOR_NON_LISTED_NODES`
-  catch-all means every node uses this path on its own disk). Shared by both classes below — RabbitMQ's
-  quorum-log volumes co-tenant this 50 GiB slice with Postgres (tiny, accepted; see
-  [11_messaging.md](11_messaging.md)).
-- `storageClasses`: two classes on the one provisioner, both `defaultClass: false` (there is no cluster-default
-  class; consumers opt in by name), both `volumeBindingMode: WaitForFirstConsumer`, and both now
-  `reclaimPolicy: Delete`: `local-path` (CNPG) and `local-path-ephemeral` (RabbitMQ). CNPG no longer needs
-  Retain: its data is protected from a GitOps prune by orphan-not-delete (see [13_backups.md](13_backups.md)),
-  and Delete auto-cleans a per-volume dir on a legitimate PVC delete (scale-down, intentional cluster delete)
-  instead of leaking it.
-- `helperImage` pinned (see `values.yaml`) for reproducibility.
+### WaitForFirstConsumer is mandatory
 
-**Privileged PSA required** (like Longhorn): the provisioner runs unprivileged, but the short-lived helper pods
-it stamps out to mkdir/rm per-volume dirs mount the node data path as a `hostPath`, forbidden under Talos'
-`baseline` default. `managedNamespaceMetadata` labels the `local-path-storage` namespace
-`pod-security.kubernetes.io/enforce: privileged`; without it the helper pods are rejected at admission and PVC
-provisioning fails. No CRDs, so no SSA needed.
+For true node-local storage the volume physically exists on only one node, so the scheduler must place the pod
+first (honoring CNPG's `kubernetes.io/hostname` anti-affinity) and then provision the volume wherever it landed.
+`Immediate` is fine for network-reachable CSI like Longhorn but wrong here: it would bind a PV to an arbitrary
+node before the pod is scheduled.
 
-**Verify:**
+### Talos prerequisite
+
+Two things from [`03d`](03_operating_system.md): the fixed-size XFS volume at `/var/mnt/localpath` (50 GiB,
+`min == max` so it cannot grow into Longhorn's space), and a kubelet bind-mount of it in `cp-patch.yaml`. Same
+reason as Longhorn, but plain `[bind, rw]` suffices, since there are no per-replica sub-mounts to propagate.
+
+### Vendored, not a dependency pin
+
+There is no usable public Helm repo (Rancher's registry is auth-gated, which breaks ArgoCD's repo-server; the
+community mirror is stale), so the chart vendors the upstream manifests under `templates/`, parameterized from
+`values.yaml` and pinned to `appVersion`. No `Chart.lock`, nothing to resolve.
+
+To bump: edit `image.tag` and `helperImage.tag` plus `appVersion`, then re-diff `templates/` against the upstream
+`deploy/local-path-storage.yaml` at the new tag.
+
+### Config worth calling out
+
+- `dataPath: /var/mnt/localpath`, node-local via the `DEFAULT_PATH_FOR_NON_LISTED_NODES` catch-all, so every node
+  uses this path on its own disk. Shared by both classes: RabbitMQ's quorum-log volumes co-tenant the 50 GiB
+  slice with Postgres. They are tiny, so this is accepted. See [11_messaging.md](11_messaging.md).
+- `storageClasses`: two classes on the one provisioner, both `defaultClass: false`, both
+  `WaitForFirstConsumer`, both `reclaimPolicy: Delete`. `local-path` for CNPG, `local-path-ephemeral` for
+  RabbitMQ.
+- `helperImage` pinned for reproducibility.
+
+CNPG does not need Retain: its data is protected from a GitOps prune by orphan-not-delete, and Delete auto-cleans
+a per-volume dir on a legitimate PVC delete (replica scale-down, intentional cluster delete) rather than leaking
+it on the shared slice.
+
+### Privileged PSA required
+
+The provisioner itself runs unprivileged, but the short-lived helper pods it stamps out to mkdir and rm
+per-volume dirs mount the node data path as a `hostPath`, which Talos' `baseline` default forbids.
+`managedNamespaceMetadata` labels `local-path-storage` privileged; without it the helper pods are rejected at
+admission and PVC provisioning fails. No CRDs, so no SSA needed.
+
+### Verify
 
 ```bash
-helm template argo_apps/platform/charts/02_local_path_provisioner   # Deployment + 2 SCs (local-path + -ephemeral) + RBAC + ConfigMap
+helm template argo_apps/platform/charts/02_local_path_provisioner   # Deployment + 2 SCs + RBAC + ConfigMap
 export KUBECONFIG=secrets/kubeconfig
-talosctl -n 192.168.10.201 get volumestatus | grep -E 'localpath|longhorn'  # u-localpath (50GiB) + u-longhorn present
+talosctl -n 192.168.10.201 get volumestatus | grep -E 'localpath|longhorn'  # u-localpath (50GiB) + u-longhorn
 talosctl -n 192.168.10.201 read /proc/mounts | grep /var/mnt/localpath      # mounted + visible to the kubelet
 kubectl -n local-path-storage get pods                                 # provisioner Running
 kubectl get sc local-path -o jsonpath='{.volumeBindingMode}'; echo     # == WaitForFirstConsumer
 ```
 
-**Caveat.** Both classes are `reclaimPolicy: Delete`, so local-path runs its teardown (`rm -rf $VOL_DIR`) when a
-PVC is deleted and frees the dir automatically. A GitOps prune does NOT delete a CNPG PVC (orphan-not-delete
-keeps the `Cluster`, so its PVCs stay bound), so the data is not at risk from a prune.
-
 ## CloudNativePG
 
-[CloudNativePG](https://cloudnative-pg.io) (CNPG) is a Kubernetes-native PostgreSQL operator that reconciles a
-declarative `Cluster` CR into an HA Postgres (primary + streaming replicas, with failover, rolling updates and
-metrics). It ships as two apps split across the two trees so operator and database land in dependency order
-(see the two-tree model in [`05_gitops.md`](05_gitops.md)):
+[CNPG](https://cloudnative-pg.io) reconciles a declarative `Cluster` CR into an HA Postgres: primary plus
+streaming replicas, with failover, rolling updates and metrics. Two apps, split across the two trees so operator
+and database land in dependency order (see [`05_gitops.md`](05_gitops.md)):
 
 | App | Tree | What |
 |-----|------|------|
-| `cnpg-operator` (`platform/charts/02_cnpg_operator`) | platform, wave 2 | the controller + its CRDs (`Cluster`, `Backup`, …), an independent leaf. |
-| `sample-workload` (`workloads/charts/sample_workload`) | workloads, no wave | a 2-instance Postgres `Cluster` on the `local-path` class. |
+| `cnpg-operator` (`platform/charts/02_cnpg_operator`) | platform, wave 2 | the controller + its CRDs, an independent leaf |
+| `sample-user-manager` (`workloads/charts/sample_user_manager`) | workloads, no wave | two Postgres `Cluster`s on the `local-path` class |
 
-The root-of-roots creates the workloads tree only after the whole platform is Healthy, so by the time the
-`Cluster` CR is applied both its real dependencies — the operator's `Cluster` CRD and the `local-path` class —
-are guaranteed present, no per-app `sync-wave` needed. Chart versions live in the charts: the operator dep
-`cnpg/cloudnative-pg` (`argo_apps/platform/charts/02_cnpg_operator/Chart.yaml`); the `Cluster` comes via the
-shared `pg-cluster` wrapper (`lib/helm/pg-cluster`), which renders the CNPG CRs directly (no upstream chart) and
-pins the `ghcr.io/cloudnative-pg/postgresql` image itself (postgres only, no postgis). Images are multi-arch incl. arm64.
+Workloads carry no `sync-wave`. The root-of-roots creates the workloads tree about 5s after the platform tree
+with no health gate, so a `Cluster` CR applied before its CRD registers fails its sync and retries until the
+operator lands. See [`05_gitops.md`](05_gitops.md).
 
-> Values shape: `sample_workload` depends on the `pg-cluster` wrapper (dependency key `pg-cluster:`); the wrapper
-> exposes a flat interface, so a workload's Postgres knobs live directly under the alias key. Most of the tree is
-> pre-baked in the wrapper; a workload only sets `name` + `postgresVersion` + `highAvailability` + `resources`
-> (+ its `allowedClients`).
+Versions: the operator dep `cnpg/cloudnative-pg` in `02_cnpg_operator/Chart.yaml`; the `Cluster` comes via the
+shared `pg-cluster` wrapper (`lib/helm/pg-cluster`), which renders the CNPG CRs directly with no upstream chart
+and pins the `ghcr.io/cloudnative-pg/postgresql` image itself. Postgres only, no postgis. Multi-arch incl. arm64.
 
-**Storage: node-local, off Longhorn.** CNPG runs on the node-local `local-path` class on the dedicated 50 GiB
-`/var/mnt/localpath` partition — no Longhorn engine/CSI in the Postgres data path, isolated so the two can't starve
-each other. Postgres streaming replication is the only replication layer: a node loss survives (CNPG promotes
-the surviving instance and re-provisions the lost one from scratch via streaming replication). Full reasoning
-in [local-path-provisioner](#local-path-provisioner) above.
+A workload declares `pg-cluster` as an **aliased** `file://` dependency, once per database, so the alias is the
+values key and its knobs sit flat under it.
 
-**Values worth calling out.** Operator (`cloudnative-pg:`): `crds.create: true` (safe — the cluster is only
-created after the platform is Healthy), `monitoring.podMonitorEnabled: true`, modest `resources` (it only
-reconciles). The operator pod carries its own pod-scoped `CiliumNetworkPolicy`
-(`02_cnpg_operator/templates/networkpolicy.yaml`): in — vmagent metrics `:8080`, apiserver webhook `:9443`,
-kubelet probe; out — DNS, apiserver, each instance's instance-manager `:8000` (cross-namespace via
-`matchExpressions` ns-Exists), and the barman-cloud plugin `:9090`. See [04_networking.md](04_networking.md). Cluster — most of the following is pre-baked in the `pg-cluster` wrapper's `values.yaml`; the
-workload only overrides the ⭐ **set-per-workload** ones (in `sample_workload/values.yaml` under the alias key):
+### Storage: node-local, off Longhorn
 
-- ⭐ **`highAvailability: true`** (REQUIRED bool): 2 instances (1 primary + 1 streaming replica on two distinct
-  nodes; PDB on; switchover updates). `false` = a single instance (PDB off, in-place restart). One bool drives it;
-  there is no separate `instances`/`enablePDB`/`primaryUpdateMethod` knob.
-- ⭐ **`resources`** (REQUIRED; here 256Mi/250m req, 512Mi/1cpu limit): sized for the Pi 5s. Per-instance.
-- ⭐ **`postgresVersion`** (REQUIRED): the image tag on `ghcr.io/cloudnative-pg/postgresql` (postgres only, no postgis).
-- **`affinity.topologyKey: kubernetes.io/hostname`** (wrapper-baked): the chart default spreads by
+CNPG runs on `local-path`, on the dedicated 50 GiB partition, so there is no Longhorn engine or CSI in the
+Postgres data path and the two cannot starve each other. Postgres streaming replication is the only replication
+layer: a node loss survives, because CNPG promotes the surviving instance and re-provisions the lost one from
+scratch. Full reasoning in [local-path-provisioner](#local-path-provisioner).
+
+### Operator values
+
+`crds.create: true`, `monitoring.podMonitorEnabled: true`, modest `resources` (it only reconciles), and
+`INHERITED_LABELS: alert-criticality` so the label reaches the Postgres pods for the outage alerts.
+
+The operator pod carries a pod-scoped `CiliumNetworkPolicy`: in from vmagent metrics, the apiserver webhook and
+the kubelet probe; out to DNS, the apiserver, each instance's instance-manager, and the barman-cloud plugin. See
+[04_networking.md](04_networking.md).
+
+### Cluster values
+
+Most of the tree is pre-baked in the `pg-cluster` wrapper. A workload sets only these:
+
+| Knob | Required | Notes |
+|---|---|---|
+| `name` | yes | used verbatim: the Cluster, its `<name>-rw`/`-ro`/`-r` Services, the `<name>-app` Secret |
+| `postgresVersion` | yes | a MAJOR, and a key into the wrapper's pinned image map |
+| `highAvailability` | yes | one bool: true = 2 instances + PDB + switchover, false = 1 instance, PDB off, in-place restart |
+| `resources` | yes | per-instance, no default; forced choice on a Pi |
+| `allowedClients` | yes | who may open 5432; also drives the client-side egress policy |
+| `deletionProtection` | yes | one bool, no default; the only thing between a stray prune and gone data |
+| `alertCritical` | no | stamps `alert-criticality`, so a crashloop pages critical rather than warning |
+
+Wrapper-baked, worth knowing:
+
+- `affinity.topologyKey: kubernetes.io/hostname`. The chart default spreads by
   `topology.kubernetes.io/zone`, but bare Pi nodes carry no zone label, so both instances could land on one
-  node. Spreading by hostname forces distinct nodes — the node-loss HA that node-local storage relies on.
-- `storage.storageClass: local-path`, `size: 45Gi` (wrapper-baked): the size is required by CNPG but a no-op
-  under local-path (Postgres sees the whole ~50 GiB partition via `statfs`); set to the honest partition budget
-  so it stays sane if the class is ever swapped.
-- `postgresql.parameters` (`shared_buffers: 128MB`, `max_connections: 50`) (wrapper defaults, overridable):
-  sized for the Pi 5s.
-- `monitoring.enabled: true` (+ `podMonitor`; `prometheusRule` OFF) (wrapper-baked): per-instance Postgres
-  metrics, discovered by the [monitoring](09_monitoring.md) stack. The chart's CNPG alert rules are disabled
-  (`vmalert` is off, so a VMRule never fires) — the CNPG backup + operational alerts are Grafana rules instead
-  (see [13_backups.md](13_backups.md)).
-- `initdb: { database: app, owner: app }` (wrapper-baked): bootstraps a demo `app` DB; the operator
-  auto-generates the owner's credentials into the `<name>-app` Secret (e.g. `sample-workload-db-app`, where the
-  name is the instance's REQUIRED `name`), no sealed-secret needed.
+  node. Spreading by hostname forces distinct nodes, which is the node-loss HA that node-local storage relies on.
+- `storage.size: 45Gi` is a no-op under local-path (Postgres sees the whole partition via `statfs`) but the CR
+  requires it, so it is set to the honest partition budget in case the class is ever swapped.
+- `postgresql.parameters` sized for the Pi 5s, overridable per workload.
+- `initdb: { database: app, owner: app }`. The operator auto-generates the owner's credentials into the
+  `<name>-app` Secret, so no sealed secret is needed.
+- The chart's own CNPG alert rules are disabled: `vmalert` is off, so a VMRule would never fire. The CNPG backup
+  and operational alerts are Grafana rules instead. See [13_backups.md](13_backups.md).
 
-**Reclaim & durability.** The `local-path` class is `reclaimPolicy: Delete`: data safety no longer rests on
-Retain, because the DB unit is protected from a GitOps prune by orphan-not-delete (`Prune=false,Delete=false` on
-the Cluster + its ObjectStore/ScheduledBackup/PodMonitor/NetworkPolicy + the S3-creds SealedSecret, see the
-pg-cluster wrapper). Removing a workload from git leaves its `Cluster` + PVCs running, and restoring the files
-re-adopts them with no data movement. Durability has two tiers: in-cluster, Postgres replication across the 2
-instances plus orphan-not-delete; and off-cluster, optional **S3 backups** (continuous WAL archiving + daily
-base backups via the `cnpg/plugin-barman-cloud` plugin) for real PITR and total-loss recovery. Backups are OFF by default (`backups.enabled: false`) and turned
-on from `.env` by `14_cnpg_backup.sh`. See **[13_backups.md](13_backups.md)** for the full design and the two
-recovery paths.
+### Reclaim & durability
 
-Neither namespace needs privileged PSA — controller and Postgres pods run non-root (uid 26), so
-`cnpg-system`/`sample-workload` stay restricted-compatible. Both apps use SSA (the CRDs and `Cluster` CR blow
-the client-side annotation limit). The consuming app + its SSO/ingress edge ship in the merged
-`sample-workload` chart — it ships its own edge, see [`07_ingress.md`](07_ingress.md) and
-[`10_sample_workload.md`](10_sample_workload.md).
+`local-path` is `reclaimPolicy: Delete`. Data safety does not rest on Retain: the DB unit is protected from a
+GitOps prune by orphan-not-delete (`Prune=false,Delete=false` on the Cluster plus its ObjectStore,
+ScheduledBackup, PodMonitor, NetworkPolicy and S3-creds SealedSecret). Removing a workload from git leaves its
+`Cluster` and PVCs running, and restoring the files re-adopts them with no data movement.
 
-**Verify:**
+Two durability tiers:
+
+1. **In-cluster**: Postgres replication across the instances, plus orphan-not-delete.
+2. **Off-cluster**: S3 backups, continuous WAL archiving plus daily base backups via the
+   `cnpg/plugin-barman-cloud` plugin, for real PITR and total-loss recovery. Turned on from `.env` by
+   `14_cnpg_backup.sh`. See [13_backups.md](13_backups.md).
+
+Neither namespace needs privileged PSA: controller and Postgres pods run non-root (uid 26). Both apps use SSA,
+because the CRDs and the `Cluster` CR blow the client-side annotation limit.
+
+### Verify
 
 ```bash
 helm dependency build argo_apps/platform/charts/02_cnpg_operator
-helm dependency build argo_apps/workloads/charts/sample_workload
 export KUBECONFIG=secrets/kubeconfig
 kubectl -n cnpg-system rollout status deploy/cnpg-operator-cloudnative-pg   # operator Healthy (platform)
-kubectl -n sample-workload get pods -o wide                                 # 2 instances Running, distinct nodes
-kubectl -n sample-workload get pvc -o custom-columns=NAME:.metadata.name,SC:.spec.storageClassName  # == local-path
+kubectl -n sample-user-manager get pods -o wide                             # 2 instances Running, distinct nodes
+kubectl -n sample-user-manager get pvc -o custom-columns=NAME:.metadata.name,SC:.spec.storageClassName  # local-path
 kubectl get vmpodscrape -A | grep -i cnpg                                   # metrics wired into VictoriaMetrics
 ```
 
-Smoke test: delete the primary pod (`sample-workload-db-1`) and watch CNPG promote the replica, then heal
-back to 2. The `app` role's credentials for external clients live in the auto-generated
-`sample-workload-db-app` Secret; connect via the `sample-workload-db-rw` service.
+Smoke test: delete the primary pod (`sample-user-manager-db-1`) and watch CNPG promote the replica, then heal
+back to 2. The `app` role's credentials live in the auto-generated `sample-user-manager-db-app` Secret; connect
+via the `sample-user-manager-db-rw` Service.

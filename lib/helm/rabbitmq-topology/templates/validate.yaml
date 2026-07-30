@@ -1,6 +1,4 @@
 {{- /* Renders nothing: fail-fast guards only (like pg-cluster/redis-instance validate.yaml). */ -}}
-{{- /* Broker + vhost are platform invariants (cluster `rabbitmq`/ns `rabbitmq`, vhost `apps`), identical for
-       every consumer -> baked into the templates, not values. Reject an override so a stray key can't drift. */ -}}
 {{- if or (hasKey .Values "cluster") (hasKey .Values "vhost") }}
 {{- fail "rabbitmq-topology: `cluster`/`vhost` are fixed platform invariants (broker `rabbitmq`/ns `rabbitmq`, vhost `apps`), not configurable; remove them" }}
 {{- end }}

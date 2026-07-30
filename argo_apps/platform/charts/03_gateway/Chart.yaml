@@ -1,16 +1,5 @@
 apiVersion: v2
 name: gateway
-description: >-
-  Wrapper chart for the cluster's ACME INGRESS PLATFORM (no apps, no :443 listeners): the shared-gateway
-  Gateway reduced to its :80 HTTP listener ONLY (cert-manager HTTP-01 solver routes attach here; the
-  http->https redirect lands here later) on the Envoy Gateway `eg` class, plus the Let's Encrypt
-  ClusterIssuers (staging + prod) that cert-manager uses to mint certs via HTTP-01 solved THROUGH that
-  :80 listener. Each HTTPS host is now a per-app Gateway (its own :443 listener + Certificate + HTTPRoute)
-  owned by the app's chart, the sample workload in sample-workload, SSO callbacks in 04_google_sso, argocd in 06, the
-  monitoring UIs in 07, all merged onto one Envoy via mergeGateways (01_envoy_gateway). With no cert
-  refs the shared-gateway is Programmed immediately, independent of any app. Pins NO upstream dependency
-  (first-party CRs), so there is no Chart.lock. Single source of truth for ACME config
-  (values.yaml; email written by 07_gateway.sh). Delivered purely by ArgoCD via
-  argo_apps/apps/03_gateway.yaml, wave 3 (after the `eg` class wave 1 + cert-manager wave 2). See 10_gateway.md.
+description: The shared :80 Gateway that cert-manager's HTTP-01 solver routes attach to, plus the Let's Encrypt ClusterIssuers. Each HTTPS host is its own per-app Gateway.
 type: application
-version: 0.1.0                 # local chart, never bump version
+version: 0.1.0 # local chart, never bump version

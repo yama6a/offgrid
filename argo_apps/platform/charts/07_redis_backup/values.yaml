@@ -1,17 +1,8 @@
-# argo_apps/platform/charts/07_redis_backup — the CENTRAL Redis-backup CronJob. One job discovers every durable
-# Redis instance cluster-wide and dumps each to S3. bucket/region are injected once by lib/shell/15_redis_backup.sh
-# from .env; an EMPTY bucket means the feature is off (the CronJob does not render), the repo's "empty = off"
-# contract. Enable with `make configure-redis-backup`. See docs/12_redis.md + docs/13_backups.md.
-
-schedule: "0 2 * * *" # daily 02:00 UTC; one schedule for all instances (edit here to change cadence)
-bucket: "my-cluster-backups" # set by 15_redis_backup.sh (.env S3_BACKUP_BUCKET); EMPTY = backups off
-region: "eu-central-1" # set by 15_redis_backup.sh (.env AWS_REGION)
-prefix: "redis/" # bucket prefix for redis dumps (cnpg/ is CNPG's; see docs/13_backups.md)
-secretName: "redis-backup-s3" # the sealed S3 writer creds in THIS namespace; keys AWS_ACCESS_KEY_ID / AWS_SECRET_ACCESS_KEY
-# The CR label the chart discovers durable instances by (lib/helm/redis-instance stamps it on persistence:true).
-discoveryLabel: "redis-backup.raspi-cluster/enabled"
-# NO images here on purpose: both pins live (renovate-annotated) in templates/cronjob.yaml, which is what the
-# regex manager scans. A copy here would be a second, UNtracked pin that silently rots. Both are multi-arch
-# incl. arm64:
-#   k8s    discovery (kubectl) + upload (aws) + shell   alpine/k8s (bundles kubectl + aws-cli + jq; tag ~ k8s ver)
-#   redis  redis-cli --rdb full-sync dump               quay.io/opstree/redis (--rdb is version-tolerant)
+schedule: "0 2 * * *" # daily 02:00 UTC, one schedule for every instance
+bucket: "my-cluster-backups" # written by 15_redis_backup.sh from .env; EMPTY = backups off, nothing renders
+region: "eu-central-1" # written by 15_redis_backup.sh from .env
+prefix: "redis/" # cnpg/, vm/ and longhorn/ are the other prefixes in this bucket
+secretName: "redis-backup-s3" # sealed S3 writer creds in THIS namespace; keys AWS_ACCESS_KEY_ID / AWS_SECRET_ACCESS_KEY
+discoveryLabel: "redis-backup.raspi-cluster/enabled" # lib/helm/redis-instance stamps it on persistence:true
+# No image knobs on purpose: both pins are renovate-annotated in templates/cronjob.yaml, which is what the
+# regex manager scans. A copy here would be a second, untracked pin that rots.

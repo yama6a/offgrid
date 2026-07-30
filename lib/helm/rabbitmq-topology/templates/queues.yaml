@@ -1,8 +1,6 @@
-{{- /* Every queue this workload CONSUMES, with its binding and (unless deadLetter=false) its dead-letter
-       companions. Two sources, one shape: a consumeCommands queue is named after the command; a subscribeEvents
-       queue is `<user>.<exchange>` (private per subscriber). Each gets `<queue>.dlx` (fanout) + `<queue>.dlq`
-       (quorum) + the binding between them; the source queue points its x-dead-letter-exchange at `<queue>.dlx`,
-       so after deliveryLimit failed redeliveries a poison message lands in the DLQ instead of being dropped.
+{{- /* Every queue this workload CONSUMES, with its binding and, unless deadLetter=false, its dead-letter
+       companions. A consumeCommands queue is named after the command; a subscribeEvents queue is
+       `<user>.<exchange>`, private per subscriber.
        Queue arguments are IMMUTABLE: toggling deadLetter on an existing queue needs it recreated. */ -}}
 {{- $ns := .Release.Namespace -}}
 {{- $user := include "rabbitmq-topology.user" . -}}
@@ -24,7 +22,7 @@ metadata:
   namespace: {{ $ns }}
 spec:
   name: {{ $q.name }}
-  type: quorum           # durable, Raft-replicated; the modern default (classic mirrored queues are gone in 4.x)
+  type: quorum           # survives a broker restart, and replicates by majority vote rather than to one mirror
   durable: true
   autoDelete: false
   vhost: apps

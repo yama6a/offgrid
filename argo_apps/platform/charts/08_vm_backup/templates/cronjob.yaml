@@ -1,15 +1,9 @@
 {{- /*
-The central VM/VL backup CronJob. Rendered only when a bucket is configured (empty = feature off; set by
-17_vm_backup.sh). ONE container streams two logical dumps to S3 (no local disk — the export is piped straight
-through gzip into `aws s3 cp -`, so a 50Gi store needs no matching emptyDir):
-  metrics  VMSingle  GET /api/v1/export/native?match[]={..}&start&end  -> vm/metrics/<YYYYMMDD>.native.gz
-  logs     VLSingle  GET /select/logsql/query  query=_time:[start,end) -> vm/logs/<YYYYMMDD>.jsonl.gz
-Each run backs up ONLY the previous full UTC day (a bounded daily slice, not a growing full-store dump — that
-OOM'd the source stores). A full DR replays every daily slice — restored with vmrestore-equivalent /import
-endpoints by recover_vm_from_s3.sh (its `all` target loops them). `set -o pipefail` makes a failed curl OR upload fail the stage; a partial S3 object is
-deleted and the failure recorded, so the Job exits non-zero => the backup-freshness alert fires. Per-stage detail
-is on stdout (-> VictoriaLogs). Egress is locked down by networkpolicy.yaml; VMSingle/VLSingle each allow THIS
-pod inbound (their networkpolicy.yaml allowlists app.kubernetes.io/name: vm-backup).
+The central VM/VL backup CronJob, rendered only when a bucket is configured. One container streams two dumps
+straight through gzip into `aws s3 cp -`, so a 50Gi store needs no matching emptyDir.
+Each run backs up ONLY the previous full UTC day: a bounded slice, because a growing full-store dump OOM'd the
+source stores. A full DR replays every daily slice, which recover_vm_from_s3.sh's `all` target does.
+`set -o pipefail` makes a failed curl OR upload fail the stage; a partial S3 object is deleted.
 */ -}}
 {{- if .Values.bucket }}
 apiVersion: batch/v1
@@ -29,7 +23,7 @@ spec:
   jobTemplate:
     spec:
       backoffLimit: 1
-      activeDeadlineSeconds: 3600     # a full metrics+logs export+upload that runs >1h is wedged — fail it
+      activeDeadlineSeconds: 3600     # a full metrics+logs export+upload that runs >1h is wedged, fail it
       ttlSecondsAfterFinished: 86400  # GC finished jobs after a day
       template:
         metadata:
@@ -52,16 +46,13 @@ spec:
               args:
                 - |
                   set -u
-                  # back up ONLY the previous full UTC day [start,end): a bounded daily slice, so peak memory on the
-                  # source stores stays flat as the dataset grows (a full-store dump OOM'd vmsingle/vlsingle). DR
-                  # replays every daily slice — see recover_vm_from_s3.sh + docs/13_backups.md.
                   now="$(date -u +%s)"
                   end=$(( now - now % 86400 ))   # today 00:00 UTC
                   start=$(( end - 86400 ))       # yesterday 00:00 UTC
                   day="$(date -u -d "@${start}" +%Y%m%d)"
                   failed=""
 
-                  # stream <url> <curl-data-arg> <s3-key> : export | gzip | upload; delete a partial on failure.
+                  # stream <url> <curl-data-arg> <s3-key>: export, gzip, upload; delete a partial on failure.
                   stream() {
                     url="$1"; data="$2"; key="$3"
                     dst="s3://${BUCKET}/${key}"
@@ -74,8 +65,8 @@ spec:
                     fi
                   }
 
-                  # window-scoped: export/native honours start/end; LogsQL scopes with a _time filter. One file per
-                  # UTC day (idempotent — a re-run overwrites that day's slice).
+                  # export/native honours start/end; LogsQL scopes with a _time filter. One file per UTC day,
+                  # so a re-run just overwrites that day's slice.
                   stream "${VMSINGLE}/api/v1/export/native" "--data-urlencode match[]={__name__!=\"\"} --data-urlencode start=${start} --data-urlencode end=${end}" "${PREFIX}metrics/${day}.native.gz"
                   stream "${VLSINGLE}/select/logsql/query"  "--data-urlencode query=_time:[${start},${end})"                                                        "${PREFIX}logs/${day}.jsonl.gz"
 

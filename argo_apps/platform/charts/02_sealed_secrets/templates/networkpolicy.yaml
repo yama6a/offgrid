@@ -1,5 +1,4 @@
-# Namespace-wide default-deny for the sealed-secrets controller, which holds the RSA key that decrypts every
-# SealedSecret. See 04_networking.md / 06_secrets.md.
+# Namespace-wide default-deny for the controller holding the RSA key that decrypts every SealedSecret.
 apiVersion: cilium.io/v2
 kind: CiliumNetworkPolicy
 metadata:

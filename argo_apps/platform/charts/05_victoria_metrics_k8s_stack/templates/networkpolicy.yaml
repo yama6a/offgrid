@@ -1,5 +1,5 @@
-# POD-SCOPED to the vmsingle metrics store. NOT namespace-wide: vmagent shares the monitoring namespace and
-# scrapes the whole cluster, so it must stay unrestricted. See 04_networking.md / 09_monitoring.md.
+# POD-scoped to the vmsingle store. Not namespace-wide: vmagent shares the monitoring namespace and scrapes
+# the whole cluster, so it must stay unrestricted.
 apiVersion: cilium.io/v2
 kind: CiliumNetworkPolicy
 metadata:
@@ -11,7 +11,7 @@ spec:
       app.kubernetes.io/name: vmsingle
       app.kubernetes.io/instance: victoria-metrics-k8s-stack
   ingress:
-    # :8428 — vmagent remote-writes + self-scrapes, grafana reads, the Envoy edge serves vmui, vm-backup exports.
+    # vmagent remote-writes and self-scrapes, grafana reads, the Envoy edge serves vmui, vm-backup exports.
     - fromEndpoints:
         - matchLabels:
             k8s:io.kubernetes.pod.namespace: monitoring

@@ -1,16 +1,9 @@
 #!/usr/bin/env bash
-#
-# fix_chart_locks.sh
-#
-# Find every chart that pins dependencies and, where its committed Chart.lock is out of sync with Chart.yaml
-# (the exact failure ArgoCD's repo-server hits on sync), regenerate the lock with `helm dependency update`.
-# Detection is `helm dependency build`, which fast-fails on the lock/Chart.yaml digest mismatch, so only truly
-# stale charts are rewritten (no timestamp churn on in-sync ones). No git: it edits Chart.lock (+ charts/) in
-# place; commit the diff yourself.
-#
-# The per-chart check is network-bound (an in-sync remote-dep chart still has its dependency charts fetched into
-# charts/ before it's confirmed), so charts are checked in parallel. First run is the slow one; charts/ is then
-# cached.
+# Regenerates any committed Chart.lock that is out of sync with its Chart.yaml, which is the exact failure
+# ArgoCD's repo-server hits on sync. Detection is `helm dependency build`, which fast-fails on the digest
+# mismatch, so in-sync charts are left alone and get no timestamp churn.
+# Runs no git: it edits Chart.lock and charts/ in place, commit the diff yourself.
+# The per-chart check is network-bound, so charts are checked in parallel. The first run is the slow one.
 
 set -uo pipefail
 
@@ -20,7 +13,7 @@ source "${SCRIPT_DIR}/common.sh"
 require helm
 
 # ---- knobs ----
-JOBS=12   # parallel `helm dependency build`s; network-bound, so more than cores is fine. Edit to change.
+JOBS=12   # parallel `helm dependency build`s; network-bound, so more than cores is fine
 
 # Charts that pin at least one REMOTE (https/oci) dependency. A file://-only chart is lockless (its deps live in
 # this repo, nothing to pin), so it commits no Chart.lock and there is nothing here to check or fix.

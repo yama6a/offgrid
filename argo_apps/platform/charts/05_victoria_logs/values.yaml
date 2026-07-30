@@ -1,63 +1,42 @@
-# Values for the 05_victoria_logs wrapper chart. SINGLE SOURCE OF TRUTH, ArgoCD (and any local
-# `helm template`) consume this. Chart version pinned in Chart.yaml. See 15_monitoring.md.
-#
-# Two pieces:
-#   1. vlsingle.*           -> our hand-written VLSingle CR (templates/vlsingle.yaml), reconciled by the
-#                              standalone VM operator (01_victoria_metrics_operator).
-#   2. victoria-logs-collector.* -> the upstream collector DaemonSet (key == dependency name).
-
-# Orphan-not-delete, same guard CNPG and Redis use: stamps Prune=false,Delete=false on the VLSingle CR, so a
-# GitOps prune leaves the store RUNNING (and restoring the files re-adopts it) instead of destroying its PVC.
-# ALWAYS true in steady state. false is a TRANSIENT state only: set it, commit+push, let Argo sync, THEN remove
-# the app in a follow-up commit. See docs/08_storage.md.
+# Orphan-not-delete: a prune leaves the store RUNNING instead of destroying its PVC, and restoring the files
+# re-adopts it. To remove: set false in a first commit, delete the app in a follow-up commit.
 deletionProtection: true
 
-# ---- VLSingle (the logs store) ---------------------------------------------------------------------
 vlsingle:
-  # CR name -> the operator names the Service `vlsingle-<name>` on :9428 (the collector remoteWrite target
-  # and the vlogs UI backend both reference it). Keep in step with victoria-logs-collector.remoteWrite and
-  # the `ingress.backend` block below.
+  # The operator names the Service `vlsingle-<name>` on :9428. Keep in step with the collector remoteWrite
+  # URL below and the vlogs host in 06_platform_ingress.
   name: victoria-logs
   namespace: monitoring
-  # Logs are bulkier than metrics, so they get their OWN, shorter window (metrics are 180d). 60d here.
-  retentionPeriod: "60d"
+  retentionPeriod: "60d" # logs are bulkier than metrics, which get 180d
   storage:
-    storageClassName: longhorn-r2-ephemeral  # Delete r2 (02_longhorn): deletionProtection below is the prune guard, so
-                                             # Retain would only leak orphaned PVs. Total-loss coverage is the daily
-                                             # S3 export CronJob (platform app 08_vm_backup, logs leg).
+    storageClassName: longhorn-r2-ephemeral # deletionProtection is the prune guard, so Retain would only leak PVs
     size: 30Gi
   resources:
     requests: {cpu: 10m, memory: 96Mi}
-    # 512Mi: at rest VL sits ~17Mi, but the daily vm-backup export (a full-day logsql dump, ~20MB+) spikes it
-    # past 192Mi and OOMs mid-response (fails the backup's logs leg). Headroom for that transient query spike.
+    # Sized for the daily vm-backup export, not steady state: a full-day logsql dump spikes memory and OOMs
+    # mid-response, which fails the backup's logs leg.
     limits: {memory: 512Mi}
 
-# ---- victoria-logs-collector (the DaemonSet) -------------------------------------------------------
 victoria-logs-collector:
-  # Tail all container logs on every node, remote-write to the VLSingle service above.
   remoteWrite:
-      # Cap the on-disk send buffer (default: uncapped). VLSingle is in-cluster on these same 3 nodes, so if it
-      # goes down the buffer could otherwise grow until it fills the node's /var/lib and takes the node with it;
-      # capped, the collector drops oldest logs instead. (Homelab: dropping logs during a store outage is fine.)
+      # Cap the on-disk send buffer (default uncapped). VLSingle runs on these same 3 nodes, so if it goes
+      # down an uncapped buffer fills the node's /var/lib and takes the node with it. Capped, oldest logs drop.
     - url: http://vlsingle-victoria-logs.monitoring.svc:9428
       maxDiskUsagePerURL: 2GiB
 
   collector:
-    # Drop the collector's OWN logs before reading them (applied pre-read => saves CPU + hostPath I/O + store
-    # space, and stops a self-ingestion feedback loop). %{HOSTNAME} is substituted per-pod by the chart.
+    # Applied pre-read, so it also saves CPU and hostPath I/O, and stops a self-ingestion feedback loop.
+    # %{HOSTNAME} is substituted per-pod by the chart.
     excludeFilter: "kubernetes.pod_name:=%{HOSTNAME}"
-    # Don't stamp every log line with all pod labels (default true): needless stream/field cardinality in the
-    # small 30Gi/60d store. Labels stay available to excludeFilter above regardless.
+    # One searchable field per pod label on every log line, for no gain at this volume. The excludeFilter
+    # above matches pod_name, not a label, so turning this off does not affect it.
     includePodLabels: false
 
-  # DaemonSet must land on all 3 nodes. All-control-plane cluster, so tolerate everything rather than a
-  # control-plane nodeSelector (a node-role.kubernetes.io/control-plane:DoesNotExist selector would match
-  # ZERO nodes here).
+  # Every node here IS control-plane, so a node-role.kubernetes.io/control-plane:DoesNotExist selector would
+  # match zero nodes. Tolerate everything instead.
   tolerations:
     - operator: Exists
 
-  # Let vmagent scrape the collector's own /metrics via a VMPodScrape (vm: true), operator-native,
-  # picked up by vmagent's selectAllByDefault.
   podMonitor:
     enabled: true
     vm: true
@@ -65,4 +44,3 @@ victoria-logs-collector:
   resources:
     requests: {cpu: 10m, memory: 48Mi}
     limits: {memory: 96Mi}
-

@@ -1,34 +1,16 @@
-# ArgoCD Application for local-path-provisioner (argo_apps/platform/charts/02_local_path_provisioner/),# node-local dynamic PVs on the dedicated XFS 'localpath' user volume (mounted at /var/mnt/localpath by 03d,
-# exposed to the kubelet by 03d's extraMount). It backs stateful apps OFF Longhorn (CNPG Postgres + RabbitMQ)
-# so the app layer owns replication, on a partition isolated from Longhorn's.
-# See 18_local_path_provisioner.md.
-#
-# AUTOMATED (prune + selfHeal): a safe leaf like longhorn / cnpg-operator / sealed-secrets, it owns
-# no CRDs and can't cut the cluster off its network, so drift should auto-correct.
-#
-# sync-wave "2": same wave as longhorn / cnpg-operator / cert-manager / sealed-secrets, independent
-# storage leaves, none depends on the others. Per CLAUDE.md the NN prefix IS the wave (02_). The CNPG
-# *cluster* that consumes the local-path class is a workload, only created once the whole platform is
-# Healthy, so any platform wave is early enough, wave 2 keeps it with the storage leaves.
-#
-# Privileged PSA IS required: the provisioner Deployment itself runs unprivileged, but the short-lived
-# helper pods it stamps out to mkdir/rm the per-volume dirs mount the node's data path as a `hostPath`
-# volume, and hostPath is FORBIDDEN under `baseline`, which is Talos' cluster-wide default. So like
-# longhorn, the namespace must be labelled `privileged` (managedNamespaceMetadata below) or the helper
-# pods are rejected at admission and PVC provisioning fails with a PodSecurity "baseline" violation.
+# local-path-provisioner: node-local dynamic PVs on the XFS 'localpath' volume 03d mounts, isolated from Longhorn.
 apiVersion: argoproj.io/v1alpha1
 kind: Application
 metadata:
   name: local-path-provisioner
   namespace: argocd
-  # Cascade-delete this app's own resources on Application deletion instead of orphaning them; see 05_gitops.md.
   finalizers:
     - resources-finalizer.argocd.argoproj.io
   annotations:
     argocd.argoproj.io/sync-wave: "2"
 spec:
   project: default
-  revisionHistoryLimit: 0  # roll-forward only; no Argo rollback history (05_gitops.md)
+  revisionHistoryLimit: 0
   source:
     repoURL: https://github.com/yama6a/offgrid
     targetRevision: HEAD
@@ -37,10 +19,7 @@ spec:
     server: https://kubernetes.default.svc
     namespace: local-path-storage
   syncPolicy:
-    # The provisioner's helper pods mount a hostPath volume, which `baseline` (Talos' default) forbids.
-    # CreateNamespace makes the namespace; this stamps the enforce label on it so the helper pods are
-    # admitted. Mirrors longhorn.
-    managedNamespaceMetadata:
+    managedNamespaceMetadata: # the mkdir/rm helper pods mount hostPath, which Talos' default `baseline` pod-security level forbids
       labels:
         pod-security.kubernetes.io/enforce: privileged
         pod-security.kubernetes.io/warn: privileged
@@ -49,8 +28,8 @@ spec:
       prune: true
       selfHeal: true
     retry:
-      limit: -1  # unbounded; only retry re-drives a failed sync (see 05_gitops.md)
-      refresh: true  # retry the latest revision so a fix commit lands mid-loop
+      limit: -1
+      refresh: true
       backoff:
         duration: 5s
         factor: 2

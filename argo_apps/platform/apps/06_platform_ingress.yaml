@@ -1,25 +1,9 @@
-# ArgoCD Application for THE platform ingress (argo_apps/platform/charts/06_platform_ingress/). One app
-# rendering the EDGES for every platform UI (argocd, grafana, vmui, vlogs) — a per-host Gateway (merged onto
-# the one Envoy) + HTTPRoute + ReferenceGrant + one shared multi-SAN Certificate. NO SSO here: these hosts
-# are gated centrally by 04_google_sso (its domains[].hosts), which targetRefs these routes by name. The
-# whole edge is rendered by the shared ingress library (a file:// dependency); no edge YAML is
-# hand-written. See 07_ingress.md.
-#
-# AUTOMATED (prune + selfHeal): a safe leaf, Gateways + Certificate + HTTPRoutes + ReferenceGrants, no CRDs,
-# can't cut the cluster off its network. Break-glass if this wedges a UI:
-# `kubectl -n argocd port-forward svc/argocd-server 8080:80` bypasses the Gateway + SSO entirely.
-#
-# sync-wave "6": AFTER the monitoring backends (wave 5) so every cross-namespace backendRef resolves the
-# instant the route is created (no ResolvedRefs:False across a wave boundary), and after 04_google_sso
-# (wave 4) so the central SSO policy is already there to attach to these routes as they appear (a UI is
-# briefly open only for the EG reconcile lag between route creation and policy attachment). ServerSideDiff
-# so server-defaulted Gateway API fields don't show perpetual OutOfSync; pairs with ServerSideApply.
+# The edges for every platform UI (argocd, grafana, vmui, vlogs). SSO is applied centrally by 04_google_sso.
 apiVersion: argoproj.io/v1alpha1
 kind: Application
 metadata:
   name: platform-ingress
   namespace: argocd
-  # Cascade-delete this app's own resources on Application deletion instead of orphaning them; see 05_gitops.md.
   finalizers:
     - resources-finalizer.argocd.argoproj.io
   annotations:
@@ -27,24 +11,21 @@ metadata:
     argocd.argoproj.io/compare-options: ServerSideDiff=true
 spec:
   project: default
-  revisionHistoryLimit: 0  # roll-forward only; no Argo rollback history (05_gitops.md)
+  revisionHistoryLimit: 0
   source:
     repoURL: https://github.com/yama6a/offgrid
     targetRevision: HEAD
     path: argo_apps/platform/charts/06_platform_ingress
   destination:
     server: https://kubernetes.default.svc
-    # The Gateways/Certificates/HTTPRoutes/SecurityPolicy land in `gateway`; each ReferenceGrant sets its
-    # own metadata.namespace (argocd / monitoring). The default AppProject permits all three, so this
-    # multi-namespace app is fine.
-    namespace: gateway
+    namespace: gateway # each ReferenceGrant overrides this with its own namespace (argocd / monitoring)
   syncPolicy:
     automated:
       prune: true
       selfHeal: true
     retry:
-      limit: -1  # unbounded; only retry re-drives a failed sync (see 05_gitops.md)
-      refresh: true  # retry the latest revision so a fix commit lands mid-loop
+      limit: -1
+      refresh: true
       backoff:
         duration: 5s
         factor: 2

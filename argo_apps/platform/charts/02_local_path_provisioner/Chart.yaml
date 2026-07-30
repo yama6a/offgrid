@@ -1,20 +1,8 @@
 apiVersion: v2
 name: local-path-provisioner
-description: >-
-  Wrapper chart for Rancher's local-path-provisioner on the Talos/Raspberry Pi 5
-  cluster, node-local dynamic PVs on the dedicated XFS 'localpath' user volume (mounted
-  at /var/mnt/localpath by 03d), used to back stateful apps off Longhorn (CNPG Postgres,
-  RabbitMQ) so the app layer owns replication, not the volume. Single source of truth for
-  the version (this file, appVersion) and config (values.yaml). Delivered purely by
-  ArgoCD via argo_apps/platform/apps/02_local_path_provisioner.yaml, wave 2, with
-  the other storage leaves (longhorn / cnpg-operator). The one-time host prerequisite
-  (kubelet extraMount for /var/mnt/localpath) lives in 03d. See 18_local_path_provisioner.md.
-
-  NOTE: there is no public, maintained upstream Helm repo for this chart (Rancher's
-  is auth-gated; the community mirror is stale), so the ~6 manifests are VENDORED into
-  templates/ and parameterized from values.yaml, pinned to the appVersion below. No
-  Chart.lock / `helm dependency build` needed (no chart dependencies). Bump by editing
-  values.image.tag + appVersion and re-diffing against the upstream release manifest.
+description: Rancher local-path-provisioner, node-local dynamic PVs on the XFS 'localpath' volume 03d mounts. Backs the stateful apps kept off Longhorn.
 type: application
-version: 0.1.0                 # local chart, never bump version
-appVersion: "v0.0.36"         # rancher/local-path-provisioner release the vendored manifests track
+version: 0.1.0 # local chart, never bump version
+# No public maintained upstream repo (Rancher's is auth-gated), so the manifests are vendored into templates/.
+# To bump: edit appVersion + values.image.tag, then re-diff against the upstream release manifest.
+appVersion: "v0.0.36"

@@ -1,53 +1,35 @@
-# Values for the 05_grafana wrapper chart. SINGLE SOURCE OF TRUTH, ArgoCD (and any local
-# `helm template`) consume this. Chart version pinned in Chart.yaml. See 09_monitoring.md for the why.
-#
-# Grafana runs in the `monitoring` namespace (release name `grafana`), alongside the VictoriaMetrics +
-# VictoriaLogs stack it visualises AND alerts on. Everything under `grafana:` is passed to the upstream
-# grafana/grafana subchart (key == dependency name). Since the Prometheus -> VictoriaMetrics migration,
-# Grafana also OWNS alerting (no Alertmanager, no vmalert): datasources, contact point, notification
-# policy and alert rules are all provisioned here as code.
+# Grafana also OWNS alerting here: there is no Alertmanager and no vmalert, so datasources, contact point,
+# notification policy and rules are all provisioned as code.
 grafana:
-  revisionHistoryLimit: 0  # roll-forward only; no old ReplicaSets kept. persistence off => Deployment, so it applies (05_gitops.md)
-  # No persistent storage (explicit request). Ephemeral pod, the datasources, dashboards and alert rules
-  # are all re-provisioned on every start (from these values + the k8s-stack's emitted dashboard
-  # ConfigMaps). TRADE-OFF: alert *state* (firing history, silences) and any UI-created dashboards reset
-  # on restart; rules themselves survive because they are file-provisioned. See 09_monitoring.md.
+  revisionHistoryLimit: 0
+  # Ephemeral. Datasources, dashboards and rules are re-provisioned on every start. Alert STATE (firing
+  # history, silences) and any UI-created dashboard reset on restart; file-provisioned rules survive.
   persistence:
     enabled: false
 
-  # With persistence off the data dir is an emptyDir and the pod already sets fsGroup 472, so the root busybox
-  # chown init-container is redundant — drop it (one fewer init container + image pull, faster arm64 startup).
   initChownData:
-    enabled: false
+    enabled: false # with persistence off the data dir is an emptyDir and the pod already sets fsGroup 472
 
-  # Self-scrape Grafana's own /metrics via a ServiceMonitor (VM operator -> VMServiceScrape; vmagent
-  # selectAllByDefault picks it up) — dashboard render times + alert-rule eval latency, the lone blind spot.
   serviceMonitor:
     enabled: true
 
-  # Pinned so the chart stops generating a random admin-password each render (churns checksum/secret,
-  # rolls the pod every sync). Value irrelevant, login is disabled.
+  # Pinned so the chart stops generating a random password each render, which churns the secret checksum and
+  # rolls the pod every sync. The value is irrelevant, login is disabled.
   adminUser: admin
   adminPassword: raspi-cluster
 
-  # Grafana's OWN auth is OFF, the gateway Google SSO allowlist (this chart's own `sso: example.com` edge
-  # route, see the `ingress:` block below, + the 04_google_sso SecurityPolicy) is the only barrier, exactly
-  # like the vmui/VictoriaLogs UIs.
-  # Every request arrives already authenticated at the edge, so we serve it as an anonymous Admin: no
-  # second login, full functionality. dotted keys (`auth.anonymous` etc.) are grafana.ini SECTION names.
+  # Grafana's OWN auth is OFF. The Google SSO policy on its edge is the only barrier, so every request arrives
+  # already authenticated and is served as an anonymous Admin. Dotted keys here are grafana.ini SECTION names.
   grafana.ini:
-    # Quiet Grafana's INFO chatter (per-poll "Plugin Request Completed" datasource calls, cleanup &
-    # update-check). WARN keeps errors. No HTTP access logs lost, inbound traffic is logged by the
-    # envoy gateway, which stays at INFO on purpose.
+    # Per-poll "Plugin Request Completed" datasource calls dominate. No HTTP access logs are lost, inbound
+    # traffic is logged by the Envoy gateway, which stays at INFO on purpose.
     log:
       level: warn
-    # Kill Grafana's phone-home at the source (the log.level:warn above only silences the log line): no usage
-    # reporting, no version-update check. Offline-ish homelab with no in-UI upgrade path anyway.
+    # Kills the phone-home at the source; log.level above only silences the line.
     analytics:
       reporting_enabled: false
       check_for_updates: false
-    # No outbound calls on UI load for a single-admin SSO-gated dashboard: drop the grafana.com news feed and
-    # gravatar.com avatar fetches (faster first paint, less egress).
+    # No outbound calls on UI load: drop the grafana.com news feed and the gravatar avatar fetches.
     news:
       news_feed_enabled: false
     security:
@@ -56,38 +38,33 @@ grafana:
       domain: grafana.ops.example.com
       root_url: https://grafana.ops.example.com
     auth:
-      disable_login_form: true       # no built-in login, SSO is the front door
+      disable_login_form: true
     auth.anonymous:
       enabled: true
       org_name: Main Org.
       org_role: Admin                # everyone who clears the SSO allowlist gets full admin
     auth.basic:
-      # ON so the alerts/dashboards sidecars can authenticate their provisioning-reload POST (the
-      # /api/admin/provisioning/*/reload endpoint is Basic-Auth-ONLY; with it off the sidecar's reload 403s and
-      # provisioning silently only ever applied on a pod restart). Not an external hole: the SSO edge gates all
-      # browser traffic and only the in-cluster sidecar uses the admin creds. Login form stays off (SSO is the front door).
+      # ON so the sidecars can authenticate their provisioning-reload POST: /api/admin/provisioning/*/reload
+      # is Basic-Auth-ONLY, and with it off the reload 403s and provisioning silently only applies on restart.
+      # Not a hole: the SSO edge gates all browser traffic and only the in-cluster sidecar uses the creds.
       enabled: true
 
-  # GF_NTFY_TOKEN <- the sealed grafana-ntfy Secret (key `token`), referenced (env-interpolated) by the ntfy
-  # webhook contact point below as ${GF_NTFY_TOKEN}, so the write token never lands in git. The Secret is
-  # created by the committed SealedSecret (templates/grafana-ntfy-sealedsecret.yaml), written by 10_ntfy_auth.sh.
+  # Interpolated into the ntfy contact point as ${GF_NTFY_TOKEN}, so the write token never lands in git.
+  # The Secret comes from templates/grafana-ntfy-sealedsecret.yaml, written by 10_ntfy_auth.sh.
   envValueFrom:
     GF_NTFY_TOKEN:
       secretKeyRef:
         name: grafana-ntfy
         key: token
-        optional: true   # so Grafana starts before 10_ntfy_auth.sh seals the token; the ntfy contact point just
-                         # fails to publish (auth rejected) until the SealedSecret lands and the pod restarts
+        optional: true   # so Grafana starts before the token is sealed; ntfy publishing just fails until then
 
-  # The VictoriaLogs datasource is NOT built in (unlike Loki), install the signed plugin (commercial
-  # signature, so no allow-unsigned needed). Version pinned; the space-separated form pins the version via
-  # grafana-cli. The VictoriaMetrics datasource is the built-in `prometheus` type, no plugin required.
+  # VictoriaLogs is not built in (unlike Loki). Commercially signed, so no allow-unsigned needed. The
+  # space-separated form is what pins the version via grafana-cli.
   plugins:
     - victoriametrics-logs-datasource 0.29.0
 
-  # Provisioned datasources (replaces the old sidecar-fed Prometheus datasource ConfigMap). UIDs are PINNED
-  # and deliberately match the k8s-stack's defaults (`VictoriaMetrics` / `VictoriaLogs`) so BOTH the
-  # synced default dashboards AND the alert rules below resolve their datasource. See 09_monitoring.md.
+  # UIDs are PINNED to the k8s-stack's defaults so both the synced default dashboards AND the alert rules
+  # resolve their datasource.
   datasources:
     datasources.yaml:
       apiVersion: 1
@@ -99,52 +76,38 @@ grafana:
           url: http://vmsingle-victoria-metrics-k8s-stack.monitoring.svc:8428
           isDefault: true
           jsonData:
-            # VM is PromQL-compatible; mark it so Grafana enables the right query editor features.
-            prometheusType: Prometheus
+            prometheusType: Prometheus # VM is PromQL-compatible; this enables the right query editor features
         - name: VictoriaLogs
           type: victoriametrics-logs-datasource
           uid: VictoriaLogs
           access: proxy
           url: http://vlsingle-victoria-logs.monitoring.svc:9428
 
-  # Dashboards: keep the sidecar (it ingests the k8s-stack's emitted `grafana_dashboard` ConfigMaps across
-  # ALL namespaces). Datasources sidecar is OFF, datasources are provisioned directly above now.
   sidecar:
-    # Right-size the dashboard sidecar per KRR (applies to all sidecar containers in the pod).
     resources:
       requests: {cpu: 10m, memory: 96Mi}
       limits: {memory: 128Mi}
     dashboards:
-      enabled: true
+      enabled: true # ingests the k8s-stack's emitted grafana_dashboard ConfigMaps
       label: grafana_dashboard
       searchNamespace: ALL
     datasources:
-      enabled: false
+      enabled: false # provisioned directly above instead
 
+    # The contact point, notification policy and every rule group live in files/alerts/*.yaml, shipped as
+    # ConfigMaps by templates/alerts-configmaps.yaml. No searchNamespace, so this release's namespace.
     alerts:
-      # Load alert provisioning files from ConfigMaps labelled grafana_alert (files/alerts/*.yaml via
-      # templates/alerts-configmaps.yaml), mirroring the dashboards sidecar. No searchNamespace => this
-      # release's namespace (monitoring), where those ConfigMaps live. Same grafana.ini reload as dashboards.
       enabled: true
       label: grafana_alert
-  # ---- Alerting: provisioned as sidecar-loaded ConfigMaps, NOT inline here ------------------------
-  # The contact point, notification policy and every rule group live in files/alerts/*.yaml, shipped as
-  # ConfigMaps (templates/alerts-configmaps.yaml, label grafana_alert) and loaded by the alerts sidecar
-  # below — the SAME model as dashboards. Keeps this file small + each group in its own diffable file.
-  # ${GF_NTFY_TOKEN} is still env-interpolated by Grafana at load (see envValueFrom above). See 09_monitoring.md.
-  # Default ClusterIP Service on :80 -> container :3000, what this chart's own grafana edge backendRef
-  # targets (the `ingress:` block below; name `grafana`, port 80).
+
   service:
     enabled: true
     type: ClusterIP
-    port: 80
+    port: 80 # what the grafana edge backendRef targets in 06_platform_ingress
 
-  # No Helm test Pod, it's a `helm.sh/hook: test` resource ArgoCD ignores anyway; drop it so the chart
-  # ships only the running workload.
   testFramework:
-    enabled: false
+    enabled: false # a helm.sh/hook: test resource ArgoCD ignores anyway
 
-  # Modest footprint for a Pi 5.
   resources:
     requests:
       cpu: 250m
@@ -152,11 +115,9 @@ grafana:
     limits:
       memory: 384Mi
 
-  # Spread across Pi nodes if `replicas` is ever raised. PREFERRED + hostname: bare Pi nodes have no zone
-  # label, and soft so a scale-up never wedges as Pending on the 3-node cluster. No-op at the default single
-  # replica. NOTE: this only pre-stages placement — actually running replicas>1 first needs unified-alerting
-  # HA (grafana.ini `unified_alerting.ha_*`), else each replica evaluates rules independently and double-sends
-  # email; and with persistence off, UI-created annotations/silences aren't shared. See 09_monitoring.md.
+  # Pre-staged placement only. Actually running replicas>1 first needs unified-alerting HA (grafana.ini
+  # unified_alerting.ha_*), else each replica evaluates rules independently and double-sends; and with
+  # persistence off, UI-created annotations and silences are not shared.
   affinity:
     podAntiAffinity:
       preferredDuringSchedulingIgnoredDuringExecution:
@@ -166,4 +127,3 @@ grafana:
               matchLabels:
                 app.kubernetes.io/name: grafana
             topologyKey: kubernetes.io/hostname
-

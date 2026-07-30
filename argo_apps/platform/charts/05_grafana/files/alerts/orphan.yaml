@@ -1,10 +1,9 @@
 apiVersion: 1
 groups:
-  # Orphan-not-delete monitoring (docs/13_backups.md, docs/12_redis.md). A workload's manifests leaving Git
-  # ORPHANS every CR carrying deletionProtection (CNPG Cluster, OpsTree Redis, VLSingle/VMSingle/VMAgent) instead
-  # of deleting it: it keeps running, unmanaged, so the data survives a restore. These alerts make that silent state loud. Vector 1 (CR
-  # removed from a live app, app stays OutOfSync) is covered by the general rule in argocd-health.yaml; here are
-  # vector 2 (owning app gone) + the untracked guard + the exporter deadman. Fed by 05_orphan_exporter.
+  # A workload's manifests leaving git ORPHANS every CR carrying deletionProtection instead of deleting it: it
+  # keeps running, unmanaged, so the data survives a restore. These alerts make that silent state loud.
+  # Vector 1 (CR removed from a live app, app stays OutOfSync) is covered in argocd-health.yaml. Here are
+  # vector 2 (owning app gone), the untracked guard, and the exporter deadman. Fed by 05_orphan_exporter.
   - orgId: 1
     name: orphan
     folder: raspi-cluster
@@ -46,8 +45,8 @@ groups:
               conditions:
                 - type: query
                   evaluator: {type: gt, params: [0]}
-      # A CNPG Cluster in an Argo-managed namespace with no tracking metadata: the exporter cannot tell whether
-      # it is orphaned, so it says so loudly rather than reading as healthy. See docs/13_backups.md.
+      # No tracking metadata means the exporter cannot tell whether it is orphaned, so it says so loudly
+      # rather than letting unknown read as healthy.
       - uid: cnpg-cluster-untracked
         title: CNPG cluster untracked by ArgoCD
         condition: C
@@ -84,9 +83,8 @@ groups:
               conditions:
                 - type: query
                   evaluator: {type: gt, params: [0]}
-      # Deadman: if the exporter stops emitting, no orphaned_* metric can ever fire, so silence would look like
-      # health. noDataState: Alerting makes an ABSENT heartbeat (pod down/unscheduled/unscraped) alert; a scan
-      # error emits 0 and trips the same threshold.
+      # Deadman: with the exporter silent, no orphaned_* metric can fire, so silence would look like health.
+      # noDataState: Alerting makes an ABSENT heartbeat alert; a scan error emits 0 and trips the same threshold.
       - uid: orphan-exporter-down
         title: Orphan exporter down
         condition: C
@@ -123,9 +121,8 @@ groups:
               conditions:
                 - type: query
                   evaluator: {type: lt, params: [1]}
-      # Same two vectors for Redis. The label key is `redis` (not `instance`, which the scrape already owns).
-      # A durable instance has a daily S3 RDB dump, so an orphan is recoverable; this makes the unmanaged state
-      # visible. See docs/12_redis.md.
+      # Same two vectors for Redis. The label key is `redis`, not `instance`, which the scrape already owns.
+      # A durable instance has a daily S3 dump, so an orphan is recoverable; this just makes it visible.
       - uid: redis-instance-orphaned
         title: Redis instance orphaned
         condition: C
@@ -162,8 +159,7 @@ groups:
               conditions:
                 - type: query
                   evaluator: {type: gt, params: [0]}
-      # A Redis instance in an Argo-managed namespace with no tracking metadata: the exporter cannot tell whether
-      # it is orphaned, so it says so loudly rather than reading as healthy.
+      # As above: unknown must not read as healthy.
       - uid: redis-instance-untracked
         title: Redis instance untracked by ArgoCD
         condition: C
@@ -200,9 +196,8 @@ groups:
               conditions:
                 - type: query
                   evaluator: {type: gt, params: [0]}
-      # Same two vectors for the VM/VL stores (VLSingle / VMSingle / VMAgent), which share one metric pair with a
-      # `kind` label. Both stores have a daily S3 export (08_vm_backup) so an orphan is recoverable; these make the
-      # unmanaged state visible. See docs/08_storage.md.
+      # Same two vectors for the VM/VL stores, which share one metric pair with a `kind` label. Both have a
+      # daily S3 export, so an orphan is recoverable.
       - uid: vm-resource-orphaned
         title: VM/VL store orphaned
         condition: C
@@ -239,8 +234,7 @@ groups:
               conditions:
                 - type: query
                   evaluator: {type: gt, params: [0]}
-      # A VM/VL store CR in an Argo-managed namespace with no tracking metadata: the exporter cannot tell whether
-      # it is orphaned, so it says so loudly rather than reading as healthy.
+      # As above: unknown must not read as healthy.
       - uid: vm-resource-untracked
         title: VM/VL store untracked by ArgoCD
         condition: C

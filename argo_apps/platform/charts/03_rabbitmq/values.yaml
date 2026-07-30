@@ -1,61 +1,38 @@
-# Values for the 03_rabbitmq chart (the operators AND the single shared broker). SINGLE SOURCE OF TRUTH; ArgoCD
-# (and any local `helm template`) consume this. Chart version pinned in Chart.yaml. See 11_messaging.md for the why.
-#
-# Both operators and the broker run in the same `rabbitmq` namespace (CreateNamespace=true in the Application).
-# They run non-root, so the namespace stays restricted-compatible (like cert-manager / cnpg-operator).
-#
-# Two halves:
-#   - Everything under `rabbitmq-cluster-operator:` is passed to the upstream CloudPirates subchart (key ==
-#     dependency name). The subchart bundles + installs the RabbitMQ CRDs (RabbitmqCluster + the topology CRDs).
-#   - The top-level keys (name/replicas/image/resources/storage/vhost) configure this chart's OWN templates (the
-#     RabbitmqCluster / Vhost / CiliumNetworkPolicy in templates/), which render the broker itself.
-# The broker CRs carry SkipDryRunOnMissingResource (see the templates) so a cold-boot sync doesn't fail before
-# the subchart's CRDs are registered; ArgoCD applies CRDs before CRs and selfHeal converges once the operator boots.
+# Two halves: `rabbitmq-cluster-operator:` goes to the upstream subchart (which also installs the CRDs), the
+# top-level keys drive this chart's OWN templates, which render the broker.
 
 rabbitmq-cluster-operator:
-  # cert-manager owns + AUTO-ROTATES the topology-operator's webhook serving cert and injects the caBundle into
-  # the ValidatingWebhookConfiguration (via a cert-manager.io/inject-ca-from annotation). This FIXES a real bug
-  # in the self-signed path (useCertManager:false): that path mints the cert with Helm genSignedCert at TEMPLATE
-  # time, so ArgoCD re-rendered a fresh cert every reconcile -> the webhook Secret + caBundle were perpetually
-  # OutOfSync and topology CR writes (Queue/Exchange/Binding/User/Permission/Vhost, failurePolicy:Fail) could be
-  # transiently rejected. TRADE-OFF (deliberate): adds a cross-wave dep on cert-manager — cert-manager + its
-  # Issuer/Certificate CRDs are wave 2, this app is wave 3. Waves are advisory (no health gate), so on a cold
-  # boot the Certificate may briefly sit pending until cert-manager reconciles; the app self-converges via its
-  # unbounded syncPolicy.retry (the repo's standard model). See 11_messaging.md.
+  # Fixes a real bug in the self-signed path: that one mints the webhook cert with Helm genSignedCert at
+  # TEMPLATE time, so ArgoCD re-renders a fresh cert every reconcile, leaving the Secret and caBundle
+  # perpetually OutOfSync and transiently rejecting topology CR writes (failurePolicy: Fail).
+  # Trade-off: a cross-wave dependency on cert-manager (wave 2, this app is wave 3). Waves are advisory, so on
+  # a cold boot the Certificate may sit pending until the app's unbounded retry converges.
   useCertManager: true
 
-  # The RabbitMQ Cluster Operator: watches all namespaces so it can reconcile the RabbitmqCluster in `rabbitmq`
-  # and (via topology-allowed-namespaces on the CR) topology objects in every workload namespace.
   clusterOperator:
     replicaCount: 1
-    revisionHistoryLimit: 0  # roll-forward only; no old ReplicaSets kept (05_gitops.md)
-    # Modest footprint for a controller pod on the Pi 5s — it only reconciles; the broker work lives in the
-    # RabbitmqCluster pods. Tunable later via the repo's krr workflow.
+    revisionHistoryLimit: 0
     resources:
       requests:
         cpu: 10m
         memory: 64Mi
       limits:
         memory: 128Mi
-    # Emit a PodMonitor so vmagent scrapes the operator's plaintext /metrics; the VM operator auto-converts
-    # PodMonitor -> VMPodScrape (CRDs exist from wave 0). See 09_monitoring.md.
     metrics:
       podMonitor:
         enabled: true
-    # Ship OUR own tight CiliumNetworkPolicy (templates/networkpolicy-cluster-operator.yaml), not the subchart's
-    # bundled vanilla NetworkPolicy — its default is allow-all-egress, which Cilium UNIONs with our CNP and would
-    # blow the default-deny wide open (same reason argocd pins global.networkPolicy.create:false). See 04_networking.md.
+    # Ours is in templates/networkpolicy-cluster-operator.yaml. The subchart's bundled vanilla NetworkPolicy
+    # defaults to allow-all-egress, which Cilium UNIONs with our CNP and blows default-deny open.
     networkPolicy:
       enabled: false
 
-  # The Messaging Topology Operator: reconciles the Queue/Exchange/Binding/User/Permission/Vhost CRs.
   msgTopologyOperator:
     enabled: true
     replicaCount: 1
-    revisionHistoryLimit: 0  # roll-forward only; no old ReplicaSets kept (05_gitops.md)
-    # --zap-log-level=error. It logs Start/Successfully-declare/Finished at INFO per topology CR every
-    # SYNC_PERIOD -> ~55% of ALL cluster log volume, pure success chatter. Also drops WARN; real failures
-    # still surface via CR status conditions, k8s events, and the queue/DLQ alerts (05_grafana rabbitmq-health.yaml).
+    revisionHistoryLimit: 0
+    # At INFO it logs Start/declare/Finished per topology CR every SYNC_PERIOD, which dominates cluster log
+    # volume with pure success chatter. This also drops WARN; real failures still surface via CR status
+    # conditions, k8s events, and the queue/DLQ alerts.
     logLevel: error
     resources:
       requests:
@@ -64,36 +41,28 @@ rabbitmq-cluster-operator:
       limits:
         memory: 128Mi
     extraEnvVars:
-      - name: SYNC_PERIOD # re-reconcile all topology CRs so a declare that failed on out-of-order deps self-heals
+      - name: SYNC_PERIOD # re-reconciles all topology CRs, so a declare that failed on out-of-order deps self-heals
         value: "1m"
-    # metrics left off: the topology-operator's metrics endpoint requires TLS, which the plaintext
-    # vmagent scrape can't consume without extra config — not worth it for the homelab.
-    # Ship OUR own tight CiliumNetworkPolicy (templates/networkpolicy-topology-operator.yaml), not the subchart's
-    # bundled allow-all-egress NetworkPolicy (Cilium would UNION it with our CNP and blow the default-deny open —
-    # same reason argocd pins global.networkPolicy.create:false). See 04_networking.md.
+    # metrics stay off: the topology operator's endpoint requires TLS, which the plaintext vmagent scrape
+    # cannot consume without extra config.
     networkPolicy:
-      enabled: false
+      enabled: false # same allow-all-egress problem as clusterOperator above
 
-# ---- The single shared broker (rendered by templates/, this chart's OWN resources, NOT the operator subchart) ----
+# ---- the single shared broker, rendered by this chart's own templates ----
 
-# The RabbitmqCluster name. Also the name of the client Service (rabbitmq.rabbitmq.svc) workloads dial on 5672
-# and the management UI is exposed on (15672). Workloads reference this via the rabbitmq-topology chart's
-# `cluster.name` default, so changing it means changing that default too.
+# Also the client Service name workloads dial on 5672, and the management UI on 15672. The rabbitmq-topology
+# chart hardcodes this, so changing it means changing that chart too.
 name: rabbitmq
 
-# 3 replicas — one per Pi node. Quorum queues use Raft and need a MAJORITY, so 3 tolerates losing 1 node
-# (majority 2 of 3); the operator recommends odd counts. (2 would pay the cost of a cluster with no quorum
-# benefit; 1 has no HA.) Paired with the quorum default queue type below.
+# One per Pi node. Quorum queues use Raft and need a MAJORITY, so 3 tolerates losing 1. Two would pay the cost
+# of a cluster with no quorum benefit; one has no HA.
 replicas: 3
 
-# Pinned RabbitMQ server image. `-management` bundles the management plugin (the 15672 UI); `-alpine` is the
-# small variant (kind to the Pis). Multi-arch incl. arm64. Track the server line the operator subchart
-# is built/tested against; bump deliberately.
+# `-management` bundles the 15672 UI, `-alpine` is the small variant. Track the server line the operator
+# subchart is tested against, bump deliberately.
 image: rabbitmq:4.3.3-management-alpine
 
-# Per-instance requests/limits. RabbitMQ sizes its memory high-watermark off the memory LIMIT, so the limit
-# is the real knob — 1Gi gives ~400Mi of working set before back-pressure, ample for homelab messaging on the
-# 8GB Pi 5s that already run a lot. Tunable later via the repo's krr workflow.
+# RabbitMQ sizes its memory high-watermark off the LIMIT, so the limit is the real knob here.
 resources:
   requests:
     cpu: 200m
@@ -102,30 +71,21 @@ resources:
     cpu: "1"
     memory: 1Gi
 
-# Per-broker storage on the node-local `local-path-ephemeral` class (NOT Longhorn). Quorum queues already
-# replicate every message across the 3 brokers via Raft and fsync locally, so HA + durability live in the app;
-# replicating the volume underneath too would just be write amplification — the same reason CNPG runs Postgres
-# on local-path. So each broker gets a plain node-local volume, and it's disposable: lose a node and its
-# replacement broker starts empty and rebuilds from the 2 healthy peers, which is why the class is reclaimPolicy
-# Delete, not Retain (nothing to preserve; the dir is auto-cleaned). Trade-offs, all accepted: while a node is
-# down there's no spare fault tolerance (a 2nd loss drops quorum below majority), and this shares Postgres's
-# fixed 50GiB /var/mnt/localpath slice (fine — quorum-log volumes are tiny). `size` is nominal: local-path enforces
-# no quota (same as CNPG's value).
+# Node-local, not Longhorn: quorum queues already replicate every message across the 3 brokers via Raft and
+# fsync locally, so replicating the volume underneath is pure write amplification. Each broker's volume is
+# disposable, a replacement rebuilds from its 2 healthy peers, hence the -ephemeral (reclaim Delete) class.
+# Accepted: while a node is down there is no spare fault tolerance, a 2nd loss drops below majority.
 storage:
   className: local-path-ephemeral
-  size: 5Gi
+  size: 5Gi # nominal, local-path enforces no quota
 
-# The one shared vhost every workload's users/exchanges/queues live in (kept separate from the default `/`,
-# which stays admin-only). The rabbitmq-topology chart defaults `vhost` to this name — keep them in sync.
+# Every workload's users/exchanges/queues live here, kept out of the default `/`, which stays admin-only.
+# The rabbitmq-topology chart hardcodes this name too.
 vhost: apps
 
-# ---- broker metrics scrape ----
-# The broker exposes Prometheus on :15692 (the `-management` image; the netpol already allows vmagent). This
-# renders a PodMonitor (templates/podmonitor.yaml; VM operator -> VMPodScrape) that scrapes EACH broker pod on
-# TWO endpoints: /metrics (aggregated node/cluster health) and /metrics/detailed (per-queue depth + consumer
-# count — the aggregated endpoint has NO `queue` label, so the queue/DLQ alerts need the detailed one). Scraped
-# per-pod, NOT via the LB `rabbitmq` Service: detailed per-queue metrics are only reported by the node hosting
-# each queue's leader. Without this the broker's rabbitmq_* metrics never reach VictoriaMetrics. See 09_monitoring.md.
+# Scrapes EACH broker pod on both /metrics and /metrics/detailed: the aggregated endpoint carries no `queue`
+# label, so the queue and DLQ alerts need the detailed one. Per-pod, NOT via the LB Service, because detailed
+# per-queue metrics are only reported by the node hosting that queue's leader.
 metrics:
   podMonitor:
     enabled: true

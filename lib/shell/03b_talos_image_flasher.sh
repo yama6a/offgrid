@@ -1,17 +1,9 @@
 #!/usr/bin/env bash
+# Writes the local custom Pi 5 Talos image built by 03a to an NVMe SSD over a USB adapter. Once per drive.
+# With no SD card inserted the Pi then boots Talos from this NVMe straight into maintenance mode; cluster
+# config is applied later by 03d.
 #
-# 03b_talos_image_flasher.sh  (macOS)
-#
-# Writes the LOCAL custom Raspberry Pi 5 Talos image, built and validated by
-# 03a_talos_image_builder.sh, to an NVMe SSD over a USB adapter. Run once per
-# drive; swap the SSD each time.
-#
-# Boot chain: the EEPROM (step 02) tries SD first, then NVMe. With no card
-# inserted, the Pi boots Talos from this NVMe straight into maintenance mode.
-# Cluster config (IPs, VIP, partitions) is applied later by 03d_talos_cluster_config.sh.
-#
-# Requires: xz   (brew install xz)
-#
+# Requires: xz
 set -euo pipefail
 
 # OUT_DIR (the build-cache output dir from 03a_talos_image_builder.sh) is derived in lib/shell/common.sh.
@@ -33,7 +25,7 @@ if [ ! -f "$RAW" ] || [ "$RAW_XZ" -nt "$RAW" ]; then
 fi
 ls -lh "$RAW"
 
-# ===== DESTRUCTIVE FROM HERE: writing the NVMe ===============================
+# DESTRUCTIVE FROM HERE: writing the NVMe
 
 # 1. Show disks so you can identify the USB-NVMe adapter
 diskutil list

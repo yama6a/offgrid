@@ -1,27 +1,9 @@
 #!/usr/bin/env bash
-#
-# 03a_talos_image_builder.sh  (macOS, Apple Silicon)
-#
-# Builds a CUSTOM Talos Linux image for the Raspberry Pi 5 at the latest Talos
-# on a recent Raspberry Pi kernel, bakes in the items cluster bring-up (03d) and
-# hardening (step 04) need, ends with an OFFLINE validation stage, and then
-# OPTIONALLY publishes the installer image to GHCR (for network upgrades, 03f).
-# A clean run = a built AND validated image (published too, if a push token is set).
-#
-# Set GITHUB_GHCR_PUSH_TOKEN_SECRET (classic, write:packages) in .env to publish the
-# installer to ${INSTALLER_REF}; leave it empty to build+validate only.
-#
-# It drives talos-rpi5/talos-builder (which stitches siderolabs/pkgs +
-# siderolabs/talos + the talos-rpi5 overlay), but rebases four things the
-# upstream build can't do at this Talos version, see the REBASES below.
-#
-# Prereqs (the script checks them):
-#   - gmake (GNU make >= 4)        brew install make      (system make is 3.81)
-#   - zstd, xz, jq, curl           brew install zstd xz jq
-#   - docker (Rancher Desktop ok) with an arm64 Linux VM, >= ~120 GB free disk
-#
-# Nothing here touches hardware. Flashing is next (03b_talos_image_flasher.sh).
-#
+# Builds a CUSTOM Talos image for the Pi 5 (latest Talos on a recent Raspberry Pi kernel), validates it
+# offline, and optionally publishes the installer to GHCR for the network upgrades 03f does.
+# Set GITHUB_GHCR_PUSH_TOKEN_SECRET in .env to publish; leave it empty to build and validate only.
+# It drives talos-rpi5/talos-builder but rebases four things the upstream build cannot do at this Talos
+# version, see the REBASES below. Touches no hardware; flashing is 03b.
 set -euo pipefail
 
 # The version recipe (versions, kernel ref, extensions) lives in the committed versions.env; registry/paths in .env.
@@ -40,15 +22,13 @@ REGISTRY_USER="talos-rpi5"                 # path component in the local registr
 REGISTRY_NAME="talos-registry"             # registry container name
 # renovate: datasource=docker
 REGISTRY_IMAGE="registry:3"                # local build-registry image
-BUILDER_NAME="talos-bx"                    # docker-container buildx builder (mergeop-capable)
+BUILDER_NAME="talos-bx"                    # standalone buildx builder; the one inside dockerd cannot do this build
 SRCSERVER_NAME="talos-srcserver"           # local HTTP server for the (non-byte-stable) kernel tarball
 SRCSERVER_PORT="8099"
 IMAGE_NAME="metal-arm64-rpi5.raw.xz"       # staged image filename (rpi5/grub imager emits .raw.xz; matches 03b's RAW_XZ default)
 # renovate: datasource=docker
-ALPINE_IMAGE="alpine:3.24"                 # throwaway container for the raw-image + UKI validation steps
-# -----------------------------------------------------------------------------
+ALPINE_IMAGE="alpine:3.24"                 # throwaway container for the raw-image + boot-binary validation steps
 
-# === 0. prereqs ==============================================================
 say "checking prerequisites"
 [ "$(uname -m)" = "arm64" ] || warn "not arm64, the kernel build will be emulated and very slow"
 [ -x "$GMAKE" ] || die "GNU make >= 4 not found at $GMAKE (brew install make)"
@@ -58,14 +38,14 @@ docker info >/dev/null 2>&1 || die "docker not responding (start Rancher/Docker 
 export PATH="/opt/homebrew/opt/make/libexec/gnubin:${PATH}"   # so make / $(MAKE) == gmake 4.x
 mkdir -p "$BUILD_DIR" "$OUT_DIR"
 
-# === 1. local registry + mergeop-capable builder =============================
-# siderolabs `bldr` uses BuildKit mergeop, which the dockerd-embedded builder
-# (Rancher's default) refuses. A standalone docker-container builder supports it.
+# `bldr` (siderolabs' build tool) needs BuildKit's merge operation, which stacks image layers without
+# re-copying them. The builder built into dockerd (Rancher Desktop's default) refuses it; a standalone
+# docker-container builder supports it.
 say "local registry on ${REGISTRY_HOST}"
 docker ps --format '{{.Names}}' | grep -qx "$REGISTRY_NAME" || \
   docker run -d --restart=unless-stopped -p "127.0.0.1:${REGISTRY_PORT}:5000" --name "$REGISTRY_NAME" "$REGISTRY_IMAGE" >/dev/null
 
-say "mergeop-capable buildx builder ${BUILDER_NAME}"
+say "buildx builder ${BUILDER_NAME} (supports BuildKit merge)"
 if ! docker buildx inspect "$BUILDER_NAME" >/dev/null 2>&1; then
   cfg="$(mktemp)"; printf '[registry."%s"]\n  http = true\n  insecure = true\n' "$REGISTRY_HOST" > "$cfg"
   docker buildx create --name "$BUILDER_NAME" --driver docker-container \
@@ -74,7 +54,6 @@ fi
 docker buildx use "$BUILDER_NAME"
 docker buildx inspect --bootstrap "$BUILDER_NAME" >/dev/null
 
-# === 2. clone builder + checkouts ============================================
 say "clone talos-builder ${BUILDER_VERSION} + checkouts (pkgs ${PKG_VERSION}, talos ${TALOS_VERSION}, overlay ${SBCOVERLAY_VERSION})"
 # Pin the builder scaffold to BUILDER_VERSION, enforcing the pin even on a cached
 # checkout from a previous run/ref (the clone is the only network-heavy step here).
@@ -93,15 +72,16 @@ rm -rf "$CHK/pkgs" "$CHK/talos" "$CHK/sbc-raspberrypi5"
 # here (a commit reachable in main's history). pkgs/talos pin via --branch (they're tags).
 git -C "$CHK/sbc-raspberrypi5" checkout -q "$SBCOVERLAY_VERSION" || die "could not pin overlay to ${SBCOVERLAY_VERSION}"
 
-# === 3. REBASE 1, kernel: raspberrypi/linux source + Pi5 config fragment ====
 # pkgs ships a stock arm64 config (already 4K). We point the kernel source
 # at raspberrypi/linux (for the RP1/BCM2712 drivers that are fork-only) and add a
-# small fragment, reconciled with olddefconfig under the real clang toolchain.
-# Derive the kernel from Talos: it hardcodes the version it expects (machinery DefaultKernelVersion) and the imager
-# stamps THAT onto the UKI .uname regardless of what we compile — so we build exactly that version. raspberrypi/linux
-# has no per-version tags + rebased branches, so we map version->commit via raspberrypi/FIRMWARE: each firmware ref's
-# extra/git_hash names the exact linux commit its kernel was built from. No kernel pin — TALOS_VERSION is the only
-# knob. curl+jq only (no gh); never clones the multi-GB firmware repo.
+# small fragment, then let the kernel's own `olddefconfig` target fill in every option we did not set,
+# running under the real clang toolchain.
+# Derive the kernel from Talos: it hardcodes the version it expects (machinery DefaultKernelVersion) and the
+# imager writes THAT string into the boot image's version field no matter what we compile, so we build exactly
+# that version. raspberrypi/linux has no per-version tags + rebased branches, so we map version to commit via
+# raspberrypi/FIRMWARE: each firmware ref's extra/git_hash names the exact linux commit its kernel was built
+# from. No kernel pin, TALOS_VERSION is the only knob. curl+jq only (no gh); never clones the multi-GB
+# firmware repo.
 WANT=$(grep -oE 'DefaultKernelVersion = "[0-9]+\.[0-9]+\.[0-9]+' "$CHK/talos/pkg/machinery/constants/constants.go" 2>/dev/null | grep -oE '[0-9]+\.[0-9]+\.[0-9]+')
 [ -n "$WANT" ] || die "could not read DefaultKernelVersion from the talos ${TALOS_VERSION} checkout (constants.go moved?)"
 # firmware-ref -> "<linux-commit><TAB><version>" (empty/rc1 on failure)
@@ -117,14 +97,14 @@ for _b in master stable next oldstable; do
   _o=$(_fw_kver "$_b" || true)
   if [ -n "$_o" ] && [ "${_o##*$'\t'}" = "$WANT" ]; then KERNEL_REF="${_o%%$'\t'*}"; KSRC="firmware/$_b"; break; fi
 done
-# failsafe: walk master's extra/git_hash history (a dense version index — every recent 6.18.x, newest first) for WANT
+# failsafe: walk master's extra/git_hash history (a dense version index, every recent 6.18.x, newest first) for WANT
 if [ -z "$KERNEL_REF" ]; then
   for _c in $(curl -fsSL --retry 3 "https://api.github.com/repos/raspberrypi/firmware/commits?path=extra/git_hash&sha=master&per_page=100" 2>/dev/null | jq -r '.[].sha' 2>/dev/null); do
     _o=$(_fw_kver "$_c" || true)
     if [ -n "$_o" ] && [ "${_o##*$'\t'}" = "$WANT" ]; then KERNEL_REF="${_o%%$'\t'*}"; KSRC="firmware master@${_c:0:10}"; break; fi
   done
 fi
-[[ "$KERNEL_REF" =~ ^[0-9a-f]{40}$ ]] || die "no raspberrypi/firmware ref provides linux ${WANT} (what Talos ${TALOS_VERSION} expects) — checked channels master/stable/next/oldstable + master's recent history. Resolve by hand (see docs/03 'If kernel resolution fails'), then wait for a firmware channel to ship ${WANT} or align TALOS_VERSION."
+[[ "$KERNEL_REF" =~ ^[0-9a-f]{40}$ ]] || die "no raspberrypi/firmware ref provides linux ${WANT} (what Talos ${TALOS_VERSION} expects). Checked channels master/stable/next/oldstable + master's recent history. Resolve by hand (see docs/03_operating_system.md 'If kernel resolution fails'), then wait for a firmware channel to ship ${WANT} or align TALOS_VERSION."
 say "REBASE 1, kernel source -> raspberrypi/linux ${KERNEL_REF} (${WANT}, from ${KSRC}, served locally) + Pi5 fragment"
 # GitHub's /archive/ tarballs are NOT byte-stable (different CDN nodes serve different
 # gzip), so the sha bldr downloads can differ from one we hash on the host. Download
@@ -135,7 +115,7 @@ curl -fL --retry 3 -o "$SRCDIR/linux.tar.gz" \
 # sanity: the fetched tree's own Makefile version MUST equal WANT (guards a resolver bug). Archive top dir is linux-<sha>.
 SRCVER=$(tar -xzOf "$SRCDIR/linux.tar.gz" "linux-${KERNEL_REF}/Makefile" 2>/dev/null \
   | awk -F' *= *' '/^VERSION/{v=$2} /^PATCHLEVEL/{p=$2} /^SUBLEVEL/{s=$2} END{print v"."p"."s}')
-[ "$SRCVER" = "$WANT" ] || die "resolved kernel ${KERNEL_REF} is ${SRCVER:-unknown}, expected ${WANT} (Talos ${TALOS_VERSION}) — resolver bug?"
+[ "$SRCVER" = "$WANT" ] || die "resolved kernel ${KERNEL_REF} is ${SRCVER:-unknown}, expected ${WANT} (Talos ${TALOS_VERSION}), so this is probably a resolver bug"
 echo "   kernel ${SRCVER} matches Talos ${TALOS_VERSION} expectation (via ${KSRC})"
 KSHA256=$(shasum -a 256 "$SRCDIR/linux.tar.gz" | awk '{print $1}')
 KSHA512=$(shasum -a 512 "$SRCDIR/linux.tar.gz" | awk '{print $1}')
@@ -202,11 +182,9 @@ assert anchor in s, "kernel/build/pkg.yaml anchor not found (upstream changed?)"
 open(p,"w").write(s.replace(anchor, block, 1))
 PY
 
-# === 4. build kernel =========================================================
 say "build kernel (clang/ThinLTO, the long pole; verifies bake-ins early then compiles)"
 ( cd "$WORK" && "$GMAKE" REGISTRY="$REGISTRY_HOST" REGISTRY_USERNAME="$REGISTRY_USER" kernel )
 
-# === 5. REBASE 2, filter modules-arm64.txt to what the rpi kernel built ======
 say "REBASE 2, filter modules-arm64.txt to modules the kernel actually built"
 PKGS_TAG=$(cd "$CHK/pkgs" && git describe --tag --always --dirty --match 'v[0-9]*')
 KIMG="${REGISTRY_HOST}/${REGISTRY_USER}/kernel:${PKGS_TAG}"
@@ -217,14 +195,13 @@ grep "usr/lib/modules/${KVER}/" "$BUILD_DIR/kfiles.txt" | sed "s#usr/lib/modules
 MF="$CHK/talos/hack/modules-arm64.txt"
 grep -Fxf "$BUILD_DIR/kexist.txt" "$MF" > "$MF.new" && mv "$MF.new" "$MF"
 # This rewrite is the ONLY change to the talos checkout, but it makes `git describe --dirty` report
-# `-dirty` — and that string stamps the OS version (--build-arg=TAG), so nodes report e.g. <version>-dirty
+# `-dirty`, and that string stamps the OS version (--build-arg=TAG), so nodes report e.g. <version>-dirty
 # and a clean talosctl warns it's "older than client" (semver ranks a -dirty prerelease below the clean release).
 # Mark the file assume-unchanged so every describe in the build (OS version + image tags) stays clean;
 # the modified content still feeds the installer build. Idempotent across re-runs / cached checkouts.
 git -C "$CHK/talos" update-index --assume-unchanged hack/modules-arm64.txt
 echo "   modules list pinned to kernel ${KVER}"
 
-# === 6. REBASE 3, port the overlay to the current machinery =================
 # The overlay API gained a ctx arg; the upstream overlay targets old machinery.
 say "REBASE 3, port sbc-raspberrypi5 overlay to machinery ${MACHINERY_VERSION}"
 OSRC="$CHK/sbc-raspberrypi5/installers/rpi5/src"
@@ -235,7 +212,6 @@ perl -i -pe 's/func \(i \*RpiInstaller\) Install\(options/func (i *RpiInstaller)
 grep -q '"context"' "$OSRC/main.go" || perl -0pi -e 's/(import \(\n)/$1\t"context"\n/' "$OSRC/main.go"
 ( cd "$OSRC" && GOWORK=off CGO_ENABLED=0 go build -o /dev/null . ) || die "overlay does not compile against ${MACHINERY_VERSION}"
 
-# === 7. REBASE 4, extensions + grub profile + network in the Makefile ========
 # Bake both extensions (one --system-extension-image flag each) and image with the
 # overlay's `rpi5` (grub) profile, NOT `metal` (Talos's sd-boot default silently
 # skips the overlay installer, so a Pi-5 image built as `metal` has no boot bits).
@@ -254,7 +230,6 @@ s=re.sub(r'(\$\(REGISTRY_USERNAME\)/imager:\$\(TALOS_TAG\) \\\n\t+)metal --arch'
 open(p,'w').write(s)
 PY
 
-# === 8. build overlay + installer + raw image ================================
 say "build overlay"
 ( cd "$WORK" && "$GMAKE" REGISTRY="$REGISTRY_HOST" REGISTRY_USERNAME="$REGISTRY_USER" overlay )
 say "build installer + imager -> raw disk image (grub/rpi5 profile)"
@@ -267,7 +242,6 @@ STAGED="$OUT_DIR/$IMAGE_NAME"
 cp "$IMAGER_RAW_XZ" "$STAGED"
 TALOS_TAG=$(cd "$CHK/talos" && git describe --tag --always --dirty --match 'v[0-9]*')
 
-# === 9. OFFLINE VALIDATION (the "done" test) =================================
 say "OFFLINE VALIDATION"
 INSTALLER_IMG="${REGISTRY_HOST}/${REGISTRY_USER}/installer:${TALOS_TAG}-arm64"
 docker pull -q "$INSTALLER_IMG" >/dev/null
@@ -293,9 +267,11 @@ docker run --rm --privileged -e IMAGE_NAME="$IMAGE_NAME" -v "$OUT_DIR:/work" -v 
   exit $fail
 ' || die "raw image validation failed"
 
-# 9b. kernel version + baked extensions, from the installer UKI. The UKI .uname LABEL is stamped by the imager
-#     from Talos's DefaultKernelVersion, NOT from our kernel — so cross-check it against KVER, the ACTUAL kernel
-#     we built (REBASE 2, from the kernel image's module dir). A mismatch = mislabeled image -> hard fail.
+# 9b. kernel version + baked extensions, read out of the installer's boot binary (a UKI: one EFI file holding
+#     the kernel, initrd and cmdline together). Its .uname section is the version LABEL, and the imager writes
+#     that from Talos's DefaultKernelVersion rather than from our kernel, so cross-check it against KVER, the
+#     kernel we ACTUALLY built (REBASE 2, from the kernel image's module dir). A mismatch means a mislabeled
+#     image -> hard fail.
 docker run --rm -e KVER="$KVER" -v "$UKI_DIR:/w" "$ALPINE_IMAGE" sh -c '
   apk add -q python3 xz zstd >/dev/null 2>&1
   python3 - <<PY
@@ -311,13 +287,12 @@ PY
   uname=$(cat /tmp/.uname)
   case "$uname" in 6.18.*) echo "PASS  kernel $uname";; *) echo "FAIL  kernel $uname"; exit 1;; esac
   [ "$uname" = "$KVER" ] && echo "PASS  UKI label matches built kernel ($KVER)" \
-    || { echo "FAIL  UKI .uname ($uname) != built kernel ($KVER) — image mislabeled (kernel vs Talos DefaultKernelVersion drift)"; exit 1; }
+    || { echo "FAIL  UKI .uname ($uname) != built kernel ($KVER): image mislabeled (kernel vs Talos DefaultKernelVersion drift)"; exit 1; }
   ext=$( (zstd -dc /tmp/.initrd 2>/dev/null; xz -dc /tmp/.initrd 2>/dev/null) | strings | grep -ioE "iscsi-tools|util-linux-tools" | sort -u )
   echo "$ext" | grep -qx iscsi-tools && echo "PASS  extension iscsi-tools" || { echo "FAIL  iscsi-tools"; exit 1; }
   echo "$ext" | grep -qx util-linux-tools && echo "PASS  extension util-linux-tools" || { echo "FAIL  util-linux-tools"; exit 1; }
 ' || die "installer/kernel validation failed"
 
-# === 9c. PUBLISH installer to GHCR (optional) ================================
 # Network upgrades (03f) work by having the nodes PULL an installer image. Push the just-built, just-
 # validated installer to GHCR so they can. Only the installer is published (not the large kernel/overlay
 # layers, which stay in the local registry, all the nodes need is the installer). The image was already
@@ -335,7 +310,6 @@ else
   warn "GITHUB_GHCR_PUSH_TOKEN_SECRET empty in .env -> skipping GHCR publish (built + validated only)"
 fi
 
-# === 10. done ================================================================
 say "BUILD + VALIDATION PASSED"
 echo "   image:     $STAGED"
 echo "   installer: ${REGISTRY_HOST}/${REGISTRY_USER}/installer:${TALOS_TAG}  (local registry)"

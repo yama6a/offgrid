@@ -1,19 +1,10 @@
 apiVersion: v2
 name: platform-ingress
-description: >-
-  The ONE platform ingress. Fronts every platform UI (argocd, grafana, vmui, vlogs) on its own host
-  through a per-host Gateway (merged onto the one Envoy via mergeGateways), all behind ONE Google-SSO
-  SecurityPolicy sharing ONE email allowlist. Renders nothing itself: it wraps the ingress LIBRARY
-  chart (a `file://` dependency) and supplies the platform `ingresses:` list in values.yaml. This
-  replaces the four hand-copied edge quartets that used to live inside 06_argocd_ingress + the three
-  07_* monitoring charts, and it carries the SecurityPolicy that used to be the domain-central one in
-  04_google_sso. Delivered by ArgoCD via argo_apps/platform/apps/06_platform_ingress.yaml, wave 6 (after
-  the monitoring backends at wave 5, so every backendRef resolves on creation, and after 04_google_sso at
-  wave 4 for the callback host + sealed OAuth secret). See 07_ingress.md.
+description: The one platform ingress, a per-host Gateway and route for argocd, grafana, vmui and vlogs. Renders nothing itself, it wraps the shared ingress chart and supplies values.
 type: application
-version: 0.1.0                 # local chart, never bump version
+version: 0.1.0 # local chart, never bump version
 
 dependencies:
   - name: ingress
-    version: "*"                              # the shared library chart; THE single source for the edge templates (file:// dep: path IS the source, version just a constraint Helm requires — see sample_user_manager)
+    version: "*"
     repository: "file://../../../../lib/helm/ingress"

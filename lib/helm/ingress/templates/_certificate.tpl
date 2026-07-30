@@ -1,4 +1,4 @@
-{{/* ingress.certificate — ONE multi-SAN Certificate per ingress (a dnsName per host) into the shared
+{{/* ingress.certificate: ONE multi-SAN Certificate per ingress (a dnsName per host) into the shared
      <name>-tls Secret, issued HTTP-01 via 03_gateway's :80 listener. ctx: {ingress}. */}}
 {{- define "ingress.certificate" -}}
 apiVersion: cert-manager.io/v1

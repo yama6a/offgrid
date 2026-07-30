@@ -1,7 +1,5 @@
-# The VictoriaLogs store, reconciled by the standalone VM operator (01_victoria_metrics_operator). Single
-# replica, Longhorn-backed, on its own 60d retention (logs are bulkier than the 180d metrics). The
-# operator materialises this as a Deployment + a `vlsingle-{{ .Values.vlsingle.name }}` Service on :9428,
-# and auto-creates a self VMServiceScrape so vmagent monitors it. See 15_monitoring.md.
+# The VictoriaLogs store, reconciled by the standalone VM operator. The operator materialises it as a
+# Deployment plus a `vlsingle-<name>` Service on :9428, and auto-creates a self VMServiceScrape.
 apiVersion: operator.victoriametrics.com/v1
 kind: VLSingle
 metadata:
@@ -9,8 +7,7 @@ metadata:
   namespace: {{ .Values.vlsingle.namespace }}
   {{- if .Values.deletionProtection }}
   annotations:
-    # Orphan-not-delete: a GitOps prune leaves this CR (and the PVC the operator made from it) running, and
-    # restoring the files re-adopts it. See values.yaml for the flip-then-remove deletion flow.
+    # Orphan-not-delete. See values.yaml for the flip-then-remove deletion flow.
     argocd.argoproj.io/sync-options: Prune=false,Delete=false
   {{- end }}
 spec:

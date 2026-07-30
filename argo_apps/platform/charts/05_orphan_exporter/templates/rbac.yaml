@@ -1,6 +1,5 @@
-# Cluster-wide READ on the protected stateful CRs (CNPG Clusters, OpsTree Redis) + Argo Applications, plus the
-# barman ObjectStores whose status carries backup recoverability. The least needed to resolve each CR to its
-# owning Application and decide orphaned / untracked / unrecoverable. No write, nothing else.
+# Cluster-wide READ on the protected stateful CRs, Argo Applications, and the ObjectStores whose status
+# carries backup recoverability. No write, nothing else.
 apiVersion: rbac.authorization.k8s.io/v1
 kind: ClusterRole
 metadata:
@@ -21,8 +20,7 @@ rules:
   - apiGroups: ["argoproj.io"]
     resources: ["applications"]
     verbs: ["get", "list"]
-# ConfigMap access is deliberately NOT here: the exporter reads exactly ONE ConfigMap in ONE namespace, so it
-# gets a namespaced Role naming that object rather than cluster-wide read over every ConfigMap in the cluster.
+# ConfigMap access is deliberately not cluster-wide: see the namespaced Role below.
 ---
 apiVersion: rbac.authorization.k8s.io/v1
 kind: ClusterRoleBinding
@@ -37,10 +35,9 @@ subjects:
     name: orphan-exporter
     namespace: {{ .Release.Namespace }}
 ---
-# The single ConfigMap the 07_redis_backup CronJob publishes its per-instance outcome into, and the only source
-# for redis_backup_recoverable (Redis has no in-cluster object describing backup state). Namespaced, get-only,
-# and pinned to the one object name: a cluster-wide configmaps read would hand the exporter every ConfigMap in
-# the cluster for one gauge. The RoleBinding reaches across namespaces to the exporter's ServiceAccount.
+# The one ConfigMap 07_redis_backup publishes its per-instance outcome into. Pinned to that object name: a
+# cluster-wide configmaps read would hand the exporter every ConfigMap in the cluster for one gauge.
+# The RoleBinding reaches across namespaces to the exporter's ServiceAccount.
 apiVersion: rbac.authorization.k8s.io/v1
 kind: Role
 metadata:

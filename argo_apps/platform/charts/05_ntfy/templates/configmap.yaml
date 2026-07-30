@@ -1,6 +1,5 @@
-# ntfy server config (server.yml), rolled into the pod via the Deployment's checksum/config annotation.
-# Private instance: deny-all + per-topic ACLs seeded by lib/shell/10_ntfy_auth.sh (ntfy has NO declarative
-# user/token config, so seeding is imperative). See 09_monitoring.md.
+# ntfy server.yml. Private instance: deny-all plus per-topic ACLs seeded by lib/shell/10_ntfy_auth.sh, because
+# ntfy has NO declarative user or token config.
 apiVersion: v1
 kind: ConfigMap
 metadata:
@@ -8,8 +7,7 @@ metadata:
   namespace: {{ .Release.Namespace }}
   {{- if .Values.deletionProtection }}
   annotations:
-    # Orphan-not-delete: a GitOps prune leaves ntfy running on its PVC instead of destroying it, and restoring the
-    # files re-adopts it. See values.yaml for the flip-then-remove deletion flow.
+    # Orphan-not-delete. See values.yaml for the flip-then-remove deletion flow.
     argocd.argoproj.io/sync-options: Prune=false,Delete=false
   {{- end }}
   labels:
@@ -25,4 +23,4 @@ data:
     enable-signup: false                 # no self-service signup; users are seeded, not self-registered
     cache-file: "/var/lib/ntfy/cache.db" # message cache (disposable)
     cache-duration: "168h"               # 1 week (Go duration has no "d" unit); lets phone history scroll back a week
-    # Android-only: self-contained instant delivery. No upstream-base-url / firebase (those are the iOS/ntfy.sh push proxy).
+    # Android-only, self-contained instant delivery. No upstream-base-url or firebase, those are the iOS push proxy.

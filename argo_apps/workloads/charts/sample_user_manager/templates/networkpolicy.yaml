@@ -1,14 +1,8 @@
 {{- /*
-App lockdown. Default-deny both directions (listing ingress AND egress makes the selected endpoint
-deny-by-default in each), then allow only: ingress from the ingress edge (Envoy) on the app port, and egress
-for DNS + this app's own Postgres. The app has no probes and no metrics scrape, so nothing else is opened.
-
-Fixed platform selectors are hardcoded (they don't vary): the merged Envoy Gateway data-plane pod lives in
-envoy-gateway-system (mergeGateways => one Envoy for the whole cluster), CoreDNS in kube-system. Postgres/Redis
-egress is NOT here: each store's pg-cluster/redis-instance chart renders the client-egress CNP from its own
-allowedClients (allowedClients is the single source of truth for the app<->store edge, both directions). So this
-policy names no store. Always rendered: the app lockdown is not optional (there's no situation where we'd want it
-reachable from arbitrary sources).
+App lockdown, always rendered. Default-deny both ways, then allow ingress from the Envoy edge on the app port
+and egress for DNS plus the shared broker. No probes and no metrics scrape, so nothing else is opened.
+Postgres and Redis egress is deliberately absent: each store's own chart renders a client-egress CNP from its
+allowedClients, which is the single source of truth for the app-to-store edge in both directions.
 */ -}}
 apiVersion: cilium.io/v2
 kind: CiliumNetworkPolicy
@@ -38,11 +32,8 @@ spec:
         - ports:
             - { port: "53", protocol: UDP }
             - { port: "53", protocol: TCP }
-    # Postgres + Redis egress is rendered by each store's own chart (pg-cluster / redis-instance client-egress
-    # CNP, keyed by allowedClients), NOT here. Cilium UNIONs those onto this endpoint.
-    # The shared RabbitMQ broker (ns rabbitmq) on AMQP 5672: this workload publishes/consumes messages. The
-    # broker side allows this via its `messaging-client: "true"` ingress rule (the pod carries that label). See
-    # 11_messaging.md.
+    # The shared RabbitMQ broker. The broker side allows this via its `messaging-client: "true"` ingress rule,
+    # and the pod carries that label.
     - toEndpoints:
         - matchLabels:
             k8s:io.kubernetes.pod.namespace: rabbitmq

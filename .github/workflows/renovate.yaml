@@ -1,13 +1,11 @@
-# Self-hosted Renovate. The repo's ONLY CI — it exists solely to run Renovate; nothing here builds/tests the
-# cluster. Config: /renovate.json5 (read automatically from the cloned repo). Setup + rationale: docs/14_renovate.md.
+# Self-hosted Renovate. Reads /renovate.json5 from the cloned repo automatically.
 name: Renovate
 
 on:
   schedule:
-    # Every 3h. Automerge needs frequent runs: Renovate opens the combined PR on one run and self-merges it on
-    # a LATER run (~2h grace, no CI gate) — a weekly cron would leave an auto-mergeable PR sitting for a week.
+    # Automerge needs frequent runs: Renovate opens the PR on one run and merges it on the NEXT one (if CI passes).
     - cron: "17 */3 * * *"
-  workflow_dispatch: # manual run (first run / on demand)
+  workflow_dispatch:
     inputs:
       logLevel:
         description: Renovate log level
@@ -29,7 +27,7 @@ concurrency:
   cancel-in-progress: false
 
 permissions:
-  contents: read # checkout only; Renovate acts through RENOVATE_TOKEN, not GITHUB_TOKEN
+  contents: read # Renovate acts through RENOVATE_TOKEN, not GITHUB_TOKEN
 
 jobs:
   renovate:
@@ -38,9 +36,9 @@ jobs:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
       - uses: renovatebot/github-action@3064367f740a1a91cca218698a63902689cce200 # v46.1.20
         with:
-          # Dedicated PAT (repo secret). GITHUB_TOKEN can't open PRs that re-trigger workflows and lacks scope.
+          # A dedicated PAT: GITHUB_TOKEN cannot open PRs that re-trigger workflows, and lacks the scope.
           token: ${{ secrets.RENOVATE_TOKEN }}
         env:
-          RENOVATE_REPOSITORIES: ${{ github.repository }} # this repo only; no org-wide autodiscover
+          RENOVATE_REPOSITORIES: ${{ github.repository }} # this repo only, no org-wide autodiscover
           LOG_LEVEL: ${{ inputs.logLevel || 'info' }}
           RENOVATE_DRY_RUN: ${{ inputs.dryRun && 'full' || '' }}

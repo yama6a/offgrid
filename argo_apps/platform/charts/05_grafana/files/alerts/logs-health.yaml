@@ -13,9 +13,9 @@ groups:
         annotations:
           summary: 'More than 100 error logs in the last 5m across the cluster'
           description: |
-            • >100 error logs in 5m cluster-wide — something is failing loudly
-            • open VictoriaLogs (vlogs) filtered on level:error to find the source
-            • drill into the noisiest namespace/pod
+            - >100 error logs in 5m cluster-wide: something is failing loudly
+            - open VictoriaLogs (vlogs) filtered on level:error to find the source
+            - drill into the noisiest namespace/pod
         noDataState: OK
         execErrState: Error
         data:
@@ -25,9 +25,9 @@ groups:
             model:
               refId: A
               queryType: stats
-              # match structured (level:error) AND logfmt-text (level=error) so text-format loggers (grafana, etc.)
-              # still count — but NOT bare `error`, which substring-matched info logs merely mentioning "error".
-              # NOT-list mutes benign lines misclassed as error: cert-manager informer, argocd reconcile cache race.
+              # Matches structured (level:error) AND logfmt text (level=error) so text-format loggers count,
+              # but NOT bare `error`, which substring-matched info logs merely mentioning the word.
+              # The NOT-list mutes benign lines misclassed as error: cert-manager informer, argocd cache race.
               expr: '(level:error OR level:ERROR OR "level=error" OR "level=ERROR") AND NOT ("OnUpdate missing ObjectOld" OR "DiffFromCache" OR "cache: key is missing") | stats count() as logs'
           - refId: B
             relativeTimeRange: {from: 300, to: 0}

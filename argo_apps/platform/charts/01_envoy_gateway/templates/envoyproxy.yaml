@@ -1,51 +1,37 @@
-# Provider config for every Gateway of the `eg` class (the GatewayClass parametersRef points here). Two jobs:
-#
-#   1. mergeGateways, collapse EVERY Gateway of the `eg` class onto ONE Envoy Deployment + ONE
-#      LoadBalancer Service. This is what lets each app own its own Gateway (its own :443 listener + cert)
-#      while the cluster keeps a single ingress point on one pinned IP. Without it, Envoy Gateway spawns
-#      one Envoy + one LoadBalancer Service PER Gateway, so N app Gateways would each demand the pinned IP
-#      and fight over it. The merge constraint is global uniqueness of (port, protocol, hostname) across
-#      all merged listeners, our hostnames are all distinct, so there's no collision. See 11_envoy_gateway.md.
-#   2. Pin that one shared Service to the LB-IPAM IP via the `lbipam.cilium.io/ips` annotation (Cilium
-#      LB-IPAM honours it on >= 1.15). This is now the SOLE authority for the IP, per-Gateway
-#      spec.addresses is dropped (it would conflict on the one shared Service under merge). The fixed IP
-#      the old Raspberry Pi forwards :80/:443 to, keep it inside the pool (192.168.100.10-250, from
-#      04_networking/config.sh) and stable.
+# Provider config for every Gateway of the `eg` class; the GatewayClass parametersRef points here.
 apiVersion: gateway.envoyproxy.io/v1alpha1
 kind: EnvoyProxy
 metadata:
   name: {{ .Values.envoyProxy.name }}
   namespace: {{ .Values.envoyProxy.namespace }}
 spec:
-  # All `eg`-class Gateways share one data plane (one Envoy + one LB Service). See the header comment.
+  # Collapses every `eg` Gateway onto ONE Envoy + ONE LoadBalancer Service, so each app can own its own
+  # Gateway while the cluster keeps a single pinned ingress IP. Without it, N Gateways each demand that IP
+  # and fight over it. The merge constraint is global uniqueness of (port, protocol, hostname).
   mergeGateways: true
   provider:
     type: Kubernetes
     kubernetes:
-      # Data-plane Envoy container resources (KRR-sized; EG's default reserves 512Mi). See values.yaml.
       envoyDeployment:
         container:
           resources:
             {{- toYaml .Values.envoyProxy.resources | nindent 12 }}
         pod:
-          # Ingress data plane — the cluster's single merged proxy (the chokepoint all app ingress rides). Label
-          # the proxy PODS `critical` so a crashlooping/unstartable ingress pod pages `critical` via the
-          # container-waiting-fatal outage rule. (The Deployment object itself isn't labeled — Envoy Gateway has
-          # no field for it short of an envoyDeployment.patch, deliberately avoided so a bad patch can't wedge ALL
-          # ingress; a graceful scale-to-zero would page warning, not critical.) See docs/09_monitoring.md.
+          # Labels the proxy PODS so a crashlooping ingress pod pages critical. The Deployment object is
+          # not labelled: Envoy Gateway has no field for it short of an envoyDeployment.patch, avoided so a
+          # bad patch cannot wedge ALL ingress.
           labels:
             alert-criticality: critical
           {{- with .Values.envoyProxy.affinity }}
-          # Data-plane proxy pod scheduling: spread the merged Envoy replicas across Pi nodes (see values.yaml).
           affinity:
             {{- toYaml . | nindent 12 }}
           {{- end }}
       envoyService:
         type: LoadBalancer
-        # Cluster, not EG's default Local: the Cilium L2 announcer node isn't necessarily the node
-        # running the single Envoy pod, and Local can't serve the IP from a node without a local backend
-        # (dead LB after a reschedule). We don't need Local's source-IP preservation (NAT'd at the old-Pi;
-        # SSO authorizes by email). See 11_envoy_gateway.md.
+        # Cluster, not EG's default Local: the Cilium L2 announcer node is not necessarily the node running
+        # the single Envoy pod, and Local cannot serve the IP from a node with no local backend, which leaves
+        # a dead LB after a reschedule. Local's one advantage, keeping the client's source IP, buys us nothing
+        # here: traffic is already NAT'd upstream, so we never see the real client IP anyway.
         externalTrafficPolicy: Cluster
         annotations:
           lbipam.cilium.io/ips: {{ .Values.envoyProxy.loadBalancerIP | quote }}

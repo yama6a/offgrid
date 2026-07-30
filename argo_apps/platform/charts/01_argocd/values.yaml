@@ -1,131 +1,82 @@
-# Values for the 01_argocd wrapper chart. SINGLE SOURCE OF TRUTH, both the 05_argocd.sh
-# bootstrap and the (self-managed) ArgoCD Application consume this. Chart version pinned in Chart.yaml.
-#
-# HA-lite posture for 3x 8GB Pi 5s: ArgoCD is NOT in the data path of running apps (once an app
-# is synced it runs regardless of Argo), so a few seconds of no reconciliation is fine. We keep the
-# reconciler + redis as self-healing singletons, and run the stateless front-ends 2-on-2-nodes.
-
-# Everything under `argo-cd:` is passed to the upstream argoproj/argo-cd subchart (key == dependency name).
+# HA-lite for 3x 8GB Pi 5s. ArgoCD is not in the data path of running apps, so a few seconds without
+# reconciliation is fine: reconciler and redis stay self-healing singletons, the stateless front-ends run 2-up.
 argo-cd:
-  # --- HA-lite topology: spread the 2-replica components across the 3 nodes ------------------
-  # global.topologySpreadConstraints applies to every component; the chart fills in each
-  # component's labelSelector automatically. Singletons (controller, redis) satisfy it trivially.
-  # maxSkew 1 + DoNotSchedule over 3 nodes => the 2 replicas land on 2 distinct nodes.
   global:
-    # Roll-forward only, no rollback: 0 keeps NO ReplicaSet history for server/repo-server/appset/redis;
-    # the controller StatefulSet needs its own 0 too (Helm `default` treats 0 as empty). See 05_gitops.md.
     revisionHistoryLimit: 0
-    # Off: chart defaults this true, emitting a vanilla allow-all server NetworkPolicy (`ingress: - {}`) that
-    # Cilium UNIONs into our own default-deny CiliumNetworkPolicy (templates/networkpolicy.yaml) -> blows it
-    # open. Cilium is THE policy engine here (repo convention). See 04_networking.md / 05_gitops.md.
+    # Off: the chart's default emits a vanilla allow-all server NetworkPolicy that Cilium UNIONs into our
+    # default-deny CiliumNetworkPolicy and blows it open. Cilium is THE policy engine here.
     networkPolicy:
       create: false
-    # ArgoCD is ~90% of all cluster log volume at INFO, the controller's per-app reconcile churn
-    # ("Refreshing app status", "Reconciliation completed") and the repo-server's per-GenerateManifest
-    # gRPC call tracing. WARN cuts essentially all of it; sync/compare FAILURES still log at warn/error,
-    # and the sync audit trail lives in the ArgoCD UI/API + Application status.
+    # At INFO, ArgoCD dominates cluster log volume: per-app reconcile churn plus per-GenerateManifest gRPC
+    # tracing. Sync and compare FAILURES still log at warn/error, and the audit trail lives in the UI/API.
     logging:
       level: warn
+    # maxSkew 1 + DoNotSchedule over 3 nodes puts the 2-replica components on distinct nodes. The chart fills
+    # in each component's labelSelector; singletons satisfy it trivially.
     topologySpreadConstraints:
       - maxSkew: 1
         topologyKey: kubernetes.io/hostname
         whenUnsatisfiable: DoNotSchedule
-  # --- trim the footprint --------------------------------------------------------------------
   dex:
-    enabled: false # no SSO, drop the dex pod
+    enabled: false
   notifications:
-    enabled: false # no notifications controller yet, drop the pod
+    enabled: false
   redis-ha:
-    enabled: false # single redis (the default); it's only a cache, self-heals on restart
-  # The bundled redis cache: the ONE argo component the wrapper hadn't sized or scraped. Bound it + wire
-  # metrics so it matches the posture of controller/repoServer/server/applicationSet above.
+    enabled: false # it is only a cache, and self-heals on restart
   redis:
     resources:
-      requests: {cpu: 100m, memory: 64Mi} # was BestEffort (no requests) — first to misbehave under Pi memory pressure
+      requests: {cpu: 100m, memory: 64Mi} # unset upstream, which puts the pod in the class the kubelet evicts FIRST
       limits: {memory: 128Mi}
     exporter:
-      enabled: true # redis-exporter sidecar (oliver006, multi-arch/arm64) — cache mem/evictions/hit-rate
+      enabled: true
     metrics:
       enabled: true
       serviceMonitor:
-        enabled: true # vmagent selectAllByDefault scrapes it; closes the lone monitoring blind spot
-  # --- UI/API served plain HTTP so `kubectl port-forward` is simple (no ingress/LB yet) -------
-  # Flip to false (and front it with a Gateway/LoadBalancer) when the UI gets real ingress.
+        enabled: true
   configs:
     params:
-      server.insecure: true
-      controller.log.level: warn # quiet: only warnings+ (drop per-reconcile chatter)
-      # Gap between sync waves (default 2s), bumped to 5s for a bigger head-start so CRD/operator apps
-      # (waves 0/2) land before their consumers. NB fixed TIMER, not a readiness gate — real
-      # CRD-before-consumer convergence comes from unbounded syncPolicy.retry. Controller-wide: also
-      # spaces resource-level waves inside every chart. See 05_gitops.md.
+      server.insecure: true # plain HTTP, so `kubectl port-forward` needs no TLS dance; the edge terminates TLS
+      controller.log.level: warn
+      # Gap between sync waves. A fixed TIMER, not a readiness gate: real CRD-before-consumer convergence comes
+      # from unbounded syncPolicy.retry. Controller-wide, so it also spaces resource-level waves inside a chart.
       controller.sync.wave.delay.seconds: "5"
-      # Stop the benign, ~hourly-per-app `DiffFromCache error: ... cache: key is missing` (ERROR-level)
-      # noise: the app|managed-resources cache key ages out at the 1h --app-state-cache-expiration default,
-      # so a stable/idle app's next refresh reads it just after expiry, logs the miss, then recomputes.
-      # Raise it to match the 24h default-cache-expiration so the key survives between recomputes (also
-      # less recompute churn on these low-power nodes). Doesn't hide drift: watch events + selfHeal still reconcile.
+      # Silences the hourly-per-app `DiffFromCache error: cache: key is missing`. The default 1h expiry means an
+      # idle app's next refresh reads the key just after it ages out. Matching the 24h default-cache-expiration
+      # keeps it alive between recomputes. Hides no drift: watch events and selfHeal still reconcile.
       controller.app.state.cache.expiration: "24h0m0s"
-      # Cap concurrent manifest generations per repo-server. Unset (the default) means UNLIMITED, and every
-      # app here shares ONE repoURL, so a single push refreshes all of them at once. Rendering is not cheap:
-      # ~10MB of YAML across the fleet, and prometheus-operator-crds alone is 4.4MB, which costs an order of
-      # magnitude more once parsed into objects and re-serialized for gRPC. That OOMKilled both replicas at
-      # 512Mi during a run of rapid pushes. 4 bounds the peak instead of guessing a bigger limit; the cost is
-      # that a full refresh queues rather than stampedes.
+      # Unset means UNLIMITED, and every app shares one repoURL, so a single push refreshes all of them at once.
+      # That stampede OOMKilled both repo-server replicas. This bounds the peak; the cost is that a full refresh
+      # queues instead of rendering everything concurrently.
       reposerver.parallelism.limit: "4"
-    # Don't let the chart create argocd-secret: we ship the GitHub webhook.github.secret into it out of
-    # band as a sealed Secret that MERGES in (patch-mode). If the chart also owned argocd-secret, ArgoCD
-    # self-heal would fight the merged-in webhook key. Trade-off: with createSecret:false nothing creates
-    # argocd-secret on a COLD cluster, and argocd-server fatals at startup if it's absent — so 05_argocd.sh
-    # SEEDS an empty argocd-secret before the install (argocd-server then fills server.secretkey) and marks it
-    # patch-managed so the merge is allowed. NB the webhook SealedSecret does NOT live in this chart: it's a
-    # separate wave-3 app (argo_apps/platform/charts/03_argocd_webhook_secret/), because a SealedSecret here
-    # would abort 05_argocd.sh's cold-boot helm install before the sealed-secrets CRD exists (wave 2). See
-    # 05_gitops.md (Webhook sync).
+    # We merge the GitHub webhook secret into argocd-secret out of band (patch-mode), and chart ownership would
+    # make self-heal fight that merge. The catch: nothing then creates argocd-secret on a COLD cluster and
+    # argocd-server fatals without it, so 05_argocd.sh seeds an empty one before the install and marks it
+    # patch-managed. The SealedSecret itself is the separate wave-3 03_argocd_webhook_secret app.
     secret:
       createSecret: false
-    # Webhook-driven sync: git pushes hit /api/webhook (the ungated bypass route in 06_platform_ingress),
-    # so the git poll is just a fallback SAFETY NET (300s) — the webhook does the fast sync. Toggle via
-    # POLL_SYNC_ENABLED in .env + re-run 08_argocd_webhook.sh: false=300s (default) / true=60s. NB do NOT
-    # hand-edit timeout.reconciliation here — that script owns it (single source of truth = .env). A missed
-    # webhook still reconciles within ~5 min; we deliberately don't set 0s (no net). See 05_gitops.md.
+    # Git pushes hit /api/webhook, so this poll is only a fallback. 08_argocd_webhook.sh OWNS this value from
+    # .env POLL_SYNC_ENABLED, do not hand-edit it. Deliberately not 0s, so a missed webhook still converges.
     cm:
       timeout.reconciliation: 300s
       timeout.reconciliation.jitter: 2s
-      # No ArgoCD login screen: the anonymous user is auto-authenticated and (via rbac below) is admin, so
-      # whoever clears the Google SSO edge lands straight in. SAFE ONLY because the Google SSO SecurityPolicy
-      # on the platform-ingress app (06_platform_ingress, wave 6) is the SOLE path to the UI/API — that edge
-      # is the ONLY auth boundary. NB `kubectl -n argocd port-forward svc/argocd-server` bypasses the Gateway
-      # + SSO and lands in as admin with no login. See 05_gitops.md (Exposure) / 06_platform_ingress.yaml.
+      # No login screen: anonymous is auto-authenticated and admin via the rbac block below. SAFE ONLY because
+      # the Google SSO policy on 06_platform_ingress is the sole path to the UI/API. `kubectl port-forward
+      # svc/argocd-server` bypasses that edge and lands in as admin with no login.
       users.anonymous.enabled: "true"
-      # Disable the built-in local admin account: no argocd-initial-admin-secret, no username/password
-      # login. Redundant now that anonymous is admin, and removes a credential that could leak/brute-force.
-      # Recover (if you ever turn anonymous off too) with: kubectl -n argocd edit cm argocd-cm.
-      admin.enabled: "false"
-      # Reconcile churn: activate the chart's shipped ignoreResourceUpdates rules (the `.all` rule ignores
-      # /status, so status-only updates on watched resources don't trigger a reconcile). v3.x defaults this
-      # ON, but we pin it so a chart bump can't silently flip it. NB this is a MINOR lever on THIS cluster:
-      # measured ~95% of application-controller reconciles used to come from the fast git poll (now a
-      # 300s fallback, see timeout.reconciliation above), not from watch-event churn (Longhorn/Node/VM-scrapes
-      # were <5%). With the poll relaxed + webhook-driven sync, watch-event churn is what's left, so this rule still earns its keep.
+      admin.enabled: "false" # redundant once anonymous is admin; recover via `kubectl -n argocd edit cm argocd-cm`
+      # Activates the chart's ignoreResourceUpdates rules, so status-only updates don't trigger a reconcile.
+      # Set explicitly so a chart bump cannot silently flip it.
       resource.ignoreResourceUpdatesEnabled: "true"
-      # Track managed resources by annotation, not the default label. The label is capped at 63 chars and
-      # collides with app-owned argocd.argoproj.io/instance labels; annotation tracking is the modern-
-      # recommended, collision-free method (more robust pruning). Safe to set on this cluster.
+      # The default label is capped at 63 chars and collides with app-owned argocd.argoproj.io/instance labels.
       application.resourceTrackingMethod: annotation
-      # NB: intentionally NO argoproj.io_Application health check. Waves are advisory creation-ordering only,
-      # not health gates; children converge via unbounded syncPolicy.retry (see any app manifest). See 05_gitops.md.
-    # RBAC: give every request (i.e. the anonymous user above) full admin. No per-user roles — there are no
-    # ArgoCD users, Google SSO already gated who can reach this at the edge.
+      # Intentionally NO argoproj.io_Application health check: waves are advisory creation-ordering, not health
+      # gates, and children converge via unbounded syncPolicy.retry.
+    # Every request is the anonymous user above, and Google SSO already gated who reaches this at the edge.
     rbac:
       policy.default: role:admin
-  # --- Prometheus metrics: per-component metrics Service + ServiceMonitor. Discovered cluster-wide
-  # via the stack's serviceMonitorSelectorNilUsesHelmValues:false. CRDs exist from wave 0, before this
-  # wave-1 app. See 15_monitoring.md.
-  # --- the reconciler: singleton StatefulSet, self-heals on restart --------------------------
   controller:
     replicas: 1
-    revisionHistoryLimit: 0  # StatefulSet ignores global's 0 (Helm `default`), so zero it here too. See 05_gitops.md.
+    revisionHistoryLimit: 0 # a StatefulSet ignores global's 0, Helm `default` treats it as empty
     metrics:
       enabled: true
       serviceMonitor:
@@ -133,7 +84,6 @@ argo-cd:
     resources:
       requests: {cpu: 200m, memory: 512Mi}
       limits: {memory: 3Gi}
-  # --- manifest generation: 2 replicas on 2 nodes + PDB (stays up across a node drain) -------
   repoServer:
     replicas: 2
     metrics:
@@ -145,10 +95,9 @@ argo-cd:
       minAvailable: 1
     resources:
       requests: {cpu: 250m, memory: 128Mi}
-      # Headroom above the parallelism cap above, not a substitute for it. Idle is ~50Mi; the spikes come from
-      # concurrent renders of the CRD-heavy charts.
+      # Headroom above the parallelism cap, not a substitute for it: the spikes come from concurrent renders
+      # of the CRD-heavy charts.
       limits: {memory: 768Mi}
-  # --- API/UI: 2 replicas on 2 nodes + PDB ---------------------------------------------------
   server:
     replicas: 2
     metrics:
@@ -161,10 +110,8 @@ argo-cd:
     resources:
       requests: {cpu: 50m, memory: 128Mi}
       limits: {memory: 256Mi}
-  # --- ApplicationSet controller: leader-elected; 2 replicas for fast failover ---------------
-  # (drop to 1 if RAM gets tight once Longhorn + monitoring land.)
   applicationSet:
-    replicas: 2
+    replicas: 2 # leader-elected, so the second is just fast failover; drop to 1 if RAM gets tight
     metrics:
       enabled: true
       serviceMonitor:

@@ -1,16 +1,10 @@
 apiVersion: v2
 name: cilium
-description: >-
-  Wrapper chart for Cilium on Talos/Raspberry Pi 5, the CNI + LoadBalancer
-  (LB-IPAM/L2) + Gateway API + WireGuard encryption. Single source of truth for
-  the Cilium chart version (this file), its values (values.yaml), the Gateway API
-  CRDs (crds/), and the LB-IPAM pool + L2 policy (templates/cilium-lb.yaml).
-  Bootstrapped imperatively by ../../../04_networking/04_cilium.sh; later adopted
-  by ArgoCD against this same chart. See 04_networking.md.
+description: Cilium, the CNI plus LB-IPAM/L2 LoadBalancer and WireGuard encryption. Bootstrapped by 04_cilium.sh, then adopted by ArgoCD.
 type: application
-version: 0.1.0                 # local chart, never bump version
+version: 0.1.0 # local chart, never bump version
 
 dependencies:
   - name: cilium
-    version: "1.19.6"         # cilium/cilium chart + image, THE single source for the pin
+    version: "1.19.6"
     repository: https://helm.cilium.io

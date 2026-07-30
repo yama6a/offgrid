@@ -1,84 +1,51 @@
-# Values for the 02_longhorn wrapper chart. SINGLE SOURCE OF TRUTH, ArgoCD (and any local
-# `helm template`) consume this. Chart version pinned in Chart.yaml. See 09_longhorn.md for the why.
-#
-# Longhorn runs in its own `longhorn-system` namespace (CreateNamespace=true in the Application,
-# which also stamps the `pod-security.kubernetes.io/enforce: privileged` label Longhorn requires).
-#
-# Everything under `longhorn:` is passed to the upstream longhorn/longhorn subchart (key == dependency name).
 longhorn:
   defaultSettings:
-    # Point Longhorn at the dedicated XFS user volume (03d volumes.yaml -> /var/mnt/longhorn),
-    # exposed to the kubelet by the extraMount in 03d's cp-patch. Longhorn auto-creates a default
-    # disk here on every node and reads its (fixed, grow-once-at-provision) capacity via statfs.
-    defaultDataPath: /var/mnt/longhorn
-    # Longhorn's global default replica count (a fallback — every StorageClass here sets numberOfReplicas: 2
-    # explicitly). 2 on a 3-node cluster survives the one node loss we design for AND leaves a spare node to rebuild
-    # the lost replica onto; at 3 replicas / hard anti-affinity there's no spare, so a volume stays degraded until
-    # the dead node returns. replicaSoftAntiAffinity stays default false => hard anti-affinity, one replica per node.
+    defaultDataPath: /var/mnt/longhorn # the dedicated XFS volume 03d creates and extraMounts for the kubelet
+    # 2 on 3 nodes survives the one node loss we design for AND leaves a spare to rebuild onto. At 3 replicas
+    # with hard anti-affinity there is no spare, so a volume stays degraded until the dead node returns.
     defaultReplicaCount: 2
-    # Keep headroom on the Pi NVMes, don't schedule replicas onto a disk under 15% free.
-    storageMinimalAvailablePercentage: 15
-    # When a node goes down, force-delete the StatefulSet pods bound to it so the scheduler can
-    # reschedule them onto a surviving node instead of waiting indefinitely for the dead node. Single-
-    # replica StatefulSets (Prometheus, Alertmanager, 07_kube_prometheus_stack) otherwise hang on a
-    # lost node; with replica-3 Longhorn volumes the rescheduled pod re-attaches from a surviving
-    # replica. The NICs on this cluster are flaky, so node loss is a real, recurring case. See
-    # 15_monitoring.md (failover).
+    storageMinimalAvailablePercentage: 15 # keep headroom on the Pi NVMes
+    # Force-delete StatefulSet pods bound to a downed node so they reschedule instead of hanging forever.
+    # NICs on this cluster are flaky, so node loss is recurring, not theoretical.
     nodeDownPodDeletionPolicy: delete-statefulset-pod
-    # /var/mnt/longhorn is a DEDICATED XFS volume carved out for Longhorn alone, so don't reserve ~1/3 of it
-    # "for the OS" (default 30%). storageMinimalAvailablePercentage:15 above already gives runtime headroom.
+    # This is a dedicated volume, not a shared root filesystem, so don't hold back the default 30% "for the OS".
     storageReservedPercentageForDefaultDisk: 5
-    # Serialize replica rebuilds per node (default 5): when a flaky node returns, 5 parallel rebuilds saturate
-    # the single NVMe + flaky NIC during the exact recovery window. Trades rebuild speed for stability.
+    # Serialize rebuilds: when a flaky node returns, parallel rebuilds saturate its single NVMe and NIC during
+    # the exact recovery window. Trades rebuild speed for stability.
     concurrentReplicaRebuildPerNodeLimit: 1
-    # Wait longer before replenishing a lost replica (default 600s): flaky NICs often flap a node back within
-    # minutes, so reuse its existing replica data instead of a full cross-network rebuild.
+    # Flaky NICs often flap a node back within minutes, so wait and reuse its replica data instead of a full
+    # cross-network rebuild.
     replicaReplenishmentWaitInterval: 1800
-    # Auto-reclaim stale replica data left by node flaps (default off) so it doesn't silently eat the NVMe.
-    # Only touches replica DATA, and skips failed/unknown nodes so a still-recovering node isn't nuked.
-    orphanResourceAutoDeletion: "replica-data"
-    # Trim per-instance-manager CPU reservation from the 12% default (~480m on a 4-core Pi) to free scheduling
-    # headroom; kept non-trivial to protect volume I/O. (v2 is inert here — v2DataEngine off — but keep the shape.)
+    orphanResourceAutoDeletion: "replica-data" # stale replica data from node flaps would silently eat the NVMe
+    # Trim the 12% default per-instance-manager CPU reservation to free scheduling headroom on a 4-core Pi.
     guaranteedInstanceManagerCPU: '{"v1":"8","v2":"8"}'
-  # Off-cluster S3 backup target for OPT-IN volumes (the longhorn-r2-retained-with-backups class -> templates/storageclasses.yaml).
-  # 16_longhorn_backup.sh fills these from .env/terraform when AWS creds are present; empty here = backups OFF (the
-  # committed default). Longhorn owns retention via the RecurringJob `retain` counts (the S3 longhorn/ prefix is
-  # delete-free, terraform/main.tf) — see templates/recurringjobs.yaml + docs/13_backups.md.
+  # 16_longhorn_backup.sh fills these from .env/terraform; empty = backups off. Longhorn owns retention via the
+  # RecurringJob retain counts, the S3 longhorn/ prefix has no lifecycle rule.
   defaultBackupStore:
-    backupTarget: "s3://my-cluster-backups@eu-central-1/longhorn/" # -> s3://<S3_BACKUP_BUCKET>@<AWS_REGION>/longhorn/
-    backupTargetCredentialSecret: "longhorn-backup-s3" # -> longhorn-backup-s3 (sealed into longhorn-system, templates/backup-s3-sealedsecret.yaml)
-    pollInterval: 300 # s; how often Longhorn rescans S3 (also how DR discovers BackupVolumes on a rebuild)
+    backupTarget: "s3://my-cluster-backups@eu-central-1/longhorn/"
+    backupTargetCredentialSecret: "longhorn-backup-s3" # sealed into longhorn-system by templates/backup-s3-sealedsecret.yaml
+    pollInterval: 300 # seconds; also how fast a rebuilt cluster notices the backups already in the bucket
   persistence:
-    # NO default StorageClass. The two explicit classes (templates/storageclasses.yaml: longhorn-r2-ephemeral /
-    # -retained-with-backups) are the only Longhorn classes, and every workload names one deliberately
-    # — a PVC that omits a class stays Pending rather than silently landing on Longhorn. See docs/08_storage.md.
+    # No default class. Every workload names one of the two in templates/storageclasses.yaml deliberately, so a
+    # PVC that omits a class stays Pending rather than silently landing on Longhorn.
     defaultClass: false
-  # The pre-upgrade checker is a Helm pre-upgrade HOOK Job. Under ArgoCD a hook Job can stall the
-  # sync waiting on its completion; version control already lives in git, so disable it.
   preUpgradeChecker:
-    jobEnabled: false
-  # Create the Longhorn Manager ServiceMonitor so Prometheus scrapes storage metrics (volume health,
-  # capacity, replica state). CRDs exist from wave 0, before this wave-2 app. See 15_monitoring.md.
+    jobEnabled: false # a Helm pre-upgrade hook Job, which can stall an ArgoCD sync waiting on completion
   metrics:
     serviceMonitor:
       enabled: true
   csi:
-    # Disable the CSI snapshotter sidecar (we don't use CSI VolumeSnapshots; it spams "failed to watch
-    # VolumeSnapshotClass" since those CRDs aren't installed). No on/off toggle -> drop replica count to 0.
-    # MUST be the STRING "0": int 0 is falsy in the chart's `{{- if .snapshotterReplicaCount }}` env guard
-    # -> the var is dropped and Longhorn falls back to its default of 3 (that's why plain 0 did nothing).
-    # Deployer sets replicas only at CREATE, so after this lands delete the live deploy once to recreate at
-    # 0: kubectl -n longhorn-system delete deploy csi-snapshotter.
+    # We use no CSI VolumeSnapshots and the sidecar spams "failed to watch VolumeSnapshotClass". No on/off
+    # toggle exists, so drop the replica count. MUST be the STRING "0": int 0 is falsy in the chart's
+    # `{{- if .snapshotterReplicaCount }}` guard, which drops the var and falls back to 3.
+    # The deployer sets replicas only at CREATE, so after a change here delete the live deploy once.
     snapshotterReplicaCount: "0"
-  # longhorn-manager DaemonSet is a real ~134Mi/node consumer (KRR) that ships with NO resources set, so
-  # the scheduler treats it as free and a manager leak could pressure a node. Request + bound it. (The tiny
-  # CSI sidecars are settable via defaultSettings.systemManagedCSIComponentsResourceLimits but deliberately
-  # left unset: it only ADDS reservations for ~16Mi sidecars, is storage-critical, and takes a fiddly JSON.)
+  # Ships with no resources set, so the scheduler treats a real per-node consumer as free. (The tiny CSI
+  # sidecars are settable via defaultSettings.systemManagedCSIComponentsResourceLimits, left unset on purpose:
+  # fiddly JSON, storage-critical, and it only ADDS reservations.)
   longhornManager:
     resources:
       requests: {cpu: 20m, memory: 190Mi}
       limits: {memory: 256Mi}
-  # The UI is a non-critical read-mostly dashboard; the chart runs 2 replicas by default (anti-affinity pins
-  # them to separate nodes) — wasted footprint on a 3-node 8GB cluster. One is plenty.
   longhornUI:
-    replicas: 1
+    replicas: 1 # a read-mostly dashboard; the chart's default 2 is wasted footprint here

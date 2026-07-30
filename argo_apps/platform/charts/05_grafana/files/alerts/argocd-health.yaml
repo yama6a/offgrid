@@ -1,8 +1,7 @@
 apiVersion: 1
 groups:
-  # ArgoCD application health (argocd_app_info from the application-controller). Static severity. A Degraded or
-  # stuck-OutOfSync app means GitOps isn't converging — nothing else self-heals if the delivery engine is stuck.
-  # The controller/repo-server/redis being down is already covered by target-down on the argocd-* jobs.
+  # A Degraded or stuck-OutOfSync app means GitOps is not converging, and nothing else self-heals if the
+  # delivery engine is stuck. A down controller/repo-server/redis is already covered by target-down.
   - orgId: 1
     name: argocd-health
     folder: raspi-cluster
@@ -16,9 +15,9 @@ groups:
         annotations:
           summary: 'ArgoCD app {{ $labels.name }} is {{ $labels.health_status }}'
           description: |
-            • ArgoCD app {{ $labels.name }} is {{ $labels.health_status }} — GitOps not converging
-            • check: argocd app get {{ $labels.name }} (or the ArgoCD UI)
-            • inspect the failing resource's events/logs
+            - ArgoCD app {{ $labels.name }} is {{ $labels.health_status }}: GitOps not converging
+            - check: argocd app get {{ $labels.name }} (or the ArgoCD UI)
+            - inspect the failing resource's events/logs
         noDataState: OK
         execErrState: Error
         data:
@@ -44,11 +43,10 @@ groups:
               conditions:
                 - type: query
                   evaluator: {type: gt, params: [0]}
-      # Sustained OutOfSync: auto-sync + unbounded retry should converge quickly, so 30m OutOfSync = genuinely
-      # stuck (bad manifest, failed hook, missing dependency) and needs a human.
-      # LOAD-BEARING for orphan-not-delete: a Cluster removed from a live app (Prune=false) leaves that app
-      # permanently OutOfSync, so this general rule IS the vector-1 orphan signal. Do not narrow it to exclude
-      # CNPG or Redis. See docs/13_backups.md / orphan.yaml.
+      # Auto-sync plus unbounded retry converges quickly, so 30m OutOfSync means genuinely stuck.
+      # This rule is also the only orphan signal for vector 1. A Cluster removed from a live app carries
+      # Prune=false, so it is kept and the app stays OutOfSync forever. Narrow this to exclude CNPG or Redis
+      # and you silently lose that detection.
       - uid: argocd-app-out-of-sync
         title: ArgoCD application stuck OutOfSync
         condition: C
@@ -57,9 +55,9 @@ groups:
         annotations:
           summary: 'ArgoCD app {{ $labels.name }} has been OutOfSync for >30m'
           description: |
-            • ArgoCD app {{ $labels.name }} stuck OutOfSync >30m — auto-sync not converging
-            • usually a bad manifest, failed hook, or missing dependency
-            • check: argocd app get {{ $labels.name }}; review its sync result
+            - ArgoCD app {{ $labels.name }} stuck OutOfSync >30m: auto-sync not converging
+            - usually a bad manifest, failed hook, or missing dependency
+            - check: argocd app get {{ $labels.name }}; review its sync result
         noDataState: OK
         execErrState: Error
         data:
@@ -85,10 +83,9 @@ groups:
               conditions:
                 - type: query
                   evaluator: {type: gt, params: [0]}
-      # sync_status=Unknown = argocd could not RENDER the app (ComparisonError: bad helm dep, missing path, repo
-      # unreachable). It is neither OutOfSync nor Degraded, so the two rules above BOTH miss it, and the app just
-      # silently freezes on its last-good manifests. Blind spot until this rule existed; do not fold it into the
-      # OutOfSync rule (different cause, different fix).
+      # Unknown means argocd could not RENDER the app (bad helm dep, missing path, repo unreachable). It is
+      # neither OutOfSync nor Degraded, so both rules above miss it and the app silently freezes on its
+      # last-good manifests. Do not fold this into the OutOfSync rule: different cause, different fix.
       - uid: argocd-app-comparison-error
         title: ArgoCD application cannot be compared
         condition: C

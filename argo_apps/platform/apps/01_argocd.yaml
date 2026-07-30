@@ -1,27 +1,16 @@
-# ArgoCD Application that makes ArgoCD MANAGE ITSELF from the wrapper chart at
-# argo_apps/charts/01_argocd/. The 05_argocd.sh bootstrap installs the same chart/release by hand
-# first; this Application then adopts it (same name "argocd" + namespace "argocd") and, from then
-# on, reconciles ArgoCD from git. See 05_gitops.md.
-#
-# AUTOMATED (prune + selfHeal): safe to self-manage, ArgoCD applying its own manifests is the
-# whole point. ServerSideApply avoids the "last-applied annotation too long" failure on the large
-# argo-cd CRDs.
-#
-# sync-wave "1": after Cilium (wave 0), ArgoCD needs the CNI. Both are adopted (already running),
-# so this is purely the order the root creates the Application objects. Future apps go at wave 2+.
+# ArgoCD managing itself. 05_argocd.sh installs the same chart and release by hand first; this adopts it.
 apiVersion: argoproj.io/v1alpha1
 kind: Application
 metadata:
   name: argocd
   namespace: argocd
-  # Cascade-delete this app's own resources on Application deletion instead of orphaning them; see 05_gitops.md.
   finalizers:
     - resources-finalizer.argocd.argoproj.io
   annotations:
     argocd.argoproj.io/sync-wave: "1"
 spec:
   project: default
-  revisionHistoryLimit: 0  # roll-forward only; no Argo rollback history (05_gitops.md)
+  revisionHistoryLimit: 0
   source:
     repoURL: https://github.com/yama6a/offgrid
     targetRevision: HEAD
@@ -34,8 +23,8 @@ spec:
       prune: true
       selfHeal: true
     retry:
-      limit: -1  # unbounded; only retry re-drives a failed sync (see 05_gitops.md)
-      refresh: true  # retry the latest revision so a fix commit lands mid-loop
+      limit: -1
+      refresh: true
       backoff:
         duration: 5s
         factor: 2

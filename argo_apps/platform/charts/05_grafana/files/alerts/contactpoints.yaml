@@ -12,16 +12,14 @@ contactPoints:
           authorization_credentials: ${GF_NTFY_TOKEN}           # sealed write token, env-interpolated; never committed
           maxAlerts: 0                                          # no cap on alerts bundled per notification
           payload:
-            # title = the firing alert's `summary` (resource-first, names the faulty resource); message = its
-            # `description` (short what's-wrong + how-to-fix bullets). Reads per-alert `.Annotations`, NOT
-            # `.CommonAnnotations` — the latter is empty whenever grouped alerts differ. Paired with policies.yaml
-            # `group_by: ['...']` each notification is a single resource, so `index .Alerts 0` is that resource;
-            # the range over .Alerts is a belt-and-braces fallback if several ever bundle.
-            # Built as a dict + `data.ToJSON` (Grafana ≥12.0 gomplate funcs) so it JSON-escapes the multi-line
-            # bullet `description` and any quotes for us — hand-writing the JSON string would break on the newlines.
-            # NOTE the `$$` on the Go-template vars: Grafana env-expands contact-point SETTINGS at provision time
-            # (that's how ${GF_NTFY_TOKEN} resolves), so a bare `$sev` gets eaten as an env var — `$$sev` escapes
-            # to a literal `$sev`. severity -> ntfy priority (critical=5 / warning=4 / else=3) + a matching tag.
+            # title is the alert's `summary`, message its `description`. Reads per-alert `.Annotations`, NOT
+            # `.CommonAnnotations`, which is empty whenever grouped alerts differ. policies.yaml groups by all
+            # labels, so each notification is one resource and `index .Alerts 0` is it; the range is a fallback.
+            # Built as a dict plus `data.ToJSON` so it escapes the multi-line description and any quotes for us.
+            # Hand-writing that JSON string would break on the newlines.
+            # The `$$` on the Go-template vars is not a typo. Grafana expands environment variables in
+            # contact-point settings at provision time, which is how ${GF_NTFY_TOKEN} resolves, so a bare
+            # `$sev` would be swallowed as an env var and arrive empty. `$$` escapes it to a literal `$`.
             template: |
               {{- $$sev := index .CommonLabels "severity" -}}
               {{- $$prio := 3 -}}

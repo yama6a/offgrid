@@ -1,4 +1,4 @@
-{{/* ingress.gateway — one host's Gateway: a single :443 HTTPS listener terminating TLS with the
+{{/* ingress.gateway: one host's Gateway, a single :443 HTTPS listener terminating TLS with the
      ingress's shared cert (merged onto the one Envoy via mergeGateways). ctx: {ingress, host}. */}}
 {{- define "ingress.gateway" -}}
 {{- $name := include "ingress.hostName" . -}}

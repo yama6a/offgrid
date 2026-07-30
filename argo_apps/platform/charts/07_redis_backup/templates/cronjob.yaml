@@ -1,15 +1,9 @@
 {{- /*
-The central backup CronJob. Rendered only when a bucket is configured (empty = feature off; set by
-15_redis_backup.sh). Three stages sharing an emptyDir /work, so partial success still uploads:
-  init  list   (alpine/k8s) — kubectl get redis -A -l <discoveryLabel> => /work/instances.txt (its SA has
-                              cluster-wide READ on Redis CRs; see rbac.yaml).
-  init  dump   (opstree redis) — per instance, redis-cli --rdb over the Service on 6379; continue on error,
-                              recording failures. --rdb only streams bytes, so this image need not match the
-                              server major.
-  main  upload (alpine/k8s) — aws s3 cp each dump to <prefix><ns>/<name>/<UTC>.rdb; exit non-zero if ANY
-                              instance failed at dump or upload => the Job fails => the Grafana alert fires.
-                              Per-instance detail is on stdout (-> VictoriaLogs).
-Egress is opened by networkpolicy.yaml; each durable instance's own policy allows this pod inbound on 6379.
+The central backup CronJob, rendered only when a bucket is configured. Three stages share an emptyDir /work so
+partial success still uploads: list the instances, dump each over its Service, then upload every dump.
+The dump stage continues past a failed instance and records it; the upload stage exits non-zero if ANY instance
+failed, which fails the Job and fires the Grafana alert.
+redis-cli --rdb only streams bytes, so the dump image need not match the server major.
 */ -}}
 {{- if .Values.bucket }}
 apiVersion: batch/v1
@@ -29,7 +23,7 @@ spec:
   jobTemplate:
     spec:
       backoffLimit: 1
-      activeDeadlineSeconds: 1800     # a whole-fleet dump+upload that runs >30m is wedged — fail it
+      activeDeadlineSeconds: 1800     # a whole-fleet dump+upload that runs >30m is wedged, fail it
       ttlSecondsAfterFinished: 86400  # GC finished jobs after a day
       template:
         metadata:
@@ -110,19 +104,18 @@ spec:
                     echo "uploading $ns/$name -> s3://${BUCKET}/${key}"
                     if aws s3 cp "$f" "s3://${BUCKET}/${key}"; then
                       echo "  ok"
-                      # Per-instance outcome for the recoverability metric. Size is the whole point: an upload
-                      # can succeed with a keyless RDB, and only the byte count distinguishes that from a real
-                      # backup. Recorded per instance, so a partial run still reports the ones that worked.
+                      # Record the SIZE, not just success: an upload can succeed with an RDB that holds no
+                      # keys, and the byte count is the only way to tell that from a real backup. Written per
+                      # instance, so a partial run still reports the ones that worked.
                       echo "${ns}_${name}=${now} $(wc -c < "$f" | tr -d ' ')" >> /work/status.txt
                     else
                       echo "  UPLOAD FAILED $ns/$name"; echo "$ns/$name upload" >> /work/failed.txt
                     fi
                   done < /work/instances.txt
-                  # Publish the outcome where something without S3 access can read it: nothing in-cluster
-                  # otherwise knows whether a dump exists, so orphan-exporter reads this ConfigMap to export
-                  # redis_backup_recoverable. Written even on a failed run, so the surviving instances still
-                  # report. Deliberately NOT annotations on the Redis CRs: those are Argo-managed with selfHeal,
-                  # which would strip them and make the metric flap.
+                  # Nothing in-cluster otherwise knows whether a dump exists, so orphan-exporter reads this
+                  # ConfigMap. Written even on a failed run, so surviving instances still report.
+                  # Deliberately NOT annotations on the Redis CRs: those are Argo-managed with selfHeal, which
+                  # would strip them and make the metric flap.
                   kubectl -n "$NAMESPACE" create configmap redis-backup-status \
                     --from-env-file=/work/status.txt --dry-run=client -o yaml \
                     | kubectl apply -f - >/dev/null \

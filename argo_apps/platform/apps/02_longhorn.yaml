@@ -1,27 +1,16 @@
-# ArgoCD Application for Longhorn (argo_apps/charts/02_longhorn/), the cluster's distributed block
-# storage and default StorageClass, backed by the dedicated XFS 'longhorn' user volume on each NVMe
-# (mounted at /var/mnt/longhorn by 03d, exposed to the kubelet by 03d's extraMount). See 09_longhorn.md.
-#
-# AUTOMATED (prune + selfHeal): a safe leaf, like nic-keeper / sealed-secrets / cert-manager, it can't
-# cut the cluster off its own network, so drift should auto-correct. Longhorn keeps its own CRDs (it
-# manages their lifecycle), so a prune here won't cascade-delete volume data.
-#
-# sync-wave "2": same wave as nic-keeper / sealed-secrets / cert-manager, all independent leaves, none
-# depends on the others. Per CLAUDE.md the NN prefix IS the wave, so they share `02_` (distinct dir
-# names). Wave 2 is the "after the platform (CNI + ArgoCD) is in place" slot.
+# Longhorn: distributed block storage and the default StorageClass, on the XFS 'longhorn' volume 03d mounts.
 apiVersion: argoproj.io/v1alpha1
 kind: Application
 metadata:
   name: longhorn
   namespace: argocd
-  # Cascade-delete this app's own resources on Application deletion instead of orphaning them; see 05_gitops.md.
   finalizers:
     - resources-finalizer.argocd.argoproj.io
   annotations:
     argocd.argoproj.io/sync-wave: "2"
 spec:
   project: default
-  revisionHistoryLimit: 0  # roll-forward only; no Argo rollback history (05_gitops.md)
+  revisionHistoryLimit: 0
   source:
     repoURL: https://github.com/yama6a/offgrid
     targetRevision: HEAD
@@ -30,9 +19,7 @@ spec:
     server: https://kubernetes.default.svc
     namespace: longhorn-system
   syncPolicy:
-    # Longhorn's manager/driver pods need privileged PSA. CreateNamespace makes the namespace; this
-    # stamps the enforce label on it so the pods are admitted (Talos applies baseline PSA by default).
-    managedNamespaceMetadata:
+    managedNamespaceMetadata: # manager/driver pods need privileged; Talos would otherwise reject them, it defaults every namespace to the `baseline` pod-security level
       labels:
         pod-security.kubernetes.io/enforce: privileged
         pod-security.kubernetes.io/warn: privileged
@@ -41,12 +28,12 @@ spec:
       prune: true
       selfHeal: true
     retry:
-      limit: -1  # unbounded; only retry re-drives a failed sync (see 05_gitops.md)
-      refresh: true  # retry the latest revision so a fix commit lands mid-loop
+      limit: -1
+      refresh: true
       backoff:
         duration: 5s
         factor: 2
         maxDuration: 1m
     syncOptions:
       - CreateNamespace=true
-      - ServerSideApply=true   # the Longhorn CRDs are large, SSA avoids the last-applied-annotation limit
+      - ServerSideApply=true # these CRDs are too big for client-side apply's 256KiB manifest annotation

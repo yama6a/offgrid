@@ -1,6 +1,6 @@
 {{- if .Values.loadBalancer.enabled }}
-# LoadBalancer IPs for the cluster. COMMIT THIS, later managed by ArgoCD.
-apiVersion: cilium.io/v2          # promoted to v2 in a recent Cilium
+# LoadBalancer IPs for the cluster.
+apiVersion: cilium.io/v2
 kind: CiliumLoadBalancerIPPool
 metadata:
   name: pool-default
@@ -9,26 +9,19 @@ spec:
     - start: "{{ .Values.loadBalancer.ipPool.start }}"
       stop:  "{{ .Values.loadBalancer.ipPool.stop }}"
 ---
-apiVersion: cilium.io/v2alpha1    # L2 policy is still v2alpha1
+apiVersion: cilium.io/v2alpha1
 kind: CiliumL2AnnouncementPolicy
 metadata:
   name: l2-default
 spec:
   loadBalancerIPs: true
-  # Also announce externalIPs (defensive). The merged Envoy Service gets 192.168.100.10 as an LB-IPAM
-  # ingress IP via the EnvoyProxy `lbipam.cilium.io/ips` annotation, loadBalancerIPs:true announces that.
-  # We KEEP externalIPs:true as a safety net: historically the Gateway's spec.addresses also surfaced the
-  # IP as a spec.externalIP (Envoy Gateway copied it onto the Service), and when one IP is both, Cilium
-  # creates a single frontend typed `ExternalIPs` that loadBalancerIPs:true alone does NOT announce, and
-  # the type could land differently across restarts, silently dropping the ARP announcement on a
-  # reschedule/rebuild. Since the mergeGateways migration we no longer set spec.addresses (the annotation
-  # is the sole IP authority), so that ExternalIPs frontend shouldn't recur, but announcing both stays
-  # deterministic and costs nothing. See 04_networking.md.
+  # Announce externalIPs too, as a safety net. When one IP is both a LoadBalancer ingress IP and a
+  # spec.externalIP, Cilium creates a single ExternalIPs-typed frontend that loadBalancerIPs:true alone does
+  # NOT announce, and the type can land differently across restarts, silently dropping the ARP announcement.
   externalIPs: true
   interfaces:
     - ^end0$
-  # ALL nodes are control-plane here, so select every Linux node (the common
-  # 'control-plane DoesNotExist' selector would match zero nodes on this cluster).
+  # Every node here IS control-plane, so the usual control-plane:DoesNotExist selector matches zero nodes.
   nodeSelector:
     matchLabels:
       kubernetes.io/os: linux

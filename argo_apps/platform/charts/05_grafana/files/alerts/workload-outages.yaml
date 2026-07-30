@@ -1,15 +1,13 @@
 apiVersion: 1
 groups:
-  # ================================================================================================
-  # GLOBAL WORKLOAD ALERTS (all namespaces, one rule each). Severity model, see 09_monitoring.md:
-  #   OUTAGE-class (this group) = workload down / broken -> severity is DYNAMIC: `critical` when the
-  #     firing object carries alert-criticality=critical (joined in via kube_<obj>_labels +
-  #     group_left(label_alert_criticality); needs the KSM metricLabelsAllowlist in 05_vm_k8s_stack),
-  #     else `warning`. Absent label => "" => warning.
-  #   ANOMALY-class (next group) = degraded / saturating / about-to-break -> always `warning`.
-  # The `spec>0 and available==0` ordering keeps the firing value >0 after the `* kube_<obj>_labels`
-  # (value 1) multiply that attaches the criticality label.
-  # ================================================================================================
+  # Global workload alerts, all namespaces, one rule each. OUTAGE-class, so severity is DYNAMIC: critical when
+  # the firing object carries alert-criticality=critical. The label is not on the outage metric itself, so each
+  # rule pulls it off kube_<obj>_labels with a `group_left` join; that series only exists because
+  # kube-state-metrics allowlists the label (metricLabelsAllowlist in 05_victoria_metrics_k8s_stack). An absent
+  # label yields "", so warning.
+  # The next group is ANOMALY-class and always warning.
+  # Keep the `spec>0 and available==0` ordering. Reversing it makes the firing value 0, and multiplying by
+  # `kube_<obj>_labels` to attach the criticality label then keeps it 0, so the alert never fires.
   - orgId: 1
     name: workload-outages
     folder: raspi-cluster
@@ -24,10 +22,10 @@ groups:
         annotations:
           summary: 'Deployment {{ $labels.namespace }}/{{ $labels.deployment }} has no available replicas'
           description: |
-            • full outage — zero replicas available, the Deployment is serving nothing
-            • status: kubectl -n {{ $labels.namespace }} rollout status deploy/{{ $labels.deployment }}
-            • events + pods: kubectl -n {{ $labels.namespace }} describe deploy {{ $labels.deployment }}
-            • logs: kubectl -n {{ $labels.namespace }} logs deploy/{{ $labels.deployment }}
+            - full outage: zero replicas available, the Deployment is serving nothing
+            - status: kubectl -n {{ $labels.namespace }} rollout status deploy/{{ $labels.deployment }}
+            - events + pods: kubectl -n {{ $labels.namespace }} describe deploy {{ $labels.deployment }}
+            - logs: kubectl -n {{ $labels.namespace }} logs deploy/{{ $labels.deployment }}
         noDataState: OK
         execErrState: Error
         data:
@@ -62,10 +60,10 @@ groups:
         annotations:
           summary: 'StatefulSet {{ $labels.namespace }}/{{ $labels.statefulset }} has no ready replicas'
           description: |
-            • full outage — zero ready replicas (check storage/PVC before assuming a crash)
-            • events + pods: kubectl -n {{ $labels.namespace }} describe statefulset {{ $labels.statefulset }}
-            • PVCs: kubectl -n {{ $labels.namespace }} get pvc
-            • logs: kubectl -n {{ $labels.namespace }} logs statefulset/{{ $labels.statefulset }}
+            - full outage: zero ready replicas (check storage/PVC before assuming a crash)
+            - events + pods: kubectl -n {{ $labels.namespace }} describe statefulset {{ $labels.statefulset }}
+            - PVCs: kubectl -n {{ $labels.namespace }} get pvc
+            - logs: kubectl -n {{ $labels.namespace }} logs statefulset/{{ $labels.statefulset }}
         noDataState: OK
         execErrState: Error
         data:
@@ -100,10 +98,10 @@ groups:
         annotations:
           summary: 'DaemonSet {{ $labels.namespace }}/{{ $labels.daemonset }} has no available pods'
           description: |
-            • full outage — no pods available on any scheduled node
-            • events + pods: kubectl -n {{ $labels.namespace }} describe daemonset {{ $labels.daemonset }}
-            • check node readiness/taints: kubectl get nodes
-            • logs: kubectl -n {{ $labels.namespace }} logs daemonset/{{ $labels.daemonset }}
+            - full outage: no pods available on any scheduled node
+            - events + pods: kubectl -n {{ $labels.namespace }} describe daemonset {{ $labels.daemonset }}
+            - check node readiness/taints: kubectl get nodes
+            - logs: kubectl -n {{ $labels.namespace }} logs daemonset/{{ $labels.daemonset }}
         noDataState: OK
         execErrState: Error
         data:
@@ -129,9 +127,9 @@ groups:
               conditions:
                 - type: query
                   evaluator: {type: gt, params: [0]}
-      # Container stuck in a FATAL waiting reason (can't start). This is the criticality-critical path for
-      # CNPG too (bespoke controller, no Deployment/StatefulSet): a crashlooping labeled CNPG/Redis pod pages
-      # critical here. `reason` kept in the series for the summary; join on (namespace,pod) to kube_pod_labels.
+      # A container stuck in a FATAL waiting reason cannot start. This is also the criticality-critical path
+      # for CNPG, which has no Deployment or StatefulSet, so a crashlooping labelled CNPG or Redis pod pages
+      # critical here. `reason` stays in the series for the summary.
       - uid: container-waiting-fatal
         title: Container stuck (crashloop / image / config)
         condition: C
@@ -141,10 +139,10 @@ groups:
         annotations:
           summary: 'Container {{ $labels.namespace }}/{{ $labels.pod }}/{{ $labels.container }} stuck: {{ $labels.reason }}'
           description: |
-            • container can't start — {{ $labels.reason }} (crashloop, bad image, or bad config)
-            • events: kubectl -n {{ $labels.namespace }} describe pod {{ $labels.pod }}
-            • crashloop → logs: kubectl -n {{ $labels.namespace }} logs {{ $labels.pod }} -c {{ $labels.container }} --previous
-            • image/config → verify image tag + referenced ConfigMap/Secret exist
+            - container can't start: {{ $labels.reason }} (crashloop, bad image, or bad config)
+            - events: kubectl -n {{ $labels.namespace }} describe pod {{ $labels.pod }}
+            - crashloop -> logs: kubectl -n {{ $labels.namespace }} logs {{ $labels.pod }} -c {{ $labels.container }} --previous
+            - image/config -> verify image tag + referenced ConfigMap/Secret exist
         noDataState: OK
         execErrState: Error
         data:

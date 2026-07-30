@@ -1,49 +1,44 @@
 # Pi 5 EEPROM / boot prep
 
-Firmware setup for each Pi 5 node before installing the OS. Goal: every board boots the same way, no matter which EEPROM
+Firmware setup for each Pi 5 before the OS goes on. Every board ends up booting the same way, whatever EEPROM
 version it shipped with.
 
-## What we're doing
+- One reusable SD card reflashes each Pi's bootloader EEPROM with the latest stable firmware and a known config.
+- The config sets the boot order (SD first, NVMe fallback) and forces a PCIe probe.
+- The script always picks the latest stable bootloader binary from the official repo, so flashing also levels
+  every board onto the same firmware version.
+- Once every EEPROM is flashed, the card's job is done.
 
-- Build one reusable SD card that reflashes each Pi's bootloader EEPROM with the latest firmware and a known config.
-- That config sets boot order (SD first, NVMe fallback) and forces a PCIe probe.
-- The script always picks the latest stable bootloader binary from the official repo, so flashing the card also
-  updates every board to the same known firmware version, regardless of what it shipped with.
-- Once the EEPROM is flashed, the card's job is done.
-
-### Why a custom card instead of the Pi Imager preset
-
-- Imager's "NVMe/USB Boot" preset writes a fixed config: no way to add `PCIE_PROBE` or choose the boot order.
+The Pi Imager's "NVMe/USB Boot" preset writes a fixed config with no way to add `PCIE_PROBE` or pick the boot
+order, hence the custom card.
 
 ## The settings
 
-`BOOT_ORDER=0xf461` -> SD -> NVMe -> USB -> loop
+`BOOT_ORDER=0xf461` means SD, then NVMe, then USB, then loop.
 
-- Tries SD first; if there's no bootable card, falls through to NVMe.
-- SD-first on purpose: we can always drop in a card to recover or override a node.
+- Tries SD first; with no bootable card it falls through to NVMe.
+- SD-first on purpose: you can always drop in a card to recover or override a node.
 
-`PCIE_PROBE=1` -> force the bootloader to probe PCIe
+`PCIE_PROBE=1` forces the bootloader to probe PCIe.
 
-- The RS-P11 isn't a HAT+ board (no ID EEPROM), so the firmware won't auto-probe PCIe and might not see the NVMe as a
-  boot device.
-- Forcing the probe fixes that. Harmless when not needed; worst case is a tiny boot delay if no drive is present.
+- The RS-P11 is not a HAT+ board and has no ID EEPROM, so the firmware will not auto-probe PCIe and may not see
+  the NVMe as a boot device at all.
+- Forcing the probe fixes that. Harmless otherwise; worst case is a small boot delay with no drive present.
 
-## How to build the card
+## Build the card
 
-Script: `build-rpi5-eeprom-card.sh` (runs on macOS). What it does:
+`make build-eeprom-card` (`lib/shell/02_raspi_eeprom.sh`, macOS). It:
 
 1. Clones the official `rpi-eeprom` repo.
 2. Picks the newest stable Pi 5 (2712) bootloader image.
 3. Dumps its config, sets `BOOT_ORDER` + `PCIE_PROBE`.
-4. Re-embeds the config, makes the `.sig` (sha256 of the image).
-5. Formats the SD as FAT32 and copies `recovery.bin` + `pieeprom.bin` + `pieeprom.sig`.
+4. Re-embeds the config and writes `pieeprom.sig` (the image's sha256).
+5. Formats the SD as FAT32 and copies `recovery.bin`, `pieeprom.bin` and `pieeprom.sig`.
 
 ## Per board
 
-- Insert card, power on. NVMe doesn't need to be installed yet, this only touches the EEPROM.
-- Fast green LED blink (green screen on HDMI) = success. Red + blink code = failure.
-- Power off, pull the card, next board.
+1. Insert the card, power on. The NVMe does not need to be installed yet, this only touches the EEPROM.
+2. Fast green LED blink, green screen on HDMI: success. Red plus a blink code: failure.
+3. Power off, pull the card, next board.
 
-## Then
-
-- Flash the OS image to each NVMe via the USB adapter, slot it in, boot.
+Then flash the OS image to each NVMe over the USB adapter (03b), slot it in, and boot.

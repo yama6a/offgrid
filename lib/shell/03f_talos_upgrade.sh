@@ -1,38 +1,12 @@
 #!/usr/bin/env bash
-#
-# 03f_talos_upgrade.sh  (macOS)
-#
-# Rolling, in-place upgrade of the running Talos cluster (from 03d) to the installer image 03a published
-# to GHCR (${INSTALLER_REF}). NO reflash: Talos upgrades are atomic A/B with rollback, one node reboots
-# into the new system while the other two hold etcd quorum, then the next. talosctl drives one node at a
-# time and refuses to proceed if a reboot would break quorum.
-#
-# We CORDON + DRAIN each node ourselves (native kubectl) BEFORE talosctl upgrade, so Talos's own in-upgrade
-# drain finds an empty node and can't hang on a PDB or a slow-terminating pod (which is what stalls it).
-# A Longhorn volume-health gate runs first so we never reboot a node holding a volume's last healthy
-# replica. See 03_operating_system.md for the full why.
-#
-# The nodes PULL the installer using the read:packages auth 03d baked into their machine config, so a
-# PRIVATE ${INSTALLER_PACKAGE} works with no extra steps here.
-#
-# This upgrades the Talos OS only; it does NOT change the Kubernetes version. k8s is a separate, no-reboot
-# roll — bump KUBERNETES_VERSION in versions.env and run 03g_k8s_upgrade.sh. If both changed, run 03f then 03g.
-#
-# Prereqs:
-#   - 03a was run with GITHUB_GHCR_PUSH_TOKEN_SECRET set, so ${INSTALLER_REF} exists on GHCR.
-#   - The nodes can pull it: either the GHCR package is PUBLIC, or 03d was run with a
-#     GITHUB_GHCR_PULL_TOKEN_SECRET set (baked into the machine config). Otherwise the pull 401s and the
-#     upgrade fails, re-run 03d with the pull token, or make the package public.
-#   - The cluster is up (03d).
-#
-# Mixed tooling: talosctl runs as a pinned Docker image against secrets/ (talosconfig from 03d), like
-# 03c-03e (Talos work -> Docker; the native macOS talosctl is unreliable, see 03_operating_system.md). The
-# drain is a cluster op, so it uses NATIVE kubectl (apply-to-cluster -> native, like 04/05).
-#
-# NOT DANGEROUS_ (atomic A/B with rollback, not a wipe) but it reboots every node in turn, so it asks for
-# a typed 'yes'. Re-run-safe: a node already on the target image is a clean no-op, so a re-run after a
-# mid-way failure just resumes.
-#
+# Rolling, in-place upgrade of the running Talos cluster to the installer image 03a published to GHCR.
+# No reflash: Talos upgrades are atomic A/B with rollback, and talosctl refuses to proceed if a reboot would
+# break etcd quorum.
+# We CORDON + DRAIN each node ourselves before `talosctl upgrade`, so Talos's own in-upgrade drain finds an
+# empty node and cannot hang on a PDB or a slow-terminating pod. A Longhorn volume-health gate runs first, so
+# we never reboot a node holding a volume's last healthy replica.
+# This upgrades the OS ONLY. Kubernetes is a separate, no-reboot roll: 03g. If both changed, run 03f then 03g.
+# Re-run-safe: a node already on the target image is a clean no-op, so a re-run resumes.
 set -euo pipefail
 
 # Node list (CLUSTER_NODES) in .env; INSTALLER_REF / NODES / TALOSCTL_VERSION derived in lib/shell/common.sh.
@@ -50,7 +24,6 @@ REPLICATION_HEALTH_TIMEOUT=1800  # secs: before draining EACH node, wait until e
                                  # out the PREVIOUS node's post-reboot resync. Abort if exceeded (fix + re-run).
 GRACEFUL_DRAIN_TIMEOUT=120  # secs: bounded polite drain (honors eviction) before escalating to force
 FORCE_GRACE=20              # secs: grace-period on the force-delete of stragglers (let rabbit flush; 0=now)
-# -----------------------------------------------------------------------------
 
 require docker kubectl
 docker info >/dev/null 2>&1 || die "docker not responding (start Rancher/Docker Desktop)"
@@ -86,7 +59,7 @@ _cnpg_unready() {
 }
 
 # RabbitMQ: all broker replicas ready (quorum queues have full membership) + cluster available. Deliberately
-# ignores the NoWarnings condition (benign, e.g. mem request!=limit) — gating on it would hang forever.
+# ignores the NoWarnings condition (benign, e.g. mem request!=limit): gating on it would hang forever.
 _rabbitmq_unready() {
   kubectl get rabbitmqclusters.rabbitmq.com -A \
     -o jsonpath='{range .items[*]}{.metadata.namespace}/{.metadata.name}{"|"}{range .status.conditions[*]}{.type}={.status};{end}{"\n"}{end}' \
@@ -113,7 +86,7 @@ wait_replication_healthy() {
 }
 
 # drain_node <node> -> cordon, then a bounded graceful drain; force-delete any stragglers so the node can
-# ALWAYS reboot (these pods can't relocate — node-local storage / per-node engine / hard anti-affinity —
+# ALWAYS reboot (these pods can't relocate: node-local storage / per-node engine / hard anti-affinity,
 # so a graceful drain can only kill them; they come back on the same node after the reboot).
 drain_node() {
   local node="$1"

@@ -1,25 +1,24 @@
 apiVersion: 1
 groups:
-  # Self-monitoring of the observability stack ("who watches the watchmen"). If vmagent/vmsingle/VL silently
-  # fail, every OTHER alert goes NoData->OK and you're blind. Static severity. The PVCs themselves are also
-  # covered by pvc-nearly-full; these catch the VM/VL-specific failure modes. See 09_monitoring.md.
+  # Who watches the watchmen: if vmagent, vmsingle or VL silently fail, every OTHER alert goes NoData, so OK,
+  # and you are blind. The PVCs are also covered by pvc-nearly-full; these catch the VM/VL-specific modes.
   - orgId: 1
     name: monitoring-health
     folder: raspi-cluster
     interval: 1m
     rules:
-      # vmsingle refuses writes when free disk drops to its reserved limit -> metrics data loss. 3x headroom.
+      # vmsingle refuses writes once free disk hits its reserved limit, which loses metrics. 3x headroom.
       - uid: vmsingle-near-read-only
         title: VictoriaMetrics near read-only (low disk)
         condition: C
         for: 10m
         labels: {severity: critical}
         annotations:
-          summary: 'vmsingle free disk is approaching the reserved limit — it will stop accepting metrics'
+          summary: 'vmsingle free disk is approaching the reserved limit: it will stop accepting metrics'
           description: |
-            • vmsingle free disk near its reserved limit — it will go read-only and drop metrics
-            • check: kubectl -n monitoring get pvc; df on the vmsingle volume
-            • grow the vmsingle PVC or lower retention
+            - vmsingle free disk near its reserved limit: it will go read-only and drop metrics
+            - check: kubectl -n monitoring get pvc; df on the vmsingle volume
+            - grow the vmsingle PVC or lower retention
         noDataState: OK
         execErrState: Error
         data:
@@ -45,18 +44,18 @@ groups:
               conditions:
                 - type: query
                   evaluator: {type: gt, params: [0]}
-      # vmagent dropping samples on remote-write to vmsingle = metrics loss (persistent queue full / vmsingle rejecting).
+      # Dropped samples on remote-write means metrics loss: persistent queue full, or vmsingle rejecting.
       - uid: vmagent-dropping-samples
         title: vmagent dropping samples
         condition: C
         for: 10m
         labels: {severity: warning}
         annotations:
-          summary: 'vmagent is dropping samples on remote-write — metrics are being lost'
+          summary: 'vmagent is dropping samples on remote-write: metrics are being lost'
           description: |
-            • vmagent dropping remote-write samples — usually vmsingle rejecting or queue full
-            • check: kubectl -n monitoring logs deploy/vmagent
-            • verify vmsingle health + free disk
+            - vmagent dropping remote-write samples: usually vmsingle rejecting or queue full
+            - check: kubectl -n monitoring logs deploy/vmagent
+            - verify vmsingle health + free disk
         noDataState: OK
         execErrState: Error
         data:
@@ -90,9 +89,9 @@ groups:
         annotations:
           summary: 'VictoriaLogs is reporting internal errors (ingestion/storage)'
           description: |
-            • VictoriaLogs hitting internal errors on ingestion/storage
-            • check: kubectl -n monitoring logs deploy/victoria-logs
-            • verify its PVC has free space + is writable
+            - VictoriaLogs hitting internal errors on ingestion/storage
+            - check: kubectl -n monitoring logs deploy/victoria-logs
+            - verify its PVC has free space + is writable
         noDataState: OK
         execErrState: Error
         data:

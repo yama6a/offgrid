@@ -1,14 +1,10 @@
-# The two Longhorn StorageClasses every workload picks from. Both are 2-replica (survives the one node loss we
-# design for AND leaves a spare node to rebuild the lost replica onto, see 08_storage.md); they differ only in
-# whether they're backed up off-cluster. There is NO default class (values persistence.defaultClass: false), so
-# every PVC names one of these explicitly. See docs/08_storage.md + docs/13_backups.md.
-#
-# There is NO Retain class any more: `deletionProtection` (Prune=false,Delete=false on the owning CR/PVC) is what
-# makes a GitOps prune non-destructive, so Retain would protect nothing a deliberate deletion didn't mean and would
-# only leak orphaned `Released` PVs. Every store either has an app-level backup or an accepted loss. See 08_storage.md.
+# Both are 2-replica: survives the one node loss we design for AND leaves a spare to rebuild onto. They differ
+# only in whether they are backed up off-cluster. There is no default class, so every PVC names one.
+# There is no Retain class: deletionProtection is what makes a prune non-destructive, so Retain would protect
+# nothing a deliberate deletion did not mean and would only leak orphaned Released PVs.
 
-# Delete: volume (data) is removed with its PVC. The general-purpose class: prune safety comes from
-# deletionProtection, total-loss coverage from each app's own backup.
+# The general-purpose class. Prune safety comes from deletionProtection, total-loss coverage from each app's
+# own backup.
 ---
 apiVersion: storage.k8s.io/v1
 kind: StorageClass
@@ -24,9 +20,9 @@ parameters:
   fsType: "ext4"
   dataLocality: "disabled"
 
-# Retain + off-cluster S3 backups. recurringJobSelector adds every volume to the `backup` group -> the daily+weekly
-# RecurringJobs (templates/recurringjobs.yaml), which only run once a backup target is set (16_longhorn_backup.sh).
-# Precious data with no app-level backup (sqlite / config). No consumer yet.
+# For precious data with no app-level backup (sqlite, config). recurringJobSelector adds every volume to the
+# `backup` group, which the RecurringJobs in templates/recurringjobs.yaml act on once a target is set.
+# No consumer yet.
 ---
 apiVersion: storage.k8s.io/v1
 kind: StorageClass

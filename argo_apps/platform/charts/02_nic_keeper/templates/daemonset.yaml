@@ -1,6 +1,5 @@
-# One pod per rpi5 node. hostNetwork so it sees and acts on the host NIC + host-netns sockets.
-# Least privilege: NET_ADMIN (ethtool EEE, `ip link`, `ss -K`) + NET_RAW (ping), not privileged.
-# Never calls the k8s API -> automountServiceAccountToken: false.
+# One pod per rpi5 node. hostNetwork so it sees and acts on the host NIC and host-netns sockets.
+# Never calls the k8s API, hence automountServiceAccountToken: false.
 apiVersion: apps/v1
 kind: DaemonSet
 metadata:
@@ -9,7 +8,7 @@ metadata:
   labels:
     app.kubernetes.io/name: nic-keeper
 spec:
-  revisionHistoryLimit: 0  # roll-forward only; no old ControllerRevisions kept (05_gitops.md)
+  revisionHistoryLimit: 0  # recovery is a git revert, never a rollback, so kept history is dead weight
   selector:
     matchLabels:
       app.kubernetes.io/name: nic-keeper
@@ -28,8 +27,8 @@ spec:
       dnsPolicy: ClusterFirstWithHostNet
       automountServiceAccountToken: false
       priorityClassName: system-node-critical
-      # All nodes here are control-plane, so tolerate that taint (plus anything else, so the
-      # NIC keeper keeps recovering the node even under pressure).
+      # Every node here IS control-plane. Tolerate everything else too, so the keeper still recovers a node
+      # that is under pressure.
       tolerations:
         - key: node-role.kubernetes.io/control-plane
           operator: Exists
@@ -44,8 +43,8 @@ spec:
             allowPrivilegeEscalation: false
             capabilities:
               drop: ["ALL"]
-              # NET_ADMIN: ethtool EEE, `ip link` down/up, `ss -K`. NET_RAW: ping's ICMP socket
-              # (dropped by drop:ALL otherwise, so every probe would false-fail -> false wedge).
+              # NET_ADMIN for ethtool EEE, `ip link` and `ss -K`. NET_RAW for ping's ICMP socket, which
+              # drop:ALL would otherwise remove, false-failing every probe into a false wedge.
               add: ["NET_ADMIN", "NET_RAW"]
           env:
             - {name: IFACE, value: {{ .Values.iface | quote }}}

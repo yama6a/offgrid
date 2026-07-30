@@ -1,10 +1,5 @@
-# POD-SCOPED default-deny for the OpsTree redis-operator (reconciles standalone Redis CRs cluster-wide). Listing
-# ingress AND egress makes the operator endpoints deny-by-default each way; allow only what it needs. Minimal
-# surface by design: metrics :8080 is live but NO PodMonitor ships (values), so vmagent doesn't scrape it -> no
-# metrics ingress; the admission webhook is OFF (values redisOperator.webhook:false) -> no apiserver->webhook
-# ingress. Fixed platform selectors (CoreDNS, kube-apiserver) are cluster constants, hardcoded. Audit-first
-# rollout like every netpol here (Cilium PolicyAuditMode + `hubble observe --verdict DROPPED,AUDIT`, then
-# enforce). Ports: 8081 health probe, 6379 Redis, 53 DNS. See 04_networking.md / 12_redis.md.
+# Default-deny both ways for the OpsTree redis-operator. The surface is thin because no PodMonitor ships and
+# the admission webhook is off (both in values.yaml), so there is no metrics and no apiserver-webhook ingress.
 apiVersion: cilium.io/v2
 kind: CiliumNetworkPolicy
 metadata:
@@ -13,15 +8,15 @@ metadata:
 spec:
   endpointSelector:
     matchLabels:
-      name: redis-operator          # the operator POD's label (its Deployment selector); NOT app.kubernetes.io/name (that's only on the Deployment object, so it would select zero pods)
+      name: redis-operator # the POD label. app.kubernetes.io/name is only on the Deployment, so it selects zero pods
   ingress:
-    # (a) Kubelet /healthz + /readyz probes hit :8081 from the node. (No metrics scrape, no webhook — see header.)
+    # Kubelet /healthz and /readyz probes, from the node.
     - fromEntities: [host, remote-node]
       toPorts:
         - ports:
             - { port: "8081", protocol: TCP }
   egress:
-    # (b) DNS (CoreDNS).
+    # DNS.
     - toEndpoints:
         - matchLabels:
             k8s:io.kubernetes.pod.namespace: kube-system
@@ -30,12 +25,11 @@ spec:
         - ports:
             - { port: "53", protocol: UDP }
             - { port: "53", protocol: TCP }
-    # (c) Watches Redis CRs / manages the StatefulSets + Services via the API server.
+    # Watches Redis CRs and manages their StatefulSets and Services.
     - toEntities: [kube-apiserver]
-    # (d) Reconciles/health-checks each managed Redis over :6379. Instances live in WORKLOAD namespaces, so this
-    # must cross namespaces: port-scoped :6379 to ANY namespace (matchExpressions ns Exists) — NOT the empty {}
-    # selector, which in Cilium means "same namespace only". Broad-on-:6379 mirrors the redis-backup egress
-    # rationale (avoid depending on the operator's per-instance pod label). See 12_redis.md.
+    # Reconciles each managed Redis. Instances live in WORKLOAD namespaces, and an empty {} selector means
+    # same-namespace-only in Cilium, hence the explicit ns-Exists matchExpression. Broad on the port rather
+    # than pinned to the operator's per-instance pod label, which we would then depend on.
     - toEndpoints:
         - matchExpressions:
             - { key: k8s:io.kubernetes.pod.namespace, operator: Exists }

@@ -1,3 +1,1 @@
-# Nothing to configure. The SealedSecret in templates/ is written verbatim by 08_argocd_webhook.sh
-# (it seals a generated secret against the live controller's key). File kept for convention (every chart
-# has one).
+# Nothing to configure. 08_argocd_webhook.sh writes the SealedSecret in templates/ verbatim.

@@ -1,12 +1,10 @@
 apiVersion: 1
 groups:
-  # Ingress HTTP health, PER ROUTE. Envoy's upstream cluster stats are labelled
-  # envoy_cluster_name="httproute/<gw-ns>/<route>/rule/N" — one cluster per HTTPRoute rule, i.e. per instance of
-  # the ingress lib chart — so grouping by envoy_cluster_name gives per-route alerts (filtered to httproute/.+ to
-  # skip Envoy's internal clusters: eg / xds_cluster / prometheus_stats / *_googleapis). Metrics come from the
-  # 01_envoy_gateway proxy PodMonitor; metric names verified against the live /stats/prometheus. Static severity.
-  # Small request-volume floor (>0.2 rq/s over 5m) keeps error-ratio rules quiet on trivial traffic. Latency is
-  # envoy_cluster_upstream_rq_time in MILLISECONDS. See 09_monitoring.md / 07_ingress.md.
+  # Per ROUTE. Envoy labels its upstream cluster stats envoy_cluster_name="httproute/<gw-ns>/<route>/rule/N",
+  # one per HTTPRoute rule, so grouping by that label gives per-route alerts. Filtered to httproute/.+ to skip
+  # Envoy's internal clusters (eg, xds_cluster, prometheus_stats, *_googleapis).
+  # The >0.2 rq/s floor keeps the error-ratio rules quiet on trivial traffic.
+  # envoy_cluster_upstream_rq_time is in MILLISECONDS.
   - orgId: 1
     name: ingress-http
     folder: raspi-cluster
@@ -20,9 +18,9 @@ groups:
         annotations:
           summary: 'Ingress route {{ $labels.envoy_cluster_name }} is returning >2% 5xx'
           description: |
-            • backend returning 5xx — app errors or upstream unhealthy (cluster name = httproute/<gw-ns>/<route>/rule/N)
-            • find the backend Service/pods behind that HTTPRoute and check their logs
-            • pods: kubectl get pods -A | grep <backend>; logs: kubectl -n <ns> logs <pod>
+            - backend returning 5xx: app errors or upstream unhealthy (cluster name = httproute/<gw-ns>/<route>/rule/N)
+            - find the backend Service/pods behind that HTTPRoute and check their logs
+            - pods: kubectl get pods -A | grep <backend>; logs: kubectl -n <ns> logs <pod>
         noDataState: OK
         execErrState: Error
         data:
@@ -56,9 +54,9 @@ groups:
         annotations:
           summary: 'Ingress route {{ $labels.envoy_cluster_name }} is returning >25% 4xx'
           description: |
-            • high client-error rate — often 401/403 from SSO, or 404 from a route/path mismatch
-            • cluster name = httproute/<gw-ns>/<route>/rule/N; check that HTTPRoute's matches + the google-sso allowlist
-            • inspect: kubectl get httproute -A; kubectl -n gateway get securitypolicy
+            - high client-error rate: often 401/403 from SSO, or 404 from a route/path mismatch
+            - cluster name = httproute/<gw-ns>/<route>/rule/N; check that HTTPRoute's matches + the google-sso allowlist
+            - inspect: kubectl get httproute -A; kubectl -n gateway get securitypolicy
         noDataState: OK
         execErrState: Error
         data:
@@ -92,9 +90,9 @@ groups:
         annotations:
           summary: 'Ingress route {{ $labels.envoy_cluster_name }} p95 upstream latency above 2s'
           description: |
-            • backend slow to respond — overloaded, CPU-throttled, or waiting on a dependency (DB/Redis)
-            • cluster name = httproute/<gw-ns>/<route>/rule/N; find the backend pods and check load/throttling
-            • pods: kubectl -n <ns> top pod; logs: kubectl -n <ns> logs <pod>
+            - backend slow to respond: overloaded, CPU-throttled, or waiting on a dependency (DB/Redis)
+            - cluster name = httproute/<gw-ns>/<route>/rule/N; find the backend pods and check load/throttling
+            - pods: kubectl -n <ns> top pod; logs: kubectl -n <ns> logs <pod>
         noDataState: OK
         execErrState: Error
         data:
@@ -120,7 +118,7 @@ groups:
               conditions:
                 - type: query
                   evaluator: {type: gt, params: [2000]}
-      # 503-cause: a route whose backend has zero healthy hosts (all endpoints down / failing health checks).
+      # The 503 cause: a route whose backend has zero healthy hosts.
       - uid: ingress-no-healthy-upstream
         title: Ingress route has no healthy upstream
         condition: C
@@ -129,9 +127,9 @@ groups:
         annotations:
           summary: 'Ingress route {{ $labels.envoy_cluster_name }} has no healthy upstream hosts'
           description: |
-            • outage — every backend endpoint is down/unhealthy, clients get 503
-            • cluster name = httproute/<gw-ns>/<route>/rule/N; check the backend Service has ready endpoints
-            • endpoints: kubectl -n <ns> get endpoints <svc>; pods: kubectl -n <ns> get pods
+            - outage: every backend endpoint is down/unhealthy, clients get 503
+            - cluster name = httproute/<gw-ns>/<route>/rule/N; check the backend Service has ready endpoints
+            - endpoints: kubectl -n <ns> get endpoints <svc>; pods: kubectl -n <ns> get pods
         noDataState: OK
         execErrState: Error
         data:
@@ -165,9 +163,9 @@ groups:
         annotations:
           summary: 'Ingress route {{ $labels.envoy_cluster_name }} has upstream connection failures'
           description: |
-            • Envoy can't open connections to the backend — pods restarting, port mismatch, or NetworkPolicy block
-            • cluster name = httproute/<gw-ns>/<route>/rule/N; verify Service port matches the container port
-            • check: kubectl -n <ns> get endpoints <svc>; kubectl -n <ns> get ciliumnetworkpolicy
+            - Envoy can't open connections to the backend: pods restarting, port mismatch, or NetworkPolicy block
+            - cluster name = httproute/<gw-ns>/<route>/rule/N; verify Service port matches the container port
+            - check: kubectl -n <ns> get endpoints <svc>; kubectl -n <ns> get ciliumnetworkpolicy
         noDataState: OK
         execErrState: Error
         data:

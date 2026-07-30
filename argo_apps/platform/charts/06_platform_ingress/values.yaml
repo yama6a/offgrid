@@ -1,16 +1,14 @@
-# Ingress (edges) for all platform UIs.
 ingress:
   ingresses:
     - name: platform
-      domain: ops.example.com # platform UIs live under the *.ops.<base> tier (workloads use *.app.<base>). See 07_ingress.md.
-      issuer: letsencrypt-prod
-      # Flip back to letsencrypt-prod for prod: GitHub webhook SSL verification to argocd.<domain> needs a publicly-trusted cert. See 07_ingress.md.
+      domain: ops.example.com # platform UIs sit under *.ops.<base>, workloads under *.app.<base>
+      issuer: letsencrypt-prod # GitHub webhook SSL verification to argocd.<domain> needs a publicly-trusted cert
       hosts:
         - subdomain: argocd
           targetNamespace: argocd
           targetService: argocd-server
           targetPort: 80
-          requestTimeout: "0s"           # UI holds SSE streams on /api/v1/stream/*; Envoy's 15s default 504s them
+          requestTimeout: "0s"           # the UI keeps /api/v1/stream/* open to receive live updates; Envoy's 15s default cuts it off with a 504
 
         - subdomain: grafana
           targetNamespace: monitoring
@@ -25,29 +23,26 @@ ingress:
           targetService: vlsingle-victoria-logs
           targetPort: 9428
         - subdomain: hubble
-          targetNamespace: kube-system # hubble-ui ships with Cilium (00_cilium) in kube-system
+          targetNamespace: kube-system
           targetService: hubble-ui
           targetPort: 80
         - subdomain: longhorn
-          targetNamespace: longhorn-system # longhorn-frontend (the UI) ships with Longhorn (02_longhorn)
-          targetService: longhorn-frontend # UI has NO auth of its own -> gated by google-sso (wave 4)
+          targetNamespace: longhorn-system
+          targetService: longhorn-frontend # no auth of its own, gated by google-sso
           targetPort: 80
         - subdomain: rabbitmq
-          targetNamespace: rabbitmq        # the shared broker's client Service (03_rabbitmq_cluster)
-          targetService: rabbitmq          # management UI on 15672; gated by google-sso (wave 4), then RabbitMQ's own login
+          targetNamespace: rabbitmq
+          targetService: rabbitmq          # management UI, gated by google-sso then RabbitMQ's own login
           targetPort: 15672
-    # ntfy gets its OWN ingress (not a host under `platform`) because the Android app validates TLS, so its cert
-    # must be PUBLICLY TRUSTED -> letsencrypt-PROD, while `platform` stays on staging during rebuild-heavy dev.
-    # Per-ingress issuer => a separate ntfy-tls Certificate, no overlap with the staging SAN set. Deliberately NOT
-    # listed in 04_google_sso, so the edge stays OPEN (the mobile app can't do human OAuth) — ntfy's own deny-all
-    # + token/user auth is the only gate. See 07_ingress.md / 09_monitoring.md.
+    # Its own ingress, not a host under `platform`: the Android app validates TLS, so this cert must stay on
+    # letsencrypt-prod even when `platform` drops to staging. Deliberately NOT listed in 04_google_sso, so the
+    # edge stays OPEN (a mobile app cannot do human OAuth); ntfy's own deny-all + token auth is the only gate.
     - name: ntfy
       domain: ops.example.com
       issuer: letsencrypt-prod
       hosts:
-        - subdomain: ntfy                  # -> ntfy.ops.example.com (the phone subscribes here; Grafana publishes in-cluster)
+        - subdomain: ntfy
           targetNamespace: monitoring
           targetService: ntfy
           targetPort: 8080
-          requestTimeout: "0s"             # Android app holds a long-poll JSON stream; Envoy's 15s default forces
-                                           # a reconnect 4x/min (battery drain + delivery gaps)
+          requestTimeout: "0s"             # the app holds a long-poll stream; 15s would force a reconnect 4x/min

@@ -1,26 +1,16 @@
-# ArgoCD Application for the orphan-exporter (argo_apps/platform/charts/05_orphan_exporter/). Detects every
-# deletionProtection-carrying CR (CNPG Clusters, OpsTree Redis, VLSingle/VMSingle/VMAgent) orphaned by a GitOps
-# prune (owning Argo app gone) or lacking Argo tracking metadata, the monitoring half of orphan-not-delete.
-# See docs/13_backups.md + docs/12_redis.md.
-#
-# AUTOMATED (prune + selfHeal): a safe read-only leaf.
-#
-# sync-wave "5": needs the CNPG CRD (wave 2), the Redis CRD (wave 3) and the Argo Application CRD (wave 1) to
-# read, plus the VM operator (wave 1) to convert its PodMonitor. Grouped with the monitoring apps at wave 5.
-# A CRD that isn't there yet is tolerated anyway (the exporter's list helper swallows a 404).
+# orphan-exporter: finds deletionProtection CRs orphaned by a GitOps prune. The monitoring half of orphan-not-delete.
 apiVersion: argoproj.io/v1alpha1
 kind: Application
 metadata:
   name: orphan-exporter
   namespace: argocd
-  # Cascade-delete this app's own resources on Application deletion instead of orphaning them; see 05_gitops.md.
   finalizers:
     - resources-finalizer.argocd.argoproj.io
   annotations:
     argocd.argoproj.io/sync-wave: "5"
 spec:
   project: default
-  revisionHistoryLimit: 0  # roll-forward only; no Argo rollback history (05_gitops.md)
+  revisionHistoryLimit: 0
   source:
     repoURL: https://github.com/yama6a/offgrid
     targetRevision: HEAD
@@ -33,8 +23,8 @@ spec:
       prune: true
       selfHeal: true
     retry:
-      limit: -1  # unbounded; only retry re-drives a failed sync (see 05_gitops.md)
-      refresh: true  # retry the latest revision so a fix commit lands mid-loop
+      limit: -1
+      refresh: true
       backoff:
         duration: 5s
         factor: 2

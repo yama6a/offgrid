@@ -1,17 +1,5 @@
 apiVersion: v2
 name: ingress
-description: >-
-  Shared APPLICATION chart that renders the ingress "edge" for a consumer's `ingresses:` list: per host a
-  :443 Gateway listener + an HTTPRoute + a ReferenceGrant, and ONE multi-SAN cert-manager Certificate per
-  ingress (covering all its hosts, into one shared Secret every listener references). Consumed via a `file://`
-  dependency by the platform ingress (argo_apps/platform/charts/06_platform_ingress) and each workload chart,
-  which just supply values (no template). The google-sso chart depends on it too but for its callback hosts
-  calls the `ingress.renderIngress` named template directly from its own templates (named templates are global
-  across the chart tree). It renders NO SSO: Google-SSO is applied centrally per domain by 04_google_sso (one
-  SecurityPolicy per domain with per-host email allowlists). See 07_ingress.md.
-# type: application (renders first-party Gateway API + cert-manager resources), like pg-cluster/redis-instance.
-# Pins NO upstream and has no dependencies, so there is no Chart.lock here (the CONSUMERS carry the lock).
+description: Shared chart that renders the ingress edge for a consumer's ingresses[], per host a Gateway listener + HTTPRoute + ReferenceGrant, and one multi-SAN Certificate per ingress. Renders no SSO.
 type: application
-# Renders per-domain Cloudflare DNS-01 wildcard support (cloudflareZones): CF domains reference the shared
-# wildcard-<domain>-tls Secret + skip their per-ingress Certificate; non-CF domains unchanged (HTTP-01).
-version: 0.1.0                 # local chart, never bump version
+version: 0.1.0 # local chart, never bump version

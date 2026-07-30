@@ -1,24 +1,9 @@
-# ArgoCD Application for standalone Grafana (argo_apps/charts/05_grafana/), the dashboards UI for the
-# monitoring core. The grafana/grafana chart (no CRDs); its sidecar ingests kube-prometheus-stack's
-# emitted datasource + dashboard ConfigMaps (search-all-namespaces). Grafana's own auth is off
-# (anonymous Admin); the only gate is Google SSO, applied by the consolidated platform-ingress app (wave
-# 6) which fronts grafana.ops.example.com. No persistence. See 09_monitoring.md.
-#
-# AUTOMATED (prune + selfHeal): a leaf workload in the `monitoring` namespace, it can't cut the cluster
-# off its network, and it owns no CRDs.
-#
-# sync-wave "5": same wave as the stack it reads ConfigMaps from (05_victoria_metrics_k8s_stack). The
-# sidecar is a continuous watcher, so no hard "after the stack" ordering is needed. The grafana edge now
-# lives in the platform-ingress app at a LATER wave (6), so the grafana Service already exists when its
-# route is created (its backendRef resolves immediately). The namespace is labelled privileged exactly like
-# the stack (idempotent if the stack created `monitoring` first); ServerSideApply for parity with the other
-# monitoring apps; ServerSideDiff so server-defaulted CR fields don't show perpetual OutOfSync.
+# Grafana, the dashboards UI. Its own auth is off (anonymous admin); the central Google-SSO on its edge is the only gate.
 apiVersion: argoproj.io/v1alpha1
 kind: Application
 metadata:
   name: grafana
   namespace: argocd
-  # Cascade-delete this app's own resources on Application deletion instead of orphaning them; see 05_gitops.md.
   finalizers:
     - resources-finalizer.argocd.argoproj.io
   annotations:
@@ -26,14 +11,13 @@ metadata:
     argocd.argoproj.io/compare-options: ServerSideDiff=true
 spec:
   project: default
-  revisionHistoryLimit: 0  # roll-forward only; no Argo rollback history (05_gitops.md)
+  revisionHistoryLimit: 0
   source:
     repoURL: https://github.com/yama6a/offgrid
     targetRevision: HEAD
     path: argo_apps/platform/charts/05_grafana
   destination:
     server: https://kubernetes.default.svc
-    # Grafana lands in `monitoring` (single-namespace now that the edge moved to platform-ingress).
     namespace: monitoring
   syncPolicy:
     managedNamespaceMetadata:
@@ -45,8 +29,8 @@ spec:
       prune: true
       selfHeal: true
     retry:
-      limit: -1  # unbounded; only retry re-drives a failed sync (see 05_gitops.md)
-      refresh: true  # retry the latest revision so a fix commit lands mid-loop
+      limit: -1
+      refresh: true
       backoff:
         duration: 5s
         factor: 2

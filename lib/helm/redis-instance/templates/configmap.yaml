@@ -1,20 +1,12 @@
 {{- /*
-Extra redis.conf, mounted on top of the operator's generated base config. The OpsTree operator mounts this
-ConfigMap — referenced by the CR's spec.redisConfig.additionalRedisConfig — and includes `redis-additional.conf`
-(the key name is fixed by the operator). Always rendered (both persistence modes) so every instance gets the
-defrag block; the AOF lines are added only in persistent mode.
+Extra redis.conf, mounted over the operator's generated base config. The `redis-additional.conf` key name is
+fixed by the operator.
 
-Active defrag: jemalloc doesn't return freed memory to the allocator, so a high-churn workload (e.g. the cache's
-RPUSH-per-UUID with a 1h TTL) leaves used_memory_rss inflated and mem_fragmentation_ratio climbing. `activedefrag
-yes` lets Redis compact live. Upstream triggers never fire on a Pi-sized instance (default ignore-bytes 100mb ≫
-a ~77Mi maxmemory), so we lower them: ignore-bytes 16mb + threshold-lower 15%. (Redis conf takes no trailing
-inline comments — a `#` after a value is parsed as arguments — so the rationale stays here, not on the line.)
-See docs/12_redis.md.
-
-`appendonly yes` (persistent only) replays every write since the last rewrite on restart — at most ~1s lost on a
-hard crash (`appendfsync everysec`), vs the whole window back to the last RDB snapshot. AOF (and RDB) land on the
-PVC (operator sets dir=/data). Ephemeral (persistence: false) just omits these lines; the operator's base
-redis.conf still enables AOF, so it is not RDB-only in practice.
+Active defrag: jemalloc does not return freed memory, so a high-churn workload leaves used_memory_rss inflated.
+Upstream's trigger thresholds never fire on a Pi-sized instance (default ignore-bytes 100mb against a ~77Mi
+maxmemory), hence the lowered values below.
+Redis conf takes no trailing inline comments, a `#` after a value is parsed as an argument, so the rationale
+has to live up here rather than on the lines themselves.
 */ -}}
 apiVersion: v1
 kind: ConfigMap

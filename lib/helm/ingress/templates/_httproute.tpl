@@ -1,4 +1,4 @@
-{{/* ingress.httproute — routes one host to its Service. SSO (if any) is applied centrally by the
+{{/* ingress.httproute: routes one host to its Service. SSO (if any) is applied centrally by the
      google-sso chart, which targetRefs this route by name. ctx: {ingress, host}. */}}
 {{- define "ingress.httproute" -}}
 {{- $name := include "ingress.hostName" . -}}
@@ -21,6 +21,6 @@ spec:
           port: {{ .host.targetPort }}
 {{- with .host.requestTimeout }}
       timeouts:
-        request: {{ . | quote }}          # "0s" = off; needed for SSE/long-poll backends (Envoy cuts at 15s -> 504)
+        request: {{ . | quote }}          # "0s" = off; for backends that hold a response open (Envoy cuts at 15s -> 504)
 {{- end }}
 {{- end -}}

@@ -1,61 +1,55 @@
 # Sealed Secrets: committing secrets to git, safely
 
-With ArgoCD delivering everything from [step 05](05_gitops.md), the cluster needs a way to keep
-secrets in git alongside the manifests that consume them. [05_gitops.md](05_gitops.md) already
-flagged this: the repo clone credential stays imperative (chicken-and-egg), and "sealed-secrets is
-reserved for app/cluster secrets later (GitOps-managed, wave 1+)." This is that step.
+[Sealed Secrets](https://github.com/bitnami-labs/sealed-secrets) runs a controller holding an RSA key pair.
+`kubeseal` encrypts a value against the public key into a `SealedSecret` custom resource, which is safe to
+commit. Only this controller, holding the private key, can decrypt it back into a normal `Secret` in-cluster.
+Asymmetric, so anyone can seal and only the cluster can unseal.
 
-[Sealed Secrets](https://github.com/bitnami-labs/sealed-secrets) (Bitnami) runs a controller holding
-an RSA key pair. You encrypt a value against its public key (`kubeseal`) into a `SealedSecret`
-custom resource (safe to commit to git), and only this controller, with the private key, can
-decrypt it back into a normal `Secret` in-cluster. Asymmetric, so anyone can seal; only the cluster
-can unseal.
-
-This is not an imperative bootstrap like Cilium or ArgoCD, it's a plain wave-2 ArgoCD app. The
-only out-of-band step is backing up the controller's private key (below): lose it and every
-committed `SealedSecret` is permanently undecryptable.
+- Not an imperative bootstrap like Cilium or ArgoCD. It is a plain wave-2 ArgoCD app.
+- One out-of-band step: backing up the controller's private key. Lose it and every committed `SealedSecret` is
+  permanently undecryptable.
+- [05_gitops.md](05_gitops.md) flagged the split: the repo clone credential stays imperative
+  (chicken-and-egg), everything else waits for this.
 
 ## The wrapper chart
 
-Single source of truth is the wrapper chart at `argo_apps/platform/charts/02_sealed_secrets/` (same pattern as
-`00_cilium` / `01_argocd`):
+`argo_apps/platform/charts/02_sealed_secrets/`, same pattern as `00_cilium` and `01_argocd`:
 
 | Path          | Holds                                                                                    |
 |---------------|------------------------------------------------------------------------------------------|
-| `Chart.yaml`  | the sealed-secrets chart version, a dependency on the `bitnami.github.io/sealed-secrets` chart repo. |
-| `values.yaml` | all config under the `sealed-secrets:` key: `fullnameOverride`, logging, resources.      |
-| `Chart.lock`  | pins the resolved dependency; must be committed (ArgoCD's repo-server runs `helm dependency build`). |
+| `Chart.yaml`  | a dependency on the `bitnami.github.io/sealed-secrets` chart repo, pinned                |
+| `values.yaml` | all config under the `sealed-secrets:` key: `fullnameOverride`, logging, resources        |
+| `Chart.lock`  | the resolved dependency; must be committed, ArgoCD's repo-server runs `helm dependency build` |
 
-Generate/refresh the lock with `helm dependency update argo_apps/platform/charts/02_sealed_secrets` and commit
-it (the vendored `charts/*.tgz` is gitignored, reproduced from the lock, same as the other charts).
+Refresh the lock with `helm dependency update argo_apps/platform/charts/02_sealed_secrets` and commit it. The
+vendored `charts/*.tgz` is gitignored and reproduced from the lock, same as the other charts.
 
-## Where it sits: wave 2, same as nic-keeper
+## Where it sits: wave 2
 
-The [`nic-keeper`](03_operating_system.md) DaemonSet and this controller are independent leaves (neither
-depends on the other), so they share sync-wave `2`. Per [CLAUDE.md](../CLAUDE.md) the `NN` prefix on
-an app is its wave, so both carry the `02_` prefix (`argo_apps/platform/apps/02_nic_keeper.yaml` and
-`argo_apps/platform/apps/02_sealed_secrets.yaml`); the dir/file names stay distinct and `ls argo_apps/platform/apps/`
-still reads in deploy order. Wave 2 is the "after the platform (CNI + ArgoCD) is in place" slot.
+The [`nic-keeper`](03_operating_system.md) DaemonSet and this controller are independent leaves, neither
+depending on the other, so they share wave `2`: the "after the CNI and ArgoCD are in place" slot. Both carry the
+`02_` prefix, and `ls argo_apps/platform/apps/` still reads in deploy order.
 
-Standard automated-leaf posture (`prune + selfHeal`, see [CLAUDE.md](../CLAUDE.md)) + `ServerSideApply=true`.
-Two specifics worth noting: the controller's runtime-generated key Secret is not in git, so `prune` never
-cascade-deletes it, and it runs in its own `sealed-secrets` namespace (`CreateNamespace=true`), mirroring
-how ArgoCD gets its own ns.
+Standard automated-leaf settings (`prune` + `selfHeal`) plus `ServerSideApply=true`. Two specifics:
+
+- The controller's runtime-generated key Secret is not in git, so `prune` never cascade-deletes it.
+- It runs in its own `sealed-secrets` namespace (`CreateNamespace=true`), mirroring how ArgoCD gets its own.
 
 ## Key custody: the one thing you must not lose
 
 The controller generates its RSA key on first start, stores the private key in a Secret labelled
-`sealedsecrets.bitnami.com/sealed-secrets-key` in the `sealed-secrets` namespace, and rotates it
-roughly monthly, keeping the old keys (so previously-sealed secrets still decrypt). That key set is
-the only thing that can decrypt the `SealedSecret`s committed to this repo, a cluster rebuild
-without it orphans every sealed value.
+`sealedsecrets.bitnami.com/sealed-secrets-key` in the `sealed-secrets` namespace, and rotates it roughly monthly
+while keeping the old keys so previously-sealed secrets still decrypt.
+
+That key set is the only thing that can decrypt the `SealedSecret`s in this repo. A cluster rebuild without it
+orphans every sealed value.
 
 `lib/shell/06_backup_sealed_secrets_key.sh` dumps all labelled key Secrets to
-`secrets/sealed-secrets-master.key`. That dir is gitignored (the `/secrets` rule in the root
-`.gitignore`; `secrets/` is a symlink to an off-repo store), so the private key is never committed, the
-same custody guarantee as the `kubeconfig` / `talosconfig` that already live there. Native `kubectl`,
-PASS/FAIL summary, idempotent, re-run after each rotation (and stash a copy somewhere off-cluster;
-surviving a cluster loss is the whole point).
+`secrets/sealed-secrets-master.key`. That dir is gitignored (`/secrets` in the root `.gitignore`; `secrets/` is a
+symlink to an off-repo store), so the private key is never committed. Same custody as the `kubeconfig` and
+`talosconfig` already there. Native `kubectl`, PASS/FAIL summary, idempotent, re-run after each rotation.
+
+Keep a copy off-cluster too. A backup that only exists on this cluster is useless the day you lose the cluster.
 
 ```bash
 # back up the master key (after the app is Synced/Healthy, and after each ~monthly rotation):
@@ -66,27 +60,26 @@ kubectl apply -f secrets/sealed-secrets-master.key
 kubectl delete pod -n sealed-secrets -l app.kubernetes.io/name=sealed-secrets   # restart to load it
 ```
 
-### First-time bootstrap vs rebuild (the two orchestrators)
+### First-time bootstrap vs rebuild
 
-The repo has two one-shot orchestrators at the root, and the sealed-secrets key is exactly what separates
-them:
+The key is exactly what separates the two one-shot orchestrators:
 
-- **`DANGEROUS_rebuild_cluster.sh`** — wipes a **running** cluster and rebuilds it, then **restores** the
-  backed-up master key (`06_restore`) so the committed `SealedSecret`s decrypt unchanged. It does *not*
-  re-seal. Requires a current key backup (run `06_backup` beforehand).
-- **`DANGEROUS_bootstrap_cluster.sh`** — **first-time** init on freshly-flashed nodes in maintenance mode.
-  There is no prior key to restore, so the fresh controller mints a **brand-new** key and the committed
-  `google-oauth` `SealedSecret` is orphaned. It therefore **re-seals** it against the new key
-  (`07_google_sso </dev/null` — keeps the committed allowlists), commits +
-  pushes, then **backs up** the new key (`06_backup`) so future rebuilds can restore it. It also archives
-  the old `secrets.yaml`/`kubeconfig`/`talosconfig`/`sealed-secrets-master.key` to
-  `secrets/backup_<timestamp>/` and starts from a fresh Talos CA. To re-initialize a *running*
-  cluster, use the rebuild script instead (it wipes first).
+- `DANGEROUS_rebuild_cluster.sh` wipes a RUNNING cluster and rebuilds it, then RESTORES the backed-up master key
+  so the committed `SealedSecret`s decrypt unchanged. It does not re-seal. Needs a current backup, so run
+  `06_backup` beforehand.
+- `DANGEROUS_bootstrap_cluster.sh` is a FIRST-TIME init on freshly-flashed nodes in maintenance mode. There is
+  no prior key, so the fresh controller mints a brand-new one and the committed `google-oauth` `SealedSecret` is
+  orphaned. It therefore re-seals against the new key (keeping the committed allowlists), commits, pushes, then
+  backs the new key up so future rebuilds can restore it. It also archives the old
+  `secrets.yaml`/`kubeconfig`/`talosconfig`/`sealed-secrets-master.key` to `secrets/backup_<timestamp>/` and
+  starts from a fresh Talos CA.
 
-## Using it: sealing a secret
+To re-initialize a running cluster use the rebuild script, which wipes first.
 
-Install the `kubeseal` CLI (`brew install kubeseal`), then seal against this controller (the
-`fullnameOverride: sealed-secrets` in `values.yaml` keeps the name/namespace stable):
+## Sealing a secret
+
+Install the CLI with `brew install kubeseal`. The `fullnameOverride: sealed-secrets` in `values.yaml` keeps the
+name and namespace stable, which is what the flags below match on.
 
 ```bash
 # seal a whole Secret manifest into a commit-safe SealedSecret:
@@ -100,16 +93,15 @@ echo -n s3cr3t | kubeseal --controller-namespace sealed-secrets --controller-nam
     --raw --scope strict --name my-secret --namespace my-app
 ```
 
-By default a `SealedSecret` is `strict`-scoped: it only unseals into the exact name+namespace it was
-sealed for. Use `--scope namespace-wide` / `cluster-wide` only when you deliberately need to relax that.
+A `SealedSecret` is `strict`-scoped by default: it unseals only into the exact name and namespace it was sealed
+for. Use `--scope namespace-wide` or `cluster-wide` only when you deliberately need that.
 
 ## Caveats
 
-- No bootstrap script generates the lock here (unlike `01_argocd`), so run `helm dependency update
-  argo_apps/platform/charts/02_sealed_secrets` and commit `Chart.lock` yourself before the app syncs, or
-  it shows `OutOfSync` with a `helm dependency build` error. (The general Chart.lock + push-before-sync
-  rules live in [CLAUDE.md](../CLAUDE.md).)
-- The backup is only as fresh as your last run. Keys rotate; re-run the backup script after each
-  rotation (or schedule it) so a restore has the current active key, not just historical ones.
-- `SealedSecret`s are bound to this cluster's key. Sealing against one cluster's public key and
-  applying to another won't unseal, restore the backed-up key first, or re-seal against the new key.
+- No bootstrap script generates the lock here, unlike `01_argocd`. Run `helm dependency update
+  argo_apps/platform/charts/02_sealed_secrets` and commit `Chart.lock` yourself before the app syncs, or it shows
+  `OutOfSync` with a `helm dependency build` error.
+- The backup is only as fresh as your last run. Keys rotate, so re-run the backup after each rotation, or
+  schedule it, and a restore then has the current active key rather than only historical ones.
+- A `SealedSecret` is bound to this cluster's key. Sealing against one cluster and applying to another will not
+  unseal: restore the backed-up key first, or re-seal against the new one.

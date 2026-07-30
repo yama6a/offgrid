@@ -1,39 +1,30 @@
-# ArgoCD Application for the nic-keeper DaemonSet (argo_apps/charts/02_nic_keeper/), the RUNTIME
-# half of the Pi 5 macb NIC-wedge mitigation, complementing 03e's machine-config half. See
-# 06_nic_keeper.md and 03_operating_system.md ("NIC hardening, the macb wedge").
-#
-# AUTOMATED (prune + selfHeal): unlike Cilium (wave 0), this is a safe leaf, it can't cut the
-# cluster off its own network, so drift should just auto-correct. No break-glass concerns here.
-#
-# sync-wave "2": after cilium (0) + argocd (1). The pod schedules only on a Ready node, which means
-# the CNI must be up first. Wave 2 is the "after the platform is in place" slot (CLAUDE.md).
+# nic-keeper DaemonSet: the runtime half of the Pi 5 macb NIC-wedge mitigation (03e is the machine-config half).
 apiVersion: argoproj.io/v1alpha1
 kind: Application
 metadata:
   name: nic-keeper
   namespace: argocd
-  # Cascade-delete this app's own resources on Application deletion instead of orphaning them; see 05_gitops.md.
   finalizers:
     - resources-finalizer.argocd.argoproj.io
   annotations:
     argocd.argoproj.io/sync-wave: "2"
 spec:
   project: default
-  revisionHistoryLimit: 0  # roll-forward only; no Argo rollback history (05_gitops.md)
+  revisionHistoryLimit: 0
   source:
     repoURL: https://github.com/yama6a/offgrid
     targetRevision: HEAD
     path: argo_apps/platform/charts/02_nic_keeper
   destination:
     server: https://kubernetes.default.svc
-    namespace: kube-system   # Talos exempts kube-system from Pod Security -> the NET_ADMIN pod is allowed
+    namespace: kube-system # Talos exempts kube-system from Pod Security, so the NET_ADMIN pod is allowed
   syncPolicy:
     automated:
       prune: true
       selfHeal: true
     retry:
-      limit: -1  # unbounded; only retry re-drives a failed sync (see 05_gitops.md)
-      refresh: true  # retry the latest revision so a fix commit lands mid-loop
+      limit: -1
+      refresh: true
       backoff:
         duration: 5s
         factor: 2

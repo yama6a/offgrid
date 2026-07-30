@@ -1,24 +1,20 @@
-# Custom KRR strategy for RAM-constrained nodes (this cluster: 3x 8GB Pi 5).
+# Custom KRR strategy for RAM-constrained nodes. The built-in `simple` sets memory request == limit == peak,
+# which on scarce RAM permanently books memory that is rarely used and tanks pod density, because `request` is
+# what the scheduler RESERVES. So the two are split:
 #
-# The built-in `simple` strategy sets memory request == limit == peak + buffer. On scarce RAM that's
-# wasteful: `request` is what the scheduler RESERVES, so requesting the peak permanently books memory that
-# is rarely used and tanks pod density. This strategy splits the two:
+#   memory REQUEST = max(AVERAGE working set, 16Mi)   scheduler packs on typical use, not peak
+#   memory LIMIT   = max(PEAK * 1.2, 32Mi)            per-pod safety ceiling
+#   CPU            unchanged from `simple` (CPU is compressible)
 #
-#   memory REQUEST = max(AVERAGE working-set, request-floor)   -> scheduler packs on typical use, not peak (floor 16Mi)
-#   memory LIMIT   = max(PEAK * (1 + buffer%), limit-floor)     -> per-pod safety ceiling (+20%, floor 32Mi)
-#   CPU            = unchanged from `simple` (request = Nth percentile, limit unset; CPU is compressible)
+# The two floors are ASYMMETRIC, which KRR's single --mem-min cannot express, so they live here and krr.sh runs
+# with --mem-min 0. Request floor is the idle working set; limit floor is cold-start and GC headroom.
 #
-# The two floors are ASYMMETRIC (request 16Mi < limit 32Mi), which KRR's single --mem-min can't express, so we
-# floor inside the strategy and run with --mem-min 0 (see lib/shell/krr.sh). Request floor = idle working set
-# (avoid scheduler overcommit); limit floor = cold-start/GC headroom (the OOM-safety floor).
+# Deliberate trade-off: requests no longer cover peak, so several pods peaking at once can exhaust physical RAM
+# and get a pod OOM-killed even though each is under its own limit. Accepted to buy density. Keep node eviction
+# headroom and watch for OOMKills.
 #
-# Deliberate trade-off: requests no longer cover the peak, so if several pods peak at once the node can run
-# out of physical RAM and the kernel / node-pressure eviction OOM-kills a pod even though each is under its
-# own limit. Accepted to buy density on scarce RAM; keep a node eviction headroom and watch for OOMKills.
-#
-# Loaded by mounting this file + a strategies/__init__.py that imports it into the pinned KRR image (see
-# lib/shell/krr.sh). Written against KRR v1.28.0 internals; revisit on an image bump. Modelled on the
-# upstream simple.py so the CPU path and the data-sufficiency/HPA guards behave identically.
+# Written against KRR v1.28.0 internals, and modelled on the upstream simple.py so the CPU path and the
+# data-sufficiency and HPA guards behave identically. Revisit on an image bump.
 
 import textwrap
 
@@ -100,19 +96,19 @@ class ConservativeStrategySettings(StrategySettings):
         return np.max(data_)
 
     def calculate_memory_request(self, avg_data: PodsTimeData) -> float:
-        # per-pod average, then the busiest replica's average (so no replica is under-requested vs its own typical use)
+        # Per-pod average, then the busiest replica's, so no replica is under-requested against its own use.
         data_ = [np.max(values[:, 1]) for values in avg_data.values()]
         if len(data_) == 0:
             return float("NaN")
-        # request = max(average usage, floor). Floor reflects the idle working set so the scheduler doesn't overcommit.
+        # The floor reflects the idle working set, so the scheduler does not overcommit.
         return max(np.max(data_), self.memory_request_min * 1024**2)
 
     def calculate_memory_limit(self, max_data: PodsTimeData, max_oomkill: float = 0) -> float:
         data_ = [np.max(values[:, 1]) for values in max_data.values()]
         if len(data_) == 0:
             return float("NaN")
-        # limit = max(peak + buffer, OOMKilled-limit + its buffer, floor). An OOMKill proves the ceiling was too low;
-        # the floor gives tiny pods cold-start/GC headroom (this is the OOM-safety floor, higher than the request floor).
+        # An OOMKill proves the ceiling was too low. The floor gives tiny pods cold-start and GC headroom, and
+        # is higher than the request floor on purpose.
         return max(
             np.max(data_) * (1 + self.memory_limit_buffer_percentage / 100),
             max_oomkill * (1 + self.oom_memory_buffer_percentage / 100),

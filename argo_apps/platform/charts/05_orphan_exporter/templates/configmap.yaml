@@ -1,9 +1,5 @@
-# The exporter, kept in Git and mounted read-only into the pod (run as python3 /app/exporter.py). Stdlib only
-# (urllib + http.server), so the base python image needs no pip install. Two jobs: resolve each protected stateful
-# CR (CNPG Cluster, OpsTree Redis, VM/VL stores) to its owning ArgoCD Application via tracking metadata and report
-# orphaned / untracked; and report per-CNPG-server backup recoverability off the ObjectStore status (the only
-# place that populates under the barman plugin).
-# See docs/13_backups.md + docs/12_redis.md.
+# The exporter, mounted read-only into the pod. Stdlib only (urllib + http.server), so the base python image
+# needs no pip install.
 apiVersion: v1
 kind: ConfigMap
 metadata:
@@ -41,8 +37,7 @@ data:
                 return []
             raise
 
-    # Owning app from Argo tracking metadata. Reads BOTH keys so it works under any
-    # application.resourceTrackingMethod (annotation | label | annotation+label); neither present => untracked.
+    # Reads BOTH keys so it works under any application.resourceTrackingMethod. Neither present = untracked.
     def owning_app(meta):
         tid = (meta.get("annotations") or {}).get("argocd.argoproj.io/tracking-id")
         if tid:
@@ -52,13 +47,11 @@ data:
     def esc(v):
         return v.replace("\\", "\\\\").replace('"', '\\"')
 
-    # Every emitted label is res_-prefixed, because a bare one gets CLOBBERED, not merged: the PodMonitor scrape
-    # stamps namespace/pod/instance/container/job from the exporter's OWN pod and the vmagent adds cluster, all of
-    # which win, demoting ours to exported_*. So `namespace` read "orphan-exporter" and `cluster` read
-    # "raspi-cluster" for every series, which both mislabelled the alerts and collapsed every orphaned CNPG
-    # cluster into ONE by(namespace,cluster) series. Never emit a bare namespace/cluster/pod/instance here.
-    # The VM/VL stores share ONE metric pair with a res_kind label instead of three, so the alert file stays at
-    # two rules for them.
+    # Every emitted label MUST be res_-prefixed. A bare one gets CLOBBERED, not merged: the scrape stamps
+    # namespace/pod/instance/container/job from the exporter's own pod and vmagent adds cluster, all of which
+    # win and demote ours to exported_*. That both mislabels the alerts and collapses every orphaned cluster
+    # into one by(namespace,cluster) series.
+    # The VM/VL stores share ONE metric pair with a res_kind label, so the alert file stays at two rules.
     #   (api path, label key, orphaned metric, untracked metric, extra static labels)
     KINDS = [
         ("/apis/postgresql.cnpg.io/v1/clusters",                    "res_cluster", "orphaned_cnpg_cluster",   "cnpg_cluster_untracked",   {}),
@@ -81,11 +74,10 @@ data:
         except ValueError:
             return 0
 
-    # Backup RECOVERABILITY, per barman server (= CNPG cluster name), read off each ObjectStore's status.
-    # Deliberately NOT from the Cluster: under the Barman Cloud plugin, Cluster.status.firstRecoverabilityPoint
-    # stays empty even with a completed base backup in S3, and cnpg_collector_last_available_backup_timestamp
-    # stays 0 (which is why cnpg-backup-too-old can't fire). The ObjectStore is the only source that populates.
-    # Catches the failure that WAL-archive health cannot: archiving green, catalog empty, restore impossible.
+    # Backup recoverability, per barman server, read off each ObjectStore's status. Deliberately NOT off the
+    # Cluster: under the Barman Cloud plugin, Cluster.status.firstRecoverabilityPoint stays empty even with a
+    # completed base backup in S3, which is also why cnpg-backup-too-old cannot fire. Catches the failure
+    # WAL-archive health cannot: archiving green, catalog empty, restore impossible.
     def collect_recoverability():
         out = [
             "# HELP cnpg_backup_recoverable 1 = the object store has a recovery point for this server (restorable)",
@@ -97,8 +89,8 @@ data:
             ns = store["metadata"]["namespace"]
             window = ((store.get("status") or {}).get("serverRecoveryWindow") or {})
             if not window:
-                # Store exists but the plugin has reported nothing yet: attribute it to the cluster label the
-                # chart stamps, else the failure would be invisible (no series at all reads as "fine").
+                # Attribute it to the chart-stamped cluster label. Emit nothing and there is no series at
+                # all, which the alert cannot tell apart from a healthy one.
                 name = (store["metadata"].get("labels") or {}).get("cnpg.io/cluster")
                 if name:
                     lb = labels([("res_namespace", ns), ("res_cluster", name)])
@@ -113,13 +105,10 @@ data:
                            % (lb, rfc3339((w or {}).get("lastSuccessfulBackupTime"))))
         return out
 
-    # Redis backup recoverability. Redis has no in-cluster object describing its backup state (the Redis CR has
-    # no backup stanza and the only artefact is the S3 object), so the central 07_redis_backup CronJob publishes
-    # what it knows into ConfigMap redis-backup/redis-backup-status, one key per instance,
-    # `<ns>_<name>: "<unix_ts> <bytes>"`. `_` is a safe separator: k8s names cannot contain it.
-    # The set of instances comes from the CRs, NOT from that ConfigMap, which is the point: an instance that the
-    # job never discovered (label lost, persistence flipped, renamed) has no entry, and the job still exits 0
-    # and "all backups ok". Keying off the labelled CRs turns that silence into a 0.
+    # Redis has no in-cluster object describing backup state, so the 07_redis_backup CronJob publishes what it
+    # knows into a ConfigMap, one key per instance. `_` is a safe separator, k8s names cannot contain it.
+    # The instance SET comes from the CRs, not from that ConfigMap, and that is the point: an instance the job
+    # never discovered has no entry, and the job still exits 0 and reports all backups ok.
     def collect_redis_recoverability():
         out = [
             "# HELP redis_backup_recoverable 1 = a non-empty RDB dump was uploaded for this instance",

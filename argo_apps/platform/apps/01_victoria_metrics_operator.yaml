@@ -1,22 +1,9 @@
-# ArgoCD Application for the VictoriaMetrics operator (argo_apps/charts/01_victoria_metrics_operator/).
-# The controller that reconciles the VM*/VL* CRs the wave-5 stack ships AND runs the prometheus-operator
-# converter (ServiceMonitor/PodMonitor/PrometheusRule/Probe -> VM* equivalents) so the migration off
-# kube-prometheus-stack rewrites no third-party scrape config. CRDs come from wave 0
-# (00_victoria_metrics_operator_crds, crds.enabled:false here). See 15_monitoring.md.
-#
-# AUTOMATED (prune + selfHeal): a safe leaf, it owns no CRDs (those are the wave-0 app's) and can't cut
-# the cluster off its network. selfHeal re-applying the operator Deployment is harmless.
-#
-# sync-wave "1": an operator with an admission webhook, alongside argocd / envoy-gateway, after its CRDs
-# (wave 0), and well before the wave-5 VM/VL custom resources it validates and reconciles (by the time the
-# root reaches wave 5 this operator is long Healthy, so its webhook accepts the VMSingle/VLSingle/VMAgent
-# CRs). ServerSideApply + ServerSideDiff so the operator-managed webhook fields don't show OutOfSync.
+# VictoriaMetrics operator: reconciles the VM*/VL* CRs and converts prometheus-operator ServiceMonitors to VM equivalents.
 apiVersion: argoproj.io/v1alpha1
 kind: Application
 metadata:
   name: victoria-metrics-operator
   namespace: argocd
-  # Cascade-delete this app's own resources on Application deletion instead of orphaning them; see 05_gitops.md.
   finalizers:
     - resources-finalizer.argocd.argoproj.io
   annotations:
@@ -24,7 +11,7 @@ metadata:
     argocd.argoproj.io/compare-options: ServerSideDiff=true
 spec:
   project: default
-  revisionHistoryLimit: 0  # roll-forward only; no Argo rollback history (05_gitops.md)
+  revisionHistoryLimit: 0
   source:
     repoURL: https://github.com/yama6a/offgrid
     targetRevision: HEAD
@@ -42,8 +29,8 @@ spec:
       prune: true
       selfHeal: true
     retry:
-      limit: -1  # unbounded; only retry re-drives a failed sync (see 05_gitops.md)
-      refresh: true  # retry the latest revision so a fix commit lands mid-loop
+      limit: -1
+      refresh: true
       backoff:
         duration: 5s
         factor: 2
@@ -51,6 +38,3 @@ spec:
     syncOptions:
       - CreateNamespace=true
       - ServerSideApply=true
-  # NOTE: the operator's validating webhook is disabled in values.yaml (wave-1 placement is before
-  # cert-manager, and the chart's Helm-genCA fallback drifts under ArgoCD re-renders), so there is no
-  # ValidatingWebhookConfiguration to reconcile or ignoreDifferences here. See 15_monitoring.md.

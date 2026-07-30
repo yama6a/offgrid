@@ -1,9 +1,7 @@
 {{- /*
-Egress lockdown for the central backup pod. Rendered under the same bucket gate as the CronJob. Egress-only (the
-pod exposes nothing): deny-by-default egress except the three things a run needs — DNS, VMSingle on 8428 + VLSingle
-on 9428 (to pull the exports), and S3 on 443 (to upload them). VMSingle/VLSingle each separately allow THIS pod
-inbound (their own networkpolicy.yaml allowlists app.kubernetes.io/name: vm-backup). No kube-apiserver rule: this
-job reads the stores over HTTP by Service DNS, it does not touch the k8s API.
+Egress lockdown for the central backup pod, under the same bucket gate as the CronJob. Egress-only, the pod
+exposes nothing. VMSingle and VLSingle each separately allow this pod inbound in their own policy.
+No apiserver rule: the job reads the stores over HTTP by Service DNS and never touches the k8s API.
 */ -}}
 {{- if .Values.bucket }}
 apiVersion: cilium.io/v2
@@ -17,7 +15,7 @@ spec:
       app.kubernetes.io/name: vm-backup
       app.kubernetes.io/component: vm-backup
   egress:
-    # (a) DNS to CoreDNS — L7 so Cilium's DNS proxy can back the toFQDNs rule below (and resolve Service names).
+    # DNS. L7 so Cilium's DNS proxy can back the toFQDNs rule below.
     - toEndpoints:
         - matchLabels:
             k8s:io.kubernetes.pod.namespace: kube-system
@@ -29,7 +27,7 @@ spec:
           rules:
             dns:
               - matchPattern: "*"
-    # (b) VMSingle metrics export on 8428.
+    # VMSingle metrics export.
     - toEndpoints:
         - matchLabels:
             k8s:io.kubernetes.pod.namespace: monitoring
@@ -38,7 +36,7 @@ spec:
       toPorts:
         - ports:
             - { port: "8428", protocol: TCP }
-    # (c) VLSingle logs export on 9428.
+    # VLSingle logs export.
     - toEndpoints:
         - matchLabels:
             k8s:io.kubernetes.pod.namespace: monitoring
@@ -47,7 +45,7 @@ spec:
       toPorts:
         - ports:
             - { port: "9428", protocol: TCP }
-    # (d) S3 upload over HTTPS (virtual-hosted + path-style regional endpoints).
+    # S3 upload, both virtual-hosted and path-style regional endpoints.
     - toFQDNs:
         - matchPattern: "*.s3.{{ .Values.region }}.amazonaws.com"
         - matchName: "s3.{{ .Values.region }}.amazonaws.com"

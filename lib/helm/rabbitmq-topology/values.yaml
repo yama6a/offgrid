@@ -1,56 +1,24 @@
-# Shared defaults every rabbitmq-topology consumer inherits (merged under the `rabbitmq-topology` key, the
-# repo's usual "config under the dependency name" convention). A workload overrides these under its own
-# `rabbitmq-topology:` block. This chart renders only topology CRs (User/Exchange/Queue/Binding/Permission)
-# against the shared broker; it never touches the workload's Deployment (the pod wires the generated
-# credentials Secret itself, like the PG_PASSWORD block). Full schema + the ownership model: see 11_messaging.md.
+user: ""          # OPTIONAL: (string) This workload's one user. Empty = the release name. Credentials land in Secret <user>-user-credentials.
 
-# The shared broker (cluster `rabbitmq` in ns `rabbitmq`) + the one shared vhost (`apps`) are platform invariants
-# baked into the template (see _all.tpl) — same for EVERY consumer, so NOT configurable here. The CRs live in the
-# workload's namespace but reference the broker cross-namespace, so the generated <user>-user-credentials Secret
-# lands in the workload namespace. Setting `cluster`/`vhost` is rejected at render.
+deadLetter: true  # OPTIONAL: (bool) Per consumer queue, a <queue>.dlx + <queue>.dlq pair. Nothing consumes a DLQ, you alert on its depth.
+deliveryLimit: 5  # OPTIONAL: (int) Failed redeliveries before a message goes to its DLQ.
+# Queue arguments are IMMUTABLE: turning deadLetter on for an EXISTING queue needs that queue deleted once.
 
-# This workload's ONE user (reusable for all its publish + consume needs). Empty => defaults to the release
-# name at render time. The operator generates its credentials into Secret `<user>-user-credentials`.
-user: ""
-
-# ---- Dead-letter (DLQ) ----
-# Every CONSUMER queue this workload owns (each consumeCommands + subscribeEvents queue) gets a companion
-# dead-letter exchange `<queue>.dlx` (fanout) + queue `<queue>.dlq` (quorum), and the source queue is declared
-# with x-dead-letter-exchange + x-delivery-limit: after `deliveryLimit` failed redeliveries a poison message is
-# routed to its DLQ instead of being silently dropped (at-most-once — the RabbitMQ default). DLQs are holding
-# queues, nothing consumes them; you alert on their depth (see the rabbitmq-dlq-not-empty alert / 09_monitoring.md)
-# and drain/replay by hand. Set `deadLetter: false` to opt a workload out.
-# NOTE: queue arguments are IMMUTABLE in RabbitMQ — turning this on for an EXISTING queue needs that queue
-# recreated (delete it once; the operator redeclares it with the args). See 11_messaging.md.
-deadLetter: true
-deliveryLimit: 5
-
-# ---- EVENT topics this workload OWNS + publishes to (1 publisher : N consumers) ----
-# Each entry declares an Exchange this workload owns and grants this workload write on it. Consumers of these
-# events declare their own queues via `subscribeEvents` (below), each readable only by their own user.
-#   - name: sample-events      # the exchange name
-#     type: topic              # topic | fanout | direct | headers (REQUIRED, no default)
+# Event exchanges this workload OWNS and publishes to (1 publisher : N consumers).
+#   - name: sample-events
+#     type: topic            # REQUIRED: topic | fanout | direct | headers
 publishEvents: []
 
-# ---- EVENT topics this workload SUBSCRIBES to (its OWN private queue per subscription) ----
-# For each, a Queue named "<user>.<exchange>" + a Binding to that exchange are created, and this workload's
-# user is granted read on that queue (only this user can consume it). The exchange itself is NOT declared here
-# — its owning publisher declares it via `publishEvents`.
-#   - exchange: other-events   # an event exchange owned by the publisher workload
-#     routingKey: "order.#"    # AMQP topic pattern (default "#" = all)
+# Event exchanges this workload SUBSCRIBES to. Each gets a private "<user>.<exchange>" queue + binding.
+#   - exchange: other-events
+#     routingKey: "order.#"  # OPTIONAL: default "#"
 subscribeEvents: []
 
-# ---- COMMAND topics this workload OWNS + consumes (N publishers : 1 consumer = me) ----
-# Each entry declares the Exchange + its single Queue + the Binding (all owned by this consumer) and grants
-# this workload read on the queue. Other workloads send to it via `sendCommands`. The exchange is ALWAYS a
-# `direct` exchange — a command topic is point-to-point by definition, so the type isn't configurable (setting
-# `type` is rejected). Only `name` (+ optional `routingKey`) are knobs.
-#   - name: sample-commands    # the command exchange + queue name (this workload is the sole consumer)
-#     routingKey: ""           # binding key (default: the name itself, i.e. direct routing)
+# Command exchanges this workload OWNS and consumes (N publishers : 1 consumer). Always direct, setting type is rejected.
+#   - name: sample-commands
+#     routingKey: ""         # OPTIONAL: default is the name itself
 consumeCommands: []
 
-# ---- COMMAND topics OWNED BY OTHER workloads that this workload SENDS to ----
-# Just grants this workload write on the named exchange(s); the exchange+queue are declared by their owning
-# consumer via its `consumeCommands`.
-#   - other-commands           # an exchange name owned by the consumer workload
+# Command exchanges owned by OTHER workloads that this one sends to. Grants write only, no declaration.
+#   - other-commands
 sendCommands: []

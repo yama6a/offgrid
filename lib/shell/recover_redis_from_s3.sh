@@ -1,36 +1,26 @@
 #!/usr/bin/env bash
-#
-# recover_redis_from_s3.sh  (macOS)
-#
-# Restore a standalone OpsTree Redis instance from its off-cluster S3 RDB dumps (written by the central backup
-# CronJob, 07_redis_backup / 15_redis_backup.sh). Second DR tier: use it when the data is genuinely gone
-# (disk/cluster loss, corruption, a bad write you want to rewind, or a deliberate two-commit delete).
-#
-# Resolves state first (what git declares vs what the cluster has), prints it, then runs three phases:
+# Restores a standalone Redis instance from its S3 RDB dumps. Resolves state first (what git declares vs what
+# the cluster has), prints it, then runs three phases:
 #
 #   PHASE 1  get an instance to restore into. This replays a dump INTO a running instance and cannot create
-#            one, but when the alias is still in git the instance is already on its way back, so it WAITS for
-#            Argo + the operator rather than making you poll. If nothing in git declares it, it says which two
-#            files to put back (the Chart.yaml alias is not recoverable from values.yaml alone) and stops.
-#            Refuses on an uncommitted values.yaml: Argo syncs the pushed remote, not your working tree.
-#   PHASE 2  pick a dump and replay it. Lists every dump with size + age; an RDB under 250 bytes is EMPTY and
-#            takes an explicit yes, because restoring one FLUSHALLs the instance and puts nothing back, which
-#            is data loss that reads as a successful run. Then: a temporary seed pod in redis-backup loads the
-#            RDB (image taken from the target's live CR, an RDB being forward-only), break-glass
-#            CiliumNetworkPolicies open target <-> seed on 6379, the target is FLUSHALLed and made a REPLICAOF
-#            of the seed so a full resync carries every type, TTL and score, then it is promoted back.
-#            Reports keys-before vs keys-after plus a type/TTL sample, and FAILS a 0-key restore.
-#   PHASE 3  re-protect. A restore usually follows a delete that set deletionProtection false, so it puts that
-#            back and prints the commit.
+#            one, so if the alias is still in git it WAITS for Argo and the operator. If nothing in git
+#            declares it, it names the two files to put back (the Chart.yaml alias is not recoverable from
+#            values.yaml alone) and stops. Refuses on an uncommitted values.yaml: Argo syncs the pushed
+#            remote, not your working tree.
+#   PHASE 2  pick a dump and replay it. An RDB under 250 bytes is EMPTY and takes an explicit yes, because
+#            restoring one FLUSHALLs the instance and puts nothing back. That is data loss, and the script
+#            still exits 0, so nothing tells you it happened. A temporary seed pod loads the RDB, break-glass CiliumNetworkPolicies open
+#            target-to-seed on 6379, the target is FLUSHALLed and made a REPLICAOF of the seed so a full
+#            resync carries every type, TTL and score, then it is promoted back. FAILS a 0-key restore.
+#   PHASE 3  re-protect. A restore usually follows a delete that set deletionProtection false.
 #
-# The trap promotes the target back BEFORE tearing the seed down, so bailing out mid-restore cannot leave it a
-# read-only replica of a deleted pod. Follows the repo rule that a script never runs git: it edits values.yaml
-# and prints the commit for you. See docs/12_redis.md.
+# The trap promotes the target back BEFORE tearing the seed down, so bailing out mid-restore cannot leave it
+# a read-only replica of a deleted pod.
+# Never runs git: it edits values.yaml and prints the commit for you.
 #
 # Usage (flags optional, prompts for anything missing):
 #   bash recover_redis_from_s3.sh [--namespace NS] [--instance NAME] [--target latest|<N>|<s3-key>] [--apply]
 #   make restore-redis
-#
 set -euo pipefail
 
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
@@ -61,17 +51,17 @@ use_kubeconfig
 assert_api
 
 # S3 listing runs on the HOST with the .env DEPLOYER creds (read is within its s3:* on the bucket). The in-cluster
-# download uses the sealed WRITER creds already in ns redis-backup — no host writer creds needed.
-[ -n "$AWS_DEPLOY_ACCESS_KEY_ID" ] || die "AWS_DEPLOY_ACCESS_KEY_ID empty in .env — needed to list S3 backups"
+# download uses the sealed WRITER creds already in ns redis-backup, so no host writer creds are needed.
+[ -n "$AWS_DEPLOY_ACCESS_KEY_ID" ] || die "AWS_DEPLOY_ACCESS_KEY_ID empty in .env, needed to list S3 backups"
 export AWS_ACCESS_KEY_ID="$AWS_DEPLOY_ACCESS_KEY_ID"
 export AWS_SECRET_ACCESS_KEY="$AWS_DEPLOY_SECRET_ACCESS_KEY_SECRET"
 export AWS_DEFAULT_REGION="$AWS_REGION"
 
 BUCKET="$(yq -r '.bucket' "$RB_VALUES")"
 PREFIX="$(yq -r '.prefix' "$RB_VALUES")"
-[ -n "$BUCKET" ] && [ "$BUCKET" != "null" ] || die "bucket is unset in ${RB_VALUES} — run 15_redis_backup.sh first"
+[ -n "$BUCKET" ] && [ "$BUCKET" != "null" ] || die "bucket is unset in ${RB_VALUES}: run 15_redis_backup.sh first"
 
-say "Redis restore from S3 — seed pod + replication resync (in-place, non-destructive to the CR)"
+say "Redis restore from S3: seed pod + replication resync (in-place, non-destructive to the CR)"
 
 # Total keys across ALL databases. DBSIZE counts only the currently selected db, but FLUSHALL clears every db
 # and the seed loads every db the RDB contains, so a dump using db1+ would be under-counted on BOTH sides and
@@ -81,7 +71,6 @@ redis_keycount() {  # redis_keycount <namespace> <pod> <container>
     | tr -d '\r' | sed -n 's/^db[0-9][0-9]*:keys=\([0-9][0-9]*\),.*/\1/p' | awk '{s+=$1} END {print s+0}'
 }
 
-# ---- 1. gather inputs -------------------------------------------------------
 [ -n "$NS" ]       || read -rp "Namespace: " NS
 [ -n "$INSTANCE" ] || read -rp "Redis instance name (the CR / Service name): " INSTANCE
 [ -n "$NS" ] && [ -n "$INSTANCE" ] || die "namespace and instance are required"
@@ -89,7 +78,6 @@ redis_keycount() {  # redis_keycount <namespace> <pod> <container>
 kubectl -n "$SEED_NS" get secret "$SECRET_NAME" >/dev/null 2>&1 \
   || die "sealed creds ${SEED_NS}/${SECRET_NAME} missing: enable backups first (make configure-redis-backup)"
 
-# ---- state: git says what SHOULD exist, the cluster says what DOES --------------------------------------
 # Same shape as recover_cnpg_from_s3.sh: resolve everything first, print it, then decide. redisVersion is the
 # kind discriminator so this can never bind to a pg-cluster alias of the same name.
 FOUND="$(wl_find_alias "$INSTANCE" redisVersion || true)"
@@ -112,7 +100,6 @@ else
   echo "    owning chart        : NOT IN GIT"
 fi
 
-# ---- PHASE 1/3: get an instance to restore into --------------------------------------------------------
 # This script replays a dump INTO a running instance; it cannot create one. But when the alias is still in git
 # the instance is already on its way back, so wait for Argo instead of making the operator poll by hand.
 say "PHASE 1/3, target instance"
@@ -242,10 +229,9 @@ if [ "$DO_APPLY" != "true" ]; then
   [[ "$OK" =~ ^[Yy]$ ]] || { warn "Aborted."; exit 0; }
 fi
 
-# ---- cleanup trap -----------------------------------------------------------
-# PROMOTE FIRST, then tear down. A replica whose master is gone keeps serving reads and REJECTS WRITES
-# (replica-read-only), so bailing out between FLUSHALL and the promote used to leave the instance up, empty and
-# write-refusing: worse than down, and nothing alerts on it (no replication-role rule in redis-health.yaml).
+# PROMOTE FIRST, then tear down. A replica whose master is gone keeps serving reads but refuses writes, so
+# bailing out between FLUSHALL and the promote would leave the instance up, empty and write-refusing: worse
+# than down, and nothing alerts on it (no replication-role rule in redis-health.yaml).
 # Promoting is safe to run unconditionally, including when the instance was never made a replica.
 PROMOTED="no"
 cleanup() {
@@ -261,7 +247,6 @@ cleanup() {
 }
 trap cleanup EXIT
 
-# ---- 2. break-glass netpols (target<->seed on 6379; seed egress DNS+S3) -----
 say "applying break-glass network policies"
 kubectl apply -f - >/dev/null <<YAML
 apiVersion: cilium.io/v2
@@ -315,7 +300,6 @@ spec:
 YAML
 ok "break-glass netpols applied"
 
-# ---- 3. seed pod: download the RDB, boot redis from it ----------------------
 say "creating seed pod (downloads the RDB, serves it as a master)"
 kubectl -n "$SEED_NS" delete pod "$SEED_POD" --ignore-not-found >/dev/null 2>&1 || true
 kubectl apply -f - >/dev/null <<YAML
@@ -370,7 +354,6 @@ SEED_IP="$(kubectl -n "$SEED_NS" get pod "$SEED_POD" -o jsonpath='{.status.podIP
 SEED_DBSIZE="$(redis_keycount "$SEED_NS" "$SEED_POD" seed)"
 ok "seed serving on ${SEED_IP}, loaded ${SEED_DBSIZE} keys from the dump"
 
-# ---- 4. resync the target from the seed -------------------------------------
 BEFORE_DBSIZE="$(redis_keycount "$NS" "$TARGET_POD" "$TARGET_CTR")"
 say "FLUSHALL + REPLICAOF on the target (${TARGET_POD}); it currently holds ${BEFORE_DBSIZE} keys"
 kubectl -n "$NS" exec "$TARGET_POD" -c "$TARGET_CTR" -- redis-cli FLUSHALL >/dev/null
@@ -384,15 +367,14 @@ for _ in $(seq 1 60); do
     && echo "$LINK" | grep -q 'master_sync_in_progress:0' && break
   sleep 2
 done
-echo "$LINK" | grep -q 'master_link_status:up' || die "resync did not reach master_link_status:up — inspect the target and seed"
+echo "$LINK" | grep -q 'master_link_status:up' || die "resync did not reach master_link_status:up, inspect the target and seed"
 ok "resync complete"
 
 say "promoting the target back to a standalone master (REPLICAOF NO ONE)"
 kubectl -n "$NS" exec "$TARGET_POD" -c "$TARGET_CTR" -- redis-cli REPLICAOF NO ONE >/dev/null
 PROMOTED="yes"   # past here the trap no longer needs to rescue the target
 TGT_DBSIZE="$(redis_keycount "$NS" "$TARGET_POD" "$TARGET_CTR")"
-# ---- 5. verdict -------------------------------------------------------------
-# Key COUNT equality alone is not a pass: 0 == 0 is equal, so wiping an instance with an empty dump used to
+# Key COUNT equality alone is not a pass: 0 == 0 is equal, so wiping an instance with an empty dump would
 # report success. Judge the outcome, not just the arithmetic.
 if [ "$TGT_DBSIZE" != "$SEED_DBSIZE" ]; then
   bad "target has ${TGT_DBSIZE} keys but the dump had ${SEED_DBSIZE}, investigate"
@@ -415,7 +397,6 @@ if [ "$TGT_DBSIZE" != "0" ]; then
     || warn "could not sample keys"
 fi
 
-# ---- PHASE 3/3: re-protect ----------------------------------------------------------------------------
 # A restore usually follows a deliberate two-commit delete, which left deletionProtection false. Put it back the
 # same way the CNPG script does: edit, assert, print the commit. No script here runs git.
 say "PHASE 3/3, re-protect"
@@ -444,6 +425,5 @@ the sync-options back RESTARTS the pod (~20s). The data survives on the AOF. See
 NEXT
 fi
 
-# ---- done (trap tears down the seed + netpols) ------------------------------
 summary
 [ "$FAIL" -eq 0 ]

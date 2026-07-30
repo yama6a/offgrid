@@ -1,67 +1,44 @@
-# Values for the 01_victoria_metrics_operator wrapper chart. SINGLE SOURCE OF TRUTH, ArgoCD (and any
-# local `helm template`) consume this. Chart version pinned in Chart.yaml. See 09_monitoring.md.
-#
-# Everything under `victoria-metrics-operator:` is passed to the upstream victoria-metrics-operator
-# subchart (key == dependency name). The operator runs in the `monitoring` namespace and watches ALL
-# namespaces by default (watchNamespaces: []), so it reconciles VM*/VL* CRs and converts prometheus-
-# operator objects cluster-wide.
 victoria-metrics-operator:
-  # CRDs are installed separately, ahead of everything, by 00_victoria_metrics_operator_crds (wave 0).
-  # Disabling here only takes effect together with `plain: false` (the chart's documented requirement).
+  # CRDs come from 00_victoria_metrics_operator_crds. Disabling here only takes effect together with
+  # `plain: false`, per the chart's own requirement.
   crds:
     enabled: false
     plain: false
 
-  # The prometheus-operator CONVERTER, the heart of the zero-rewrite migration.
   operator:
-    # Keep the converter ON: ServiceMonitor -> VMServiceScrape, PodMonitor -> VMPodScrape,
-    # PrometheusRule -> VMRule, Probe -> VMProbe, continuously.
-    disable_prometheus_converter: false
-    # Stamp ArgoCD compare/sync-options (IgnoreExtraneous + Prune=false) on every converted object so
-    # ArgoCD never flags or prunes operator-created resources it doesn't see in git. This is what keeps
-    # the monitoring apps Synced/Healthy instead of fighting the operator. See 09_monitoring.md.
+    disable_prometheus_converter: false # ServiceMonitor -> VMServiceScrape etc, continuously
+    # Stamps IgnoreExtraneous + Prune=false on every converted object, so ArgoCD never flags or prunes
+    # operator-created resources it cannot see in git. This is what keeps the monitoring apps Synced.
     prometheus_converter_add_argocd_ignore_annotations: true
-    # Owner-reference converted objects to their source, so deleting a ServiceMonitor garbage-collects its
-    # VMServiceScrape, a clean cutover with no orphaned VM* copies when kube-prometheus-stack is removed.
-    enable_converter_ownership: true
+    enable_converter_ownership: true # deleting a ServiceMonitor then garbage-collects its VMServiceScrape
 
-  # Validation webhook for VM*/VL* CR syntax is DISABLED, deliberately. Two reasons:
-  #   1. Wave ordering: this operator is wave 1, BEFORE cert-manager (wave 2), so the cert-manager-issued
-  #      webhook-cert path isn't available yet (it would deadlock, the webhook would reject the wave-5 CRs
-  #      before cert-manager exists to issue its serving cert).
-  #   2. The chart's non-cert-manager fallback generates the webhook cert with Helm's genCA at TEMPLATE
-  #      time; ArgoCD re-renders on every sync, so the served cert and the injected caBundle drift apart
-  #      -> `x509: certificate signed by unknown authority (vm-operator-ca)`, which fails CR creation.
-  # The webhook only does admission-time SYNTACTIC validation; our VM*/VL* CRs are chart-generated and
-  # helm-template-validated already, and bad CRs are still caught at reconcile. See 09_monitoring.md.
+  # Off deliberately, for two reasons:
+  #   1. This operator is wave 1, BEFORE cert-manager (wave 2), so the issued webhook cert is unavailable.
+  #   2. The non-cert-manager fallback generates the cert with Helm genCA at TEMPLATE time. ArgoCD re-renders
+  #      every sync, so the served cert and the injected caBundle drift apart and CR creation fails with
+  #      "x509: certificate signed by unknown authority".
+  # It only does admission-time syntactic validation; bad CRs are still caught at reconcile.
   admissionWebhooks:
     enabled: false
 
-  # Modest footprint for an 8GB Pi 5 already running etcd + control plane + Cilium + Longhorn.
   resources:
     requests: {cpu: 10m, memory: 64Mi}
     limits: {memory: 144Mi}
 
-  # Soft GC ceiling just under the 96Mi hard limit above: the Go runtime is otherwise blind to the cgroup cap
-  # and only GCs on heap growth, so a transient spike during BULK prometheus->VM conversion (the converter's
-  # whole job) can blow past 96Mi and OOMKill the very component driving the migration. GOMEMLIMIT makes GC
-  # aggressive as it nears the ceiling. Cheap insurance for a Go binary in a tight limit.
+  # The Go runtime is blind to the cgroup cap and only GCs on heap growth, so a spike during bulk
+  # prometheus-to-VM conversion can OOMKill the very component driving it. Keep this under the limit above.
   env:
     - name: GOMEMLIMIT
       value: "90MiB"
 
-  # Protect the operator from eviction under node memory pressure (its own ns, not kube-system => our class).
   priorityClassName: platform-critical
 
-  # Scrape the operator's OWN /metrics via a VMServiceScrape (vm:true), so converter/reconcile failures are
-  # visible — the converter is central to the monitoring migration. vmagent selectAllByDefault picks it up.
   serviceMonitor:
     enabled: true
     vm: true
 
-  # Leader-elected (one active + standby). If replicaCount is ever raised, keep the standby off the active's
-  # node. PREFERRED + hostname: bare Pi nodes have no zone label, and soft so a scale-up never wedges as
-  # Pending on the 3-node cluster. No-op at the default single replica.
+  # Soft + hostname: bare Pi nodes have no zone label, and soft means raising replicaCount never wedges a pod
+  # Pending on 3 nodes. No-op at the default single replica.
   affinity:
     podAntiAffinity:
       preferredDuringSchedulingIgnoredDuringExecution:

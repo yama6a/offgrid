@@ -1,12 +1,7 @@
 {{- /*
-Scrape THIS instance's redis-exporter. The operator stamps its per-instance Service with the labels below
-(app / redis_setup_type / role) and exposes the exporter on a named port `redis-exporter` — selectors + port
-name verified against the upstream ot-helm/redis chart's own ServiceMonitor. Scoped to this instance + its
-namespace (not the broad redis_setup_type=standalone alone) so a workload's two Redis instances don't cross-scrape.
-
-Wiring: the VM operator auto-converts ServiceMonitor -> VMServiceScrape and vmagent discovers every scrape
-cluster-wide (selectAllByDefault), so this needs no extra labels to reach VictoriaMetrics. CRDs exist from
-wave 0. See docs/09_monitoring.md.
+Scrape THIS instance's redis-exporter. Selectors and the port name match what the operator stamps on its
+per-instance Service. Scoped to this instance and namespace, not the broad redis_setup_type=standalone, so a
+workload's two Redis instances do not cross-scrape.
 */ -}}
 apiVersion: monitoring.coreos.com/v1
 kind: ServiceMonitor

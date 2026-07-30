@@ -1,61 +1,69 @@
-# 14 — Renovate (automatic dependency updates)
+# 14: Renovate (automatic dependency updates)
 
-Renovate opens PRs to bump every pinned dependency in the repo. Config: [`/renovate.json5`](../renovate.json5).
-Runner: [`.github/workflows/renovate.yaml`](../.github/workflows/renovate.yaml) — dedicated to running Renovate.
-Separately, [`.github/workflows/ci.yaml`](../.github/workflows/ci.yaml) validates every PR (shellcheck +
-`helm dependency build`/lint/template + kubeconform + renovate-config-validator + yamllint/actionlint) and now
-**gates this automerge** — see "How the automerge works" below.
+Renovate opens PRs to bump every pinned dependency in the repo.
+
+- Config: [`/renovate.json5`](../renovate.json5)
+- Runner: [`.github/workflows/renovate.yaml`](../.github/workflows/renovate.yaml)
+- Gate: [`.github/workflows/ci.yaml`](../.github/workflows/ci.yaml) validates every PR (shellcheck, `helm
+  dependency build`/lint/template, kubeconform, renovate-config-validator, yamllint, actionlint) and the
+  automerge waits on it. See "How the automerge works".
 
 ## Why Renovate, not Dependabot
 
-Dependabot has no Helm manager and can't touch image tags inside `values.yaml` or the version vars in `versions.env`.
-It would cover only Terraform and (once they exist) GitHub Actions. Renovate covers everything this repo pins:
+Dependabot has no Helm manager and cannot touch image tags inside `values.yaml` or the version vars in
+`versions.env`. It would cover Terraform and GitHub Actions only. Renovate covers everything this repo pins:
 
-- **Helm chart deps** — every wrapper chart's `Chart.yaml` + its `Chart.lock` (helmv3). No chart commits a
-  vendored `charts/*.tgz` (each either gitignores the fetched blob or renders CRs directly, like pg-cluster /
-  redis-instance), so `helmUpdateSubChartArchives` is a currently-dormant guard. `file://` deps have no
-  datasource, so Renovate skips them.
-- **Terraform** — the aws provider in `terraform/versions.tf` + `.terraform.lock.hcl`.
-- **GitHub Actions** — the workflow's own action pins (kept digest-pinned).
-- **Everything else, via comment-annotated regex** (`# renovate: datasource=...`): single-string `image:` values,
-  chart-template images, shell-script image literals, the per-workload datastore version pins in workload
-  `values.yaml` (the annotated `postgresVersion`/`redisVersion` scalars, owned per-workload), the pg-cluster
-  Postgres image map (`lib/helm/pg-cluster/files/postgres-images.yaml`, digest-pinned per major), and the
-  Talos/kernel build recipe in `versions.env`.
+| Manager | Covers |
+|---|---|
+| `helmv3` | every wrapper chart's `Chart.yaml` + `Chart.lock`. `file://` deps have no datasource, so they are skipped |
+| `terraform` | the aws provider in `terraform/versions.tf` + `.terraform.lock.hcl` |
+| `github-actions` | the workflow's own action pins, kept digest-pinned |
+| `helm-values` | standard-shape `image:` / `repository`+`tag` in a `values.yaml` |
+| regex, annotated | anything carrying `# renovate: datasource=...`: chart-template images, shell-script image literals, the per-workload `postgresVersion`/`redisVersion` scalars, the pg-cluster image map, the Talos/kernel recipe in `versions.env` |
 
-We keep the pin as the single source of truth (see [CLAUDE.md]) and do NOT restate versions in prose/comments,
-so a bump never strands a stale number. Version literals survive in docs only where the specific version is
-load-bearing (a bug fixed in X, a minimum version, a deprecation, a must-match constraint).
+`helmUpdateSubChartArchives` is on but currently does nothing: no chart commits a vendored `charts/*.tgz` any
+more. Kept as a guard in case one comes back.
+
+The pin is the single source of truth. Versions are never restated in prose or comments, so a bump cannot strand
+a stale number. A version literal survives in a doc only when that exact version is the point: a minimum, a
+ceiling, or a must-match constraint.
 
 ## Running it
 
-Self-hosted GitHub Action on a weekly cron + `workflow_dispatch`. **One-time setup:** create a PAT (fine-grained:
-this repo, Contents + Pull requests + Workflows + Issues read-write; or classic `repo` + `workflow`) and add it as the [repo
-secret](https://github.com/yama6a/offgrid/settings/secrets/actions/new) `RENOVATE_TOKEN`. The built-in
-`GITHUB_TOKEN` can't open PRs that re-trigger workflows and lacks scope, so the dedicated PAT is required. Issues
-read-write is what lets Renovate create + maintain the dependency-dashboard issue. First run:
-trigger the workflow manually — it populates the dependency-dashboard issue and opens the initial PRs.
+Self-hosted GitHub Action, cron every 3 hours plus `workflow_dispatch`.
 
-## PR grouping and merge posture
+One-time setup:
 
-- **One combined, auto-merged PR for every non-major update** — all `minor` / `patch` / `digest` / `pin` /
-  lockfile bumps land in a single "all non-major dependencies" PR that Renovate **merges itself**.
-- **Each major update is its own PR**, left for manual review — a breaking bump is never bundled or automerged.
-  The one exception: the **VictoriaMetrics** charts keep their majors together (the CRDs must match the operator).
+1. Create a PAT. Fine-grained: this repo, Contents + Pull requests + Workflows + Issues read-write. Or classic:
+   `repo` + `workflow`.
+2. Add it as the repo secret `RENOVATE_TOKEN`.
+3. Trigger the workflow by hand. It populates the dependency-dashboard issue and opens the first PRs.
 
-### How the automerge works (CI-gated, Renovate-driven merge)
+The built-in `GITHUB_TOKEN` cannot open PRs that re-trigger workflows and lacks the scope, so the dedicated PAT
+is required. Issues read-write is what lets Renovate create and maintain the dashboard issue.
 
-We keep `platformAutomerge: false` and let **Renovate merge the PR through the API itself** (not GitHub's
-native auto-merge). Renovate merges only when a PR is mergeable — which now means **after the required CI
-checks ([`ci.yaml`](../.github/workflows/ci.yaml)) pass**: Renovate waits on a PR's status checks by default,
-and `main`'s branch protection enforces them on the API merge too. So the combined PR merges on a **subsequent
-run once CI is green** (~2h+ after creation), one merge per run. That two-pass timing is why the workflow cron
-runs **every 3 hours** rather than weekly — a weekly cron would leave a green, auto-mergeable PR sitting for a
-week. A manual `workflow_dispatch` also completes a pending merge on demand.
+## PR grouping, and when Renovate self-merges
 
-Branch protection on `main` requires the CI **checks, not reviews** — a required review would deadlock Renovate
-(it can't approve its own PR) — and leaves `enforce_admins` off so a break-glass fix can still land. One-time
-setup, run once the CI checks have run at least once — open a PR first so GitHub registers the check contexts:
+- One combined, auto-merged PR for every non-major update: `minor`, `patch`, `digest`, `pin` and lockfile bumps
+  all land in a single "all non-major dependencies" PR that Renovate merges itself.
+- Each major update is its own PR, left for review. A breaking bump is never bundled or automerged. The one
+  exception: the VictoriaMetrics charts keep their majors together, because the CRDs must match the operator.
+
+### How the automerge works
+
+`platformAutomerge: false`, so Renovate merges through the API itself rather than using GitHub's native
+auto-merge. It merges only when the PR is mergeable, which now means after the required CI checks pass: Renovate
+waits on status checks by default, and `main`'s branch protection enforces them on the API merge too.
+
+Consequence: the combined PR merges on a LATER run once CI is green, roughly 2h+ after it was opened, one merge
+per run. That two-pass timing is why the cron runs every 3 hours. A weekly cron would leave a green,
+auto-mergeable PR sitting for a week. A manual `workflow_dispatch` also completes a pending merge on demand.
+
+Branch protection on `main` requires the CI checks, not reviews. A required review would deadlock Renovate,
+since it cannot approve its own PR. `enforce_admins` stays off so a break-glass fix can still land.
+
+Run this once, after the CI checks have run at least once (open a PR first so GitHub registers the check
+contexts):
 
 ```bash
 gh api -X PUT repos/yama6a/offgrid/branches/main/protection \
@@ -71,57 +79,48 @@ gh api -X PUT repos/yama6a/offgrid/branches/main/protection \
 JSON
 ```
 
-### The risk (and how to dial it back)
+### The risk, and how to dial it back
 
-CI now blocks a bump that fails to render or produces invalid manifests — but a bump that renders cleanly yet
-misbehaves at runtime (a Cilium regression, a bad default) is NOT caught by static checks. Merging still
-reaches the live cluster: ArgoCD syncs it, and most apps run `selfHeal`. Auto-merging the combined PR
-therefore applies everything in it **unattended**, including:
+CI blocks a bump that fails to render or produces invalid manifests. It does NOT catch a bump that renders
+cleanly but misbehaves at runtime, like a Cilium regression or a changed default. A merge reaches the live
+cluster: ArgoCD syncs it and most apps run `selfHeal`, so the combined PR applies everything in it unattended.
 
-- **Cilium** — the one app that can cut the cluster (and Argo) off its own network. See [04_networking.md] /
-  [05_gitops.md].
-- **`local-path-provisioner`** (labeled `needs-revendor`) — its manifests are vendored verbatim; a tag bump
-  really needs a manual re-diff against the upstream release. If it appears in the PR, split it out and
-  re-vendor rather than letting it merge.
-- **The Talos/kernel build recipe** (`versions.env`) — merging these lines does NOT self-apply; a real bump
-  needs a manual image rebuild ([03a]). Treat them as a "newer version exists" signal. `KUBERNETES_VERSION` is
-  coupled to Talos (its ceiling is the Talos release's k8s default), so move it WITH Talos.
+Three things in that PR need care:
 
-This is an accepted hands-off trade-off. To de-risk without splitting the PR: add `minimumReleaseAge` (e.g.
-`"3 days"`) so bumps bake before they're eligible, or remove `automerge` from specific deps you want to gate.
+- Cilium: the one app that can cut the cluster, and Argo with it, off its own network. See
+  [04_networking.md](04_networking.md) and [05_gitops.md](05_gitops.md).
+- `local-path-provisioner`, labelled `needs-revendor`: its manifests are vendored verbatim, so a tag bump needs
+  a manual re-diff against the upstream release. If it shows up in the PR, split it out and re-vendor.
+- The Talos/kernel recipe in `versions.env`: merging those lines does NOT apply them. A real bump needs a manual
+  image rebuild ([03_operating_system.md](03_operating_system.md)), so treat them as a "newer version exists"
+  signal. `KUBERNETES_VERSION` is capped by the Talos release's k8s default, so move it WITH Talos.
 
-Two things ride in the combined PR that need care before merging:
-
-- **The Talos/kernel build recipe** (`versions.env`) — a bump here does NOT self-apply: it needs a manual image
-  rebuild with source rebases ([03a]). Treat those lines as a "newer version exists" signal. `KUBERNETES_VERSION`
-  is coupled to Talos (its ceiling is the Talos release's k8s default), so move it WITH Talos.
-- **`local-path-provisioner`** — its manifests are vendored verbatim (a tag bump must be re-diffed against the
-  upstream release); flagged `needs-revendor`. If it changed, split it out and re-vendor before merging.
+Accepted hands-off trade-off. To de-risk without splitting the PR: add `minimumReleaseAge` (e.g. `"3 days"`) so
+bumps bake before they are eligible, or drop `automerge` from the specific deps you want to gate.
 
 ## Gotchas baked into the config
 
-- **No `**/charts/**` disable rule.** The wrapper charts themselves live under paths containing `/charts/`, so the
+- No `**/charts/**` disable rule. The wrapper charts themselves live under paths containing `/charts/`, so the
   usual Helm guard would disable the whole repo.
-- **`helm-values` owns standard-shape `values.yaml` images; the template/shell docker regex manager does NOT scan
-  `values.yaml`.** helm-values only recognizes `image:`/`repository`+`tag` structures, so the per-workload datastore
-  version (a bare annotated `postgresVersion`/`redisVersion` scalar, repo named in the `depName=` comment) is handled
-  by a SEPARATE regex manager scoped to `argo_apps/workloads/charts/*/values.yaml`. The three managers must not overlap
-  on the same key: a built-in manager's `managerFilePatterns` is additive (can't narrow it), so the template/shell
-  regex manager keeps `values.yaml` out entirely, and the datastore-version manager matches only the annotated
+- The three image managers must not overlap on the same key. `helm-values` only recognises `image:` or
+  `repository`+`tag` structures, and a built-in manager's `managerFilePatterns` is additive, so it cannot be
+  narrowed. Therefore the template/shell regex manager keeps `values.yaml` out entirely, and a separate
+  datastore-version manager (scoped to `argo_apps/workloads/charts/*/values.yaml`) matches only the annotated
   `postgresVersion`/`redisVersion` line.
-- **Postgres version is split across two pins: MAJOR (workload) + patch/digest (chart map).** A workload's
-  `postgresVersion` is a bare major (`"18"`), Renovate-tracked but held MAJOR-only by a packageRule, so it only
-  surfaces a `18 to 19` upgrade for review. The actual image (flavor, OS, patch, digest) lives once in
-  `lib/helm/pg-cluster/files/postgres-images.yaml`, one pinned `tag@digest` per supported major, which Renovate
-  tracks DIGEST-only (patches move the rolling `<major>-minimal-trixie` tag; the tag string never changes). A new
-  major is added to the map by hand (a `pg_upgrade`, not a swap); until it is, a workload bumped to that major
-  fails the render (the chart's `pg-cluster.image` helper fails on an unlisted key), which blocks the major PR.
-- **The barman-cloud vendored manifest is in `ignorePaths`** — bumping it re-vendors an upstream release verbatim
-  (per that chart's README), not a line edit.
-- **VictoriaMetrics charts are grouped**; the CRD chart's app version must match its operator, a human check on
-  the grouped PR. See [09_monitoring.md].
-- **The kernel isn't a Renovate dependency — it's derived from Talos.** raspberrypi/linux has no per-version tags,
-  and its `stable_YYYYMMDD` tags jump kernel lines (mid-2026 `stable_20260715` was 6.12.95), so there's nothing safe
-  to track. Instead `03a` reads the kernel version Talos expects (`DefaultKernelVersion`) at build time and resolves
-  the exact `raspberrypi/linux` commit via `raspberrypi/firmware`'s `extra/git_hash`. So bumping `TALOS_VERSION`
-  carries the kernel with it — no separate pin or manager. See [03_operating_system.md].
+- Postgres version is split across two pins, MAJOR in the workload and patch/digest in the chart map. A
+  workload's `postgresVersion` is a bare major (`"18"`), held MAJOR-only by a packageRule, so only an `18 to 19`
+  upgrade surfaces for review. The actual image (flavour, OS, patch, digest) lives once in
+  `lib/helm/pg-cluster/files/postgres-images.yaml`, one pinned `tag@digest` per supported major, tracked
+  DIGEST-only because patches move the rolling `<major>-minimal-trixie` tag and the tag string never changes. A
+  new major is added to the map by hand, because it is a `pg_upgrade` and not a swap. Until it is, a workload
+  bumped to that major fails to render (the chart's `pg-cluster.image` helper fails on an unlisted key), which
+  blocks the major PR.
+- The barman-cloud vendored manifest is in `ignorePaths`. Bumping it re-vendors an upstream release verbatim per
+  that chart's README, not a line edit.
+- VictoriaMetrics charts are grouped. The CRD chart's app version must match its operator, which is a human
+  check on the grouped PR. See [09_monitoring.md](09_monitoring.md).
+- The kernel is not a Renovate dependency, it is derived from Talos. raspberrypi/linux has no per-version tags,
+  and its `stable_YYYYMMDD` tags jump kernel lines, so there is nothing safe to track. Instead `03a` reads the
+  kernel version Talos expects (`DefaultKernelVersion`) at build time and resolves the exact `raspberrypi/linux`
+  commit via `raspberrypi/firmware`'s `extra/git_hash`. Bumping `TALOS_VERSION` carries the kernel with it, with
+  no separate pin. See [03_operating_system.md](03_operating_system.md).

@@ -1,6 +1,4 @@
-# POD-SCOPED to grafana. NOT namespace-wide: vmagent shares the monitoring namespace and must stay
-# unrestricted. Every request is already SSO-authenticated at the Envoy edge. See 04_networking.md /
-# 09_monitoring.md.
+# POD-scoped, not namespace-wide: vmagent shares the monitoring namespace and must stay unrestricted.
 apiVersion: cilium.io/v2
 kind: CiliumNetworkPolicy
 metadata:
@@ -44,8 +42,7 @@ spec:
       toPorts:
         - ports:
             - { port: "9428", protocol: TCP }
-    # ntfy webhook (in-cluster) — publish firing alerts to the ntfy notification server (05_ntfy). REPLACES the
-    # former Gmail SMTP :587 egress (email notifier retired in favour of ntfy mobile push).
+    # ntfy webhook: publish firing alerts to the notification server.
     - toEndpoints:
         - matchLabels:
             k8s:io.kubernetes.pod.namespace: monitoring
@@ -58,5 +55,5 @@ spec:
       toPorts:
         - ports:
             - { port: "443", protocol: TCP }
-    # k8s-sidecar (dashboards NAMESPACE=ALL + alerts) WATCH the apiserver :6443 for their ConfigMaps.
+    # The dashboards and alerts sidecars watch the apiserver for their ConfigMaps.
     - toEntities: [kube-apiserver]

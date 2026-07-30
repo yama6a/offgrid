@@ -1,7 +1,4 @@
-# POD-SCOPED default-deny for ntfy (a private notification server). Listing ingress AND egress makes the ntfy
-# endpoints deny-by-default each way; allow only what's needed. Same audit-first rollout as the other lockdowns
-# here (Cilium PolicyAuditMode + `hubble observe --verdict DROPPED,AUDIT` until clean, then enforce). Port 8080
-# end-to-end. See 04_networking.md / 09_monitoring.md.
+# Default-deny both ways for ntfy. Port 8080 end to end.
 apiVersion: cilium.io/v2
 kind: CiliumNetworkPolicy
 metadata:
@@ -9,8 +6,7 @@ metadata:
   namespace: {{ .Release.Namespace }}
   {{- if .Values.deletionProtection }}
   annotations:
-    # Orphan-not-delete: a GitOps prune leaves ntfy running on its PVC instead of destroying it, and restoring the
-    # files re-adopts it. See values.yaml for the flip-then-remove deletion flow.
+    # Orphan-not-delete. See values.yaml for the flip-then-remove deletion flow.
     argocd.argoproj.io/sync-options: Prune=false,Delete=false
   {{- end }}
 spec:
@@ -18,7 +14,7 @@ spec:
     matchLabels:
       app.kubernetes.io/name: ntfy
   ingress:
-    # :8080 — the Envoy edge serves the phone (subscribe), and the in-cluster Grafana webhook publishes alerts.
+    # The Envoy edge serves the phone (subscribe); the in-cluster Grafana webhook publishes alerts.
     - fromEndpoints:
         - matchLabels:
             k8s:io.kubernetes.pod.namespace: envoy-gateway-system

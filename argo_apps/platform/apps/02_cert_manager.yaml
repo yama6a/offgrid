@@ -1,27 +1,16 @@
-# ArgoCD Application for cert-manager (argo_apps/charts/02_cert_manager/), the X.509 certificate
-# controller (issuance + renewal). This step installs the CONTROLLER ONLY; the Let's Encrypt
-# ClusterIssuer for Gateway HTTPS comes in a later step. See 08_cert_manager.md.
-#
-# AUTOMATED (prune + selfHeal): a safe leaf, like nic-keeper / sealed-secrets, it can't cut the
-# cluster off its own network, so drift should just auto-correct. The CRDs are kept on prune
-# (crds.keep: true in values.yaml), so prune never cascade-deletes them or the CRs they own.
-#
-# sync-wave "2": same wave as nic-keeper and sealed-secrets, all three are independent leaves,
-# none depends on the others. Per CLAUDE.md the NN prefix IS the wave, so they share `02_`
-# (distinct dir names). Wave 2 is the "after the platform (CNI + ArgoCD) is in place" slot.
+# cert-manager: the X.509 issuance and renewal controller. The ClusterIssuers ship with 03_gateway.
 apiVersion: argoproj.io/v1alpha1
 kind: Application
 metadata:
   name: cert-manager
   namespace: argocd
-  # Cascade-delete this app's own resources on Application deletion instead of orphaning them; see 05_gitops.md.
   finalizers:
     - resources-finalizer.argocd.argoproj.io
   annotations:
     argocd.argoproj.io/sync-wave: "2"
 spec:
   project: default
-  revisionHistoryLimit: 0  # roll-forward only; no Argo rollback history (05_gitops.md)
+  revisionHistoryLimit: 0
   source:
     repoURL: https://github.com/yama6a/offgrid
     targetRevision: HEAD
@@ -34,12 +23,12 @@ spec:
       prune: true
       selfHeal: true
     retry:
-      limit: -1  # unbounded; only retry re-drives a failed sync (see 05_gitops.md)
-      refresh: true  # retry the latest revision so a fix commit lands mid-loop
+      limit: -1
+      refresh: true
       backoff:
         duration: 5s
         factor: 2
         maxDuration: 1m
     syncOptions:
       - CreateNamespace=true
-      - ServerSideApply=true   # the cert-manager CRDs are large, SSA avoids the last-applied-annotation limit
+      - ServerSideApply=true # these CRDs are too big for client-side apply's 256KiB manifest annotation

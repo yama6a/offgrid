@@ -1,45 +1,26 @@
-# Values for the 03_gateway wrapper chart. SINGLE SOURCE OF TRUTH, ArgoCD (and any local
-# `helm template`) consume this. See 10_gateway.md for the why.
-#
-# This chart is the cluster's ACME ingress PLATFORM only:
-#   1. the shared-gateway Gateway, now the :80 HTTP listener ONLY (cert-manager HTTP-01 solver routes
-#      attach here; the http->https redirect lands here later), on the Envoy Gateway `eg` class, and
-#   2. the Let's Encrypt ClusterIssuers that mint certs via HTTP-01 solved through that :80 listener.
-# It owns NO apps and NO :443 listeners. Each HTTPS host is now a per-app Gateway (its own :443 listener
-# + Certificate + HTTPRoute) shipped by the owning chart, the sample workload in sample-workload, the SSO callback
-# hosts in 04_google_sso, argocd in 06, the monitoring UIs in 07. All merged onto one Envoy via
-# mergeGateways (01_envoy_gateway). See 10_gateway.md / 11_envoy_gateway.md.
-
 gateway:
   name: shared-gateway
-  # Dedicated namespace. The per-app Gateways/Certificates/HTTPRoutes live here too, and cert-manager's
-  # solver routes attach cross-namespace (listener allowedRoutes.from: All). Created via CreateNamespace
-  # in the Application.
-  namespace: gateway
-  # Envoy Gateway's class (registered by the 01_envoy_gateway chart). See 11_envoy_gateway.md.
+  namespace: gateway # the per-app Gateways/Certificates/HTTPRoutes land here too
   className: eg
-  # NOTE: the pinned LoadBalancer IP is NOT set here anymore. Under mergeGateways all `eg` Gateways share
-  # one LB Service, pinned solely by the EnvoyProxy `lbipam.cilium.io/ips` annotation (01_envoy_gateway
-  # values: envoyProxy.loadBalancerIP). A per-Gateway spec.addresses would conflict on that shared Service.
+  # No pinned LoadBalancer IP here. mergeGateways is on (01_envoy_gateway), which collapses every `eg`
+  # Gateway onto ONE Envoy and ONE LB Service. That single Service gets its IP from the EnvoyProxy
+  # lbipam.cilium.io/ips annotation, so setting spec.addresses on a Gateway here would have several Gateways
+  # each claiming the same shared Service.
 acme:
-  # ACME registration email (account-level; LE expiry notices go here).
-  email: "letsencrypt@example.com"
-  # Two issuers: ALWAYS test a new host against staging first (generous limits, untrusted-but-harmless
-  # certs), then switch the host's Certificate to prod once issuance works. Prod has tight rate limits.
+  email: "letsencrypt@example.com" # ACME account level, LE expiry notices go here
+  # Always test a new host against staging first, prod has tight rate limits.
   issuers:
     - name: letsencrypt-staging
       server: "https://acme-staging-v02.api.letsencrypt.org/directory"
     - name: letsencrypt-prod
       server: "https://acme-v02.api.letsencrypt.org/directory"
-  # Cloudflare DNS-01 (optional, per-domain). 07_gateway.sh writes `zones` from .env CLOUDFLARE_WILDCARD_DOMAINS and
-  # seals the token; empty zones => no dns01 solver + no wildcard certs => HTTP-01 for everything (unchanged).
-  # When non-empty: each issuer above gets a dns01.cloudflare solver scoped to these zones (+ the http01
-  # catch-all stays), and one shared wildcard cert per zone is minted (wildcard-certificates.yaml).
+  # Optional, per-domain. 07_gateway.sh writes `zones` from .env and seals the token. Empty zones = no dns01
+  # solver and no wildcard certs, HTTP-01 for everything.
   cloudflare:
     zones:
       - example.com
       - ops.example.com
       - app.example.com
-    apiTokenSecretName: cloudflare-api-token # SealedSecret in cert-manager ns (sealed by 07_gateway.sh)
-    apiTokenSecretKey: api-token # data key inside that Secret
-    wildcardIssuer: letsencrypt-prod # issuer for ALL shared wildcard certs; flip to letsencrypt-prod once issuance is verified (wildcards need DNS-01, staging first dodges prod rate limits)
+    apiTokenSecretName: cloudflare-api-token # SealedSecret in the cert-manager namespace, sealed by 07_gateway.sh
+    apiTokenSecretKey: api-token
+    wildcardIssuer: letsencrypt-prod # for ALL shared wildcard certs; wildcards need DNS-01, so staging first dodges prod limits

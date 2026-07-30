@@ -1,15 +1,7 @@
 apiVersion: v2
 name: argocd-webhook-secret
-description: >-
-  The sealed GitHub-webhook shared secret for ArgoCD, merged into argocd-secret's webhook.github.secret
-  key (patch-mode). It lives in its OWN wave-3 app, deliberately NOT in the wave-1 01_argocd chart: that
-  chart is installed IMPERATIVELY by 05_argocd.sh (and self-healed at wave 1) BEFORE the sealed-secrets
-  controller + its bitnami.com/v1alpha1 CRD exist (wave 2). A SealedSecret in the argocd chart therefore
-  aborts the cold-boot helm install ("no matches for kind SealedSecret") and deadlocks the wave-1 sync.
-  Splitting it out to wave 3 (after sealed-secrets, wave 2) keeps the argocd install CRD-clean. Written by
-  08_argocd_webhook.sh; ArgoCD merges it once the controller is up. See docs/05_gitops.md.
-
-  DELIBERATE DEVIATION from the usual wrapper-chart pattern: this chart pins no upstream and renders a single
-  committed manifest, so like redis-instance it ships no Chart.lock and no vendored charts/*.tgz.
+description: The sealed GitHub-webhook secret, patch-merged into argocd-secret's webhook.github.secret. Written by 08_argocd_webhook.sh.
+# Deliberately NOT in the wave-1 01_argocd chart: 05_argocd.sh installs that one imperatively before the
+# sealed-secrets CRD exists (wave 2), so a SealedSecret there aborts the cold-boot install.
 type: application
-version: 0.1.0                 # local chart, never bump version
+version: 0.1.0 # local chart, never bump version

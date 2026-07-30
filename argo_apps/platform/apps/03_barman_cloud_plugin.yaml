@@ -1,29 +1,16 @@
-# ArgoCD Application for the CloudNativePG Barman Cloud CNPG-I plugin (argo_apps/platform/charts/03_barman_cloud_plugin/):
-# the ObjectStore CRD + the plugin Deployment/Service/RBAC + its cert-manager Issuer & Certificates, all in
-# cnpg-system (the plugin MUST run in the operator's namespace). This is the component that gives CNPG the
-# ability to archive WAL + take base backups to S3; per-cluster backups are turned on downstream by
-# lib/helm/pg-cluster (backups.method: plugin) in the workloads tree. See docs/13_backups.md.
-#
-# AUTOMATED (prune + selfHeal): a safe leaf like cert-manager / cnpg-operator. Nothing here can cut the cluster
-# off its network; a prune only removes plugin infra (the per-cluster ObjectStore CRs live in the workloads tree).
-#
-# sync-wave "3": needs cert-manager (wave 2) for its serving/client mTLS certs (the manifest ships a cert-manager
-# Issuer + two Certificates), and the CNPG operator (wave 2, cnpg-system) to discover the plugin Service. So it
-# lands one wave after both — same wave as gateway / redis-operator, all wave-2-dependent leaves. No
-# CreateNamespace: cnpg-system is owned by the wave-2 cnpg-operator app and already exists by now.
+# The Barman Cloud CNPG-I plugin: ObjectStore CRD + plugin Deployment, in cnpg-system (must be the operator's namespace).
 apiVersion: argoproj.io/v1alpha1
 kind: Application
 metadata:
   name: barman-cloud-plugin
   namespace: argocd
-  # Cascade-delete this app's own resources on Application deletion instead of orphaning them; see 05_gitops.md.
   finalizers:
     - resources-finalizer.argocd.argoproj.io
   annotations:
     argocd.argoproj.io/sync-wave: "3"
 spec:
   project: default
-  revisionHistoryLimit: 0  # roll-forward only; no Argo rollback history (05_gitops.md)
+  revisionHistoryLimit: 0
   source:
     repoURL: https://github.com/yama6a/offgrid
     targetRevision: HEAD
@@ -36,11 +23,11 @@ spec:
       prune: true
       selfHeal: true
     retry:
-      limit: -1  # unbounded; only retry re-drives a failed sync (see 05_gitops.md)
-      refresh: true  # retry the latest revision so a fix commit lands mid-loop
+      limit: -1
+      refresh: true
       backoff:
         duration: 5s
         factor: 2
         maxDuration: 1m
     syncOptions:
-      - ServerSideApply=true   # the ObjectStore CRD is large; SSA avoids the client-side last-applied limit
+      - ServerSideApply=true # these CRDs are too big for client-side apply's 256KiB manifest annotation

@@ -1,45 +1,16 @@
-# ArgoCD Application for sample-user-manager (argo_apps/workloads/charts/sample_user_manager/): the DEFAULT
-# sample-app binary (`/manager`: HTTP GET /users + Postgres), and the hub of the messaging demo — it consumes
-# `create-user-command` and publishes `user-events` (users.created/users.deleted) + `user-audit-logger`
-# (sample-user-signup and sample-audit-logger run the `/signup` and `/auditor` binaries at the other ends).
-# Ships the app (PG_PASSWORD injected from the CNPG secret), its CloudNativePG Clusters, and two ingress
-# hosts: sample-user-manager.app.example.com (OPEN) + sample-user-manager-sso.app.example.com (gated CENTRALLY by
-# 04_google_sso, which lists it in domains[].hosts — this chart configures no SSO). Both are plain edges
-# rendered by the shared ingress library from the chart's `ingress:` values. See
-# 10_sample_workload.md / 08_storage.md.
-#
-# AUTOMATED (prune + selfHeal): drift auto-corrects. A prune is data-safe because every stateful unit carries
-# `deletionProtection: true`, which stamps Prune=false,Delete=false: the Postgres Clusters and the Redis instances
-# are ORPHANED (left running on their volumes), not deleted, and restoring the files re-adopts them. NOT because
-# of the storage class: `local-path` is reclaimPolicy Delete, so the annotation is the only thing between a stray
-# prune and gone data. The app + echo routes are safe leaves.
-#
-# MULTI-NAMESPACE: the app + Cluster (+ generated password Secret) land in the destination namespace
-# `sample-user-manager`; the per-host Gateways/Certs/HTTPRoutes set metadata.namespace: gateway explicitly
-# (where the central SSO policy + merged Envoy live), reaching the app via the chart's ReferenceGrant.
-#
-# A WORKLOAD, not platform: lives in the workloads tree. With no health gate the root-of-roots creates it while
-# the platform may still be coming up, so its CRs (CNPG Cluster, Redis, rabbitmq-topology, Certificate,
-# Gateway/HTTPRoute, SealedSecret) may briefly race the platform CRDs — the sync then fails and retries
-# (limit: -1) until each CRD lands, converging on its own. 04_google_sso's policy already lists
-# sample-user-manager-sso.app.example.com and attaches to this route once it appears. No per-app sync-wave
-# needed. See 05_gitops.md.
+# sample-user-manager: the sample-app /manager binary (HTTP + Postgres) and the hub of the messaging demo.
 apiVersion: argoproj.io/v1alpha1
 kind: Application
 metadata:
   name: sample-user-manager
   namespace: argocd
-  # Cascade-delete this app's own resources on Application deletion instead of orphaning them; see 05_gitops.md.
   finalizers:
     - resources-finalizer.argocd.argoproj.io
   annotations:
-    # Diff via a server-side-apply dry-run so server-defaulted Gateway API fields (HTTPRoute
-    # parentRefs/backendRefs group+kind, rules.matches, weight, ...) and the large CNPG Cluster CR don't
-    # show as perpetual OutOfSync. Pairs with ServerSideApply below. Needs ArgoCD >= 2.10.
-    argocd.argoproj.io/compare-options: ServerSideDiff=true
+    argocd.argoproj.io/compare-options: ServerSideDiff=true # else server-defaulted Gateway API fields read as perpetual OutOfSync
 spec:
   project: default
-  revisionHistoryLimit: 0  # roll-forward only; no Argo rollback history (05_gitops.md)
+  revisionHistoryLimit: 0
   source:
     repoURL: https://github.com/yama6a/offgrid
     targetRevision: HEAD
@@ -52,12 +23,12 @@ spec:
       prune: true
       selfHeal: true
     retry:
-      limit: -1  # unbounded; only retry re-drives a failed sync (see 05_gitops.md)
-      refresh: true  # retry the latest revision so a fix commit lands mid-loop
+      limit: -1
+      refresh: true
       backoff:
         duration: 5s
         factor: 2
         maxDuration: 1m
     syncOptions:
       - CreateNamespace=true
-      - ServerSideApply=true   # the CNPG Cluster CR is large, SSA avoids the last-applied-annotation limit
+      - ServerSideApply=true

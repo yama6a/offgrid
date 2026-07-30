@@ -1,38 +1,29 @@
-# CENTRAL Google-SSO for the whole cluster. Per domain this chart stands up the shared callback host
-# google-sso.<domain> and ONE SecurityPolicy that gates every listed host with its own email allowlist
-# (matched by the request `:authority`). Workloads/packages configure NOTHING SSO — a host is protected by
-# adding it to `domains[].hosts` below. See 07_ingress.md.
+namespace: gateway                       # must equal the ingress chart's hardcoded gateway namespace
+callbackImage: "traefik/whoami:v1.11.0"  # Envoy intercepts /oauth2/callback before it reaches this
 
-namespace: gateway                       # must equal the ingress library's hardcoded gateway namespace (where the routes live).
-callbackImage: "traefik/whoami:v1.11.0"  # Envoy intercepts /oauth2/callback before it reaches this.
-
-# Shared Google-OIDC config (one client for everything). clientID written by 07_google_sso.sh; the client
-# secret is sealed (templates/google-oauth-sealedsecret.yaml).
+# One Google client for everything. clientID written by 07_google_sso.sh, the secret is sealed.
 oidc:
   clientID: "000000000000-xxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxx.apps.googleusercontent.com"
-  clientSecretName: google-oauth   # sealed Secret holding it under key `client-secret`.
-  authSubdomain: google-sso        # callback host = <authSubdomain>.<domain>; one Google redirect URI per domain.
-  idTokenCookie: "google-id-token" # cookie holding the Google ID token (email claim read from it).
-  logoutPath: "/oauth2/sign_out"   # off the default /logout so it doesn't swallow a backend's /logout.
+  clientSecretName: google-oauth   # sealed Secret, key `client-secret`
+  authSubdomain: google-sso        # callback host = <authSubdomain>.<domain>; one Google redirect URI per domain
+  idTokenCookie: "google-id-token"
+  logoutPath: "/oauth2/sign_out"   # off the default /logout so it doesn't swallow a backend's own /logout
   refreshToken: true               # renew silently so a session outlives Google's ~1h token...
-  sessionTTL: "24h"                # ...capped here (needs access_type=offline).
-  csrfTokenTTL: "5m"               # TTL of per-flow CSRF/PKCE cookies; short so orphans drain fast.
-  # non-navigational reqs (XHR/websocket) get 401 not 302->Google, else a logged-out SPA leaks cookies
-  # until Envoy resets the stream (ERR_HTTP2_PROTOCOL_ERROR). Empty disables.
+  sessionTTL: "24h"                # ...capped here (needs access_type=offline)
+  csrfTokenTTL: "5m"               # short, so orphaned per-flow cookies drain fast
+  # XHR/websocket requests get 401 instead of a 302 to Google, else a logged-out SPA leaks cookies until Envoy
+  # resets the stream (ERR_HTTP2_PROTOCOL_ERROR). Empty disables.
   denyRedirectSecFetchMode: "cors|no-cors|same-origin|websocket"
 
-# THE central map: which hosts are SSO-gated, and by whom. One SecurityPolicy per domain covers all its
-# hosts + the callback host (one cookie identity -> the OAuth flow completes). Each host's rule allows only
-# its allowlist. To protect a host: add it here (its route is created by whatever chart owns the ingress).
+# Which hosts are SSO-gated, and by whom. One SecurityPolicy per domain covers all its hosts plus the callback
+# host, so one cookie identity completes the flow. Each host MUST equal the FQDN its ingress renders: the
+# policy attaches to routes by dashed-host name.
 domains:
   - domain: example.com
     issuer: letsencrypt-prod   # callback cert issuer (letsencrypt-staging | letsencrypt-prod)
     hosts:
-      # Platform UIs (06_platform_ingress) live under the *.ops.<domain> tier; the workload
-      # (sample_user_manager) under *.app.<domain>. All still share this one example.com domain entry:
-      # cookieDomain + callback google-sso.example.com are a parent of both, so the OAuth flow completes
-      # across both tiers with no Google Console change. Each host MUST equal the FQDN its ingress renders
-      # (the SecurityPolicy attaches to routes by dashed-host name). See 07_ingress.md.
+      # Platform UIs sit under *.ops, the workload under *.app. Both share this one example.com entry because
+      # cookieDomain and the callback host are a parent of both, so no Google Console change is needed.
       - host: argocd.ops.example.com
         allowlist:
           - you@example.com
@@ -54,6 +45,6 @@ domains:
       - host: sample-user-manager-sso.app.example.com
         allowlist:
           - you@example.com
-      - host: rabbitmq.ops.example.com   # RabbitMQ management UI (06_platform_ingress); edge SSO + RabbitMQ's own login
+      - host: rabbitmq.ops.example.com   # edge SSO, then RabbitMQ's own login
         allowlist:
           - you@example.com

@@ -1,57 +1,31 @@
-# Values for the 02_local_path_provisioner wrapper chart. SINGLE SOURCE OF TRUTH, ArgoCD (and any
-# local `helm template`) consume this. Version pinned in Chart.yaml (appVersion). See
-# 18_local_path_provisioner.md for the why.
-#
-# Unlike the other platform charts this does NOT pull an upstream subchart, there's no maintained
-# public Helm repo for local-path-provisioner, so its manifests are vendored under templates/ and
-# parameterized from here. Runs in its own `local-path-storage` namespace (CreateNamespace=true in the
-# Application). PSA: the provisioner Deployment runs unprivileged, but its helper pods mount the node
-# data path as a `hostPath` volume, FORBIDDEN under `baseline` (Talos' default), so the namespace is
-# labelled `privileged` via managedNamespaceMetadata in the Application (like longhorn).
-
 image:
   repository: docker.io/rancher/local-path-provisioner
   tag: v0.0.36                  # mirrors Chart.yaml appVersion
   pullPolicy: IfNotPresent
 
-# Provisioner Deployment footprint (KRR-sized). It only watches PVCs and spawns short-lived helper pods,
-# so it's tiny; requesting it stops the scheduler treating it as free. Wired into templates/deployment.yaml.
 resources:
   requests: { cpu: 10m, memory: 32Mi }
   limits:   { memory: 48Mi }
 
-# The busybox image the provisioner spawns as a short-lived helper pod to mkdir/rm the volume dirs
-# on the target node. Multi-arch (works on arm64). Pinned for reproducibility.
+# Short-lived helper pod the provisioner spawns to mkdir/rm each volume dir on the target node.
 helperImage:
   repository: docker.io/library/busybox
   tag: "1.38"
 
-# Where PVs are physically created on each node. This is the dedicated, fixed-size XFS 'localpath' user
-# volume from 03d (mounted at /var/mnt/localpath, exposed to the kubelet by 03d's extraMount). Node-local:
-# every node uses this same path for its OWN disk (NOT a shared filesystem).
+# The dedicated XFS volume 03d mounts. Node-local: every node uses this path for its OWN disk, not a share.
 dataPath: /var/mnt/localpath
 
-# StorageClasses served by the one provisioner above (both provision under `dataPath` on the pod's own node).
-# Neither is the cluster default — Longhorn stays default; a consumer opts in by name. Both use
-# WaitForFirstConsumer, mandatory for true node-local storage: the volume exists on one node only, so the
-# scheduler must place the pod first (honoring the consumer's hostname anti-affinity) before the volume is
-# provisioned there (Immediate would bind to an arbitrary node first). Both are reclaimPolicy: Delete now; they
-# stay separate classes by intent (CNPG vs RabbitMQ), see each below:
+# Neither is the cluster default, Longhorn is; a consumer opts in by name. WaitForFirstConsumer is mandatory
+# for node-local storage: the scheduler must place the pod first, or the volume binds to an arbitrary node.
 storageClasses:
-    # local-path (Delete): for CNPG. Data safety no longer rests on Retain: the Cluster is protected from a
-    # GitOps prune by orphan-not-delete (Prune=false,Delete=false on the whole DB unit, see lib/helm/pg-cluster +
-    # docs/13_backups.md), so a prune never deletes its PVC. Delete auto-cleans the /var/mnt/localpath dir on a
-    # LEGITIMATE PVC delete (replica scale-down, intentional cluster delete) instead of leaking it.
+    # For CNPG. Delete auto-cleans the dir on a legitimate PVC delete instead of leaking it on the shared
+    # slice; the DB's own orphan-not-delete guard is what stops a prune reaching the PVC at all.
   - name: local-path
     defaultClass: false
     volumeBindingMode: WaitForFirstConsumer
     reclaimPolicy: Delete
-    # local-path-ephemeral (Delete): for self-replicating stateful apps whose HA + durability live in the app,
-    # not the volume (RabbitMQ quorum queues replicate across brokers via Raft). The per-broker volume is
-    # disposable — a replacement broker rebuilds it from healthy peers — so a deleted PVC SHOULD reclaim: Delete
-    # runs the teardown and frees the dir automatically (no manual cleanup, which matters on the shared
-    # /var/mnt/localpath slice). Follows the repo's -ephemeral(=Delete) / -persistent(=Retain) class-naming
-    # convention (see the longhorn-redis-* classes).
+    # For apps whose durability lives in the app, not the volume (RabbitMQ quorum queues replicate via Raft).
+    # A replacement broker rebuilds from healthy peers, so a deleted PVC SHOULD reclaim.
   - name: local-path-ephemeral
     defaultClass: false
     volumeBindingMode: WaitForFirstConsumer

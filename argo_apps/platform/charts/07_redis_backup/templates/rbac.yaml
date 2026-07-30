@@ -1,6 +1,5 @@
-# Cluster-wide READ on Redis CRs only — the least the discovery step needs to `kubectl get redis -A -l ...`
-# across every namespace. No write, no other resources; the dump reaches instances over the network (netpol),
-# not via the API.
+# Cluster-wide READ on Redis CRs only, the least the discovery step needs. No write, no other resources; the
+# dump itself reaches instances over the network, not via the API.
 apiVersion: rbac.authorization.k8s.io/v1
 kind: ClusterRole
 metadata:
@@ -23,9 +22,8 @@ subjects:
     name: redis-backup
     namespace: {{ .Release.Namespace }}
 ---
-# Namespaced write for the ONE ConfigMap the job publishes its per-instance outcome into (read by
-# orphan-exporter for redis_backup_recoverable). Deliberately a Role, not a ClusterRole: the job has no reason
-# to touch anything outside its own namespace.
+# Namespaced write for the ONE ConfigMap the job publishes its per-instance outcome into, read by
+# orphan-exporter. A Role, not a ClusterRole: the job has no reason to touch anything outside its namespace.
 apiVersion: rbac.authorization.k8s.io/v1
 kind: Role
 metadata:

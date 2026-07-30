@@ -1,19 +1,10 @@
 apiVersion: v2
 name: google-sso
-description: >-
-  CENTRAL Google-SSO for the whole cluster. Per domain (values `domains[]`) it stands up the shared
-  callback host google-sso.<domain> (its edge rendered by the ingress library) + ONE SecurityPolicy
-  that targetRefs the callback route and every gated app route, so a single OAuth flow completes on the
-  shared callback host (one cookie identity). Authorization is per-host: each host's rule allows only its
-  own email allowlist, matched by the request `:authority`. So workloads/packages configure NOTHING SSO —
-  a host is gated by adding it to `domains[].hosts` here. Also holds the sealed OAuth client secret
-  (sealed by 07_ingress/07_google_sso.sh) + the shared whoami the callback routes to. Google needs one
-  redirect URI per domain (google-sso.<domain>/oauth2/callback). Delivered by ArgoCD via
-  argo_apps/platform/apps/04_google_sso.yaml, wave 4. See 07_ingress.md.
+description: Central Google-SSO. Per domain, one SecurityPolicy with per-host email allowlists plus the shared google-sso.<domain> callback host, so a host is gated by adding it to domains[].hosts here.
 type: application
-version: 0.1.0                 # local chart, never bump version
+version: 0.1.0 # local chart, never bump version
 
 dependencies:
   - name: ingress
-    version: "*"             # shared edge library; renders each callback host's Gateway/cert/route/policy (file:// dep: version just a constraint, not a selector — see sample_user_manager)
+    version: "*"
     repository: "file://../../../../lib/helm/ingress"

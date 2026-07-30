@@ -9,7 +9,7 @@ metadata:
   namespace: {{ .Release.Namespace }}
 spec:
   replicas: 1
-  revisionHistoryLimit: 0  # roll-forward only; no old ReplicaSets kept (05_gitops.md)
+  revisionHistoryLimit: 0  # recovery is a git revert, never a rollback, so kept history is dead weight
   selector:
     matchLabels:
       app: local-path-provisioner

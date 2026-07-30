@@ -1,9 +1,7 @@
 apiVersion: 1
 groups:
-  # Off-cluster Redis RDB backups (the single central CronJob `redis-backup` in ns redis-backup, from the
-  # 07_redis_backup app). vmalert is off so VMRules are inert — these live here (the only path that fires)
-  # and key off the CronJob/Job NAME via kube-state-metrics. Job-level, not per-instance: which instance
-  # failed is in the job's stdout (VictoriaLogs). See docs/13_backups.md.
+  # Job-level, not per-instance: which instance failed is in the job's stdout. The per-instance gap is covered
+  # by redis-backup-unrecoverable at the bottom of this group. See docs/13_backups.md.
   - orgId: 1
     name: backups
     folder: raspi-cluster
@@ -17,9 +15,9 @@ groups:
         annotations:
           summary: 'Redis backup job {{ $labels.namespace }}/{{ $labels.job_name }} failed'
           description: |
-            • redis backup Job {{ $labels.namespace }}/{{ $labels.job_name }} failed
-            • which instance failed is in the job stdout
-            • check: kubectl -n {{ $labels.namespace }} logs job/{{ $labels.job_name }}
+            - redis backup Job {{ $labels.namespace }}/{{ $labels.job_name }} failed
+            - which instance failed is in the job stdout
+            - check: kubectl -n {{ $labels.namespace }} logs job/{{ $labels.job_name }}
         noDataState: OK
         execErrState: Error
         data:
@@ -29,7 +27,7 @@ groups:
             model:
               refId: A
               instant: true
-              expr: 'max by (namespace, job_name) (kube_job_status_failed{namespace="redis-backup", job_name=~"redis-backup-.+"})'  # kube_job_status_failed (this KSM has no kube_job_failed{condition=...})
+              expr: 'max by (namespace, job_name) (kube_job_status_failed{namespace="redis-backup", job_name=~"redis-backup-.+"})'  # kube-state-metrics here has no kube_job_failed{condition=...}, so count failed pods instead
           - refId: B
             relativeTimeRange: {from: 600, to: 0}
             datasourceUid: __expr__
@@ -45,10 +43,9 @@ groups:
               conditions:
                 - type: query
                   evaluator: {type: gt, params: [0]}
-      # Staleness: no successful backup recently. `last_successful_time > 0` keeps it quiet before the first
-      # run (absent series => NoData => OK). 129600s = 36h (daily + slack, matching CNPG); raise it if you
-      # set a slower schedule in the 07_redis_backup values. VERIFY kube_cronjob_status_last_successful_time
-      # exists in the running kube-state-metrics at apply time. See docs/13_backups.md.
+      # `last_successful_time > 0` keeps this quiet before the first run: an absent series reads NoData, so OK.
+      # 129600s is 36h, daily plus slack. Raise it if you slow the schedule in the 07_redis_backup values.
+      # VERIFY kube_cronjob_status_last_successful_time exists in the running kube-state-metrics at apply time.
       - uid: redis-backup-stale
         title: Redis backup is stale
         condition: C
@@ -57,9 +54,9 @@ groups:
         annotations:
           summary: 'Redis backup {{ $labels.namespace }}/{{ $labels.cronjob }} has no success in >36h'
           description: |
-            • no successful redis backup in >36h for {{ $labels.namespace }}/{{ $labels.cronjob }}
-            • CronJob may be suspended or never scheduling
-            • check: kubectl -n {{ $labels.namespace }} get cronjob {{ $labels.cronjob }}
+            - no successful redis backup in >36h for {{ $labels.namespace }}/{{ $labels.cronjob }}
+            - CronJob may be suspended or never scheduling
+            - check: kubectl -n {{ $labels.namespace }} get cronjob {{ $labels.cronjob }}
         noDataState: OK
         execErrState: Error
         data:
@@ -85,10 +82,7 @@ groups:
               conditions:
                 - type: query
                   evaluator: {type: gt, params: [129600]}
-      # Native Longhorn volume backups (daily/weekly RecurringJobs on the longhorn-r2-retained-with-backups class, 02_longhorn +
-      # 16_longhorn_backup.sh). Longhorn's ServiceMonitor is enabled (02_longhorn metrics.serviceMonitor), so
-      # these scrape via VictoriaMetrics like the redis rules. Per-volume; the volume is in $labels.volume.
-      # See docs/13_backups.md.
+      # Native Longhorn backups, so these scrape via its own ServiceMonitor. Per-volume.
       - uid: longhorn-backup-failed
         title: Longhorn backup failed
         condition: C
@@ -97,9 +91,9 @@ groups:
         annotations:
           summary: 'Longhorn backup for volume {{ $labels.volume }} is in Error state'
           description: |
-            • Longhorn backup for volume {{ $labels.volume }} is in Error state
-            • check the volume's backups in the Longhorn UI
-            • verify the S3 backup target creds + connectivity
+            - Longhorn backup for volume {{ $labels.volume }} is in Error state
+            - check the volume's backups in the Longhorn UI
+            - verify the S3 backup target creds + connectivity
         noDataState: OK
         execErrState: Error
         data:
@@ -125,11 +119,11 @@ groups:
               conditions:
                 - type: query
                   evaluator: {type: gt, params: [0]}
-      # Staleness: a backed-up volume hasn't had a successful backup recently — a silently stopped
-      # RecurringJob produces NO Error state, so this is the only signal. 172800s = 48h (daily + slack).
-      # VERIFY the metric name longhorn_volume_last_backup_at exists in the running Longhorn at apply time (the
-      # Longhorn docs list a per-volume "last backup" timestamp but not the exact name); a wrong name => NoData =>
-      # OK (silent, never a false alert), so adjust if it never fires after a known-good backup.
+      # A silently stopped RecurringJob produces NO Error state, so staleness is the only signal. 172800s is
+      # 48h, daily plus slack.
+      # VERIFY longhorn_volume_last_backup_at exists in the running Longhorn at apply time: the docs list a
+      # per-volume last-backup timestamp but not the exact name, and a wrong name reads NoData, so OK, which is
+      # silent rather than a false alert.
       - uid: longhorn-backup-stale
         title: Longhorn backup is stale
         condition: C
@@ -138,9 +132,9 @@ groups:
         annotations:
           summary: 'Longhorn volume {{ $labels.volume }} has no successful backup in >48h'
           description: |
-            • volume {{ $labels.volume }} has no successful backup in >48h — RecurringJob may have stopped
-            • a stopped RecurringJob emits no Error, so this is the only signal
-            • check the Longhorn RecurringJob schedule + backup target
+            - volume {{ $labels.volume }} has no successful backup in >48h: RecurringJob may have stopped
+            - a stopped RecurringJob emits no Error, so this is the only signal
+            - check the Longhorn RecurringJob schedule + backup target
         noDataState: OK
         execErrState: Error
         data:
@@ -166,10 +160,8 @@ groups:
               conditions:
                 - type: query
                   evaluator: {type: gt, params: [172800]}
-      # ---- CNPG + VM/VL backup health -----------------------------------------------------------------
-      # Ported from the former chart PrometheusRules (08_vm_backup + pg-cluster), now DISABLED: vmalert is
-      # off so their converted VMRules never fired — Grafana is the only path. Metric names lifted verbatim
-      # from those rules. See docs/13_backups.md.
+      # CNPG and VM/VL backup health. Metric names lifted verbatim from the chart PrometheusRules these
+      # replace, which never fired because vmalert is off.
       - uid: vm-backup-failed
         title: VM/VL backup job failed
         condition: C
@@ -178,9 +170,9 @@ groups:
         annotations:
           summary: 'VM/VL backup Job {{ $labels.namespace }}/{{ $labels.job_name }} failed'
           description: |
-            • VM/VL backup Job {{ $labels.namespace }}/{{ $labels.job_name }} failed
-            • check: kubectl -n {{ $labels.namespace }} logs job/{{ $labels.job_name }}
-            • verify the S3 target creds + bucket
+            - VM/VL backup Job {{ $labels.namespace }}/{{ $labels.job_name }} failed
+            - check: kubectl -n {{ $labels.namespace }} logs job/{{ $labels.job_name }}
+            - verify the S3 target creds + bucket
         noDataState: OK
         execErrState: Error
         data:
@@ -190,7 +182,7 @@ groups:
             model:
               refId: A
               instant: true
-              expr: 'max by (namespace, job_name) (kube_job_status_failed{namespace="monitoring", job_name=~"vm-backup.*"})'  # kube_job_status_failed (this KSM has no kube_job_failed{condition=...})
+              expr: 'max by (namespace, job_name) (kube_job_status_failed{namespace="monitoring", job_name=~"vm-backup.*"})'  # kube-state-metrics here has no kube_job_failed{condition=...}, so count failed pods instead
           - refId: B
             relativeTimeRange: {from: 600, to: 0}
             datasourceUid: __expr__
@@ -206,8 +198,8 @@ groups:
               conditions:
                 - type: query
                   evaluator: {type: gt, params: [0]}
-      # Staleness: no successful run in >36h (129600s; daily + slack). `> 0` guards the metric being
-      # absent/zero before the first success (absent => NoData => OK). Catches a suspended/never-scheduled job.
+      # 129600s is 36h, daily plus slack. `> 0` guards the metric being absent or zero before the first
+      # success, so a suspended or never-scheduled job is what actually trips this.
       - uid: vm-backup-stale
         title: VM/VL backup is stale
         condition: C
@@ -216,9 +208,9 @@ groups:
         annotations:
           summary: 'VM/VL backup {{ $labels.namespace }}/{{ $labels.cronjob }} has no success in >36h'
           description: |
-            • no successful VM/VL backup in >36h for {{ $labels.namespace }}/{{ $labels.cronjob }}
-            • CronJob may be suspended or never scheduling
-            • check: kubectl -n {{ $labels.namespace }} get cronjob {{ $labels.cronjob }}
+            - no successful VM/VL backup in >36h for {{ $labels.namespace }}/{{ $labels.cronjob }}
+            - CronJob may be suspended or never scheduling
+            - check: kubectl -n {{ $labels.namespace }} get cronjob {{ $labels.cronjob }}
         noDataState: OK
         execErrState: Error
         data:
@@ -244,9 +236,9 @@ groups:
               conditions:
                 - type: query
                   evaluator: {type: gt, params: [129600]}
-      # WAL archiving to S3 falling behind/failing (load-bearing: a stalled archiver fills pg_wal -> primary
-      # read-only). `value="ready"` counts not-yet-archived segments; sustained >0 for 15m = not keeping up.
-      # Cluster-wide (dropped the per-instance pod regex the PrometheusRule used). See docs/13_backups.md.
+      # Worth paging on: a stalled archiver fills pg_wal, and a full pg_wal turns the primary read-only.
+      # `value="ready"` counts segments waiting to be archived, so a sustained non-zero over 15m means the
+      # archiver is not keeping up.
       - uid: cnpg-wal-archive-failing
         title: CNPG WAL archiving to S3 failing
         condition: C
@@ -255,9 +247,9 @@ groups:
         annotations:
           summary: 'CNPG {{ $labels.namespace }}/{{ $labels.pod }}: WAL archiving to S3 is failing'
           description: |
-            • WAL segments piling up on {{ $labels.namespace }}/{{ $labels.pod }} — not archiving to S3
-            • pg_wal grows until the volume fills and the primary goes read-only
-            • check the barman-cloud sidecar logs + S3 creds/bucket
+            - WAL segments piling up on {{ $labels.namespace }}/{{ $labels.pod }}: not archiving to S3
+            - pg_wal grows until the volume fills and the primary goes read-only
+            - check the barman-cloud sidecar logs + S3 creds/bucket
         noDataState: OK
         execErrState: Error
         data:
@@ -283,8 +275,8 @@ groups:
               conditions:
                 - type: query
                   evaluator: {type: gt, params: [0]}
-      # No recent base backup (>36h). The timestamp metric MAY stay 0 under the barman plugin, so `> 0`
-      # guards it: never populated => won't fire (we lean on the WAL alert then). See docs/13_backups.md.
+      # The timestamp metric MAY stay 0 under the barman plugin, so `> 0` guards it: never populated means
+      # this never fires and the WAL alert carries the load instead.
       - uid: cnpg-backup-too-old
         title: CNPG base backup is stale
         condition: C
@@ -293,9 +285,9 @@ groups:
         annotations:
           summary: 'CNPG {{ $labels.namespace }}/{{ $labels.pod }}: last base backup is >36h old'
           description: |
-            • last CNPG base backup for {{ $labels.namespace }}/{{ $labels.pod }} is >36h old
-            • check: kubectl -n {{ $labels.namespace }} get backup
-            • inspect the barman-cloud sidecar on the standby
+            - last CNPG base backup for {{ $labels.namespace }}/{{ $labels.pod }} is >36h old
+            - check: kubectl -n {{ $labels.namespace }} get backup
+            - inspect the barman-cloud sidecar on the standby
         noDataState: OK
         execErrState: Error
         data:
@@ -321,14 +313,14 @@ groups:
               conditions:
                 - type: query
                   evaluator: {type: gt, params: [129600]}
-      # The per-instance Redis equivalent, and the reason the two redis rules above are not enough: both key on
-      # the CronJob/Job name, so they only see the whole job. An instance the job never DISCOVERED (backup label
-      # lost, persistence flipped to false, CR renamed) contributes nothing to failed.txt, the job exits 0 and
-      # prints "all backups ok", and neither rule fires. Zero durable instances discovered is equally silent.
-      # Sourced from orphan-exporter, which keys off the labelled Redis CRs rather than the backup job's own
-      # output, so a missing instance reads as 0 instead of an absent series. Also 0 when the last dump was
-      # empty: an upload can succeed with a keyless RDB, and restoring one wipes the instance.
-      # 2h grace covers a freshly created instance whose first nightly dump has not run.
+      # The per-instance gap the two job-level rules above cannot see: an instance the job never DISCOVERED
+      # (backup label lost, persistence flipped, CR renamed) contributes nothing to failed.txt, so the job
+      # exits 0 printing "all backups ok" and neither rule fires. Zero durable instances is equally silent.
+      # Sourced from orphan-exporter, which keys off the labelled Redis CRs rather than the job's own output,
+      # so a missing instance reports 0 rather than dropping out of the query entirely. Also 0 when the last
+      # dump was empty: an
+      # upload can succeed with a keyless RDB, and restoring one wipes the instance.
+      # The 2h grace covers a fresh instance whose first nightly dump has not run.
       - uid: redis-no-recoverable-backup
         title: Redis instance has no usable backup
         condition: C
@@ -367,13 +359,12 @@ groups:
               conditions:
                 - type: query
                   evaluator: {type: lt, params: [1]}
-      # The one that actually catches an unrestorable DB, and the reason the two rules above are not enough:
-      # WAL archiving can be green and cnpg-backup-too-old permanently silent (its metric stays 0 under the
-      # plugin) while the catalog holds no base backup at all. That is exactly what a destinationPath change
-      # did: WAL kept flowing to the new prefix, every base backup stayed behind at the old one, nothing fired.
-      # Sourced from orphan-exporter reading ObjectStore.status.serverRecoveryWindow, since
-      # Cluster.status.firstRecoverabilityPoint stays empty under the plugin. The 1h grace covers a genuinely
-      # new cluster whose first backup has not run yet. See docs/13_backups.md.
+      # The one that actually catches an unrestorable DB: WAL archiving can be green and cnpg-backup-too-old
+      # permanently silent (its metric stays 0 under the plugin) while the catalog holds no base backup at all.
+      # A destinationPath change does exactly that, WAL flowing to the new prefix while every base backup stays
+      # behind at the old one.
+      # Sourced from orphan-exporter reading ObjectStore.status.serverRecoveryWindow, because
+      # Cluster.status.firstRecoverabilityPoint stays empty under the plugin. The 1h grace covers a new cluster.
       - uid: cnpg-no-recoverable-backup
         title: CNPG database has no recovery point
         condition: C

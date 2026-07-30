@@ -1,30 +1,16 @@
-# ArgoCD Application for the self-hosted ntfy notification server (argo_apps/platform/charts/05_ntfy/): the
-# alert transport. Grafana's unified-alerting webhook publishes firing alerts to the `cluster-alerts` topic
-# in-cluster; the Android app subscribes over the public edge. First-party chart (Deployment + Service +
-# ConfigMap + PVC + a pod-scoped CiliumNetworkPolicy). Users/ACLs/token are seeded post-sync by
-# lib/shell/10_ntfy_auth.sh (ntfy has no declarative user config). See 09_monitoring.md.
-#
-# AUTOMATED (prune + selfHeal): a leaf workload in the `monitoring` namespace, it can't cut the cluster off
-# its network, and it owns no CRDs.
-#
-# sync-wave "5": with the monitoring stack it serves (05_grafana), after Longhorn (wave 2, its PVC). The edge
-# is added by the platform-ingress app at a LATER wave (6), so the ntfy Service already exists when its route
-# is created. The namespace is labelled privileged exactly like the stack (idempotent if the stack created
-# `monitoring` first) — though ntfy's own pod runs restricted (non-root, drops all caps). No CRDs here, so
-# (unlike grafana) no ServerSideDiff is needed.
+# Self-hosted ntfy, the alert transport Grafana's webhook publishes to. Users/ACLs/token are seeded post-sync by lib/shell/10_ntfy_auth.sh.
 apiVersion: argoproj.io/v1alpha1
 kind: Application
 metadata:
   name: ntfy
   namespace: argocd
-  # Cascade-delete this app's own resources on Application deletion instead of orphaning them; see 05_gitops.md.
   finalizers:
     - resources-finalizer.argocd.argoproj.io
   annotations:
     argocd.argoproj.io/sync-wave: "5"
 spec:
   project: default
-  revisionHistoryLimit: 0  # roll-forward only; no Argo rollback history (05_gitops.md)
+  revisionHistoryLimit: 0
   source:
     repoURL: https://github.com/yama6a/offgrid
     targetRevision: HEAD
@@ -42,8 +28,8 @@ spec:
       prune: true
       selfHeal: true
     retry:
-      limit: -1  # unbounded; only retry re-drives a failed sync (see 05_gitops.md)
-      refresh: true  # retry the latest revision so a fix commit lands mid-loop
+      limit: -1
+      refresh: true
       backoff:
         duration: 5s
         factor: 2

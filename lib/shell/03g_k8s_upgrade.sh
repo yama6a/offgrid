@@ -1,28 +1,11 @@
 #!/usr/bin/env bash
-#
-# 03g_k8s_upgrade.sh  (macOS)
-#
-# Rolling, in-place upgrade of the running cluster's KUBERNETES version to KUBERNETES_VERSION (versions.env), via
-# `talosctl upgrade-k8s`. This is the k8s-only counterpart to 03f (which upgrades the Talos OS): the two are
-# independent. `talosctl upgrade --image` (03f) swaps the node OS and does NOT touch k8s; `upgrade-k8s`
-# (here) rolls the control-plane static pods (apiserver/controller-manager/scheduler) + kubelet component
-# versions and does NOT reboot nodes. So bumping ONLY KUBERNETES_VERSION means: run THIS, not 03f.
-#
-# talosctl drives the whole cluster from one endpoint: it upgrades each control-plane component in turn and
-# only proceeds while the API stays healthy. No image publish step is needed (k8s images come from
-# registry.k8s.io, not our GHCR installer), so unlike 03f there's no 03a prerequisite.
-#
-# Order when BOTH change: upgrade Talos first (03f), then k8s (03g) — a newer Talos always supports the k8s
-# version it defaults to. KUBERNETES_VERSION can't exceed the pinned Talos's default (see versions.env); bump
-# TALOS_VERSION + run 03a/03f before raising it past that ceiling, or upgrade-k8s rejects it.
-#
-# Self-contained: talosctl runs as a pinned Docker image against secrets/ (talosconfig from 03d),
-# like 03c-03f. Talos work -> Docker (the native macOS talosctl is unreliable, see 03_operating_system.md).
-#
-# NOT DANGEROUS_ (no wipe, no reboot; k8s control-plane roll with health gating) but it does roll the
-# live control plane, so it asks for a typed 'yes'. Re-run-safe: a cluster already at the target version
-# is a clean no-op, so a re-run after a mid-way failure just resumes.
-#
+# Rolling, in-place upgrade of the cluster's KUBERNETES version to KUBERNETES_VERSION, via
+# `talosctl upgrade-k8s`. The counterpart to 03f, which upgrades the OS; the two are independent, so bumping
+# only KUBERNETES_VERSION means running THIS, not 03f. It rolls the control-plane static pods and kubelet
+# versions and reboots nothing.
+# KUBERNETES_VERSION cannot exceed the pinned Talos's default: bump TALOS_VERSION and run 03a/03f before
+# raising it past that ceiling, or upgrade-k8s rejects it.
+# Re-run-safe: a cluster already at the target version is a clean no-op.
 set -euo pipefail
 
 # KUBERNETES_VERSION / NODES / TALOSCTL_VERSION derived-or-read in lib/shell/common.sh (from versions.env + .env).

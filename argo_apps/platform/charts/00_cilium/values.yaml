@@ -1,55 +1,37 @@
-# Values for the 00_cilium wrapper chart. SINGLE SOURCE OF TRUTH, both the 04_cilium.sh
-# bootstrap and the ArgoCD Application consume this. The chart version is pinned in Chart.yaml.
-
-# Everything under `cilium:` is passed to the upstream cilium/cilium subchart (key == dependency name).
 cilium:
-  # CLUSTER-WIDE policy audit mode: every CiliumNetworkPolicy runs in log-only mode — a would-be drop is
-  # reported (Hubble verdict AUDIT, `cilium monitor --type policy-verdict`) but the packet is STILL FORWARDED.
-  # NOTHING is enforced anywhere while this is true; it's a rollout/iteration safety net, not a steady state.
-  # Renders `policy-audit-mode: "true"` into cilium-config. Set back to false (or remove) to re-enforce.
-  # NOTE: agents read this at startup — after changing it, roll the cilium DaemonSet to apply (rollOutCiliumPods below now automates that).
+  # CLUSTER-WIDE log-only mode: every CiliumNetworkPolicy reports a would-be drop (Hubble verdict AUDIT) but
+  # STILL FORWARDS the packet. NOTHING is enforced anywhere while this is true. Flip when this project is stable.
   policyAuditMode: true
-  # Auto-roll the agent DaemonSet when cilium-config changes (default false). Without it a GitOps config edit
-  # (e.g. policyAuditMode above) has NO effect until a human rolls the DaemonSet by hand — closes that gap.
+  # Agents read config at startup. Without force-rolling pods like this, a GitOps config edit does nothing until a human
+  # rolls the DaemonSet by hand.
   rollOutCiliumPods: true
-  # CNI must survive node memory pressure: losing the agent breaks pod networking on that node. Built-in class
-  # is allowed here (cilium runs in kube-system).
   priorityClassName: system-node-critical
-  # Talos on Raspberry Pi 5.
   ipam:
     mode: kubernetes
   kubeProxyReplacement: true
   k8sServiceHost: localhost # Talos KubePrism
   k8sServicePort: 7445
-  # eBPF-native egress masquerade (default off): moves masquerading off iptables into the datapath, the natural
-  # pairing with full kubeProxyReplacement above. Supported by the rpi-6.18 kernel this image builds.
+  # Rewrites pod source IPs to the node IP (needed for pod-to-internet traffic) inside Cilium's in-kernel datapath
+  # instead of using the older iptables rules. Keeps the outbound path consistent with kubeProxyReplacement above,
+  # which already handles service routing the same way.
   bpf:
     masquerade: true
   encryption:
     enabled: true
-    type: wireguard # transparent node-to-node encryption
+    type: wireguard # transparent node-to-node encryption (within-same-node traffic is unencrypted, but that's fine)
   l2announcements:
-    enabled: true # LoadBalancer IPs announced via ARP (replaces MetalLB)
+    enabled: true # LoadBalancer IPs announced via ARP, replaces MetalLB
   gatewayAPI:
-    # OFF: the cluster's Gateway API data plane is Envoy Gateway (argo app 01_envoy_gateway), not
-    # Cilium. Cilium stays the CNI + LB-IPAM only. Disabling this drops the `cilium` GatewayClass and
-    # Cilium's gateway controller. Envoy Gateway now OWNS the Gateway API CRDs (it ships its own), so the
-    # previously-vendored crds/gateway.networking.k8s.io_*.yaml are removed from this chart. The live
-    # CRDs survive the removal (this app is prune:false) and Envoy Gateway adopts them via SSA.
-    # See 11_envoy_gateway.md.
-    enabled: false
-  # Expose agent + operator metrics and create their ServiceMonitors so Prometheus scrapes Cilium.
-  # The monitoring.coreos.com CRDs exist from wave 0 (00_prometheus_operator_crds), same wave as this
-  # app, so on a cold boot these ServiceMonitors converge once the CRDs register. See 15_monitoring.md.
+    enabled: false # Off: We use Envoy Gateway instead (see 01_envoy_gateway), Cilium stays CNI + LB-IPAM only.
   prometheus:
     enabled: true
     serviceMonitor:
       enabled: true
   operator:
-    rollOutPods: true # roll the operator too on cilium-config change (pairs with rollOutCiliumPods above)
-    priorityClassName: system-cluster-critical # protect the operator from eviction (kube-system => built-in allowed)
+    rollOutPods: true
+    priorityClassName: system-cluster-critical
     podDisruptionBudget:
-      enabled: true # 2 replicas: keep LB-IPAM/L2 leader through Talos node reboots (chart default maxUnavailable:1)
+      enabled: true # keeps the LB-IPAM/L2 leader through Talos node reboots
     prometheus:
       enabled: true
       serviceMonitor:
@@ -58,20 +40,15 @@ cilium:
     enabled: true
     relay:
       enabled: true
-      # Setting this key REPLACES the chart's default relay affinity, so its default REQUIRED podAffinity
-      # (relay must co-locate with a cilium agent — every node runs one as a DaemonSet, so always satisfiable)
-      # is repeated verbatim, PLUS a soft podAntiAffinity so a raised `relay.replicas` spreads relay across Pi
-      # nodes. PREFERRED + hostname: bare Pi nodes have no zone label, and soft so a scale-up never wedges as
-      # Pending. No-op at the default single replica.
       affinity:
         podAffinity:
-          requiredDuringSchedulingIgnoredDuringExecution:
+          requiredDuringSchedulingIgnoredDuringExecution: # relay must co-locate with an agent
             - topologyKey: kubernetes.io/hostname
               labelSelector:
                 matchLabels:
                   k8s-app: cilium
         podAntiAffinity:
-          preferredDuringSchedulingIgnoredDuringExecution:
+          preferredDuringSchedulingIgnoredDuringExecution: # spread relays across nodes if possible
             - weight: 100
               podAffinityTerm:
                 labelSelector:
@@ -80,12 +57,9 @@ cilium:
                 topologyKey: kubernetes.io/hostname
     ui:
       enabled: true
-      # Spread hubble-ui across Pi nodes if `ui.replicas` is raised. PREFERRED + hostname (no zone label on
-      # bare Pi nodes; soft so a scale-up never wedges as Pending). No-op at the default single replica.
-      # (The chart's default ui.affinity is empty, so there's nothing to preserve here.)
       affinity:
         podAntiAffinity:
-          preferredDuringSchedulingIgnoredDuringExecution:
+          preferredDuringSchedulingIgnoredDuringExecution: # spread hubble-ui across nodes if possible
             - weight: 100
               podAffinityTerm:
                 labelSelector:
@@ -94,41 +68,32 @@ cilium:
                 topologyKey: kubernetes.io/hostname
     tls:
       auto:
-        # GITOPS-CRITICAL: generate the Hubble mTLS certs (and the SHARED `cilium-ca` secret, which the
-        # chart labels cilium.io/helm-template-non-idempotent) via an in-cluster Job, NOT at Helm render
-        # time. The upstream default `helm` re-runs genCA/genSelfSignedCert on every render, so ArgoCD's
-        # repo-server minted fresh certs on each git push -> perpetual drift on cilium-ca + hubble-*-certs
-        # -> selfHeal rewrote them and bounced hubble-relay/ui every push. `cronJob` renders a stable
-        # manifest (the certs live in the cluster, generated once), so there's nothing for Argo to diff.
-        # Not `certmanager`: that needs cert-manager (wave 2) present, but this app is wave 0.
+        # By default, ArgoCD's repo-server would mint new certs on each push, causing out-of-sync on cilium-ca and
+        # hubble-*-certs every time. It self-heals but is unnecessary. Using `cronJob` renders a stable manifest instead.
+        # We cannot use cert-manager, which is wave 2.
         method: cronJob
-    # Hubble flow metrics (a lean set, keeps cardinality bounded on the Pis; add httpV2 if wanted).
-    metrics:
+    metrics: # A lean set, keeps cardinality low
       enabled: [dns, drop, tcp, flow, icmp, port-distribution]
       serviceMonitor:
         enabled: true
-      # Emit Cilium's official Hubble dashboards as ConfigMaps (grafana_dashboard label) into
-      # kube-system; the 05_grafana sidecar (searchNamespace: ALL) imports them automatically.
       dashboards:
         enabled: true
-  # Talos-specific: it doesn't auto-mount cgroup v2, and the agent needs an explicit cap set.
   cgroup:
+    # Talos already mounts the unified cgroup v2 tree at /sys/fs/cgroup on the host, cilium doesn't need to mount its own
+    # (which would double-mount and fail). Instead, we point the agent at the host's tree.
     autoMount: {enabled: false}
     hostRoot: /sys/fs/cgroup
   securityContext:
-    capabilities:
+    capabilities: # Since the agent isn't fully privileged, it needs the caps spelled out to load eBPF and read the cgroup tree.
       ciliumAgent: [CHOWN, KILL, NET_ADMIN, NET_RAW, IPC_LOCK, SYS_ADMIN, SYS_RESOURCE, DAC_OVERRIDE, FOWNER, SETGID, SETUID]
       cleanCiliumState: [NET_ADMIN, SYS_ADMIN, SYS_RESOURCE]
-      # L2 announcements lean on leader-election leases; if you scale up the pool and see API
-      # throttling in the operator logs, raise k8sClientRateLimit (qps/burst).
-# LB-IPAM pool + L2 announcement policy (templates/cilium-lb.yaml). These reference Cilium CRDs
-# the operator only registers at runtime, so the 04_cilium.sh bootstrap installs Cilium with this
-# OFF first, waits for the operator, then re-applies with it ON. ArgoCD just leaves it true.
+
+# LB-IPAM pool + L2 announcement policy (templates/cilium-lb.yaml). These reference CRDs the operator only
+# registers at runtime, so 04_cilium.sh installs with this OFF first, waits for the operator, then re-applies
+# with it ON. ArgoCD just leaves it true.
 loadBalancer:
   enabled: true
-  # LB-IPAM address pool (CiliumLoadBalancerIPPool blocks). Written here by 04_cilium.sh
-  # from 04_networking/config.sh (yq), don't hand-edit; change the range in config.sh and
-  # re-run the script. ArgoCD reads these values, so this is what keeps Argo + the pool in sync.
+  # Written here by 04_cilium.sh from .env, don't hand-edit: change it in the .env and re-run the script.
   ipPool:
     start: "192.168.100.10"
     stop: "192.168.100.250"

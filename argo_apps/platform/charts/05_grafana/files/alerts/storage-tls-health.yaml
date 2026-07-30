@@ -1,12 +1,14 @@
 apiVersion: 1
 groups:
-  # Storage + TLS health — all warning. cert-manager (ingress TLS), Longhorn volume robustness, PV/PVC phase.
+  # cert-manager ingress TLS plus PV/PVC phase, all warning. Longhorn volume health lives in
+  # longhorn-health.yaml.
   - orgId: 1
     name: storage-tls-health
     folder: raspi-cluster
     interval: 1m
     rules:
-      # A = seconds until expiry; threshold `lt` 1209600 (14d). Also fires once already expired (negative).
+      # A is seconds until expiry, and `lt` 1209600 is 14d. Also fires once already expired, since that is
+      # negative.
       - uid: cert-expiring-soon
         title: TLS certificate expiring soon
         condition: C
@@ -15,9 +17,9 @@ groups:
         annotations:
           summary: 'Certificate {{ $labels.exported_namespace }}/{{ $labels.name }} expires in <14d'
           description: |
-            • cert {{ $labels.exported_namespace }}/{{ $labels.name }} is within 14d of expiry (or already expired) — renewal is stalling
-            • inspect: kubectl -n {{ $labels.exported_namespace }} describe certificate {{ $labels.name }}
-            • check the Issuer/ACME order + challenge: kubectl -n {{ $labels.exported_namespace }} get certificaterequest,order,challenge
+            - cert {{ $labels.exported_namespace }}/{{ $labels.name }} is within 14d of expiry (or already expired): renewal is stalling
+            - inspect: kubectl -n {{ $labels.exported_namespace }} describe certificate {{ $labels.name }}
+            - check the Issuer/ACME order + challenge: kubectl -n {{ $labels.exported_namespace }} get certificaterequest,order,challenge
         noDataState: OK
         execErrState: Error
         data:
@@ -43,7 +45,7 @@ groups:
               conditions:
                 - type: query
                   evaluator: {type: lt, params: [1209600]}
-      # `== bool 0` -> 1 when the cert's Ready=True condition is not 1 (i.e. not ready).
+      # `== bool 0` yields 1 when the cert's Ready=True condition is not 1.
       - uid: cert-not-ready
         title: TLS certificate not ready
         condition: C
@@ -52,9 +54,9 @@ groups:
         annotations:
           summary: 'Certificate {{ $labels.exported_namespace }}/{{ $labels.name }} is not Ready'
           description: |
-            • cert {{ $labels.exported_namespace }}/{{ $labels.name }} is not Ready — issuance/renewal failed
-            • inspect: kubectl -n {{ $labels.exported_namespace }} describe certificate {{ $labels.name }}
-            • trace the ACME order/challenge: kubectl -n {{ $labels.exported_namespace }} get certificaterequest,order,challenge; check the Issuer is Ready
+            - cert {{ $labels.exported_namespace }}/{{ $labels.name }} is not Ready: issuance/renewal failed
+            - inspect: kubectl -n {{ $labels.exported_namespace }} describe certificate {{ $labels.name }}
+            - trace the ACME order/challenge: kubectl -n {{ $labels.exported_namespace }} get certificaterequest,order,challenge; check the Issuer is Ready
         noDataState: OK
         execErrState: Error
         data:
@@ -80,9 +82,6 @@ groups:
               conditions:
                 - type: query
                   evaluator: {type: gt, params: [0]}
-      # NOTE: longhorn-volume-degraded / -faulted MOVED to files/alerts/longhorn-health.yaml (all Longhorn health
-      # in one group) — and FIXED there: longhorn_volume_robustness is state-labelled on this version, so the old
-      # `== 2`/`== 3` never matched. See 09_monitoring.md.
       - uid: pv-errors
         title: PersistentVolume in error state
         condition: C
@@ -91,9 +90,9 @@ groups:
         annotations:
           summary: 'PersistentVolume {{ $labels.persistentvolume }} is {{ $labels.phase }}'
           description: |
-            • PV {{ $labels.persistentvolume }} is in phase {{ $labels.phase }} (Failed/Pending) — its backing volume isn't usable
-            • inspect: kubectl describe pv {{ $labels.persistentvolume }}
-            • for Longhorn-backed PVs check the volume health: kubectl -n longhorn-system get volumes.longhorn.io
+            - PV {{ $labels.persistentvolume }} is in phase {{ $labels.phase }} (Failed/Pending): its backing volume isn't usable
+            - inspect: kubectl describe pv {{ $labels.persistentvolume }}
+            - for Longhorn-backed PVs check the volume health: kubectl -n longhorn-system get volumes.longhorn.io
         noDataState: OK
         execErrState: Error
         data:
@@ -127,9 +126,9 @@ groups:
         annotations:
           summary: 'PVC {{ $labels.namespace }}/{{ $labels.persistentvolumeclaim }} is {{ $labels.phase }}'
           description: |
-            • PVC {{ $labels.namespace }}/{{ $labels.persistentvolumeclaim }} is {{ $labels.phase }} (Pending/Lost) — not bound to a volume
-            • inspect: kubectl -n {{ $labels.namespace }} describe pvc {{ $labels.persistentvolumeclaim }}
-            • check the StorageClass/provisioner + Longhorn schedulable disk capacity (see the Longhorn alerts)
+            - PVC {{ $labels.namespace }}/{{ $labels.persistentvolumeclaim }} is {{ $labels.phase }} (Pending/Lost): not bound to a volume
+            - inspect: kubectl -n {{ $labels.namespace }} describe pvc {{ $labels.persistentvolumeclaim }}
+            - check the StorageClass/provisioner + Longhorn schedulable disk capacity (see the Longhorn alerts)
         noDataState: OK
         execErrState: Error
         data:
@@ -155,6 +154,6 @@ groups:
               conditions:
                 - type: query
                   evaluator: {type: gt, params: [0]}
-# Log-based alert in its OWN file so a VL-datasource model mismatch can't break the metrics rules
-# above. VERIFY the query model against the live victoriametrics-logs-datasource at apply time (the
-# plugin's alerting model field names can change between versions). See 09_monitoring.md.
+# In its OWN file so a VL-datasource model mismatch cannot break the metrics rules above.
+# VERIFY the query model against the live victoriametrics-logs-datasource at apply time: the plugin's alerting
+# model field names can change between versions.

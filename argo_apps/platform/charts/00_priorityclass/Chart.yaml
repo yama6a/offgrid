@@ -1,14 +1,7 @@
 apiVersion: v2
 name: priorityclass
-description: >-
-  The two shared PriorityClasses that order eviction under memory pressure on the 8GB Pi 5 nodes:
-  `platform-critical` for the control plane (cert-manager, sealed-secrets, cnpg, vm-operator,
-  envoy-gateway) and `data-critical`, one notch lower, for workload data pods (every pg-cluster and
-  redis-instance instance). The built-in system-cluster-critical / system-node-critical classes are
-  admission-restricted to kube-system, so components in their OWN namespaces can't use them and these
-  cluster-scoped classes fill that gap. Cilium (kube-system) still uses the built-ins directly.
-
-  DELIBERATE DEVIATION from the usual wrapper-chart pattern: pins no upstream and renders a single
-  committed manifest, so like 03_argocd_webhook_secret it ships no Chart.lock and no vendored charts/*.tgz.
+description: The two shared PriorityClasses that order eviction under memory pressure, platform-critical and data-critical.
+# The built-in system-cluster-critical / system-node-critical are admission-restricted to kube-system, so
+# components in their own namespaces cannot use them.
 type: application
-version: 0.1.0                 # local chart, never bump version
+version: 0.1.0 # local chart, never bump version

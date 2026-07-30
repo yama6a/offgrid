@@ -1,37 +1,19 @@
-# Values for the 01_envoy_gateway wrapper chart. SINGLE SOURCE OF TRUTH, ArgoCD (and any local
-# `helm template`) consume this. Chart version pinned in Chart.yaml.
-#
-# This chart delivers the envoy-gateway controller (which also installs the Gateway API + Envoy
-# Gateway CRDs), plus the `eg` GatewayClass and the EnvoyProxy that pins the LoadBalancer IP
-# (templates/). The actual data-plane Envoy proxies are created per-Gateway by the controller.
-# See 11_envoy_gateway.md.
-
-# The `eg` GatewayClass this chart registers (templates/gatewayclass.yaml). The 03_gateway chart's
-# shared Gateway sets gatewayClassName to this.
 gatewayClass:
-  name: eg
+  name: eg # 03_gateway's shared Gateway sets gatewayClassName to this
 
-# The EnvoyProxy provider config (templates/envoyproxy.yaml), referenced by the GatewayClass above.
-# Lives in the controller's namespace (the Application destination). loadBalancerIP MUST sit inside the
-# Cilium LB-IPAM pool (192.168.100.10-250) and match the old Pi's forward target.
 envoyProxy:
   name: eg-proxy-config
   namespace: envoy-gateway-system
-  loadBalancerIP: "192.168.100.10"
-  # Data-plane Envoy container footprint (KRR-sized; the chart/EG default reserves 512Mi req). This is the
-  # cluster's SINGLE merged ingress proxy (mergeGateways above), so keep a generous memory limit — it's the
-  # ingress chokepoint and a too-tight limit OOM-kills all ingress. Wired into the EnvoyProxy CR (templates/).
+  loadBalancerIP: "192.168.100.10" # MUST sit inside the Cilium LB-IPAM pool (00_cilium loadBalancer.ipPool)
+  # This is the cluster's SINGLE merged ingress proxy, so keep a generous memory limit: a too-tight one
+  # OOM-kills all ingress at once.
   resources:
     requests: { cpu: 10m, memory: 48Mi }
     limits:   { memory: 128Mi }
 
-  # This is the cluster's SINGLE merged ingress proxy (mergeGateways). If the merged Envoy Deployment's
-  # replicas is ever raised for ingress HA, keep the replicas off the same Pi node. PREFERRED + hostname:
-  # bare Pi nodes have no zone label, and soft so a scale-up never wedges as Pending on the 3-node cluster.
-  # No-op at the default single replica. Wired into the EnvoyProxy CR's envoyDeployment.pod.affinity
-  # (templates/envoyproxy.yaml). The selector is the three stable labels Envoy Gateway stamps on every managed
-  # proxy pod (its EnvoyAppLabelSelector); if you scale, verify against a live pod
-  # (`kubectl -n envoy-gateway-system get pods --show-labels`).
+  # Soft + hostname: bare Pi nodes have no zone label, and soft means raising replicas never wedges a pod
+  # Pending on 3 nodes. The selector is Envoy Gateway's own EnvoyAppLabelSelector; verify against a live pod
+  # before relying on it (`kubectl -n envoy-gateway-system get pods --show-labels`).
   affinity:
     podAntiAffinity:
       preferredDuringSchedulingIgnoredDuringExecution:
@@ -44,18 +26,14 @@ envoyProxy:
                 app.kubernetes.io/managed-by: envoy-gateway
             topologyKey: kubernetes.io/hostname
 
-  # Scrape the data-plane proxy pods' Prometheus stats (:19001 `/stats/prometheus`, served by default) via a
-  # PodMonitor (templates/podmonitor.yaml; VM operator -> VMPodScrape). Feeds the per-route `ingress-http` alerts
-  # (05_grafana). Envoy's default cluster stats already carry `envoy_cluster_name="httproute/<ns>/<route>/rule/N"`,
-  # so those alerts are per-HTTPRoute with no extra telemetry config. See 09_monitoring.md / 07_ingress.md.
+  # Envoy's default cluster stats already carry envoy_cluster_name="httproute/<ns>/<route>/rule/N", so the
+  # ingress-http alerts are per-HTTPRoute with no extra telemetry config.
   podMonitor:
     enabled: true
 
-# Everything under `gateway-helm:` is passed to the upstream gateway-helm subchart (key == dep name).
 gateway-helm:
-  # Quiet the envoy-gateway CONTROLLER's xDS reconcile INFO logs (this is the control plane, not the
-  # data-plane proxy). WARN keeps routing/translation errors. The per-Gateway Envoy PROXY access logs
-  # (the `envoy` containers, our HTTP request/response logs) are emitted separately and stay untouched.
+  # The CONTROLLER's own logs as it turns Gateway/HTTPRoute objects into Envoy config, not the proxy's. WARN
+  # keeps routing/translation errors; the per-Gateway Envoy access logs are emitted separately and untouched.
   config:
     envoyGateway:
       logging:
@@ -63,16 +41,13 @@ gateway-helm:
           default: warn
   deployment:
     envoyGateway:
-      # Trim the controller's footprint for a 3x 8GB Pi 5 cluster (chart default limit is 1Gi).
       resources:
         requests: { cpu: 10m, memory: 48Mi }
         limits:   { memory: 96Mi }
     replicas: 1
-    priorityClassName: platform-critical # protect the single ingress control plane from eviction on the 8GB Pis (see 00_priorityclass)
-    # The CONTROLLER (control plane) is leader-elected (one active + standby); if replicas is raised for
-    # faster failover, keep the standby off the active's node. PREFERRED + hostname: bare Pi nodes have no
-    # zone label, and soft so a scale-up never wedges as Pending on the 3-node cluster. No-op at one replica.
-    # (This is the controller only — the data-plane Envoy proxy spreads via the EnvoyProxy CR, templates/envoyproxy.yaml.)
+    priorityClassName: platform-critical # the single ingress control plane
+    # Controller only; the data-plane proxy spreads via the EnvoyProxy CR above. Soft + hostname for the same
+    # reason: no zone label, and soft means a scale-up never wedges Pending.
     pod:
       affinity:
         podAntiAffinity:
@@ -83,13 +58,10 @@ gateway-helm:
                   matchLabels:
                     control-plane: envoy-gateway
                 topologyKey: kubernetes.io/hostname
-  # Zone-aware-LB injector webhook (chart default ON): OFF. It injects topology.kubernetes.io/zone
-  # into proxy pods for zone-aware routing, but bare Pi nodes have NO zone label (we spread by hostname) and we
-  # don't use zoneAware traffic policies — so it's just a webhook round-trip + cert plumbing for nothing.
+  # Injects topology.kubernetes.io/zone for zone-aware routing. Bare Pi nodes have no zone label and we use no
+  # zoneAware traffic policies, so it is a webhook round-trip plus cert plumbing for nothing.
   topologyInjector:
     enabled: false
-  # The cert-generation Job was the only component here with no resource bounds (chart default {}). Bound it to
-  # match the house "everything is sized" style; it's short-lived (ttlSecondsAfterFinished: 30) so this is minor.
   certgen:
     job:
       resources:

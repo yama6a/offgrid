@@ -1,36 +1,16 @@
-# ArgoCD Application that ADOPTS the already-running Cilium (installed imperatively by
-# 04_networking/04_cilium.sh from the SAME chart). Same chart/namespace/release -> Argo sees it
-# in-sync, not fighting it. See 05_gitops.md.
-#
-# FULL AUTOMATED posture (selfHeal + prune), the SAME as every other leaf, chosen for convenience
-# even though Cilium is the one app that can cut the whole cluster, and ArgoCD itself, off the
-# network. We knowingly accept the danger:
-#   - selfHeal: true -> an out-of-band break-glass fix (04_cilium.sh) IS reverted by Argo unless you
-#                       commit it to git promptly; drift is always dragged back to the pushed state.
-#   - prune: true    -> a resource/CRD removed from the chart IS cascade-deleted on the next sync.
-#   - a bad Cilium change PUSHED to git applies unattended AND is self-healed in place -> mind your
-#     pushes; this is the one app that can take the whole cluster (and Argo) down.
-# Break-glass rule: use 04_cilium.sh to recover, then COMMIT the fix to git FAST, because selfHeal
-# will otherwise revert your out-of-band change back to the (bad) git state.
-# First sync auto-adopts the running release with no pod churn (values.yaml already has
-# loadBalancer.enabled: true).
-#
-# sync-wave "0": the CNI's Application object is CREATED before ArgoCD (wave 1) and all later apps (waves
-# order creation ~5s apart, not health — there is no health gate). Cilium itself is installed imperatively by
-# 04_cilium.sh before ArgoCD exists; this app just adopts the running release. See 05_gitops.md "sync-wave convention".
+# Cilium, the CNI. Adopts the release 04_cilium.sh installed imperatively from this same chart.
 apiVersion: argoproj.io/v1alpha1
 kind: Application
 metadata:
   name: cilium
   namespace: argocd
-  # Cascade-delete this app's own resources on Application deletion instead of orphaning them; see 05_gitops.md.
   finalizers:
     - resources-finalizer.argocd.argoproj.io
   annotations:
     argocd.argoproj.io/sync-wave: "0"
 spec:
   project: default
-  revisionHistoryLimit: 0  # roll-forward only; no Argo rollback history (05_gitops.md)
+  revisionHistoryLimit: 0
   source:
     repoURL: https://github.com/yama6a/offgrid
     targetRevision: HEAD
@@ -43,8 +23,8 @@ spec:
       selfHeal: true
       prune: true
     retry:
-      limit: -1  # unbounded; only retry re-drives a failed sync (see 05_gitops.md)
-      refresh: true  # retry the latest revision so a fix commit lands mid-loop
+      limit: -1
+      refresh: true
       backoff:
         duration: 5s
         factor: 2

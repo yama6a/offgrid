@@ -1,33 +1,16 @@
-# ArgoCD Application for RabbitMQ (argo_apps/platform/charts/03_rabbitmq/): the operators AND the broker in ONE
-# app. The RabbitMQ Cluster Operator + the Messaging Topology Operator + their CRDs (via the CloudPirates
-# subchart), PLUS the single shared broker itself — the RabbitmqCluster CR (3 replicas on local-path-ephemeral) +
-# the one shared Vhost + the broker CiliumNetworkPolicy. Workloads add their own topology via the shared
-# lib/helm/rabbitmq-topology chart. See 11_messaging.md.
-#
-# AUTOMATED (prune + selfHeal): a safe leaf, like cert-manager / longhorn / cnpg-operator, it can't cut the
-# cluster off its own network, so drift auto-corrects. A prune deletes the RabbitmqCluster CR but the broker is
-# designed to rebuild from its peers, and the operators carry no data.
-#
-# sync-wave "3": the operators ALONE would be a wave-2 leaf (only need the CNI; the topology operator self-signs
-# its webhook so no cert-manager dep), but this app also renders the RabbitmqCluster/Vhost CRs, which can't
-# reconcile until the operator's CRDs exist and a controller is running. Bundling both in ONE app means the CRDs
-# and the CRs land in the SAME sync: ArgoCD applies CRDs before CRs (kind order), the CRs carry
-# SkipDryRunOnMissingResource (so the cold-boot dry-run doesn't fail on the not-yet-registered type), and selfHeal
-# converges once the operator boots. Wave 3 keeps this after Longhorn/CNPG (wave 2) purely so it sorts alongside
-# the other data apps; shares wave 3 with 03_gateway / 03_redis_operator (all independent).
+# RabbitMQ: both operators + CRDs and the shared broker + vhost in ONE app, so the CRDs and the CRs land in one sync.
 apiVersion: argoproj.io/v1alpha1
 kind: Application
 metadata:
   name: rabbitmq
   namespace: argocd
-  # Cascade-delete this app's own resources on Application deletion instead of orphaning them; see 05_gitops.md.
   finalizers:
     - resources-finalizer.argocd.argoproj.io
   annotations:
     argocd.argoproj.io/sync-wave: "3"
 spec:
   project: default
-  revisionHistoryLimit: 0  # roll-forward only; no Argo rollback history (05_gitops.md)
+  revisionHistoryLimit: 0
   source:
     repoURL: https://github.com/yama6a/offgrid
     targetRevision: HEAD
@@ -40,12 +23,12 @@ spec:
       prune: true
       selfHeal: true
     retry:
-      limit: -1  # unbounded; only retry re-drives a failed sync (see 05_gitops.md)
-      refresh: true  # retry the latest revision so a fix commit lands mid-loop
+      limit: -1
+      refresh: true
       backoff:
         duration: 5s
         factor: 2
         maxDuration: 1m
     syncOptions:
       - CreateNamespace=true
-      - ServerSideApply=true   # the RabbitMQ CRDs + the RabbitmqCluster's server-defaulted fields are large; SSA avoids the last-applied-annotation limit + drift
+      - ServerSideApply=true # these CRDs are too big for client-side apply's 256KiB manifest annotation

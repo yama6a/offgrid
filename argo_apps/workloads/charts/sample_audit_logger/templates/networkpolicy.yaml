@@ -1,9 +1,6 @@
 {{- /*
-Service lockdown. Default-deny both directions (listing ingress AND egress makes the selected endpoint
-deny-by-default in each), then allow only egress for DNS + the shared RabbitMQ broker. There is NO ingress
-rule: nothing calls this service (no HTTP, no Service) — it only dials out to the broker. And no Postgres
-egress: it has no database. Fixed platform selectors are hardcoded (they don't vary): CoreDNS in
-kube-system, the broker in the rabbitmq namespace. Always rendered: the lockdown is not optional.
+Service lockdown, always rendered. Egress-only: nothing calls this sink (no HTTP, no Service), it only
+dials the broker. No Postgres egress either, it has no database.
 */ -}}
 {{- /* audit sink: consumes user-audit-logger (fanout), publishes nothing. */ -}}
 apiVersion: cilium.io/v2
@@ -26,9 +23,8 @@ spec:
         - ports:
             - { port: "53", protocol: UDP }
             - { port: "53", protocol: TCP }
-    # The shared RabbitMQ broker (ns rabbitmq) on AMQP 5672 — this worker consumes/publishes messages. The
-    # broker side allows this via its `messaging-client: "true"` ingress rule (the pod carries that label).
-    # See 11_messaging.md.
+    # The shared RabbitMQ broker. The broker side allows this via its `messaging-client: "true"` ingress rule,
+    # and the pod carries that label.
     - toEndpoints:
         - matchLabels:
             k8s:io.kubernetes.pod.namespace: rabbitmq

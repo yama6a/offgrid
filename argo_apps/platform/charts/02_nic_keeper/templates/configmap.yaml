@@ -1,6 +1,5 @@
-# The nic-keeper loop, kept in Git and mounted into the pod (exec'd as /scripts/nic-keeper.sh).
-# POSIX sh. One structured stdout line per event: "<ts> nic-keeper iface=<if> event=<name> <detail>".
-# Knobs arrive as env (wired from values.yaml in the DaemonSet); defaults below are a fallback only.
+# The nic-keeper loop, mounted into the pod. POSIX sh, one structured stdout line per event.
+# Knobs arrive as env from values.yaml via the DaemonSet; the defaults below are only a fallback.
 apiVersion: v1
 kind: ConfigMap
 metadata:
@@ -11,9 +10,8 @@ metadata:
 data:
   nic-keeper.sh: |
     #!/bin/sh
-    # Runtime mitigation for the Raspberry Pi 5 macb NIC wedge. Complement to 03e's
-    # machine-config defences. Only ever touches $IFACE; every sleep is bounded so the
-    # loop always makes progress and never trips the 03e hardware watchdog.
+    # Only ever touches $IFACE. Every sleep is bounded so the loop always makes progress and never
+    # trips the 03e hardware watchdog.
     set -u
 
     IFACE="${IFACE:-end0}"
@@ -41,7 +39,8 @@ data:
       fi
     }
 
-    # Probe `ss -K` support once: it needs CONFIG_INET_DIAG_DESTROY in the kernel.
+    # Probe `ss -K` support once. Killing a socket needs the kernel built with CONFIG_INET_DIAG_DESTROY, and
+    # not every kernel is, so check rather than assume and log a skip if it is missing.
     probe_ss() {
       out="$(ss -K dport = :0 2>&1)"
       if printf '%s' "$out" | grep -qi 'not supported'; then
@@ -56,8 +55,8 @@ data:
       [ -n "$PING_TARGET" ] && log target-resolved "gateway=$PING_TARGET"
     }
 
-    # A wedge is link-up-but-no-traffic, so carrier alone can't catch it, the active ping is the
-    # real signal. Bounce the link, re-assert EEE (a bounce can re-enable it), drop stale sockets.
+    # A wedge is link-up-but-no-traffic, so carrier alone cannot catch it, the active ping is the real signal.
+    # A bounce can re-enable EEE, hence the re-assert.
     recover() {
       carrier="$(cat "/sys/class/net/$IFACE/carrier" 2>/dev/null || echo '?')"
       log wedge "fail_count=$count threshold=$FAIL_THRESHOLD carrier=$carrier (bouncing link)"

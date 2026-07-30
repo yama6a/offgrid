@@ -1,8 +1,6 @@
 {{/*
-Per domain, render the shared callback host google-sso.<domain> (Gateway + Certificate + HTTPRoute) via the
-ingress library, fronting the shared whoami (templates/callbacks.yaml). The SecurityPolicy
-(templates/securitypolicy.yaml) attaches to this route + the domain's app routes so one OAuth flow completes
-on this host. See 07_ingress.md.
+Per domain, render the shared callback host google-sso.<domain> via the ingress chart, fronting the shared
+whoami. The SecurityPolicy attaches to this route plus the domain's app routes, so one flow completes here.
 */}}
 {{- $zones := (.Values.ingress | default (dict)).cloudflareZones | default (list) -}}
 {{- range $d := .Values.domains }}

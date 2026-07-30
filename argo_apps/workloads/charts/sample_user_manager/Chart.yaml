@@ -1,21 +1,11 @@
 apiVersion: v2
 name: sample-user-manager
-description: >-
-  The user-domain hub: the sample-app image's /manager binary (HTTP GET /users + Postgres) and the owner of
-  all three messaging exchanges — consumes create-user-command (direct), publishes user-events (topic:
-  users.created/users.deleted) and user-audit-logger (fanout). Exercises ingress end to end with its own
-  Postgres + Google-SSO allowlist.
+description: The user-domain hub. The sample-app /manager binary (HTTP GET /users + Postgres) and the owner of all three messaging exchanges.
 type: application
-version: 0.1.0                 # local chart, never bump version
+version: 0.1.0 # local chart, never bump version
 
+# Helm renders a dependency once, so N instances == N aliases. Each alias is a values key carrying its own name.
 dependencies:
-  # version: "*" for every file:// dep — the path IS the source, so the version is just a required constraint
-  # Helm insists on, not a selector; an exact pin would only force a bump here each time the local chart's
-  # version changes, for no benefit. (Remote pins like cnpg/cluster inside pg-cluster stay exact.)
-  #
-  # Two Postgres instances, each an ALIASED instance of the shared pg-cluster wrapper. Helm renders a dependency
-  # once, so N databases == N aliases; each alias is a values key (maindb/analyticsdb) and carries its own
-  # explicit name. Add another alias block to add another DB.
   - name: pg-cluster
     alias: maindb
     version: "*"
@@ -24,10 +14,6 @@ dependencies:
     alias: analyticsdb
     version: "*"
     repository: "file://../../../../lib/helm/pg-cluster"
-  # Two standalone Redis instances, each an ALIASED instance of the shared redis-instance wrapper (same
-  # aliasing rule as pg-cluster above: N instances == N aliases, each a values key with its own name).
-  # `redis-cache` holds the audit-log demo (the manager dials it); `redis-sessions` is provisioned + monitored
-  # but unused, proving "more than one Redis per workload". See 12_redis.md.
   - name: redis-instance
     alias: redis-cache
     version: "*"
@@ -37,8 +23,8 @@ dependencies:
     version: "*"
     repository: "file://../../../../lib/helm/redis-instance"
   - name: ingress
-    version: "*"              # shared edge library; renders this workload's ingress from values below
+    version: "*"
     repository: "file://../../../../lib/helm/ingress"
   - name: rabbitmq-topology
-    version: "*"              # shared messaging library; renders this workload's User/Exchange/Queue/... below
+    version: "*"
     repository: "file://../../../../lib/helm/rabbitmq-topology"

@@ -1,75 +1,10 @@
-# lib/helm/redis-instance — renders ONE standalone OpsTree `Redis` CR (+ ServiceMonitor + CiliumNetworkPolicy)
-# for a workload. First-party chart (no upstream dependency): the Redis CRD comes from the platform's
-# 03_redis_operator. A workload declares this as an ALIASED file:// dependency, once per instance (the alias is
-# the values key, exactly like pg-cluster's maindb/analyticsdb). See README.md and docs/12_redis.md.
-#
-# A workload sets the five REQUIRED knobs below, plus an optional create-time disk size. The Redis SERVER version
-# (redisVersion) is one of them, owned per-workload. Everything else -- the image repo, the redis-exporter, maxmemory,
-# the non-root security context, and no-auth -- is hardcoded in the templates (single source of truth, updated for
-# every instance at once); see templates/redis.yaml. The `persistence` flag
-# (REQUIRED, no default) selects the storage class + whether AOF is on. The REQUIRED knobs are seeded with invalid
-# sentinels so templates/validate.yaml hard-fails until a consumer overrides them.
-#
-# Single standalone instance by design (no HA / replication / sentinel / cluster). Durable instances DO get
-# off-cluster S3 backups, via the central 07_redis_backup job (see `persistence` below).
+name: ""             # REQUIRED: (string) Also the ClusterIP Service DNS clients dial on :6379.
+redisVersion: ""     # REQUIRED: (string) Redis SERVER tag, e.g. "v8.6.2". The exporter tag stays pinned in the chart.
+resources: {}        # REQUIRED: Per-pod requests/limits. maxmemory is derived as 80% of the memory LIMIT.
+allowedClients: []   # REQUIRED: SAME-NS ONLY, e.g. [{matchLabels: {app: my-app}}]. No password, so this is the only access control.
+persistence: null    # REQUIRED: (bool) true = durable + enrolled in the central S3 RDB backup; false = ephemeral cache, no backup.
+deletionProtection:  # REQUIRED: (bool) To delete: set to false in a first commit, delete the alias in a follow-up commit.
+# persistence does NOT turn AOF off: the operator's own redis.conf sets `appendonly yes`, this chart only overlays it.
 
-# REQUIRED: the explicit instance name — also the ClusterIP Service DNS clients dial
-# (<name>.<namespace>.svc.cluster.local:6379). Unique per workload; aliasing this chart twice yields two
-# distinctly-named instances.
-name: ""
-
-# REQUIRED: the Redis SERVER image tag (e.g. "v8.6.2"); each workload owns its own Redis version, no shared
-# default. The image repo and the redis-exporter tag stay pinned in the chart. Renovate tracks the annotated
-# pin in the consumer values.
-redisVersion: ""
-
-# REQUIRED: per-pod requests/limits. No sane default for a Pi: force a choice. Set a memory LIMIT: Redis'
-# maxmemory is derived from it (80% of the limit, hardcoded in the template).
-resources: {}
-
-# REQUIRED: who may open a Redis connection on :6379. The CiliumNetworkPolicy is ALWAYS enforced and is the only
-# access control (there is no password), so an empty list would wall the instance off from everyone.
-# Shape: [{ matchLabels: { <k>: <v> } }, ...]. Same-ns only, so the namespace is implicit (the release's).
-allowedClients: []
-
-# REQUIRED: persistence mode — NO default; each instance must choose explicitly (durability is a deliberate call).
-#   true  = DURABLE: AOF (appendfsync everysec, crash-durable to ~1s) + enrolled in the central S3 RDB backup.
-#   false = EPHEMERAL cache: no explicit appendfsync, and NOT backed up off-cluster.
-# NB it does NOT turn AOF off. The operator's own /etc/redis/redis.conf sets `appendonly yes` and this chart
-# only supplies an ADDITIONAL overlay, so BOTH modes run AOF. Verified on a live instance.
-# It does NOT pick a storage class: both modes use `longhorn-r2-ephemeral` (2-replica, reclaim Delete, from
-# 02_longhorn). Reclaim stopped being a safety knob when deletionProtection landed, see that knob below.
-# See docs/12_redis.md.
-persistence: null   # invalid sentinel — validate.yaml fails until set to an explicit true or false
-
-# REQUIRED bool, no default. Orphan-not-delete: true stamps Prune=false,Delete=false on the instance (Redis CR +
-# its ext-config ConfigMap, ServiceMonitor and NetworkPolicy), so manifests leaving git ORPHAN a running instance
-# instead of deleting it, and restoring them re-adopts it. Independent of `persistence`: the retained class's
-# Retain is only a backstop (it saves the data, but the instance still goes down and needs a manual PV rebind).
-# ALWAYS true in steady state, caches included. false is a TRANSIENT state only: set it, commit+push, let Argo
-# sync, THEN remove the alias in a follow-up commit. Never leave an instance sitting on false.
-deletionProtection: # REQUIRED: true | false
-
-# ---- optional; defaulted ----
-
-# Mark this instance as an app-critical component. When true, the CR (and thus, via OpsTree label propagation,
-# the StatefulSet + pods) carries `alert-criticality: critical`, so the outage alerts fire `critical` (not
-# warning) if it goes down / crashloops. Default false: a plain cache being down usually just degrades. Set
-# true for a Redis a workload can't function without. See docs/09_monitoring.md (alerting severity model).
-alertCritical: false
-
-# INITIAL PVC size, set ONCE at creation. CHANGING THIS ON A LIVE INSTANCE HAS NO EFFECT — the size lives in the
-# StatefulSet's (immutable) volumeClaimTemplate and the OpsTree operator does not reconcile PVC expansion, so an
-# existing volume keeps its original size. To actually grow a running instance you expand its PVC out-of-band;
-# shrinking is impossible in place. See docs/12_redis.md ("Resizing an instance").
-#
-# The storage CLASS is fixed (longhorn-r2-ephemeral, both modes); size is the only storage knob.
-# Size it against the MEMORY LIMIT, not just the dataset: with noeviction + AOF/RDB the whole in-RAM dataset (up to
-# maxmemory = 80% of the mem limit) is persisted and the append-log adds overhead, so budget disk >= ~2x the memory
-# limit. The 1Gi default covers the small instances typical here (e.g. a 96Mi mem limit).
-initialFixedDiskSize: 1Gi
-
-# Off-cluster backups: durable (persistence:true) instances are stamped with the
-# `redis-backup.raspi-cluster/enabled` label and backed up to S3 by the CENTRAL platform app
-# `07_redis_backup` (one CronJob discovers all durable instances cluster-wide). Nothing to configure per
-# instance — enable the feature once with `make configure-redis-backup`. See docs/12_redis.md + docs/13_backups.md.
+alertCritical: false      # OPTIONAL: (bool); true = alert-severity critical; false = warning
+initialFixedDiskSize: 1Gi # OPTIONAL: Set ONCE at creation; changing it later does nothing. Budget >= 2x the memory limit.

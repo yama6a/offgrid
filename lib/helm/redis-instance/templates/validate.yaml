@@ -1,8 +1,4 @@
-{{- /*
-Validation only — renders to empty (all branches either fail or produce nothing). Enforces the REQUIRED fields,
-which values.yaml seeds with invalid sentinels (empty string / empty map / empty list) so a naive `required`
-wouldn't catch them. Runs in this chart's scope, so it sees the consumer's overrides merged over values.yaml.
-*/ -}}
+{{- /* Validation only, renders to empty. Enforces the REQUIRED fields. */ -}}
 {{- if not .Values.name }}
 {{- fail "redis-instance: name is required (the explicit Redis instance name; also the Service DNS clients dial; must be unique across a workload's Redis instances)" }}
 {{- end }}
@@ -15,11 +11,6 @@ wouldn't catch them. Runs in this chart's scope, so it sees the consumer's overr
 {{- if not .Values.allowedClients }}
 {{- fail "redis-instance: allowedClients is required (who may reach Redis on 6379); the policy is always enforced and is the only access control, so an empty list would wall off the instance" }}
 {{- end }}
-{{- /* An entry is just its matchLabels: the namespace is implicit (the release's). allowedClients drives the
-      client-egress CNP too (client-egress.yaml), a namespaced CNP that can only select same-ns clients, so a
-      cross-ns client would get ingress but no egress. Hence no per-entry namespace at all. A leftover
-      `namespace:` key would silently do nothing, and empty matchLabels would render a selector matching
-      everything; fail both. */ -}}
 {{- range .Values.allowedClients }}
 {{- if .namespace }}
 {{- fail (printf "redis-instance: allowedClients entries take no `namespace` (it is always the release namespace %q; a cross-ns client needs the clusterwide-CNP variant), drop the key" $.Release.Namespace) }}

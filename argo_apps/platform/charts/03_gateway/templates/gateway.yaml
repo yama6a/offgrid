@@ -1,14 +1,8 @@
-# The platform's ACME ingress Gateway. Envoy Gateway (the `eg` class, mergeGateways: true) folds this
-# and every per-app Gateway onto ONE data-plane Envoy + LoadBalancer Service, pinned to the LB-IPAM IP
-# by the EnvoyProxy `lbipam.cilium.io/ips` annotation (01_envoy_gateway chart), that annotation is the
-# sole IP authority now, so this Gateway carries no spec.addresses (it would conflict on the shared
-# Service under merge).
-#
-# This Gateway owns ONLY the always-on HTTP :80 listener: cert-manager's HTTP-01 ACME solver routes
-# attach here (the ClusterIssuers below point at it by name) and, later, the forced http->https redirect.
-# It has NO :443 listeners and NO cert refs, so it is Programmed immediately and its health no longer
-# depends on any app's cert. Each app now owns its OWN Gateway with a single :443 listener (its cert +
-# route + listener live together in the app's chart). See 10_gateway.md.
+# Owns ONLY the always-on HTTP :80 listener: cert-manager's HTTP-01 solver routes attach here, and later the
+# forced http-to-https redirect. No :443 listeners and no cert refs, so it is Programmed immediately and its
+# health never depends on an app's cert. Each app owns its own Gateway with its own :443 listener.
+# No spec.addresses: under mergeGateways the EnvoyProxy annotation is the sole IP authority, and a per-Gateway
+# address would conflict on the shared Service.
 apiVersion: gateway.networking.k8s.io/v1
 kind: Gateway
 metadata:
@@ -20,8 +14,8 @@ spec:
     - name: http
       protocol: HTTP
       port: 80
-      # from: All so HTTPRoutes in any app namespace (and cert-manager's solver routes, created in
-      # the Certificate's namespace) can attach to this Gateway across namespaces.
+      # All, so HTTPRoutes in any namespace can attach, including cert-manager's solver routes, which are
+      # created in the Certificate's namespace.
       allowedRoutes:
         namespaces:
           from: All

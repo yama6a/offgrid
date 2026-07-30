@@ -1,31 +1,14 @@
-# Values for the 05_ntfy wrapper chart. SINGLE SOURCE OF TRUTH, ArgoCD (and any local `helm template`)
-# consume this. First-party hand-templated chart (no upstream dependency). ntfy is the alert-notification
-# transport: Grafana's webhook contact point publishes to the `cluster-alerts` topic in-cluster (05_grafana),
-# and the Android app subscribes to it over the public edge (06_platform_ingress). See 09_monitoring.md.
-
-# ntfy server (binwiederhier/ntfy), multi-arch incl. arm64 (resolves to arm64 on the Pi 5). Digest-pinned to a
-# manifest LIST; Renovate's helm-values manager keeps tag+digest fresh (same style as 02_nic_keeper's image).
 image: "binwiederhier/ntfy:v2.26.3@sha256:081b53dbb20674fcfe05fdb4eb8af9036a2645ef979543d16f7f80803af467b1"
+baseUrl: "https://ntfy.ops.example.com" # MUST match the ntfy host in 06_platform_ingress
 
-# Public base URL — MUST match the ntfy host in 06_platform_ingress (the Android app + correct links need it).
-baseUrl: "https://ntfy.ops.example.com"
+# Orphan-not-delete. ntfy is the one store with NO backup, so the restore path is procedural: re-run
+# `make configure-ntfy-auth`, then commit the resealed token.
+deletionProtection: true # to remove: set false in a first commit, delete the app in a follow-up commit
 
-# Orphan-not-delete, same guard CNPG and Redis use: stamps Prune=false,Delete=false on the PVC (plus the
-# Deployment/ConfigMap/NetworkPolicy, so an orphaned ntfy keeps serving), so a GitOps prune can't destroy the store.
-# This PVC is the one in the repo that ArgoCD tracks DIRECTLY, so without this a prune deletes it outright.
-# ALWAYS true in steady state. false is a TRANSIENT state only: set it, commit+push, let Argo sync, THEN remove the
-# app in a follow-up commit. Unlike the other stores ntfy has NO backup, so its restore path is procedural: re-run
-# `make configure-ntfy-auth` to re-seed users + the Grafana token from .env, then commit the resealed token.
-deletionProtection: true
-
-# Auth + cache SQLite DBs live on this PVC (/var/lib/ntfy). 1Gi is plenty (a handful of users + a 1-week message
-# cache, a few thousand tiny alert rows). user.db holds the seeded users/tokens/ACLs; cache.db is disposable.
 storage:
-  storageClassName: longhorn-r2-ephemeral  # Delete r2 (02_longhorn): deletionProtection above is the prune guard,
-                                           # so Retain would only leak orphaned PVs. Total loss = re-seed (above).
-  size: 1Gi
+  storageClassName: longhorn-r2-ephemeral # deletionProtection is the prune guard, so Retain would only leak PVs
+  size: 1Gi # auth + cache SQLite DBs only
 
-# Modest footprint for a Pi 5 (a single small Go binary).
 resources:
   requests: {cpu: 10m, memory: 32Mi}
   limits: {memory: 96Mi}

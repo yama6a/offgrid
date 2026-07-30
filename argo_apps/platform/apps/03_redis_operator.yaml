@@ -1,31 +1,16 @@
-# ArgoCD Application for the OpsTree Redis operator (argo_apps/platform/charts/03_redis_operator/): the
-# ot-container-kit redis-operator controller + its CRDs (Redis / RedisReplication / RedisCluster / RedisSentinel).
-# The Longhorn StorageClass every redis-instance PVC uses (`longhorn-r2-ephemeral`, 2-replica, reclaim Delete) is
-# shipped by 02_longhorn, not here; `persistence` drives AOF + backup enrollment, not the class. The actual
-# instances (single-node `Redis` CRs) are PER-WORKLOAD, rendered by lib/helm/redis-instance in the workloads tree
-# (like Postgres via pg-cluster). See 12_redis.md.
-#
-# AUTOMATED (prune + selfHeal): a safe leaf, like cert-manager / longhorn / cnpg-operator. A prune won't
-# cascade-delete cache data: the Redis CRs live in the workloads tree and their PVCs are Longhorn (not this app).
-#
-# sync-wave "3": now that the StorageClasses moved to 02_longhorn, the operator is a plain leaf that needs only the
-# CNI (like cnpg-operator, a wave-2 leaf). Kept at wave 3 to avoid renumbering (we treat the prefix as stable, see
-# CLAUDE.md); it installs one wave later than strictly necessary, invisible in practice (redis workloads are
-# post-platform). The operator's admission webhook is DISABLED (values.yaml: webhook=false — it only guards the
-# master-slave anti-affinity feature we don't use), so this has NO dependency on cert-manager for a serving-cert.
+# OpsTree Redis operator + CRDs. The instances are per-workload, via lib/helm/redis-instance.
 apiVersion: argoproj.io/v1alpha1
 kind: Application
 metadata:
   name: redis-operator
   namespace: argocd
-  # Cascade-delete this app's own resources on Application deletion instead of orphaning them; see 05_gitops.md.
   finalizers:
     - resources-finalizer.argocd.argoproj.io
   annotations:
     argocd.argoproj.io/sync-wave: "3"
 spec:
   project: default
-  revisionHistoryLimit: 0  # roll-forward only; no Argo rollback history (05_gitops.md)
+  revisionHistoryLimit: 0
   source:
     repoURL: https://github.com/yama6a/offgrid
     targetRevision: HEAD
@@ -38,12 +23,12 @@ spec:
       prune: true
       selfHeal: true
     retry:
-      limit: -1  # unbounded; only retry re-drives a failed sync (see 05_gitops.md)
-      refresh: true  # retry the latest revision so a fix commit lands mid-loop
+      limit: -1
+      refresh: true
       backoff:
         duration: 5s
         factor: 2
         maxDuration: 1m
     syncOptions:
       - CreateNamespace=true
-      - ServerSideApply=true   # the Redis operator CRDs are large, SSA avoids the last-applied-annotation limit
+      - ServerSideApply=true # these CRDs are too big for client-side apply's 256KiB manifest annotation

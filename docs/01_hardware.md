@@ -47,12 +47,10 @@ bottom-mount cluster board that sits under the Pi.
 - PCIe Gen2 by default. Pi 5 PCIe is a single Gen2 lane (~450 MB/s). Gen3 is forceable (`dtparam=pciex1_gen=3`,
   ~800-900 MB/s) but officially unsupported and risks AER errors in a tight thermal box. We expect light IO, so Gen2 is
   plenty, and we won't risk Gen3 instability.
-- The PD brick goes into the Pi's own (side-facing) USB-C port, and because both USB-C inputs sit on a single shared 5V
-  rail (over the GPIO pins), that power feeds down into the RS-P11 and runs the NVMe from there.
-    - The NVMe boards have a convenient front-facing USB-C power port. We originally planned to use that one, to power
-      the NVMe board, which would then backfeed the power into the Pi, but switched to the Pi's port for power reasons:
-        - the front port is non-PD and can't supply the full 5A, which we might need in future if we want to connect
-          spinning HDDs to the Pis via USB3 (without dedicated power source for the drives).
+- The PD brick goes into the Pi's own side-facing USB-C port. Both USB-C inputs sit on one shared 5V rail over
+  the GPIO pins, so that power feeds down into the RS-P11 and runs the NVMe from there.
+- The RS-P11's own front-facing USB-C port would have been more convenient, backfeeding power up into the Pi.
+  Rejected: it is non-PD and cannot supply the full 5A, which we may need later for bus-powered USB3 HDDs.
 
 ## Storage: Crucial P310 1TB (without heat spreader)
 
@@ -65,10 +63,9 @@ Model CT1000P310SSD8, M.2 2280, ~220 TBW, ~1700 SEK (~$180 USD) (NAND prices sti
 - Rejected Crucial E100 (~80 TBW): fine for light IO, but weak once every node is doing fsync-heavy etcd writes
   around the clock. P310's 220 TBW removes the question for little extra.
 - PCIe Gen3 is possible, but we don't need the speed, and it risks instability, so Gen2 is fine for us.
-- I first bought one CT1000P310SSD5, the same SSD but with an attached heat-sink. The spreader didn't clear between the
-  RS-P11 board and the Pi mounted above it, so I pried it off. We don't expect sustained heavy IO, and it's throttled to
-  the Pi's Gen2 lane anyway, so the P310 will barely warm up. For the other two drives I went straight for the
-  no-spreader model (CT1000P310SSD8) to skip the peeling.
+- The first one I bought was a CT1000P310SSD5, same SSD with an attached heat spreader. It did not clear the gap
+  between the RS-P11 board and the Pi above it, so I pried it off. No sustained heavy IO here and it is throttled
+  to the Pi's Gen2 lane anyway, so it barely warms up. The other two are the no-spreader CT1000P310SSD8.
 
 ## Power: 3x 27W USB-C PD
 
@@ -84,9 +81,9 @@ One 27W USB-C PSU per Pi, plugged directly into the Pi's own USB-C port.
     - Pi compute (SoC + RAM + fan): ~1.8-2A under full load.
     - NVMe (PCIe): ~0.6-1A, off the board's 5V rail, not counted against the USB cap.
     - The four USB-A ports: hard-capped at 1.6A / 8W (all 4 ports combined).
-- Headroom for 2.5" HDDs, which is the reason we want the full 5A. The plan is to hang a bus-powered 2.5" HDD off each
-  Pi later. A 2.5" drive draws ~4-5W (most of it on spin-up). Addin a second drive might push the Pi's USB cap over
-  1.6A, so we would need an external power source for additional hdds, but that's not in the plan anyway.
+- Headroom for 2.5" HDDs is the reason we want the full 5A. The plan is one bus-powered 2.5" HDD per Pi later; a
+  2.5" drive draws ~4-5W, most of it on spin-up. A second drive would push past the 1.6A USB cap and need its own
+  power source, which is not planned.
 - Downside: the Pi's USB-C is side-facing and harder to reach.
 
 ## Cooling: Pi 5 active cooler + thermal pads
@@ -98,11 +95,10 @@ Blower-style active cooler (aluminium heatsink + PWM fan), one per board. Kit in
 - CPU (BCM2712 SoC): 1 pad. Primary contact, the tallest die.
 - RP1 I/O chip (southbridge): 2 thermal pads stacked. RP1 sits lower than the SoC, so a single pad left the cooler
   rocking/not seating flat. Doubling the pad fills the height gap and levels the cooler so both chips get firm contact.
-- No pads on the remaining chips (e.g. PMIC). Two reasons: only 3 pads in the kit, and those chips run warm, not
-  hot, so they're fine bare.
+- No pads on the remaining chips (e.g. PMIC): only 3 pads in the kit, and those run warm rather than hot.
 
-Why RP1 is the one that needs the second contact: it's the southbridge carrying USB / Ethernet / GPIO / PCIe I/O, the
-second-warmest chip after the SoC.
+RP1 is the one that needs the doubled contact because it is the southbridge carrying USB, Ethernet, GPIO and PCIe
+I/O, making it the second-warmest chip after the SoC.
 
 ## End result (assembled)
 

@@ -1,16 +1,7 @@
-# raspi-cluster — a thin dispatcher over the numbered runbook scripts.
-#
-# This Makefile does NOT hold any logic, versions, or values: every target just runs the step script it
-# names (which sources lib/shell/common.sh + .env and does the real work), so `make install-cilium` and running
-# lib/shell/04_cilium.sh by hand are identical. See CLAUDE.md for the runbook order and conventions;
-# `make help` lists everything below in one place.
-#
-# Run steps in runbook order (02 -> 03a..g -> 04 -> 05 ...), or use the one-shot orchestrators:
-#   make bootstrap-cluster   first-time init of freshly-flashed nodes
-#   make rebuild-cluster     wipe a running cluster and rebuild it end-to-end
-#
-# The health/inspection targets source lib/shell/common.sh for the dockerized talosctl() + the 03d kubeconfig,
-# so they need a live cluster and a populated .env.
+# A thin dispatcher over the numbered runbook scripts. Holds NO logic, versions or values: every target just
+# runs the step script it names, so `make install-cilium` and running lib/shell/04_cilium.sh by hand are
+# identical. `make help` lists everything; the one-shot orchestrators are bootstrap-cluster and
+# rebuild-cluster. The health targets need a live cluster and a populated .env.
 
 .DEFAULT_GOAL := help
 
@@ -18,7 +9,7 @@
 help: ## Display this help.
 	@awk 'BEGIN {FS = ":.*##"; printf "\nUsage:\n  make \033[36m<target>\033[0m\n"} /^[a-zA-Z_0-9-]+:.*?##/ { printf "  \033[36m%-22s\033[0m %s\n", $$1, $$2 } /^##@/ { printf "\n\033[1m%s\033[0m\n", substr($$0, 5) } ' $(MAKEFILE_LIST)
 
-##@ Cluster lifecycle  (DANGEROUS — destructive; each prompts for a typed confirmation)
+##@ Cluster lifecycle  (DANGEROUS: destructive; each prompts for a typed confirmation)
 .PHONY: bootstrap-cluster
 bootstrap-cluster: ## DANGER: first-time init of freshly-flashed nodes -> full cluster (archives old creds).
 	bash lib/shell/DANGEROUS_bootstrap_cluster.sh
@@ -31,7 +22,7 @@ rebuild-cluster: ## DANGER: wipe a RUNNING cluster and rebuild end-to-end (resto
 reset-cluster: ## DANGER: wipe all nodes (STATE + EPHEMERAL + Longhorn) back to maintenance.
 	bash lib/shell/DANGEROUS_reset_talos_cluster.sh
 
-##@ Node image & Talos bring-up  (step 02–03; image work runs in Docker)
+##@ Node image & Talos bring-up  (step 02-03; image work runs in Docker)
 .PHONY: build-eeprom-card
 build-eeprom-card: ## 02: build a reusable SD card that flashes the Pi 5 EEPROM (boot order / PCIe probe).
 	bash lib/shell/02_raspi_eeprom.sh
@@ -64,7 +55,7 @@ upgrade-talos: ## 03f: rolling in-place upgrade of the Talos OS to the pinned in
 upgrade-k8s: ## 03g: rolling in-place upgrade of Kubernetes to the pinned version.
 	bash lib/shell/03g_k8s_upgrade.sh
 
-##@ Cluster delivery  (step 04–09; native helm/kubectl)
+##@ Cluster delivery  (step 04-09; native helm/kubectl)
 .PHONY: install-cilium
 install-cilium: ## 04: install/upgrade the Cilium CNI (+ monitoring CRDs, LB-IPAM/L2, Hubble).
 	bash lib/shell/04_cilium.sh
@@ -93,7 +84,7 @@ configure-sso: ## 07: write the SSO clientID + seal the OAuth client secret (nee
 configure-ntfy-auth: ## 10: seed ntfy users/ACLs + seal Grafana's ntfy write token (needs 05_ntfy synced + .env secret).
 	bash lib/shell/10_ntfy_auth.sh
 
-##@ Backups  (step 13–17; S3 bucket via Terraform + CNPG WAL/base + Redis RDB + Longhorn volume + VM/VL export backups)
+##@ Backups  (step 13-17; S3 bucket via Terraform + CNPG WAL/base + Redis RDB + Longhorn volume + VM/VL export backups)
 .PHONY: s3-backup-bucket
 s3-backup-bucket: ## 13: create/update the shared S3 backup bucket + scoped IAM writer (Terraform; needs .env AWS creds).
 	bash lib/shell/13_s3_backup_bucket.sh
@@ -107,7 +98,7 @@ s3-backup-destroy: ## 13: DANGER empty the bucket AND terraform-destroy it + the
 	bash lib/shell/13_s3_backup_bucket.sh destroy
 
 .PHONY: configure-cnpg-backup
-configure-cnpg-backup: ## 14: enable CNPG S3 backups — seal the writer creds + write bucket/region/RPO into pg-cluster.
+configure-cnpg-backup: ## 14: enable CNPG S3 backups: seal the writer creds + write bucket/region/RPO into pg-cluster.
 	bash lib/shell/14_cnpg_backup.sh
 
 .PHONY: configure-redis-backup
@@ -115,11 +106,11 @@ configure-redis-backup: ## 15: enable Redis RDB S3 backups: seal the writer cred
 	bash lib/shell/15_redis_backup.sh
 
 .PHONY: configure-longhorn-backup
-configure-longhorn-backup: ## 16: enable Longhorn volume S3 backups — seal the writer creds + write the backup target into 02_longhorn.
+configure-longhorn-backup: ## 16: enable Longhorn volume S3 backups: seal the writer creds + write the backup target into 02_longhorn.
 	bash lib/shell/16_longhorn_backup.sh
 
 .PHONY: configure-vm-backup
-configure-vm-backup: ## 17: enable VictoriaMetrics/Logs S3 export backups — seal the writer creds + write bucket/region into 08_vm_backup.
+configure-vm-backup: ## 17: enable VictoriaMetrics/Logs S3 export backups: seal the writer creds + write bucket/region into 08_vm_backup.
 	bash lib/shell/17_vm_backup.sh
 
 ##@ Secrets  (sealed-secrets master key)
@@ -145,7 +136,7 @@ restore-longhorn: ## Restore a Longhorn volume from S3 into a new Volume + PV/PV
 	bash lib/shell/recover_longhorn_from_s3.sh
 
 .PHONY: restore-vm
-restore-vm: ## Restore VictoriaMetrics/Logs from an S3 export — stream it into the live store via a temp pod (interactive; needs backups on).
+restore-vm: ## Restore VictoriaMetrics/Logs from an S3 export: stream it into the live store via a temp pod (interactive; needs backups on).
 	bash lib/shell/recover_vm_from_s3.sh
 
 .PHONY: fix-chart-locks
@@ -183,6 +174,6 @@ krr-yaml: ## Rightsizing: same as `krr` but emits YAML.
 
 # Words after `make talosctl ...` (get, members, services, ...) are extra goals to Make; this no-op catch-all
 # swallows them so they're passed to talosctl instead of erroring. Explicit targets above still take priority,
-# so a mistyped real target quietly no-ops rather than erroring — the one cost of positional passthrough args.
+# so a mistyped real target quietly no-ops rather than erroring, the one cost of positional passthrough args.
 %:
 	@:

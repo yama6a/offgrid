@@ -1,5 +1,4 @@
-# Namespace-wide default-deny for cert-manager (holds the ACME account key + every issued TLS private key).
-# See 04_networking.md / 07_ingress.md.
+# Namespace-wide default-deny for cert-manager, which holds the ACME account key and every issued private key.
 apiVersion: cilium.io/v2
 kind: CiliumNetworkPolicy
 metadata:
@@ -43,8 +42,7 @@ spec:
       toPorts:
         - ports:
             - { port: "80", protocol: TCP }
-    # DNS-01 propagation self-check: cert-manager queries the recursive nameservers (values:
-    # dns01RecursiveNameservers) directly for the _acme-challenge TXT before asking LE to validate.
+    # DNS-01 propagation self-check, straight to the recursive nameservers set in values.yaml.
     - toEntities: [world]
       toPorts:
         - ports:

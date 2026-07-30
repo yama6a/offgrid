@@ -1,12 +1,8 @@
 {{- /*
-Scrape the broker's Prometheus endpoint (:15692, named port `prometheus`) on every broker pod. Two endpoints:
-  /metrics          — aggregated node/cluster health (rabbitmq_identity_info, rabbitmq_alarms_*, disk/mem, ...)
-  /metrics/detailed — per-queue metrics (rabbitmq_detailed_queue_*), families queue_coarse_metrics +
-                      queue_consumer_count, for the per-queue + DLQ + no-consumer alerts. The default /metrics
-                      AGGREGATES with no `queue` label, so per-queue alerting needs this endpoint.
-Per-pod (not the LB `rabbitmq` Service): on a cluster, a queue's detailed metrics are only reported by the node
-hosting its leader replica, so each node must be scraped individually. The VM operator converts this PodMonitor
-to a VMPodScrape; vmagent discovers it cluster-wide. See 09_monitoring.md.
+Scrape the broker's Prometheus endpoint on every broker pod, on two paths: /metrics for aggregated node and
+cluster health, /metrics/detailed for the per-queue families the queue, DLQ and no-consumer alerts need. The
+default /metrics aggregates with no `queue` label, so per-queue alerting requires the detailed one.
+Per-pod, not via the LB Service: a queue's detailed metrics are only reported by the node hosting its leader.
 */ -}}
 {{- if .Values.metrics.podMonitor.enabled }}
 apiVersion: monitoring.coreos.com/v1

@@ -1,42 +1,30 @@
-# ArgoCD Application for the shared PriorityClasses (argo_apps/platform/charts/00_priorityclass/): two
-# cluster-scoped classes, `platform-critical` (control plane) and `data-critical` (workload DBs/caches, one
-# notch lower), so neither is first evicted under memory pressure on the 8GB Pi 5s. Consumers span both
-# argo_apps trees. See that chart's Chart.yaml + docs/09_monitoring.md.
-#
-# sync-wave "0": foundational, alongside cilium + the CRD apps. The class MUST exist before any consumer
-# pod that sets priorityClassName is admitted (a pod referencing a missing PriorityClass fails admission),
-# and consumers span waves 1-6, so wave 0 guarantees it precedes all of them.
-#
-# AUTOMATED (prune + selfHeal): a safe leaf, re-applying a PriorityClass can't cut the cluster off its
-# network. It owns only the one cluster-scoped object. NB removing this app cascade-deletes the class
-# (resources-finalizer), which would fail admission of new consumer pods until restored, so mind removals.
+# platform-critical + data-critical PriorityClasses. Removing this app fails admission for every pod that names one.
 apiVersion: argoproj.io/v1alpha1
 kind: Application
 metadata:
   name: priorityclass
   namespace: argocd
-  # Cascade-delete this app's own resources on Application deletion instead of orphaning them; see 05_gitops.md.
   finalizers:
     - resources-finalizer.argocd.argoproj.io
   annotations:
     argocd.argoproj.io/sync-wave: "0"
 spec:
   project: default
-  revisionHistoryLimit: 0  # roll-forward only; no Argo rollback history (05_gitops.md)
+  revisionHistoryLimit: 0
   source:
     repoURL: https://github.com/yama6a/offgrid
     targetRevision: HEAD
     path: argo_apps/platform/charts/00_priorityclass
   destination:
     server: https://kubernetes.default.svc
-    namespace: kube-system   # ignored (PriorityClass is cluster-scoped); kube-system always exists, so no CreateNamespace
+    namespace: kube-system # ignored, PriorityClass is cluster-scoped
   syncPolicy:
     automated:
       prune: true
       selfHeal: true
     retry:
-      limit: -1  # unbounded; only retry re-drives a failed sync (see 05_gitops.md)
-      refresh: true  # retry the latest revision so a fix commit lands mid-loop
+      limit: -1
+      refresh: true
       backoff:
         duration: 5s
         factor: 2

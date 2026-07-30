@@ -1,27 +1,16 @@
-# The WORKLOADS root. A child of the root-of-roots (argo_apps/root.yaml), which creates it SECOND
-# (sync-wave "1", ~5s after the platform root). It watches argo_apps/workloads/apps/ and manages every
-# workload Application it finds there (directory.recurse).
-#
-# Workloads carry NO per-app sync-wave and NO NN_ numbering: they all reconcile in PARALLEL. There is NO
-# health gate, so this root is created while the platform may still be coming up — a workload whose platform
-# CRD (CNPG/Redis/rabbitmq-topology/cert-manager/gateway/sealed-secrets) isn't registered yet fails its sync
-# and self-converges via unbounded syncPolicy.retry (typically ~1-2 min once the platform lands). See 05_gitops.md.
-#
-# AUTOMATED: keeps the set of workload Application OBJECTS matching git; each child's own syncPolicy
-# governs its resources.
+# The workloads root. Recurses argo_apps/workloads/apps/ and manages every workload Application it finds there.
 apiVersion: argoproj.io/v1alpha1
 kind: Application
 metadata:
   name: workloads
   namespace: argocd
-  # Cascade-delete this app's own resources on Application deletion instead of orphaning them; see 05_gitops.md.
   finalizers:
     - resources-finalizer.argocd.argoproj.io
   annotations:
     argocd.argoproj.io/sync-wave: "1"
 spec:
   project: default
-  revisionHistoryLimit: 0  # roll-forward only; no Argo rollback history (05_gitops.md)
+  revisionHistoryLimit: 0
   source:
     repoURL: https://github.com/yama6a/offgrid
     targetRevision: HEAD
@@ -36,8 +25,8 @@ spec:
       prune: true
       selfHeal: true
     retry:
-      limit: -1  # unbounded; only retry re-drives a failed sync (see 05_gitops.md)
-      refresh: true  # retry the latest revision so a fix commit lands mid-loop
+      limit: -1
+      refresh: true
       backoff:
         duration: 5s
         factor: 2

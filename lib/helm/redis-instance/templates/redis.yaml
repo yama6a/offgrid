@@ -1,24 +1,8 @@
 {{- /*
-The standalone OpsTree Redis instance. `kind: Redis` (redis.redis.opstreelabs.in/v1beta2) => the operator
-reconciles a single-pod StatefulSet with ONE PVC. Single-instance by design (no HA/replication): on node loss
-Longhorn reattaches the volume elsewhere and the pod reschedules — a brief availability gap, the volume follows.
-Field shape mirrors the upstream ot-helm/redis chart's standalone template (verified against redis 0.16.9).
-
-A workload sets name / redisVersion / resources / allowedClients / persistence (+ optional initialFixedDiskSize).
-redisVersion is the Redis SERVER image tag, owned per-workload. EVERYTHING ELSE IS PINNED HERE, once, for every
-instance at once (the server image REPO, and the exporter's full ref):
-  storage class    longhorn-r2-ephemeral for BOTH modes (2-replica, reclaim Delete, from 02_longhorn);
-                   initialFixedDiskSize is the only storage knob, create-time only, default 1Gi
-                   (see docs/12_redis.md "Resizing an instance")
-  persistence      REQUIRED (no default). true: explicit appendfsync everysec + S3 backup. false: neither.
-                   It does NOT disable AOF: the operator's base redis.conf enables it for both modes.
-                   Drives AOF + S3 backup enrollment ONLY; it does NOT pick a storage class any more
-  maxmemory        80% of the container memory limit (noeviction: writes fail at the cap, never drop data)
-  security         non-root uid/gid 1000
-  auth             OFF: access is gated by the CiliumNetworkPolicy (see networkpolicy.yaml), not requirepass
-Single standalone instance by design: no HA / replication / sentinel / cluster. Durable instances are backed up
-off-cluster by the central 07_redis_backup job.
-Bump the server REPO or the exporter here and every instance picks it up; the server tag is per-workload (redisVersion).
+The standalone OpsTree Redis instance: the operator reconciles a single-pod StatefulSet with ONE PVC. No HA
+or replication by design; on node loss Longhorn reattaches the volume elsewhere and the pod reschedules.
+Field shape mirrors the upstream ot-helm/redis standalone template.
+Everything a workload should not decide is pinned here, once, for every instance at once.
 */ -}}
 apiVersion: redis.redis.opstreelabs.in/v1beta2
 kind: Redis
@@ -35,39 +19,35 @@ metadata:
     redis-backup.raspi-cluster/enabled: "true"   # discovered by the central 07_redis_backup job (durable only)
     {{- end }}
 spec:
-  # Same class as the CNPG instances: a durable store outranks the stateless app pods it serves under node
-  # memory pressure. No effect on a cgroup OOM kill (oom_score_adj ignores priority). See 00_priorityclass.
+  # A durable store outranks the stateless app pods it serves under node memory pressure. No effect on a
+  # cgroup OOM kill. The kernel picks its victim by oom_score_adj, which is set from QoS class and memory
+  # request, so priority does not protect this pod from being killed for exceeding its own memory limit.
   priorityClassName: data-critical
   kubernetesConfig:
     image: "quay.io/opstree/redis:{{ .Values.redisVersion }}"
     imagePullPolicy: IfNotPresent
     resources:
       {{- toYaml .Values.resources | nindent 6 }}
-    # No auth: access is gated by the CiliumNetworkPolicy (network-RBAC), not requirepass, so there is no
-    # secret to commit or generate. To add a password, drop a `redisSecret: { name, key }` here pointing at a
-    # (sealed) Secret; deliberately not a per-workload knob. See docs/12_redis.md.
+    # No auth: the CiliumNetworkPolicy is the access control, so there is no secret to commit or generate.
+    # To add a password, put a `redisSecret: { name, key }` here pointing at a sealed Secret.
   redisExporter:
     enabled: true
     # renovate: datasource=docker
     image: "quay.io/opstree/redis-exporter:v1.84.0"
     imagePullPolicy: IfNotPresent
   redisConfig:
-    # Extra redis.conf overlay (templates/configmap.yaml): active defrag for every instance, plus `appendonly yes`
-    # + `appendfsync everysec` in persistent mode (AOF replay on restart, ~1s max loss on a hard crash, vs the
-    # whole window back to the last RDB snapshot). AOF + RDB land on the PVC (operator sets dir=/data). Ephemeral
-    # mode skips the AOF lines — RDB only, less write overhead. ConfigMap always exists, so this is unconditional.
+    # Extra redis.conf overlay from templates/configmap.yaml. The ConfigMap always exists, so this is
+    # unconditional; the AOF lines inside it are what varies by mode.
     additionalRedisConfig: {{ .Values.name }}-ext-config
-    # maxmemory = 80% of the container memory limit (operator computes the byte value at reconcile), so Redis
-    # can't OOM its own cgroup. BOTH modes (OOM protection, unrelated to persistence). Requires
-    # resources.limits.memory. Eviction stays the Redis default (noeviction): at the cap, writes fail.
+    # The operator computes the byte value at reconcile, so Redis cannot OOM its own cgroup. Needs
+    # resources.limits.memory. Eviction stays at the Redis default noeviction: at the cap, writes fail.
     maxMemoryPercentOfLimit: 80
   storage:
     volumeClaimTemplate:
       spec:
         accessModes: ["ReadWriteOnce"]
-        # One class for BOTH modes (2-replica, reclaim Delete, from 02_longhorn). Reclaim is no longer a safety
-        # knob: deletionProtection stops an accidental prune (zero loss, restore the files), and an INTENTIONAL
-        # delete falls back to the S3 dump with its RPO window. A Retain class would only leak orphaned PVs.
+        # One class for BOTH modes. Reclaim is not a safety knob here: deletionProtection stops an accidental
+        # prune, and an intentional delete falls back to the S3 dump. A Retain class would only leak PVs.
         storageClassName: longhorn-r2-ephemeral
         resources:
           requests:

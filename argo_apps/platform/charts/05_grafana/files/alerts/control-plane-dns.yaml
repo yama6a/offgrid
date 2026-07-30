@@ -1,10 +1,9 @@
 apiVersion: 1
 groups:
-  # Kubernetes control plane. Static severity. apiserver/kubelet being DOWN is already covered by target-down;
-  # the value-add here is the apiserver server-error RATE. NOTE: kube-scheduler / kube-controller-manager are
-  # NOT scraped on this cluster (the Talos machine-config metrics bind isn't landing → no `up` for them), so
-  # they get no alerts — enable those scrapes first if you want them. See 09_monitoring.md. (etcd intentionally
-  # excluded.)
+  # apiserver and kubelet being DOWN is already covered by target-down; the value-add here is the apiserver
+  # server-error RATE.
+  # kube-scheduler and kube-controller-manager get NO alerts: they are not scraped on this cluster, because the
+  # Talos machine-config metrics bind is not landing, so there is no `up` series for them. Fix the scrape first.
   - orgId: 1
     name: control-plane
     folder: raspi-cluster
@@ -18,9 +17,9 @@ groups:
         annotations:
           summary: 'kube-apiserver is returning >5% 5xx responses'
           description: |
-            • kube-apiserver serving >5% 5xx — API calls, controllers, kubectl failing
-            • check: kubectl get --raw /healthz?verbose
-            • inspect the apiserver static-pod logs on the control-plane nodes
+            - kube-apiserver serving >5% 5xx: API calls, controllers, kubectl failing
+            - check: kubectl get --raw /healthz?verbose
+            - inspect the apiserver static-pod logs on the control-plane nodes
         noDataState: OK
         execErrState: Error
         data:
@@ -46,7 +45,7 @@ groups:
               conditions:
                 - type: query
                   evaluator: {type: gt, params: [0.05]}
-  # CoreDNS — DNS underpins ~everything; failures look like widespread breakage.
+  # CoreDNS. DNS underpins nearly everything, so its failures look like widespread breakage.
   - orgId: 1
     name: dns
     folder: raspi-cluster
@@ -60,9 +59,9 @@ groups:
         annotations:
           summary: 'Fewer than 2 CoreDNS replicas are up'
           description: |
-            • fewer than 2 CoreDNS replicas up — cluster DNS resolution at risk
-            • check: kubectl -n kube-system get pods -l k8s-app=kube-dns
-            • logs: kubectl -n kube-system logs -l k8s-app=kube-dns
+            - fewer than 2 CoreDNS replicas up: cluster DNS resolution at risk
+            - check: kubectl -n kube-system get pods -l k8s-app=kube-dns
+            - logs: kubectl -n kube-system logs -l k8s-app=kube-dns
         noDataState: OK
         execErrState: Error
         data:
@@ -96,9 +95,9 @@ groups:
         annotations:
           summary: 'CoreDNS is returning >2% SERVFAIL responses'
           description: |
-            • CoreDNS returning >2% SERVFAIL — lookups failing cluster-wide
-            • check: kubectl -n kube-system logs -l k8s-app=kube-dns
-            • verify upstream resolvers + NetworkPolicy reaching CoreDNS
+            - CoreDNS returning >2% SERVFAIL: lookups failing cluster-wide
+            - check: kubectl -n kube-system logs -l k8s-app=kube-dns
+            - verify upstream resolvers + NetworkPolicy reaching CoreDNS
         noDataState: OK
         execErrState: Error
         data:
