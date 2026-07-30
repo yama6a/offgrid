@@ -84,6 +84,7 @@ grafana:
           url: http://vlsingle-victoria-logs.monitoring.svc:9428
 
   sidecar:
+    logLevel: WARN # at INFO both sidecars log "Loading incluster config" every 30s, 4% of cluster log volume
     resources:
       requests: {cpu: 10m, memory: 96Mi}
       limits: {memory: 128Mi}

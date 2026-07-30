@@ -76,18 +76,17 @@ victoria-metrics-k8s-stack:
         - sourceLabels: [__name__]
           action: drop
           regex: "grpc_server_(handled|started|msg_received|msg_sent)_total"
-        #   flag                      : one series per command-line flag of every VM component, value always 1
-        #   kubernetes_feature_enabled: one series per feature-gate, a static config dump
-        #   kube_pod_tolerations      : toleration inventory per pod, `kubectl` it instead
-        #   container_tasks_state     : pod health already comes from kube_pod_status_*
+        # Config dumps, one series per setting and the value is always 1: VM component flags, VM operator
+        # config keys, Grafana feature toggles, k8s feature-gates. Plus per-pod toleration inventory
+        # (`kubectl` it) and container_tasks_state (kube_pod_status_* already has pod health).
         - sourceLabels: [__name__]
           action: drop
-          regex: "flag|kubernetes_feature_enabled|kube_pod_tolerations|container_tasks_state"
-        # App-exporter internals, never charted or alerted. The redis command rate/duration/failures (_total)
-        # are kept, only the per-command latency buckets go.
+          regex: "flag|config_parameter|grafana_feature_toggles_info|kubernetes_feature_enabled|kube_pod_tolerations|container_tasks_state"
+        # erlang_vm_* is the RabbitMQ broker's Erlang runtime; alerts read rabbitmq_* only. Redis keeps the
+        # command rate/duration/failure _totals, only per-command latency goes.
         - sourceLabels: [__name__]
           action: drop
-          regex: "erlang_vm_allocators|redis_commands_latencies_usec_bucket"
+          regex: "erlang_vm_.*|redis_commands_latencies_usec_bucket|redis_latency_percentiles_usec"
         # Go runtime GC/scheduler histograms, per-bucket detail for EVERY Go target. Deliberately KEEPS
         # go_sched_latencies_seconds_bucket (the VM dashboards use it) and the cheap go_memstats_* scalars.
         - sourceLabels: [__name__]
@@ -103,20 +102,52 @@ victoria-metrics-k8s-stack:
           action: drop
           regex: "cilium_.*_bucket"
         # Generic controller queue/REST histograms from many jobs. KEEPS workqueue_depth,
-        # rest_client_requests_total and rest_client_request_duration_seconds_bucket, all queried.
+        # rest_client_requests_total, rest_client_request_duration_seconds_bucket and
+        # controller_runtime_reconcile_total/_errors_total, so reconcile error RATE stays; only timing goes.
         - sourceLabels: [__name__]
           action: drop
-          regex: "workqueue_queue_duration_seconds_bucket|workqueue_work_duration_seconds_bucket|rest_client_request_size_bytes_bucket|rest_client_response_size_bytes_bucket|rest_client_rate_limiter_duration_seconds_bucket"
-        # cAdvisor per-container detail we never chart. The core container_cpu_usage_seconds_total,
-        # container_memory_working_set_bytes, container_network_* and container_memory_{rss,swap,cache} stay.
+          regex: "workqueue_(queue|work)_duration_seconds_(bucket|count|sum)|controller_runtime_reconcile_time_seconds_(bucket|count|sum)|rest_client_request_size_bytes_bucket|rest_client_response_size_bytes_bucket|rest_client_rate_limiter_duration_seconds_bucket"
+        # cAdvisor detail nothing charts. usage_bytes counts reclaimable page cache, working_set is the real
+        # number; spec_* limits duplicate kube_pod_container_resource_limits. KEEPS cpu_usage, working_set,
+        # memory_{rss,swap,cache}, fs_* and oom_events for ad-hoc vmui digging.
         - sourceLabels: [__name__]
           action: drop
-          regex: "container_memory_failures_total|container_blkio_device_usage_total|container_cpu_load_average_10s|container_cpu_load_d_average_10s|container_cpu_system_seconds_total|container_cpu_user_seconds_total|container_file_descriptors|container_health_state|container_last_seen|container_start_time_seconds"
-        # Kubelet probe histograms (success/failure is still visible via kube_pod_status_* and events) and
-        # node-exporter NFS counters (no RWX or share-manager volumes exist here).
+          regex: "container_memory_(failures_total|failcnt|kernel_usage|mapped_file|max_usage_bytes|usage_bytes|total_active_file_bytes|total_inactive_file_bytes)|container_cpu_(load_average_10s|load_d_average_10s|system_seconds_total|user_seconds_total)|container_spec_(cpu_period|cpu_shares|memory_reservation_limit_bytes|memory_swap_limit_bytes)|container_pressure_.*|container_(processes|sockets|threads|threads_max|ulimits_soft|file_descriptors|health_state|last_seen|start_time_seconds)|container_blkio_device_usage_total"
+        # cAdvisor reads a host-network pod's stats from the HOST netns, so every such pod repeats all ~70 lxc
+        # veths and the node NICs: 9k series against 568 real. eth0 is the pod's own NIC, node NICs come from
+        # node_network_*. Enumerated because RE2 has no negative lookahead, so interface!="eth0" is unwritable.
+        - sourceLabels: [__name__, interface]
+          action: drop
+          regex: "container_network_.+;(lxc.*|cilium_.*|bond0|end0|dummy0|ip6tnl0|sit0|teql0|tunl0)"
+        # node-exporter NFS counters: no RWX or share-manager volumes exist here.
         - sourceLabels: [__name__]
           action: drop
-          regex: "prober_probe_total|prober_probe_duration_seconds_(bucket|count|sum)|node_nfs_requests_total"
+          regex: "node_nfs_requests_total"
+        # One series per bucket per label combo and nothing charts API latency. Global, not on the kubeApiServer
+        # scrape below: metrics-server and Grafana each embed an apiserver and re-emit the same families.
+        # apiserver_request_duration_seconds_{count,sum} survive, the api-server dashboard uses them.
+        - sourceLabels: [__name__]
+          action: drop
+          regex: "(grafana_)?apiserver_.+_bucket"
+        # Grafana's own HTTP/plugin/alerting-engine timings, charted nowhere.
+        - sourceLabels: [__name__]
+          action: drop
+          regex: "grafana_.+_(bucket|count|sum)"
+        # Envoy xDS-push and connection-lifetime timings. Enumerated, NOT envoy_.*_bucket: the ingress-http
+        # latency alert reads envoy_cluster_upstream_rq_time_bucket.
+        - sourceLabels: [__name__]
+          action: drop
+          regex: "envoy_(cluster_(update_duration|upstream_cx_length_ms|upstream_cx_connect_ms|upstream_rq_per_cx|external_upstream_rq_time|internal_upstream_rq_time)|http_(rds_update_duration|downstream_cx_length_ms|downstream_rq_time)|listener_(downstream_cx_length_ms|connections_accepted_per_socket_event)|sds_update_duration)_bucket"
+        # Kubelet timings nothing reads. KEEPS storage_operation_duration_seconds and
+        # kubelet_runtime_operations_duration_seconds, both charted by the kubelet dashboard.
+        - sourceLabels: [__name__]
+          action: drop
+          regex: "(csi_operations_seconds|volume_operation_total_seconds|kubelet_http_requests_duration_seconds|kubelet_image_pull_duration_seconds)_(bucket|count|sum)"
+        # authn/authz/schema-validation timings from every apiserver-shaped target. A failing authenticator
+        # shows up as 401/403 in apiserver_request_total, not as a latency shift.
+        - sourceLabels: [__name__]
+          action: drop
+          regex: "(authentication_duration_seconds|authentication_token_cache_request_duration_seconds|authorization_duration_seconds|field_validation_request_duration_seconds|node_authorizer_graph_actions_duration_seconds)_(bucket|count|sum)"
       resources:
         requests: {cpu: 50m, memory: 128Mi}
         limits: {memory: 256Mi}
@@ -165,6 +196,7 @@ victoria-metrics-k8s-stack:
       k8s-resources-pod: {enabled: false}
       k8s-resources-workload: {enabled: false}
       k8s-resources-windows-cluster: {enabled: false}
+      k8s-resources-windows-namespace: {enabled: false}
       k8s-resources-windows-pod: {enabled: false}
       k8s-windows-cluster-rsrc-use: {enabled: false}
       k8s-windows-node-rsrc-use: {enabled: false}
@@ -181,6 +213,12 @@ victoria-metrics-k8s-stack:
   prometheus-node-exporter:
     enabled: true
     revisionHistoryLimit: 0
+    # Cilium names each pod's veth lxc<random>, so every restart mints ~36 node_network_* series under a name
+    # that never repeats, which then sit in the index for the whole retention window. netdev has the traffic
+    # counters, netclass the carrier/mtu/speed/up gauges, so both need excluding. Keeps cilium_*, bond0, end0, lo.
+    extraArgs:
+      - --collector.netdev.device-exclude=^(lxc.*|dummy0|ip6tnl0|sit0|teql0|tunl0)$
+      - --collector.netclass.ignored-devices=^(lxc.*|dummy0|ip6tnl0|sit0|teql0|tunl0)$
     # Every node here IS control-plane, so a node-role.kubernetes.io/control-plane:DoesNotExist selector would
     # match zero nodes. Tolerate everything instead.
     tolerations:
@@ -216,6 +254,15 @@ victoria-metrics-k8s-stack:
                 matchLabels:
                   app.kubernetes.io/name: kube-state-metrics
               topologyKey: kubernetes.io/hostname
+
+  kubelet:
+    vmScrape:
+      spec:
+        interval: 60s # chart default is 30s, but dedup.minScrapeInterval discards half of that at ingest
+    vmScrapes:
+      # /metrics/probes is only prober_probe_*, charted nowhere; probe failures show up in kube_pod_status_*
+      # and events instead.
+      probes: {enabled: false}
 
   # Talos binds controller-manager, scheduler and etcd metrics to localhost by default. They are exposed via
   # Talos machine config, OUTSIDE ArgoCD. `endpoints` are the static control-plane node IPs from .env; every
@@ -289,29 +336,17 @@ victoria-metrics-k8s-stack:
               caFile: /var/run/secrets/kubernetes.io/serviceaccount/ca.crt
               serverName: kubernetes
             metricRelabelConfigs:
-              # The apiserver's histograms: one series per bucket per label combination, so they dominate the
-              # store, and nothing here alerts on apiserver latency. apiserver_request_total stays.
-              # etcd_request_duration_seconds_bucket is the apiserver's own view of etcd latency, exported by
-              # THIS job, and the biggest single contributor.
+              # The apiserver's own view of etcd, the biggest single contributor to this job. etcd's SERVER
+              # metrics come from the kubeEtcd job above, untouched. apiserver_*_bucket is dropped globally.
               - source_labels: [__name__]
                 action: drop
-                regex: "apiserver_(request_duration_seconds|request_sli_duration_seconds|request_slo_duration_seconds|request_body_size_bytes|response_sizes|watch_list_duration_seconds|watch_cache_read_wait_seconds|watch_events_sizes|flowcontrol_request_execution_seconds|flowcontrol_priority_level_request_utilization|flowcontrol_priority_level_seat_utilization|flowcontrol_request_wait_duration_seconds|flowcontrol_demand_seats|admission_controller_admission_duration_seconds|admission_webhook_admission_duration_seconds)_bucket|etcd_request_duration_seconds_bucket"
-              # Watch-bookmark counter, watch-cache capacity gauge, and the OpenAPI schema-regeneration
-              # counters, all irrelevant on a stable cluster.
+                regex: "etcd_request_duration_seconds_(bucket|count|sum)|etcd_requests_total|etcd_bookmark_total"
+              # Watch-cache/storage inventories, body sizes, admission and flow-control accounting, plus the
+              # {count,sum} the global bucket drop leaves. Delete the flowcontrol_ term to get API-throttling
+              # visibility back.
               - source_labels: [__name__]
                 action: drop
-                regex: "etcd_bookmark_total|watch_cache_capacity|apiextensions_openapi_v(2|3)_regeneration_count"
-              # Watch-cache and storage-list inventories, body sizes, long-running gauges. Unreferenced by
-              # every rule and dashboard, including k8s_system_apisrv (which uses only apiserver_request_total
-              # plus request_duration_seconds _count/_sum). The buckets went above; this clears the remnants.
-              - source_labels: [__name__]
-                action: drop
-                regex: "apiserver_watch_cache_.*|apiserver_watch_events_.*|apiserver_watch_list_duration_seconds_(count|sum)|apiserver_storage_list_.*|apiserver_cache_list_.*|apiserver_storage_objects|apiserver_resource_objects|apiserver_resource_size_estimate_bytes|apiserver_response_sizes_(count|sum)|apiserver_request_body_size_bytes_(count|sum)|apiserver_request_sli_duration_seconds_(count|sum)|apiserver_longrunning_requests|apiserver_storage_consistency_checks_total|apiserver_storage_transformation_duration_seconds_(bucket|count|sum)"
-              # The apiserver's client-side etcd op counter and latency remnants. etcd's own SERVER metrics
-              # from the kubeEtcd job are untouched.
-              - source_labels: [__name__]
-                action: drop
-                regex: "etcd_requests_total|etcd_request_duration_seconds_(count|sum)"
+                regex: "apiserver_(watch_cache_.*|watch_events_.*|watch_list_duration_seconds_(count|sum)|storage_list_.*|storage_events_received_total|storage_objects|storage_consistency_checks_total|storage_transformation_duration_seconds_(count|sum)|cache_list_.*|resource_objects|resource_size_estimate_bytes|response_sizes_(count|sum)|request_body_size_bytes_(count|sum)|request_sli_duration_seconds_(count|sum)|request_slo_duration_seconds_(count|sum)|longrunning_requests|selfrequest_total|init_events_total|admission_(controller|webhook|step)_admission_duration_seconds_(count|sum)|flowcontrol_.*)|watch_cache_capacity|apiextensions_openapi_v(2|3)_regeneration_count"
         jobLabel: component
         namespaceSelector:
           matchNames: [default]
