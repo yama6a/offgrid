@@ -40,9 +40,8 @@ argo-cd:
       # Gap between sync waves. A fixed TIMER, not a readiness gate: real CRD-before-consumer convergence comes
       # from unbounded syncPolicy.retry. Controller-wide, so it also spaces resource-level waves inside a chart.
       controller.sync.wave.delay.seconds: "5"
-      # Silences the hourly-per-app `DiffFromCache error: cache: key is missing`. The default 1h expiry means an
-      # idle app's next refresh reads the key just after it ages out. Matching the 24h default-cache-expiration
-      # keeps it alive between recomputes. Hides no drift: watch events and selfHeal still reconcile.
+      # App state cache TTL, up from the 1h default so an idle app's state survives to its next refresh. Hides no
+      # drift, watch events and selfHeal still reconcile. Raising it will NOT silence the `DiffFromCache` error log.
       controller.app.state.cache.expiration: "24h0m0s"
       # Unset means UNLIMITED, and every app shares one repoURL, so a single push refreshes all of them at once.
       # That stampede OOMKilled both repo-server replicas. This bounds the peak; the cost is that a full refresh

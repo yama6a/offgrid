@@ -110,6 +110,21 @@ Start/declare/Finished at INFO per topology CR every `SYNC_PERIOD`. It runs at `
 too, but failures still surface via CR status conditions, k8s events, and the `rabbitmq-health` alerts. The
 collector also drops its own logs pre-read, via `excludeFilter` in `05_victoria_logs`.
 
+### Loud lines nothing can drop
+
+`excludeFilter` matches container METADATA (namespace, pod, container, labels) and runs BEFORE the log file is
+opened, so it cannot match message text. Nothing else in the vlagent/VictoriaLogs ingest path drops a line by
+content either (`ignoreFields` drops fields, not lines). So these three stay, about 6000 lines and 1.5MB a day:
+
+| Pattern | Volume | What it is |
+|---|---|---|
+| kube-apiserver `grpc: addrConn.createTransport failed to connect to 127.0.0.1:2379` | 4300/d | the etcd health probe closing a connection mid-dial, once a minute per apiserver. Confirm with `talosctl etcd members` and service health before believing it means anything |
+| longhorn-manager `Warning: v1 Endpoints is deprecated in v1.33+` | 1150/d | client-go warning on Longhorn's own API calls, gone when upstream migrates |
+| argocd `DiffFromCache error: ... cache: key is missing` | 200/d | Argo logs the cache miss at ERROR, then just does a full diff |
+
+None carries a `level` field, so none reaches the `high-error-log-rate` alert, which counts `level:error` and
+`level=error` only. Ignore them when browsing vlogs, and do not widen that alert's NOT-list for them.
+
 ### Pinned versions
 
 Chart versions live in each app's `Chart.yaml`, and Renovate groups the VictoriaMetrics charts so they bump

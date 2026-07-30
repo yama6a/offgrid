@@ -62,14 +62,15 @@ replicas: 3
 # subchart is tested against, bump deliberately.
 image: rabbitmq:4.3.3-management-alpine
 
-# RabbitMQ sizes its memory high-watermark off the LIMIT, so the limit is the real knob here.
+# RabbitMQ blocks publishers as it nears its memory LIMIT, so keep request EQUAL to limit: a smaller request lets
+# the scheduler pack the node as if the broker needed less, and the kernel OOMKills it before it ever throttles.
 resources:
   requests:
     cpu: 200m
     memory: 512Mi
   limits:
     cpu: "1"
-    memory: 1Gi
+    memory: 512Mi
 
 # Node-local, not Longhorn: quorum queues already replicate every message across the 3 brokers via Raft and
 # fsync locally, so replicating the volume underneath is pure write amplification. Each broker's volume is
