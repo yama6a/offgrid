@@ -6,5 +6,5 @@ version: 0.1.0 # local chart, never bump version
 
 dependencies:
   - name: victoria-metrics-operator
-    version: "0.66.3"
+    version: "0.67.0"
     repository: https://victoriametrics.github.io/helm-charts/
