@@ -1,5 +1,5 @@
 namespace: gateway                       # must equal the ingress chart's hardcoded gateway namespace
-callbackImage: "traefik/whoami:v1.11.0"  # Envoy intercepts /oauth2/callback before it reaches this
+callbackImage: "traefik/whoami:v1.12.0"  # Envoy intercepts /oauth2/callback before it reaches this
 
 # One Google client for everything. clientID written by 07_google_sso.sh, the secret is sealed.
 oidc:

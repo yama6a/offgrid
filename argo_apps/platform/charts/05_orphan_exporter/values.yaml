@@ -3,7 +3,7 @@
 # PodMonitor. Add a kind by appending to KINDS in templates/configmap.yaml.
 image:
   repository: python
-  tag: "3.12-slim" # renovate: datasource=docker depName=python
+  tag: "3.14-slim" # renovate: datasource=docker depName=python
 intervalSeconds: 60 # detection is not latency-sensitive, the alerts hold for minutes anyway
 port: 9100
 resources:
