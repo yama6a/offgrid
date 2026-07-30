@@ -15,11 +15,11 @@ spec:
       toPorts:
         - ports:
             - { port: "9402", protocol: TCP }
-    # kube-apiserver calls the admission webhook (cert-manager-webhook Service :443).
+    # The apiserver calls the admission webhook; the Service maps :443 to the pod's :10250.
     - fromEntities: [kube-apiserver]
       toPorts:
         - ports:
-            - { port: "443", protocol: TCP }
+            - { port: "10250", protocol: TCP }
   egress:
     # DNS (CoreDNS).
     - toEndpoints:

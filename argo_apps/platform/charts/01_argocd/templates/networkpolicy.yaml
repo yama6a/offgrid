@@ -28,6 +28,7 @@ spec:
             - { port: "8084", protocol: TCP }
             - { port: "8082", protocol: TCP }
             - { port: "8080", protocol: TCP }
+            - { port: "9121", protocol: TCP }   # the argocd-redis exporter sidecar
     # kubectl port-forward to argocd-server, break-glass. Also lands on the pod port, not the Service's.
     - fromEntities: [host]
       toPorts:

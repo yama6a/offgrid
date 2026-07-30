@@ -20,6 +20,8 @@ spec:
     - fromEndpoints:
         - matchLabels:
             messaging-client: "true"
+          matchExpressions:
+            - { key: k8s:io.kubernetes.pod.namespace, operator: Exists }   # else rabbitmq-ns only, matching nothing
       toPorts:
         - ports:
             - { port: "5672", protocol: TCP }
