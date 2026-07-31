@@ -31,7 +31,7 @@ RB_VALUES="${REPO_ROOT}/argo_apps/platform/charts/07_redis_backup/values.yaml"  
 SEED_NS="redis-backup"                                            # the seed runs where the sealed creds live
 SECRET_NAME="redis-backup-s3"                                     # the sealed writer creds in SEED_NS
 # renovate: datasource=docker
-AWSCLI_IMAGE="public.ecr.aws/aws-cli/aws-cli:2.36.12"             # the seed's S3-download initContainer
+AWSCLI_IMAGE="public.ecr.aws/aws-cli/aws-cli:2.36.13"             # the seed's S3-download initContainer
 REBUILD_WAIT=600                  # phase 1: seconds to wait for Argo + the operator to rebuild a deleted instance
 POLL=10
 
