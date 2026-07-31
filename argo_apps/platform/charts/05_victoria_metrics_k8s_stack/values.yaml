@@ -149,8 +149,10 @@ victoria-metrics-k8s-stack:
           action: drop
           regex: "(authentication_duration_seconds|authentication_token_cache_request_duration_seconds|authorization_duration_seconds|field_validation_request_duration_seconds|node_authorizer_graph_actions_duration_seconds)_(bucket|count|sum)"
       resources:
-        requests: {cpu: 50m, memory: 128Mi}
-        limits: {memory: 256Mi}
+        requests: {cpu: 50m, memory: 192Mi}
+        # Headroom for the SIGHUP scrape-config reload, which rebuilds every service-discovery routine before
+        # dropping the old ones: steady state is well under half this, the reload spike is what OOMs.
+        limits: {memory: 384Mi}
       # Soft + hostname: bare Pi nodes have no zone label, and soft means raising replicaCount never wedges a
       # pod Pending. Scaling out means full replication, with duplicates collapsed by dedup.minScrapeInterval.
       affinity:
