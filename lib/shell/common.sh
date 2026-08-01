@@ -73,7 +73,7 @@ TALOSCTL_VERSION="${TALOS_VERSION}"             # talosctl container (talosctl()
 # Keyed by the pinned build inputs so 03a and 03b resolve the SAME paths, and a version bump lands in a
 # fresh .cache/<key>/.
 BUILD_KEY="${TALOS_VERSION}-$(printf '%s' \
-  "${BUILDER_VERSION}|${PKG_VERSION}|${SBCOVERLAY_VERSION}|${MACHINERY_VERSION}|${ISCSI_EXT}|${UTIL_EXT}" \
+  "${BUILDER_VERSION}|${SBCOVERLAY_VERSION}|${MACHINERY_VERSION}|${ISCSI_EXT}|${UTIL_EXT}" \
   | shasum -a 256 | cut -c1-8)"
 BUILD_DIR="${REPO_ROOT}/.cache/${BUILD_KEY}"   # build scratch + output (gitignored; repo-root .cache/)
 OUT_DIR="${BUILD_DIR}/out"                      # final image is staged here for the flasher

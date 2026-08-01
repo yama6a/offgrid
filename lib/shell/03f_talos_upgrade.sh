@@ -153,6 +153,9 @@ for ip in "${IPS[@]}"; do
   DRAINING_NODE=""
 done
 
+bash "${SCRIPT_DIR}/03h_rebalance_workloads.sh" \
+  || warn "rebalance had failures (the upgrade itself succeeded); re-run: make rebalance-workloads"
+
 say "ROLLING UPGRADE COMPLETE"
 echo "   image:  ${INSTALLER_REF}"
 echo "   verify: talosctl version   (server tag on every node)   /   kubectl get nodes"

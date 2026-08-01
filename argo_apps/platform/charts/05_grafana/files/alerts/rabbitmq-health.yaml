@@ -20,7 +20,7 @@ groups:
             - check the cluster: kubectl -n rabbitmq get rabbitmqcluster,pods
             - inspect pod events/logs: kubectl -n rabbitmq describe pod <pod>; kubectl -n rabbitmq logs <pod>
         noDataState: OK
-        execErrState: Error
+        execErrState: KeepLast
         data:
           - refId: A
             relativeTimeRange: {from: 600, to: 0}
@@ -56,7 +56,7 @@ groups:
             - check node/pod state: kubectl -n rabbitmq get rabbitmqcluster,pods -o wide
             - recover the down pod(s); check its PVC + node scheduling before doing anything drastic
         noDataState: OK
-        execErrState: Error
+        execErrState: KeepLast
         data:
           - refId: A
             relativeTimeRange: {from: 600, to: 0}
@@ -92,7 +92,7 @@ groups:
             - check which pod is down: kubectl -n rabbitmq get pods -o wide
             - inspect the pod's events/logs and its PVC/node; restore full replica count
         noDataState: OK
-        execErrState: Error
+        execErrState: KeepLast
         data:
           - refId: A
             relativeTimeRange: {from: 600, to: 0}
@@ -128,7 +128,7 @@ groups:
             - usual cause: an unconsumed/backlogged queue growing in memory (see the queue backlog/no-consumer alerts)
             - drain the backlog (restart/scale consumers) or raise memory; check: kubectl -n rabbitmq logs <pod> | grep -i memory
         noDataState: OK
-        execErrState: Error
+        execErrState: KeepLast
         data:
           - refId: A
             relativeTimeRange: {from: 600, to: 0}
@@ -164,7 +164,7 @@ groups:
             - free disk on the node's PVC: drain queue backlog or expand the RabbitMQ PVC
             - check the underlying Longhorn volume isn't full (see the storage alerts)
         noDataState: OK
-        execErrState: Error
+        execErrState: KeepLast
         data:
           - refId: A
             relativeTimeRange: {from: 600, to: 0}
@@ -201,7 +201,7 @@ groups:
             - free space or expand the RabbitMQ PVC before it trips the disk alarm
             - check the backing Longhorn volume usage (see the storage alerts)
         noDataState: OK
-        execErrState: Error
+        execErrState: KeepLast
         data:
           - refId: A
             relativeTimeRange: {from: 600, to: 0}
@@ -245,7 +245,7 @@ groups:
             - usual cause: the consuming workload is down or crash-looping. Check its pods
             - confirm the consumer's connection: RabbitMQ mgmt UI, or kubectl -n rabbitmq exec <pod> -- rabbitmqctl list_consumers
         noDataState: OK
-        execErrState: Error
+        execErrState: KeepLast
         data:
           - refId: A
             relativeTimeRange: {from: 600, to: 0}
@@ -281,7 +281,7 @@ groups:
             - check consumer health/count; scale consumers up if the load is real
             - if it's a spike, watch it drain; threshold 100 is a homelab default: tune to real traffic
         noDataState: OK
-        execErrState: Error
+        execErrState: KeepLast
         data:
           - refId: A
             relativeTimeRange: {from: 600, to: 0}
@@ -317,7 +317,7 @@ groups:
             - usual cause: consumer stuck mid-processing, prefetch too high, or ack logic bug
             - check consumer logs for stuck processing; a consumer restart requeues the unacked
         noDataState: OK
-        execErrState: Error
+        execErrState: KeepLast
         data:
           - refId: A
             relativeTimeRange: {from: 600, to: 0}
@@ -354,7 +354,7 @@ groups:
             - inspect the messages (mgmt UI Get messages) to find the failing consumer + cause
             - fix the consumer, then replay or drop the DLQ contents
         noDataState: OK
-        execErrState: Error
+        execErrState: KeepLast
         data:
           - refId: A
             relativeTimeRange: {from: 600, to: 0}
@@ -392,7 +392,7 @@ groups:
             - catches drops even with no DLQ or after a DLQ is drained; find the offending queue in the mgmt UI
             - fix the consumer's processing error (bad payload, downstream failure) so messages stop redelivering
         noDataState: OK
-        execErrState: Error
+        execErrState: KeepLast
         data:
           - refId: A
             relativeTimeRange: {from: 600, to: 0}

@@ -9,6 +9,8 @@ Without it, only same-namespace topology is allowed.
 SkipDryRunOnMissingResource: the CRD ships with this app's own operator subchart, so on a cold boot it may not
 be registered when ArgoCD dry-runs this CR. ArgoCD applies CRDs before CRs and selfHeal converges after.
 */ -}}
+{{- $memMi := .Values.resources.limits.memory | trimSuffix "Mi" | int }}
+{{- if eq $memMi 0 }}{{ fail "resources.limits.memory must be an Mi value: total_memory_available_override_value is derived from it" }}{{ end }}
 apiVersion: rabbitmq.com/v1beta1
 kind: RabbitmqCluster
 metadata:
@@ -38,3 +40,5 @@ spec:
     additionalConfig: |
       # Also covers a queue an app declares directly rather than via a Queue CR.
       default_queue_type = quorum
+      total_memory_available_override_value = {{ mul $memMi 1048576 }} # the FULL limit; the operator would say 0.8x
+      vm_memory_high_watermark.relative = 0.85 # publishers BLOCK at 0.85x the limit, the rest absorbs GC overshoot

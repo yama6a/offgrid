@@ -19,7 +19,7 @@ groups:
             - check: argocd app get {{ $labels.name }} (or the ArgoCD UI)
             - inspect the failing resource's events/logs
         noDataState: OK
-        execErrState: Error
+        execErrState: KeepLast
         data:
           - refId: A
             relativeTimeRange: {from: 600, to: 0}
@@ -59,7 +59,7 @@ groups:
             - usually a bad manifest, failed hook, or missing dependency
             - check: argocd app get {{ $labels.name }}; review its sync result
         noDataState: OK
-        execErrState: Error
+        execErrState: KeepLast
         data:
           - refId: A
             relativeTimeRange: {from: 600, to: 0}
@@ -99,7 +99,7 @@ groups:
             - check: argocd app get {{ $labels.name }}; read the ComparisonError message in .status.conditions
             - helm deps: helm dependency build on that chart reproduces the failure locally
         noDataState: OK
-        execErrState: Error
+        execErrState: KeepLast
         data:
           - refId: A
             relativeTimeRange: {from: 600, to: 0}

@@ -21,7 +21,7 @@ groups:
             - inspect: kubectl -n {{ $labels.exported_namespace }} describe certificate {{ $labels.name }}
             - check the Issuer/ACME order + challenge: kubectl -n {{ $labels.exported_namespace }} get certificaterequest,order,challenge
         noDataState: OK
-        execErrState: Error
+        execErrState: KeepLast
         data:
           - refId: A
             relativeTimeRange: {from: 600, to: 0}
@@ -58,7 +58,7 @@ groups:
             - inspect: kubectl -n {{ $labels.exported_namespace }} describe certificate {{ $labels.name }}
             - trace the ACME order/challenge: kubectl -n {{ $labels.exported_namespace }} get certificaterequest,order,challenge; check the Issuer is Ready
         noDataState: OK
-        execErrState: Error
+        execErrState: KeepLast
         data:
           - refId: A
             relativeTimeRange: {from: 600, to: 0}
@@ -94,7 +94,7 @@ groups:
             - inspect: kubectl describe pv {{ $labels.persistentvolume }}
             - for Longhorn-backed PVs check the volume health: kubectl -n longhorn-system get volumes.longhorn.io
         noDataState: OK
-        execErrState: Error
+        execErrState: KeepLast
         data:
           - refId: A
             relativeTimeRange: {from: 600, to: 0}
@@ -130,7 +130,7 @@ groups:
             - inspect: kubectl -n {{ $labels.namespace }} describe pvc {{ $labels.persistentvolumeclaim }}
             - check the StorageClass/provisioner + Longhorn schedulable disk capacity (see the Longhorn alerts)
         noDataState: OK
-        execErrState: Error
+        execErrState: KeepLast
         data:
           - refId: A
             relativeTimeRange: {from: 600, to: 0}

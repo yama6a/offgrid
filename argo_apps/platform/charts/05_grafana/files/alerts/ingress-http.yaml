@@ -22,7 +22,7 @@ groups:
             - find the backend Service/pods behind that HTTPRoute and check their logs
             - pods: kubectl get pods -A | grep <backend>; logs: kubectl -n <ns> logs <pod>
         noDataState: OK
-        execErrState: Error
+        execErrState: KeepLast
         data:
           - refId: A
             relativeTimeRange: {from: 600, to: 0}
@@ -58,7 +58,7 @@ groups:
             - cluster name = httproute/<gw-ns>/<route>/rule/N; check that HTTPRoute's matches + the google-sso allowlist
             - inspect: kubectl get httproute -A; kubectl -n gateway get securitypolicy
         noDataState: OK
-        execErrState: Error
+        execErrState: KeepLast
         data:
           - refId: A
             relativeTimeRange: {from: 600, to: 0}
@@ -94,7 +94,7 @@ groups:
             - cluster name = httproute/<gw-ns>/<route>/rule/N; find the backend pods and check load/throttling
             - pods: kubectl -n <ns> top pod; logs: kubectl -n <ns> logs <pod>
         noDataState: OK
-        execErrState: Error
+        execErrState: KeepLast
         data:
           - refId: A
             relativeTimeRange: {from: 600, to: 0}
@@ -131,7 +131,7 @@ groups:
             - cluster name = httproute/<gw-ns>/<route>/rule/N; check the backend Service has ready endpoints
             - endpoints: kubectl -n <ns> get endpoints <svc>; pods: kubectl -n <ns> get pods
         noDataState: OK
-        execErrState: Error
+        execErrState: KeepLast
         data:
           - refId: A
             relativeTimeRange: {from: 600, to: 0}
@@ -167,7 +167,7 @@ groups:
             - cluster name = httproute/<gw-ns>/<route>/rule/N; verify Service port matches the container port
             - check: kubectl -n <ns> get endpoints <svc>; kubectl -n <ns> get ciliumnetworkpolicy
         noDataState: OK
-        execErrState: Error
+        execErrState: KeepLast
         data:
           - refId: A
             relativeTimeRange: {from: 600, to: 0}

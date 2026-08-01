@@ -21,7 +21,7 @@ groups:
             - restore the workload files in git to re-adopt it, OR if the removal was intentional finish it:
             - kubectl -n {{ $labels.res_namespace }} get cluster {{ $labels.res_cluster }} ; then delete once data is elsewhere
         noDataState: OK
-        execErrState: Error
+        execErrState: KeepLast
         data:
           - refId: A
             relativeTimeRange: {from: 600, to: 0}
@@ -59,7 +59,7 @@ groups:
             - if Argo-managed: check why the tracking annotation/label is missing (manual kubectl apply? SSA field drop?)
             - if a deliberate manual/test cluster, move it out of an Argo-managed namespace
         noDataState: OK
-        execErrState: Error
+        execErrState: KeepLast
         data:
           - refId: A
             relativeTimeRange: {from: 600, to: 0}
@@ -97,7 +97,7 @@ groups:
             - kubectl -n orphan-exporter get pods ; kubectl -n orphan-exporter logs deploy/orphan-exporter
             - check the ClusterRole/binding (get,list on clusters + redis + vm/vl stores + applications) and the PodMonitor scrape
         noDataState: Alerting
-        execErrState: Alerting
+        execErrState: KeepLast
         data:
           - refId: A
             relativeTimeRange: {from: 600, to: 0}
@@ -135,7 +135,7 @@ groups:
             - restore the workload files in git to re-adopt it, OR if the removal was intentional finish it:
             - kubectl -n {{ $labels.res_namespace }} get redis {{ $labels.res_redis }} ; then delete once data is elsewhere
         noDataState: OK
-        execErrState: Error
+        execErrState: KeepLast
         data:
           - refId: A
             relativeTimeRange: {from: 600, to: 0}
@@ -172,7 +172,7 @@ groups:
             - kubectl -n {{ $labels.res_namespace }} get redis {{ $labels.res_redis }} -o yaml | grep -A3 'annotations:'
             - expected argocd.argoproj.io/tracking-id or the app.kubernetes.io/instance label
         noDataState: OK
-        execErrState: Error
+        execErrState: KeepLast
         data:
           - refId: A
             relativeTimeRange: {from: 600, to: 0}
@@ -210,7 +210,7 @@ groups:
             - restore the app files in git to re-adopt it, OR if the removal was intentional finish it:
             - kubectl -n {{ $labels.res_namespace }} delete {{ $labels.res_kind }} {{ $labels.res_name }} ; then its PVC
         noDataState: OK
-        execErrState: Error
+        execErrState: KeepLast
         data:
           - refId: A
             relativeTimeRange: {from: 600, to: 0}
@@ -247,7 +247,7 @@ groups:
             - kubectl -n {{ $labels.res_namespace }} get {{ $labels.res_kind }} {{ $labels.res_name }} -o yaml | grep -A3 'annotations:'
             - expected argocd.argoproj.io/tracking-id or the app.kubernetes.io/instance label
         noDataState: OK
-        execErrState: Error
+        execErrState: KeepLast
         data:
           - refId: A
             relativeTimeRange: {from: 600, to: 0}

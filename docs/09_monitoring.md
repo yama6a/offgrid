@@ -189,6 +189,22 @@ bug that prompted them:
 
 Add both annotations to every new rule.
 
+### `execErrState: KeepLast` on every rule but one
+
+An eval error is not the same as a firing alert. Under `execErrState: Error` a rule that cannot run its query
+goes Alerting with NO query labels, so every `{{ $labels.x }}` in the summary renders `[no value]`. Since all
+rules share one datasource, a single vmsingle blip flips all of them at once: one node drain sent 51 FIRING plus
+51 RESOLVED in five minutes, each naming nothing, burying the two real alerts in the same window.
+
+So every rule sets `execErrState: KeepLast` and holds its previous state through the gap. The lone exception is
+`metrics-datasource-down` in `monitoring-health.yaml`, which keeps `Error` on purpose: it is the one rule whose
+job IS to report that queries are failing, and it turns the storm into a single notification. Give any new rule
+`KeepLast`.
+
+The gap this leaves: one rule with a permanently broken query, say a metric renamed by a chart bump, now stays
+silent on its last state instead of alerting. The datasource canary does not catch that, only total failure.
+Re-check queries after bumping a chart that renames metrics.
+
 ### Alert severity model and the `alert-criticality` label
 
 Alerts carry exactly two severities, `critical` and `warning`, never `info`, mapped by the ntfy webhook to
@@ -245,7 +261,7 @@ One rule per problem, all cluster-wide. Each group is its own file under `05_gra
 | `argocd-health` | warning | `argocd-app-unhealthy` (15m), `argocd-app-out-of-sync` (30m), `argocd-app-comparison-error` |
 | `cilium-health` | warning | `cilium-agent-down` (<3), `cilium-bpf-map-pressure` (>80%), `cilium-unreachable-nodes` |
 | `control-plane` + `dns` | mixed | `apiserver-error-rate-high` (critical, >5% 5xx), `coredns-down` (<2), `coredns-serverfail-rate` (>2%) |
-| `monitoring-health` | mixed | `vmsingle-near-read-only` (critical), `vmagent-dropping-samples`, `victorialogs-errors` |
+| `monitoring-health` | mixed | `metrics-datasource-down` (critical, the only `execErrState: Error` rule), `vmsingle-near-read-only` (critical), `vmagent-dropping-samples`, `victorialogs-errors` |
 | `sealed-secrets-health` | static critical | `sealed-secrets-not-ready` (10m). A down controller blocks ALL decryption cluster-wide |
 | `ingress-http` | mixed, per route | `ingress-5xx-high` (>2%), `-4xx-high` (>25%), `-latency-p95-high` (>2s), `-no-healthy-upstream` (critical, the 503 cause), `-upstream-connect-failures` |
 | `cnpg-health` | `cnpg-instance-not-ready` dynamic, rest warning | `-high-connections-*`, `-replication-lag-*`, `-txid-wraparound-*` (>300M, >1B), `-replication-slot-inactive`, `-long-running-transaction`, `-backends-waiting`, `-deadlocks`, `-manual-switchover-required`, `-fencing-on` |

@@ -24,7 +24,7 @@ groups:
             - logs: kubectl -n {{ $labels.namespace }} logs {{ $labels.pod }} -c {{ $labels.namespace }}
             - Longhorn volume may be detached mid-reschedule: check the PVC/attachment
         noDataState: OK
-        execErrState: Error
+        execErrState: KeepLast
         data:
           - refId: A
             relativeTimeRange: {from: 600, to: 0}
@@ -61,7 +61,7 @@ groups:
             - fix: raise resources.limits.memory in the workload values.yaml
             - or shed keys: check TTLs / unbounded keys: redis-cli info keyspace
         noDataState: OK
-        execErrState: Error
+        execErrState: KeepLast
         data:
           - refId: A
             relativeTimeRange: {from: 600, to: 0}
@@ -97,7 +97,7 @@ groups:
             - fix now: raise resources.limits.memory in the workload values.yaml
             - or shed keys immediately: redis-cli info keyspace, check for missing TTLs
         noDataState: OK
-        execErrState: Error
+        execErrState: KeepLast
         data:
           - refId: A
             relativeTimeRange: {from: 600, to: 0}
@@ -134,7 +134,7 @@ groups:
             - check: redis-cli info clients (connected_clients vs maxclients)
             - likely a client-side connection leak: check the app's pool sizing/close
         noDataState: OK
-        execErrState: Error
+        execErrState: KeepLast
         data:
           - refId: A
             relativeTimeRange: {from: 600, to: 0}
@@ -170,7 +170,7 @@ groups:
             - check: redis-cli info clients; likely a client pool leak
             - fix the client (close/reuse connections) before it saturates
         noDataState: OK
-        execErrState: Error
+        execErrState: KeepLast
         data:
           - refId: A
             relativeTimeRange: {from: 600, to: 0}
@@ -207,7 +207,7 @@ groups:
             - usual cause: PVC full or fork failed under memory pressure
             - check: redis-cli info persistence; df on /data; the pod's logs
         noDataState: OK
-        execErrState: Error
+        execErrState: KeepLast
         data:
           - refId: A
             relativeTimeRange: {from: 600, to: 0}
@@ -245,7 +245,7 @@ groups:
             - usual cause: PVC full or a disk I/O error
             - check: redis-cli info persistence (aof_last_write_status); df on /data
         noDataState: OK
-        execErrState: Error
+        execErrState: KeepLast
         data:
           - refId: A
             relativeTimeRange: {from: 600, to: 0}
@@ -282,7 +282,7 @@ groups:
             - active defrag is on: give it time, or restart the pod to reset RSS
             - only alerts once the instance is >50% full, so this is real fragmentation
         noDataState: OK
-        execErrState: Error
+        execErrState: KeepLast
         data:
           - refId: A
             relativeTimeRange: {from: 600, to: 0}

@@ -55,6 +55,10 @@ upgrade-talos: ## 03f: rolling in-place upgrade of the Talos OS to the pinned in
 upgrade-k8s: ## 03g: rolling in-place upgrade of Kubernetes to the pinned version.
 	bash lib/shell/03g_k8s_upgrade.sh
 
+.PHONY: rebalance-workloads
+rebalance-workloads: ## 03h: rolling-restart the stateless Deployments so the scheduler re-spreads them (03f runs this).
+	bash lib/shell/03h_rebalance_workloads.sh
+
 ##@ Cluster delivery  (step 04-09; native helm/kubectl)
 .PHONY: install-cilium
 install-cilium: ## 04: install/upgrade the Cilium CNI (+ monitoring CRDs, LB-IPAM/L2, Hubble).

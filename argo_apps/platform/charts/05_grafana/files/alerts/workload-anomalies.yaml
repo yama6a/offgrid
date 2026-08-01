@@ -18,7 +18,7 @@ groups:
             - events: kubectl -n {{ $labels.namespace }} describe pod {{ $labels.pod }}
             - raise limits (values.yaml) or fix the leak; check container_memory_working_set_bytes vs limit
         noDataState: OK
-        execErrState: Error
+        execErrState: KeepLast
         data:
           - refId: A
             relativeTimeRange: {from: 600, to: 0}
@@ -54,7 +54,7 @@ groups:
             - logs: kubectl -n {{ $labels.namespace }} logs {{ $labels.pod }} -c {{ $labels.container }} --previous
             - events: kubectl -n {{ $labels.namespace }} describe pod {{ $labels.pod }}
         noDataState: OK
-        execErrState: Error
+        execErrState: KeepLast
         data:
           - refId: A
             relativeTimeRange: {from: 3600, to: 0}
@@ -90,7 +90,7 @@ groups:
             - check current limit: kubectl -n {{ $labels.namespace }} describe pod {{ $labels.pod }}
             - raise cpu limit in values.yaml, or accept if the workload is bursty/non-latency-sensitive
         noDataState: OK
-        execErrState: Error
+        execErrState: KeepLast
         data:
           - refId: A
             relativeTimeRange: {from: 600, to: 0}
@@ -126,7 +126,7 @@ groups:
             - inspect: kubectl -n {{ $labels.namespace }} describe pod {{ $labels.pod }}
             - raise the memory limit in values.yaml or find the leak before it gets killed
         noDataState: OK
-        execErrState: Error
+        execErrState: KeepLast
         data:
           - refId: A
             relativeTimeRange: {from: 600, to: 0}
@@ -162,7 +162,7 @@ groups:
             - events: kubectl -n {{ $labels.namespace }} describe pod {{ $labels.pod }}
             - check node capacity: kubectl get nodes; and PVCs: kubectl -n {{ $labels.namespace }} get pvc
         noDataState: OK
-        execErrState: Error
+        execErrState: KeepLast
         data:
           - refId: A
             relativeTimeRange: {from: 600, to: 0}
@@ -200,7 +200,7 @@ groups:
             - events + probe config: kubectl -n {{ $labels.namespace }} describe pod {{ $labels.pod }}
             - logs: kubectl -n {{ $labels.namespace }} logs {{ $labels.pod }}
         noDataState: OK
-        execErrState: Error
+        execErrState: KeepLast
         data:
           - refId: A
             relativeTimeRange: {from: 600, to: 0}
@@ -236,7 +236,7 @@ groups:
             - inspect: kubectl -n {{ $labels.namespace }} describe rs {{ $labels.replicaset }}
             - check the pods it owns: kubectl -n {{ $labels.namespace }} get pods
         noDataState: OK
-        execErrState: Error
+        execErrState: KeepLast
         data:
           - refId: A
             relativeTimeRange: {from: 600, to: 0}
@@ -272,7 +272,7 @@ groups:
             - status: kubectl -n {{ $labels.namespace }} rollout status deploy/{{ $labels.deployment }}
             - inspect pods: kubectl -n {{ $labels.namespace }} describe deploy {{ $labels.deployment }}
         noDataState: OK
-        execErrState: Error
+        execErrState: KeepLast
         data:
           - refId: A
             relativeTimeRange: {from: 600, to: 0}
@@ -308,7 +308,7 @@ groups:
             - status: kubectl -n {{ $labels.namespace }} rollout status deploy/{{ $labels.deployment }}
             - inspect conditions: kubectl -n {{ $labels.namespace }} describe deploy {{ $labels.deployment }}
         noDataState: OK
-        execErrState: Error
+        execErrState: KeepLast
         data:
           - refId: A
             relativeTimeRange: {from: 600, to: 0}
@@ -345,7 +345,7 @@ groups:
             - inspect: kubectl -n {{ $labels.namespace }} describe hpa {{ $labels.horizontalpodautoscaler }}
             - raise maxReplicas in values.yaml if the sustained load is legitimate
         noDataState: OK
-        execErrState: Error
+        execErrState: KeepLast
         data:
           - refId: A
             relativeTimeRange: {from: 600, to: 0}
@@ -381,7 +381,7 @@ groups:
             - conditions: kubectl -n {{ $labels.namespace }} describe hpa {{ $labels.horizontalpodautoscaler }}
             - verify the metrics source is reporting for the target
         noDataState: OK
-        execErrState: Error
+        execErrState: KeepLast
         data:
           - refId: A
             relativeTimeRange: {from: 600, to: 0}
@@ -417,7 +417,7 @@ groups:
             - conditions: kubectl -n {{ $labels.namespace }} describe hpa {{ $labels.horizontalpodautoscaler }}
             - check the target's pods aren't stuck Pending/unschedulable
         noDataState: OK
-        execErrState: Error
+        execErrState: KeepLast
         data:
           - refId: A
             relativeTimeRange: {from: 600, to: 0}

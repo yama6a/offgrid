@@ -17,7 +17,7 @@ groups:
             - kubectl describe node {{ $labels.node }} -> check Conditions + kubelet
             - Talos node: talosctl -n <ip> dmesg / talosctl -n <ip> health
         noDataState: OK
-        execErrState: Error
+        execErrState: KeepLast
         data:
           - refId: A
             relativeTimeRange: {from: 600, to: 0}
@@ -53,7 +53,7 @@ groups:
             - kubectl top nodes ; kubectl top pods -A --sort-by=memory
             - shed or right-size the biggest pods, or reduce scheduled load
         noDataState: OK
-        execErrState: Error
+        execErrState: KeepLast
         data:
           - refId: A
             relativeTimeRange: {from: 600, to: 0}
@@ -89,7 +89,7 @@ groups:
             - kubectl top nodes ; kubectl top pods -A --sort-by=cpu
             - add CPU limits to the hog, or spread the load across nodes
         noDataState: OK
-        execErrState: Error
+        execErrState: KeepLast
         data:
           - refId: A
             relativeTimeRange: {from: 600, to: 0}
@@ -125,7 +125,7 @@ groups:
             - kubectl -n {{ $labels.namespace }} get pvc {{ $labels.persistentvolumeclaim }}
             - grow the PVC (Longhorn supports expansion) or clear data on the volume
         noDataState: OK
-        execErrState: Error
+        execErrState: KeepLast
         data:
           - refId: A
             relativeTimeRange: {from: 600, to: 0}
@@ -161,7 +161,7 @@ groups:
             - kubectl get pods -A -o wide | grep <app> ; check the ServiceMonitor/endpoint
             - verify the exporter port is up and CiliumNetworkPolicy allows the scrape
         noDataState: OK
-        execErrState: Error
+        execErrState: KeepLast
         data:
           - refId: A
             relativeTimeRange: {from: 600, to: 0}
@@ -200,7 +200,7 @@ groups:
             - talosctl -n {{ $labels.instance }} df ; check /var/mnt/longhorn + localpath usage
             - prune images/logs or expand the underlying disk
         noDataState: OK
-        execErrState: Error
+        execErrState: KeepLast
         data:
           - refId: A
             relativeTimeRange: {from: 600, to: 0}
@@ -237,7 +237,7 @@ groups:
             - talosctl -n {{ $labels.instance }} df -i ; find the dir with the file explosion
             - delete stale small files (caches, tmp, old logs)
         noDataState: OK
-        execErrState: Error
+        execErrState: KeepLast
         data:
           - refId: A
             relativeTimeRange: {from: 600, to: 0}
@@ -275,7 +275,7 @@ groups:
             - find the writer: talosctl -n {{ $labels.instance }} df ; du on the mount
             - act before full: prune/rotate data or expand the disk
         noDataState: OK
-        execErrState: Error
+        execErrState: KeepLast
         data:
           - refId: A
             relativeTimeRange: {from: 21600, to: 0}
@@ -313,7 +313,7 @@ groups:
             - kubectl describe node {{ $labels.node }} -> Allocated resources
             - lower over-sized requests or rebalance pods across nodes
         noDataState: OK
-        execErrState: Error
+        execErrState: KeepLast
         data:
           - refId: A
             relativeTimeRange: {from: 600, to: 0}
@@ -350,7 +350,7 @@ groups:
             - kubectl describe node {{ $labels.node }} -> Conditions + recent events
             - relieve the pressured resource (mem/disk/PIDs) fast
         noDataState: OK
-        execErrState: Error
+        execErrState: KeepLast
         data:
           - refId: A
             relativeTimeRange: {from: 600, to: 0}
@@ -388,7 +388,7 @@ groups:
             - kubectl top nodes ; kubectl describe nodes | grep -A5 Allocated
             - trim memory requests or add capacity to restore single-node tolerance
         noDataState: OK
-        execErrState: Error
+        execErrState: KeepLast
         data:
           - refId: A
             relativeTimeRange: {from: 600, to: 0}

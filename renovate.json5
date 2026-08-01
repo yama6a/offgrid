@@ -100,9 +100,6 @@
       packageNameTemplate: "https://github.com/talos-rpi5/sbc-raspberrypi5",
       datasourceTemplate: "git-refs",
     },
-    // No kernel manager: the kernel is not pinned. 03a reads the version Talos itself expects (machinery's
-    // DefaultKernelVersion) and resolves the matching raspberrypi/linux commit at build time, so bumping
-    // TALOS_VERSION carries the kernel with it.
   ],
 
   packageRules: [

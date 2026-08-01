@@ -29,6 +29,12 @@ IMAGE_NAME="metal-arm64-rpi5.raw.xz"       # staged image filename (rpi5/grub im
 # renovate: datasource=docker
 ALPINE_IMAGE="alpine:3.24"                 # throwaway container for the raw-image + boot-binary validation steps
 
+# pkgs kernel patches to NOT apply, by subject slug (the filename minus its NNNN- prefix, which pkgs renumbers).
+# The flush one rpi already carries; the watchdog one rpi does not, and we choose its own tx_pending breadcrumb
+# instead. Any other patch that fails to apply, or any entry here that matches nothing, fails the build.
+PKGS_PATCH_SKIP="net-macb-flush-PCIe-posted-write-after-TSTART-doorbe
+net-macb-add-TX-stall-watchdog-to-recover-from-lost-"
+
 say "checking prerequisites"
 [ "$(uname -m)" = "arm64" ] || warn "not arm64, the kernel build will be emulated and very slow"
 [ -x "$GMAKE" ] || die "GNU make >= 4 not found at $GMAKE (brew install make)"
@@ -54,7 +60,8 @@ fi
 docker buildx use "$BUILDER_NAME"
 docker buildx inspect --bootstrap "$BUILDER_NAME" >/dev/null
 
-say "clone talos-builder ${BUILDER_VERSION} + checkouts (pkgs ${PKG_VERSION}, talos ${TALOS_VERSION}, overlay ${SBCOVERLAY_VERSION})"
+PKGS_BRANCH="release-$(printf '%s' "${TALOS_VERSION#v}" | cut -d. -f1,2)"  # bootstrap ref only, pinned to the exact commit after checkouts
+say "clone talos-builder ${BUILDER_VERSION} + checkouts (talos ${TALOS_VERSION}, overlay ${SBCOVERLAY_VERSION})"
 # Pin the builder scaffold to BUILDER_VERSION, enforcing the pin even on a cached
 # checkout from a previous run/ref (the clone is the only network-heavy step here).
 if [ -d "$WORK/.git" ]; then
@@ -62,15 +69,40 @@ if [ -d "$WORK/.git" ]; then
 else
   git clone -q --depth 1 --branch "$BUILDER_VERSION" "$BUILDER_REPO" "$WORK"
 fi
-perl -i -pe "s/^PKG_VERSION = .*/PKG_VERSION = ${PKG_VERSION}/" "$WORK/Makefile"
+perl -i -pe "s/^PKG_VERSION = .*/PKG_VERSION = ${PKGS_BRANCH}/" "$WORK/Makefile"
 perl -i -pe "s/^TALOS_VERSION = .*/TALOS_VERSION = ${TALOS_VERSION}/" "$WORK/Makefile"
 rm -rf "$CHK/pkgs" "$CHK/talos" "$CHK/sbc-raspberrypi5"
 # NB: the Makefile uses $(PWD)/checkouts, so make must run with cwd=$WORK (not `make -C`).
 ( cd "$WORK" && "$GMAKE" checkouts )
-# The Makefile clones the overlay with `git clone --branch`, which only takes a branch
-# or tag, not a SHA. So it clones main (a full clone), and we pin to SBCOVERLAY_VERSION
-# here (a commit reachable in main's history). pkgs/talos pin via --branch (they're tags).
+# The Makefile clones with `git clone --branch`, which only takes a branch or tag, not a SHA. So pkgs and the
+# overlay clone a branch (full clones) and we pin each to its exact commit here. talos pins via --branch (a tag).
 git -C "$CHK/sbc-raspberrypi5" checkout -q "$SBCOVERLAY_VERSION" || die "could not pin overlay to ${SBCOVERLAY_VERSION}"
+
+# Derive pkgs from Talos: it names the commit it built against in its Makefile, as `<tag>-<n>-g<sha>` or a bare
+# tag. That checkout's describe becomes PKGS_TAG below, which tags the kernel image and feeds the overlay and
+# installer, so a few commits of drift propagate through the whole build.
+PKGS_DESC=$(awk -F' *\\?= *' '/^PKGS \?=/{print $2; exit}' "$CHK/talos/Makefile")
+[ -n "$PKGS_DESC" ] || die "could not read PKGS from the talos ${TALOS_VERSION} checkout's Makefile (upstream moved the line?)"
+case "$PKGS_DESC" in *-g*) PKGS_REF="${PKGS_DESC##*-g}" ;; *) PKGS_REF="$PKGS_DESC" ;; esac
+git -C "$CHK/pkgs" checkout -q "$PKGS_REF" 2>/dev/null \
+  || { git -C "$CHK/pkgs" fetch -q origin "$PKGS_REF" && git -C "$CHK/pkgs" checkout -q FETCH_HEAD; } \
+  || die "pkgs ${PKGS_REF} (from Talos ${TALOS_VERSION}'s PKGS = ${PKGS_DESC}) is not reachable on ${PKGS_BRANCH}"
+GOT=$(git -C "$CHK/pkgs" describe --tag --always --match 'v[0-9]*')
+[ "$GOT" = "$PKGS_DESC" ] || die "pkgs checkout describes as ${GOT}, expected ${PKGS_DESC} (Talos ${TALOS_VERSION})"
+echo "   pkgs ${PKGS_DESC} matches what Talos ${TALOS_VERSION} builds against"
+
+# Fail here, seconds in, rather than mid-kernel-build if a skip entry has gone stale.
+PKGS_PATCH_SLUGS=$(for f in "$CHK/pkgs/kernel/build/patches"/*.patch; do
+  [ -e "$f" ] || continue
+  s=$(basename "$f" .patch); case "$s" in [0-9]*-*) s=${s#*-} ;; esac; printf '%s\n' "$s"
+done)
+while read -r slug; do
+  [ -n "$slug" ] || continue
+  printf '%s\n' "$PKGS_PATCH_SLUGS" | grep -qxF "$slug" && continue
+  die "PKGS_PATCH_SKIP names a patch that pkgs ${PKGS_DESC} does not have: '${slug}'. Either pkgs dropped it, so
+delete the entry, or pkgs reworded its subject, so update the entry to whichever of these is the same patch:
+${PKGS_PATCH_SLUGS}"
+done <<< "$PKGS_PATCH_SKIP"
 
 # pkgs ships a stock arm64 config (already 4K). We point the kernel source
 # at raspberrypi/linux (for the RP1/BCM2712 drivers that are fork-only) and add a
@@ -157,6 +189,34 @@ CONFIG_MACB=y
 CONFIG_WATCHDOG=y
 CONFIG_BCM2835_WDT=y
 FRAG
+
+# pkgs' kernel patches target vanilla kernel.org; we build raspberrypi/linux, where some are already in or
+# collide. Gate each on a dry-run: apply what applies, skip only PKGS_PATCH_SKIP, still fail on anything else.
+python3 - "$CHK/pkgs/kernel/build/pkg.yaml" "$(printf '%s' "$PKGS_PATCH_SKIP" | tr '\n' ' ')" <<'PY'
+import sys
+p,skip=sys.argv[1],sys.argv[2].strip()
+s=open(p).read()
+anchor='''          patch -p1 < $patch || (echo "Failed to apply patch $patch" && exit 1)
+          echo "Applied patch $patch"
+'''
+block=f'''          slug=$(basename $patch .patch); case "$slug" in [0-9]*-*) slug=${{slug#*-}} ;; esac
+          if patch -p1 -N --dry-run --silent < $patch >/dev/null 2>&1; then
+            patch -p1 -N < $patch
+            echo "Applied patch $slug"
+          elif echo "{skip}" | tr ' ' '\\n' | grep -qxF "$slug"; then
+            echo "Skipped patch $slug (PKGS_PATCH_SKIP in 03a)"
+          else
+            echo "FAILED: pkgs patch does not apply to raspberrypi/linux: $slug"
+            echo "  pkgs patches target kernel.org, we build the rpi fork, so collisions are expected"
+            echo "  fix already in the rpi tree -> add '$slug' to PKGS_PATCH_SKIP in 03a"
+            echo "  fix genuinely missing       -> rebase the patch onto the rpi tree, or skip it deliberately"
+            echo "  rejects: /src/**/*.rej"
+            exit 1
+          fi
+'''
+assert anchor in s, "kernel/build/pkg.yaml patch loop not found (upstream changed?)"
+open(p,"w").write(s.replace(anchor, block, 1))
+PY
 
 # Patch the kernel build to merge the fragment + olddefconfig + fail-fast verify,
 # inserted right after the stock `cp -v /pkg/config-${CARCH} .config`.

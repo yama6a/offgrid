@@ -57,7 +57,10 @@ rebuild (below). What each is, and the constraints that matter:
 - Talos (`TALOS_VERSION`, `siderolabs/talos`): the release we rebase onto.
 - Kubernetes (`KUBERNETES_VERSION`): the pin `03d` passes to `gen config` and `03g` upgrades to. Capped by the Talos
   release's own k8s default, so raise it only after bumping Talos.
-- pkgs (`PKG_VERSION`, `siderolabs/pkgs`): ships a stock arm64 kernel config, already 4K pages.
+- pkgs (`siderolabs/pkgs`): stock arm64 kernel config, already 4K pages, plus kernel patches. No pin, derived from
+  `TALOS_VERSION`: Talos's `PKGS ?=` Makefile line names the commit it built against, and `03a` clones
+  `release-<talos minor>` then checks that out. That checkout's describe tags the kernel image and is passed on as
+  `PKGS=` to the overlay and `PKG_KERNEL=` to the installer, so `03a` hard-fails on a mismatch.
 - Kernel: no pin, derived from `TALOS_VERSION`. This is the reason for the custom build, because the kernel line
   carries the RP1 patches step 04 needs to disable the NIC's power-saving mode. There is deliberately no kernel
   version to pin: `03a` reads the version Talos expects (`DefaultKernelVersion`) from the pinned Talos and resolves
@@ -121,7 +124,8 @@ The four rebases (things the upstream pipeline can't handle at this Talos versio
 
 1. Kernel source + config: Point the kernel at `raspberrypi/linux@<tag>` and layer a small Pi 5/RP1 config fragment on
    top of the stock kernel config, then reconcile with `make olddefconfig` under the real clang toolchain. The build fails
-   immediately if any required symbol didn't make it in (4K pages, NVMe, MACB, watchdog, RP1, BCM2712).
+   immediately if any required symbol didn't make it in (4K pages, NVMe, MACB, watchdog, RP1, BCM2712). Also gates
+   pkgs' own kernel patches on a dry-run, see "pkgs kernel patches" below.
 2. Module list: Filter `hack/modules-arm64.txt` to what the rpi kernel actually built. The stock list references
    drivers our config doesn't include (e.g. `bnxt_re`), and `nvme` is now built-in rather than a module. The script
    regenerates the list by intersecting against the real kernel module tree.
@@ -131,6 +135,37 @@ The four rebases (things the upstream pipeline can't handle at this Talos versio
    sd-boot, and sd-boot's image path silently skips the overlay installer entirely. So a Pi 5 image built as `metal`
    has the kernel but no u-boot/config.txt/dtb and won't boot. The grub profile runs the overlay install
    properly and the EFI partition ends up with the boot bits it needs.
+
+### pkgs kernel patches
+
+pkgs carries its own kernel patches, written against vanilla kernel.org. We build `raspberrypi/linux`, so some are
+already in that tree or collide with how it fixed the same thing. REBASE 1 gates each patch on a `patch --dry-run`:
+apply what applies, skip only what `PKGS_PATCH_SKIP` in `03a` names, fail the build on anything else. So a pkgs bump
+that adds a patch we cannot apply stops the build instead of quietly dropping a fix.
+
+Entries are subject slugs, the filename minus its `NNNN-` prefix, because pkgs renumbers patch files (their
+sequence already skips `0005`). An entry matching no patch also fails the build, before the kernel download rather
+than during it. First thing to check there is a rename: the `die` prints every slug pkgs currently ships, so a
+reworded subject is visible side by side.
+
+Currently skipped, both from the Pi 5 macb TX-stall series that `raspberrypi/linux` merged its own version of
+(PR #7340). Note the two are different in kind, only the second is a standing judgment call:
+
+| Slug | Why |
+|---|---|
+| `net-macb-flush-PCIe-posted-write-after-TSTART-doorbe` | duplicate, already in the rpi tree, which assigns `MACB_CAPS_PCIE_POSTED_WRITES` a different bit |
+| `net-macb-add-TX-stall-watchdog-to-recover-from-lost-` | NOT in the rpi tree. It recovers lost TCOMP with a `tx_pending` breadcrumb in the TSR read path instead of a per-queue `delayed_work`, and we take that over stacking both. Conflicts only on context, an unrelated `bool tx_pending;` mid-hunk, which fuzz cannot bridge |
+
+To re-check the list after a pkgs bump, extract the kernel tarball `03a` cached under `.cache/<key>/srcserve/` and
+dry-run each patch against it:
+
+    for p in .cache/<key>/talos-builder/checkouts/pkgs/kernel/build/patches/*.patch; do
+      patch -d "$SRC" -p1 -N --dry-run --silent < "$p" >/dev/null 2>&1 \
+        && echo "applies  $(basename "$p")" || echo "CONFLICT $(basename "$p")"
+    done
+
+A conflict is not automatically a skip: check whether the rpi tree already carries the fix (grep for a symbol the
+patch adds) before adding it to `PKGS_PATCH_SKIP`.
 
 ```bash
 lib/shell/03a_talos_image_builder.sh
@@ -226,6 +261,22 @@ caught-up standby. `readyInstances` is the practical proxy; we do not query `pg_
 `03g_k8s_upgrade.sh` updates the k8s control plane (`talosctl upgrade-k8s --to "$KUBERNETES_VERSION"`). So bump *only*
 `KUBERNETES_VERSION` in `versions.env`, and then run `03g`. `KUBERNETES_VERSION` can't exceed the pinned Talos release's default
 k8s version (its supported ceiling). So it is useful to always first bump Talos.
+
+**Rebalancing after the upgrade (`03h`).** Draining node by node leaves the pods bunched on whichever nodes were
+up last, and nothing moves them back: no descheduler, and `topologySpreadConstraints` only on argocd.
+`03h_rebalance_workloads.sh` rolling-restarts the stateless Deployments so the scheduler re-places them. `03f`
+runs it; `make rebalance-workloads` runs it alone. A measured run went 39/40/15 to 31/32/32.
+
+- A nudge, not guaranteed balance. The scheduler scores each pod alone, so a run can still clump. The real fix,
+  if it ever matters, is `topologySpreadConstraints` on the workload charts.
+- Refuses to run unless every node is Ready, schedulable, and the count matches `CLUSTER_NODES`. Restarting while
+  one is cordoned just packs the survivors.
+- Serial, one Deployment at a time: `maxSurge` doubles a Deployment's pods and three Pi 5s are RAM-tight.
+- Skips a Deployment when its namespace is in `SKIP_NAMESPACES` (`longhorn-system` CSI sidecars,
+  `envoy-gateway-system` ingress data plane), when it mounts a PVC (not stateless, and moving it costs a Longhorn
+  detach/attach), or when it is scaled to 0. The PVC test is a property, so operator-generated names like
+  `vmsingle-<cr>` cannot rot a list.
+- NOT wired into `03g`: `upgrade-k8s` rolls the control plane and kubelet in place and moves no pods.
 
 ## Validation (offline, no hardware)
 

@@ -17,7 +17,7 @@ groups:
             - open VictoriaLogs (vlogs) filtered on level:error to find the source
             - drill into the noisiest namespace/pod
         noDataState: OK
-        execErrState: Error
+        execErrState: KeepLast
         data:
           - refId: A
             relativeTimeRange: {from: 300, to: 0}

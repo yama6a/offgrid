@@ -324,14 +324,21 @@ Checks, with `export KUBECONFIG=secrets/kubeconfig`:
   re-sync the `Queue` CRs; the sample queues are empty so nothing is lost.
 - Editing the generated credentials Secret does nothing. The operator does not watch it. To rotate, add a label or
   annotation to the `User` CR to force reconciliation, or re-create it.
-- Every Secret the operator touches MUST carry `rabbitmq.com/topology-operator: "true"`. The operator's Secret
-  informer only caches Secrets with that label, to bound memory. Without it the operator cannot SEE the
-  `<user>-user-credentials` Secret, so on every reconcile it tries to CREATE one, gets `secrets "<user>-user-
-  credentials" already exists`, and the `User` CR sits `Ready: False` forever, which shows up as the whole ArgoCD
-  app Degraded with no unhealthy child resource named. The operator labels the Secrets it generates, so this only
-  bites a Secret created by an older operator, restored from a backup, or hand-written (`importCredentialsSecret`,
-  `connectionSecret`, `uriSecret`, `upstreamSecret`). Fix: `kubectl -n <ns> label secret <name>
-  rabbitmq.com/topology-operator=true`, and the User reconciles within seconds.
+- The memory limit is NOT where publishers block, and request == limit, so the limit is node capacity. The chart
+  pins `total_memory_available_override_value` to the full limit, because the operator's 0.8x default compounds
+  with the watermark and blocks publishers at 0.64x the limit. That leaves one knob: publishers block at
+  `vm_memory_high_watermark.relative`, 0.85x the limit, and the remaining 15% absorbs GC overshoot before the
+  kernel OOMKills. Both are derived from `resources.limits.memory`, which must therefore stay in `Mi`.
+
+  Sized off measured RSS: an idle 3-node broker sawtooths 105-280Mi of Erlang code, allocator slack and quorum
+  ETS, not queue contents. Live data is only ~75Mi, the rest is slack the allocator has not returned. Do NOT set
+  `vm_memory_calculation_strategy = allocated` to dodge the sawtooth. It would read that 75Mi and never fire,
+  while the kernel still kills on RSS.
+- Every Secret the operator reads MUST carry `rabbitmq.com/topology-operator: "true"`, its informer caches no
+  others. Unlabelled, the operator cannot see the Secret, retries CREATE forever against `already exists`, and
+  the `User` sits `Ready: False`, surfacing as a Degraded ArgoCD app with no unhealthy child named. Only bites
+  hand-written or restored Secrets; generated ones are labelled. Fix: `kubectl -n <ns> label secret <name>
+  rabbitmq.com/topology-operator=true`.
 - Never emit empty `Permission` fields, they cause permanent OutOfSync. RabbitMQ treats a missing
   `configure`/`write`/`read` as `""`, meaning no access, and the topology operator drops empty strings from the
   stored object. So a manifest declaring `configure: ""`, which is the usual case, leaves ArgoCD owning a field

@@ -67,10 +67,10 @@ image: rabbitmq:4.3.4-management-alpine
 resources:
   requests:
     cpu: 200m
-    memory: 512Mi
+    memory: 384Mi
   limits:
     cpu: "1"
-    memory: 512Mi
+    memory: 384Mi # must stay Mi, the broker's memory override parses it. Publishers block at 0.85x, see additionalConfig
 
 # Node-local, not Longhorn: quorum queues already replicate every message across the 3 brokers via Raft and
 # fsync locally, so replicating the volume underneath is pure write amplification. Each broker's volume is

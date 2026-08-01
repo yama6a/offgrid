@@ -21,7 +21,7 @@ groups:
             - check: kubectl get --raw /healthz?verbose
             - inspect the apiserver static-pod logs on the control-plane nodes
         noDataState: OK
-        execErrState: Error
+        execErrState: KeepLast
         data:
           - refId: A
             relativeTimeRange: {from: 600, to: 0}
@@ -63,7 +63,7 @@ groups:
             - check: kubectl -n kube-system get pods -l k8s-app=kube-dns
             - logs: kubectl -n kube-system logs -l k8s-app=kube-dns
         noDataState: OK
-        execErrState: Error
+        execErrState: KeepLast
         data:
           - refId: A
             relativeTimeRange: {from: 600, to: 0}
@@ -99,7 +99,7 @@ groups:
             - check: kubectl -n kube-system logs -l k8s-app=kube-dns
             - verify upstream resolvers + NetworkPolicy reaching CoreDNS
         noDataState: OK
-        execErrState: Error
+        execErrState: KeepLast
         data:
           - refId: A
             relativeTimeRange: {from: 600, to: 0}

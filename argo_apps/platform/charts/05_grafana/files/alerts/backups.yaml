@@ -19,7 +19,7 @@ groups:
             - which instance failed is in the job stdout
             - check: kubectl -n {{ $labels.namespace }} logs job/{{ $labels.job_name }}
         noDataState: OK
-        execErrState: Error
+        execErrState: KeepLast
         data:
           - refId: A
             relativeTimeRange: {from: 600, to: 0}
@@ -58,7 +58,7 @@ groups:
             - CronJob may be suspended or never scheduling
             - check: kubectl -n {{ $labels.namespace }} get cronjob {{ $labels.cronjob }}
         noDataState: OK
-        execErrState: Error
+        execErrState: KeepLast
         data:
           - refId: A
             relativeTimeRange: {from: 600, to: 0}
@@ -95,7 +95,7 @@ groups:
             - check the volume's backups in the Longhorn UI
             - verify the S3 backup target creds + connectivity
         noDataState: OK
-        execErrState: Error
+        execErrState: KeepLast
         data:
           - refId: A
             relativeTimeRange: {from: 600, to: 0}
@@ -136,7 +136,7 @@ groups:
             - a stopped RecurringJob emits no Error, so this is the only signal
             - check the Longhorn RecurringJob schedule + backup target
         noDataState: OK
-        execErrState: Error
+        execErrState: KeepLast
         data:
           - refId: A
             relativeTimeRange: {from: 600, to: 0}
@@ -174,7 +174,7 @@ groups:
             - check: kubectl -n {{ $labels.namespace }} logs job/{{ $labels.job_name }}
             - verify the S3 target creds + bucket
         noDataState: OK
-        execErrState: Error
+        execErrState: KeepLast
         data:
           - refId: A
             relativeTimeRange: {from: 600, to: 0}
@@ -212,7 +212,7 @@ groups:
             - CronJob may be suspended or never scheduling
             - check: kubectl -n {{ $labels.namespace }} get cronjob {{ $labels.cronjob }}
         noDataState: OK
-        execErrState: Error
+        execErrState: KeepLast
         data:
           - refId: A
             relativeTimeRange: {from: 600, to: 0}
@@ -251,7 +251,7 @@ groups:
             - pg_wal grows until the volume fills and the primary goes read-only
             - check the barman-cloud sidecar logs + S3 creds/bucket
         noDataState: OK
-        execErrState: Error
+        execErrState: KeepLast
         data:
           - refId: A
             relativeTimeRange: {from: 600, to: 0}
@@ -289,7 +289,7 @@ groups:
             - check: kubectl -n {{ $labels.namespace }} get backup
             - inspect the barman-cloud sidecar on the standby
         noDataState: OK
-        execErrState: Error
+        execErrState: KeepLast
         data:
           - refId: A
             relativeTimeRange: {from: 600, to: 0}
@@ -335,7 +335,7 @@ groups:
             - check what was recorded: kubectl -n redis-backup get cm redis-backup-status -o yaml
             - check S3: aws s3 ls s3://<bucket>/redis/{{ $labels.res_namespace }}/{{ $labels.res_redis }}/
         noDataState: OK
-        execErrState: Error
+        execErrState: KeepLast
         data:
           - refId: A
             relativeTimeRange: {from: 600, to: 0}
@@ -378,7 +378,7 @@ groups:
             - check the path actually written: kubectl -n {{ $labels.res_namespace }} get objectstore {{ $labels.res_cluster }}-backups -o jsonpath='{.spec.configuration.destinationPath}{"\n"}{.status.serverRecoveryWindow}'
             - force one: apply a Backup CR (method plugin) for this cluster, then re-check the recovery window
         noDataState: OK
-        execErrState: Error
+        execErrState: KeepLast
         data:
           - refId: A
             relativeTimeRange: {from: 600, to: 0}

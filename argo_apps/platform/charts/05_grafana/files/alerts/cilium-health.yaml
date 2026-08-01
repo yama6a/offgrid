@@ -21,7 +21,7 @@ groups:
             - check: kubectl -n kube-system get pods -l k8s-app=cilium -o wide
             - logs: kubectl -n kube-system logs ds/cilium
         noDataState: OK
-        execErrState: Error
+        execErrState: KeepLast
         data:
           - refId: A
             relativeTimeRange: {from: 600, to: 0}
@@ -58,7 +58,7 @@ groups:
             - check: kubectl -n kube-system exec ds/cilium -- cilium bpf metrics list
             - needs larger map sizing or fewer endpoints/policies
         noDataState: OK
-        execErrState: Error
+        execErrState: KeepLast
         data:
           - refId: A
             relativeTimeRange: {from: 600, to: 0}
@@ -95,7 +95,7 @@ groups:
             - check: kubectl -n kube-system exec ds/cilium -- cilium status --verbose
             - verify node health + tunnels between nodes
         noDataState: OK
-        execErrState: Error
+        execErrState: KeepLast
         data:
           - refId: A
             relativeTimeRange: {from: 600, to: 0}

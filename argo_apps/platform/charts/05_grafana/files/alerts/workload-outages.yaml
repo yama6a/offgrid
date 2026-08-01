@@ -27,7 +27,7 @@ groups:
             - events + pods: kubectl -n {{ $labels.namespace }} describe deploy {{ $labels.deployment }}
             - logs: kubectl -n {{ $labels.namespace }} logs deploy/{{ $labels.deployment }}
         noDataState: OK
-        execErrState: Error
+        execErrState: KeepLast
         data:
           - refId: A
             relativeTimeRange: {from: 600, to: 0}
@@ -65,7 +65,7 @@ groups:
             - PVCs: kubectl -n {{ $labels.namespace }} get pvc
             - logs: kubectl -n {{ $labels.namespace }} logs statefulset/{{ $labels.statefulset }}
         noDataState: OK
-        execErrState: Error
+        execErrState: KeepLast
         data:
           - refId: A
             relativeTimeRange: {from: 600, to: 0}
@@ -103,7 +103,7 @@ groups:
             - check node readiness/taints: kubectl get nodes
             - logs: kubectl -n {{ $labels.namespace }} logs daemonset/{{ $labels.daemonset }}
         noDataState: OK
-        execErrState: Error
+        execErrState: KeepLast
         data:
           - refId: A
             relativeTimeRange: {from: 600, to: 0}
@@ -144,7 +144,7 @@ groups:
             - crashloop -> logs: kubectl -n {{ $labels.namespace }} logs {{ $labels.pod }} -c {{ $labels.container }} --previous
             - image/config -> verify image tag + referenced ConfigMap/Secret exist
         noDataState: OK
-        execErrState: Error
+        execErrState: KeepLast
         data:
           - refId: A
             relativeTimeRange: {from: 600, to: 0}

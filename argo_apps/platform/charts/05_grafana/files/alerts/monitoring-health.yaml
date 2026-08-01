@@ -7,6 +7,45 @@ groups:
     folder: raspi-cluster
     interval: 1m
     rules:
+      # The ONE rule that reports its own query failing, hence the lone execErrState: Error in the whole set.
+      # Every other rule holds its last state on an eval error, so a vmsingle blip sends this one notification
+      # instead of flipping all ~105 rules to Alerting with every $labels.* rendering as "[no value]".
+      - uid: metrics-datasource-down
+        title: Metrics datasource unreachable
+        condition: C
+        for: 5m
+        labels: {severity: critical}
+        annotations:
+          summary: 'Grafana cannot query VictoriaMetrics: every other alert is frozen on its last state'
+          description: |
+            - vmsingle is unreachable or scraping is dead, so no other alert can fire or clear: you are blind
+            - check: kubectl -n monitoring get pods,pvc; kubectl -n monitoring logs deploy/vmsingle-victoria-metrics-k8s-stack
+            - a node drain that moves vmsingle trips this for a few minutes and self-clears
+        noDataState: Alerting
+        execErrState: Error
+        data:
+          - refId: A
+            relativeTimeRange: {from: 600, to: 0}
+            datasourceUid: VictoriaMetrics
+            model:
+              refId: A
+              instant: true
+              expr: 'count(up)'
+          - refId: B
+            relativeTimeRange: {from: 600, to: 0}
+            datasourceUid: __expr__
+            model: {refId: B, type: reduce, expression: A, reducer: last, datasource: {type: __expr__, uid: __expr__}}
+          - refId: C
+            relativeTimeRange: {from: 600, to: 0}
+            datasourceUid: __expr__
+            model:
+              refId: C
+              type: threshold
+              expression: B
+              datasource: {type: __expr__, uid: __expr__}
+              conditions:
+                - type: query
+                  evaluator: {type: lt, params: [1]}
       # vmsingle refuses writes once free disk hits its reserved limit, which loses metrics. 3x headroom.
       - uid: vmsingle-near-read-only
         title: VictoriaMetrics near read-only (low disk)
@@ -20,7 +59,7 @@ groups:
             - check: kubectl -n monitoring get pvc; df on the vmsingle volume
             - grow the vmsingle PVC or lower retention
         noDataState: OK
-        execErrState: Error
+        execErrState: KeepLast
         data:
           - refId: A
             relativeTimeRange: {from: 600, to: 0}
@@ -57,7 +96,7 @@ groups:
             - check: kubectl -n monitoring logs deploy/vmagent
             - verify vmsingle health + free disk
         noDataState: OK
-        execErrState: Error
+        execErrState: KeepLast
         data:
           - refId: A
             relativeTimeRange: {from: 600, to: 0}
@@ -93,7 +132,7 @@ groups:
             - check: kubectl -n monitoring logs deploy/victoria-logs
             - verify its PVC has free space + is writable
         noDataState: OK
-        execErrState: Error
+        execErrState: KeepLast
         data:
           - refId: A
             relativeTimeRange: {from: 600, to: 0}
