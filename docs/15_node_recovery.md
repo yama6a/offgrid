@@ -279,13 +279,50 @@ kubectl -n rabbitmq delete pod rabbitmq-server-<n>
 
 It rejoins the cluster and takes leadership of queues within a minute or two, but the startup probe
 (`reached-target-cluster-size`) returns 503 while it catches up and will restart the container once. That is
-normal; one restart is not a failure. Confirm with:
+normal; one restart is not a failure. Confirm from a HEALTHY peer:
 
 ```bash
 kubectl -n rabbitmq exec rabbitmq-server-1 -c rabbitmq -- rabbitmqctl cluster_status
 ```
 
 All three under `Running Nodes` means it is back, even if the pod is not Ready yet.
+
+#### When the returning broker never goes Ready
+
+A peer's view is not enough on its own: ask the RETURNING node what IT can see.
+
+```bash
+kubectl -n rabbitmq exec rabbitmq-server-0 -c rabbitmq -- rabbitmqctl eval 'rabbit_nodes:list_running().'
+```
+
+If the peers list all three but the returning node lists only itself, it did not join, it FORMED a second
+cluster. Its container then restarts every ~5 minutes forever, because `reached-target-cluster-size` counts
+1 of 3, and the log loops `RabbitMQ metadata store: term mismatch ... Asking leader to resend from N` every
+30s.
+
+Peer discovery is `rabbit_peer_discovery_k8s`, which picks the lowest-ordered broker to auto-cluster onto.
+That is `rabbitmq-server-0`, so a wiped server-0 comes back and SEEDS a fresh metadata store instead of
+joining one (`DB: virgin node -> run peer discovery` then `node 'rabbit@rabbitmq-server-0...' selected for
+auto-clustering`). Ra usually reconciles that against the survivors; when it does not, the node is wedged in
+`await_condition` and no amount of waiting fixes it. Wiping server-1 or server-2 does not hit this, because
+they auto-cluster ONTO server-0.
+
+The survivors still hold it as a metadata-store member, and a member that comes back blank is rejected. Take
+it out explicitly, then let it return as a new one:
+
+```bash
+N0=rabbit@rabbitmq-server-0.rabbitmq-nodes.rabbitmq
+kubectl -n rabbitmq exec rabbitmq-server-0 -c rabbitmq -- rabbitmqctl stop_app          # forget needs it stopped
+kubectl -n rabbitmq exec rabbitmq-server-1 -c rabbitmq -- rabbitmqctl forget_cluster_node "$N0"
+kubectl -n rabbitmq delete pvc persistence-rabbitmq-server-0
+kubectl -n rabbitmq delete pod rabbitmq-server-0
+```
+
+Ready in about 90s. Quorum queues take the member back on their own, no `grow` needed:
+
+```bash
+kubectl -n rabbitmq exec rabbitmq-server-1 -c rabbitmq -- rabbitmq-queues quorum_status --vhost apps <queue>
+```
 
 ### Redis
 
@@ -331,7 +368,8 @@ this scenario. See [09_monitoring.md](09_monitoring.md). The gap is remediation,
 | etcd membership | no | nothing prunes a member whose node was replaced |
 | local-path PVCs | no | an empty PVC is indistinguishable from a corrupt one, so no operator will delete it |
 | CNPG replica | no, then yes | needs the PVC gone; after that CNPG clones by itself |
-| RabbitMQ broker | no, then yes | same |
+| RabbitMQ broker 1 or 2 | no, then yes | same |
+| RabbitMQ broker 0 | sometimes not even then | it is the auto-clustering seed, so a blank one can form a second cluster and needs forgetting first |
 | Single-instance CNPG | no | no peer, needs the S3 catalog |
 
 Three changes would remove most of the manual work, in descending order of value:
