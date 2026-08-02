@@ -270,6 +270,7 @@ Each doc holds the why behind a step, with verification commands:
 | [12_redis](docs/12_redis.md)                       | Standalone Redis instances, persistence modes, resizing.                        |
 | [13_backups](docs/13_backups.md)                   | Off-cluster S3 backups for Postgres, Redis, Longhorn and the monitoring stores. |
 | [14_renovate](docs/14_renovate.md)                 | Automated dependency updates and when Renovate is allowed to self-merge.        |
+| [15_node_recovery](docs/15_node_recovery.md)       | Losing or replacing a node: etcd, Talos, Longhorn, CNPG, RabbitMQ.              |
 
 
 ## Credits
@@ -301,3 +302,5 @@ MIT. See [LICENSE](LICENSE).
 - read and shorten all md files.
 - improve then apply comment rules from claude.md to all yaml and other code files.
 
+- can we make sure that all longhorn-dependent pods get scheduled on a node that has that volume locally to reduce network latency and traffic?
+- test and measure the performance (especially latency) impact of putting rabbitmq and cnpg onto longhorn-r2 (without backups) so that node-failure recovery is automatic'er

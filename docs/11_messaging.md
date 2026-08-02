@@ -222,8 +222,10 @@ Trade-offs, all accepted:
 - While a node is down there is no spare fault tolerance. A second node loss drops quorum queues below majority,
   so they go read-unavailable until a majority returns.
 - The volumes share Postgres's fixed 50 GiB `/var/mnt/localpath` slice. Quorum-log volumes are tiny.
-- A broker rejoining with a wiped volume under the same node name usually re-adds itself automatically, but
-  occasionally needs a manual `rabbitmq-queues grow`. Never data loss.
+- A broker whose node was REPLACED does not restart on its own: the reflash empties the volume but leaves the
+  PVC Bound, and the broker dies on `Ra could not create its data directory`. Delete the PVC and the pod and
+  it re-syncs from the two healthy peers. Expect one container restart while the startup probe waits for it
+  to catch up. Never data loss. Runbook in [15_node_recovery.md](15_node_recovery.md).
 - `5Gi` per replica is nominal, since local-path enforces no quota.
 
 ### One app: operator plus broker

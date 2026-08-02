@@ -430,6 +430,7 @@ Pick by what is actually wrong:
 | `Cluster` is GONE and you want it back as itself | `make restore-cnpg`, mode in-place |
 | DB is fine; verify a backup, read old rows, test a PITR target | `make restore-cnpg`, mode side |
 | Whole cluster rebuilt | `make restore-secrets-key` first, so the sealed S3 creds decrypt, then mode in-place per DB |
+| One node replaced, an HA instance crashlooping | Nothing here. Delete its PVC and CNPG re-clones from the primary: [15_node_recovery.md](15_node_recovery.md) |
 
 ### `make restore-cnpg`
 

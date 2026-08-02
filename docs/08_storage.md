@@ -208,8 +208,13 @@ values key and its knobs sit flat under it.
 
 CNPG runs on `local-path`, on the dedicated 50 GiB partition, so there is no Longhorn engine or CSI in the
 Postgres data path and the two cannot starve each other. Postgres streaming replication is the only replication
-layer: a node loss survives, because CNPG promotes the surviving instance and re-provisions the lost one from
-scratch. Full reasoning in [local-path-provisioner](#local-path-provisioner).
+layer: an HA cluster survives a node loss, because CNPG promotes the surviving instance and re-clones the lost
+one from it. Full reasoning in [local-path-provisioner](#local-path-provisioner).
+
+That re-clone is not automatic when the node comes BACK under the same name. A reflash empties the directory
+but leaves the PVC Bound, and CNPG will not destroy a PVC that might still hold data, so the instance
+crashloops on `pg_controldata: exit status 1` until you delete the PVC yourself. Runbook in
+[15_node_recovery.md](15_node_recovery.md).
 
 ### Operator values
 

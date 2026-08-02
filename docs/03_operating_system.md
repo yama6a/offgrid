@@ -653,6 +653,8 @@ Boot:
   `ttyAMA10`) to see what's happening.
 - Won't boot at all -> EEPROM boot order / `PCIE_PROBE` (step 02).
 - NVMe not detected -> PCIe probe / `dtparam`; confirm Gen 2 link with step 02's checks.
+- Node is gone for good and needs replacing -> [15_node_recovery.md](15_node_recovery.md). Do NOT re-run `03d`
+  as-is: it ends by bootstrapping etcd, which is for creating a cluster, not rejoining one.
 
 (Cilium / networking troubleshooting lives in [04_networking.md](04_networking.md).)
 
