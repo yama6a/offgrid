@@ -377,8 +377,21 @@ kubectl -n argocd port-forward svc/argocd-server 8080:80
 - Run order: 04 before 05. ArgoCD, CoreDNS and every workload need Cilium's pod network, and the script refuses to
   run if `ds/cilium` is absent.
 - Push before you hand off. ArgoCD clones the repo, so anything not committed and pushed is invisible to the root
-  app, which then shows `ComparisonError: path does not exist`. The script prompts; re-running after pushing is
-  safe, and `ASSUME_PUSHED=1` skips the prompt.
+  app, which then shows `ComparisonError: path does not exist`. Step 5 hard-fails on a dirty `argo_apps/` or
+  `lib/helm/`, or on unpushed commits; commit, push, re-run (idempotent).
+  - `argo_apps/root.yaml` is exempt from that gate. `kubectl` applies it from the working tree and the root's
+    path is `argo_apps/roots`, so nothing ever reads `root.yaml` from the remote. Without the exemption the
+    script's own `REPO_URL` rewrite would fail a check no amount of committing could satisfy mid-run.
+  - Any earlier step that writes into `argo_apps/` must be followed by a commit+push before step 5. Both
+    orchestrators do this: bootstrap after 04+07, rebuild after 04. A missing sync step aborts the run at the
+    gate with the cluster half-built.
+- Scripts that write chart values use `ys_set`/`ys_set_list` from `common.sh`, never `yq -i`. `yq` rewrites the
+  whole document and drops the blank line before a comment block, so a write that changes NOTHING still leaves
+  the file modified. That is enough to trip the gate above: one rebuild died at step 5 over a single deleted
+  blank line in `00_cilium/values.yaml`. `ys_set` substitutes one line, keeps its trailing comment, and is a
+  byte-level no-op when the value already matches. `yq` stays fine for reads, and every caller asserts the
+  write with a `yq -r` read-back. Writing a kubeseal-generated file with `yq` is also fine, since it is
+  regenerated wholesale each run.
 - Self-management is real. Once the `argocd` app is Synced, changes to `01_argocd/values.yaml` are applied by
   ArgoCD to itself on push. A bad value can disrupt ArgoCD briefly; it self-heals, and `05_argocd.sh` remains
   break-glass, since re-running forces the release back to the chart.

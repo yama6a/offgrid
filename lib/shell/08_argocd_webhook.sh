@@ -61,7 +61,7 @@ fi
 # The patch annotation must ALSO be on the LIVE argocd-secret for the first merge (step 4 / 05_argocd.sh).
 say "sealing ${WEBHOOK_KEY} -> ${SEALED_OUT}"
 seal_secret "$SEAL_NAME" "$SEAL_NAMESPACE" "$WEBHOOK_KEY" "$WEBHOOK_SECRET" "$SEALED_OUT"
-if [ -s "$SEALED_OUT" ]; then
+if [ -s "$SEALED_OUT" ]; then   # yq -i is fine here, unlike on hand-written values: kubeseal rewrites this file whole every run
   if yq -i '.spec.template.metadata.annotations."sealedsecrets.bitnami.com/patch" = "true"
           | .spec.template.metadata.labels."app.kubernetes.io/part-of" = "argocd"' "$SEALED_OUT"; then
     [ "$(yq -r '.spec.template.metadata.annotations."sealedsecrets.bitnami.com/patch"' "$SEALED_OUT")" = "true" ] \
@@ -83,12 +83,9 @@ else
 fi
 
 say "writing timeout.reconciliation=${RECON} into ${ARGOCD_VALUES}"
-if RECON="$RECON" yq -i '.["argo-cd"].configs.cm."timeout.reconciliation" = strenv(RECON)' "$ARGOCD_VALUES"; then
-  [ "$(yq -r '.["argo-cd"].configs.cm."timeout.reconciliation"' "$ARGOCD_VALUES")" = "$RECON" ] \
-    && ok "timeout.reconciliation set to ${RECON}" || bad "timeout.reconciliation not written"
-else
-  bad "yq failed to patch timeout.reconciliation"
-fi
+ys_set "$ARGOCD_VALUES" "$RECON" argo-cd configs cm timeout.reconciliation
+[ "$(yq -r '.["argo-cd"].configs.cm."timeout.reconciliation"' "$ARGOCD_VALUES")" = "$RECON" ] \
+  && ok "timeout.reconciliation set to ${RECON}" || bad "timeout.reconciliation not written"
 
 ARGOCD_DOMAIN="$(yq -r '.ingress.ingresses[] | select(.hosts[].subdomain == "argocd") | .domain' "$INGRESS_VALUES" 2>/dev/null | head -1)"
 WEBHOOK_URL="https://argocd.${ARGOCD_DOMAIN:-<domain>}/api/webhook"

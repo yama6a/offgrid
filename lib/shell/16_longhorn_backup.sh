@@ -63,10 +63,8 @@ ok "got writer access key id + secret from terraform"
 # flips the backup StorageClass + RecurringJobs on (they render `{{- if backupTarget }}`). See docs/13_backups.md.
 say "enabling backups: injecting backupTarget + credential secret into ${LH_VALUES}"
 BACKUP_TARGET="s3://${S3_BACKUP_BUCKET}@${AWS_REGION}/longhorn/"
-TARGET="$BACKUP_TARGET" SECRET="$SECRET_NAME" yq -i '
-  .longhorn.defaultBackupStore.backupTarget = strenv(TARGET)
-  | .longhorn.defaultBackupStore.backupTargetCredentialSecret = strenv(SECRET)
-' "$LH_VALUES"
+ys_set "$LH_VALUES" "\"${BACKUP_TARGET}\"" longhorn defaultBackupStore backupTarget
+ys_set "$LH_VALUES" "\"${SECRET_NAME}\""   longhorn defaultBackupStore backupTargetCredentialSecret
 # verify the writes round-tripped
 [ "$(yq -r '.longhorn.defaultBackupStore.backupTarget' "$LH_VALUES")" = "$BACKUP_TARGET" ] \
   && ok "backupTarget=${BACKUP_TARGET}" || bad "backupTarget not set"

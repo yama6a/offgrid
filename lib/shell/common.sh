@@ -111,7 +111,60 @@ require() {
 
 # Line-surgical edits, NOT `yq -i`: yq rewrites the whole document (collapses comment alignment, drops blank
 # lines, re-flows inline maps), which turns a two-line change into a huge diff on these hand-formatted values.
-# yq stays fine for READS. Every edit is scoped between `^<alias>:` and the next top-level key.
+# Worse, it drops the blank line before a comment block, so even a write that changes NOTHING leaves the file
+# modified: that alone aborted a rebuild at 05_argocd's uncommitted-changes gate. yq stays fine for READS.
+# Each helper below writes back with `cat tmp > file`, not `mv`: mv would leave the file with mktemp's 0600.
+
+# ys_set <file> <value> <key...>: replace the value of one existing nested key, in place, touching that ONE
+# line and keeping its trailing comment. The value is written verbatim, so the caller quotes it when the CRD
+# needs a string. Silent when the path isn't found, so every caller asserts with a `yq -r` read-back after.
+ys_set() {
+  local f="$1" v="$2"; shift 2
+  local tmp; tmp="$(mktemp)" || return 1
+  VAL="$v" awk -v path="$*" '
+    function keyof(s) { sub(/^ */, "", s); sub(/:.*/, "", s); gsub(/^"|"$/, "", s); return s }
+    BEGIN { n = split(path, want, " "); lvl = 1; parent = -1; val = ENVIRON["VAL"] }
+    lvl > n || /^ *(#|$)/ { print; next }
+    {
+      match($0, /^ */); ind = RLENGTH
+      if (ind <= parent || (lvl == 1 && ind != 0)) { print; next }   # left the parent block, give up
+      if ($0 !~ /^ *[^ ]+:/ || keyof($0) != want[lvl]) { print; next }
+      if (lvl < n) { parent = ind; lvl++; print; next }
+      tail = ""; if (match($0, / +#.*$/)) tail = substr($0, RSTART)
+      print substr($0, 1, ind) want[n] ": " val tail
+      lvl = n + 1
+    }
+  ' "$f" > "$tmp" && cat "$tmp" > "$f"
+  rm -f "$tmp"
+}
+
+# ys_set_list <file> <space-separated items> <key...>: same, for a key whose value is a block sequence of
+# plain scalars. Rewrites the whole sequence; no items collapses it to an inline `[]`.
+ys_set_list() {
+  local f="$1" items="$2"; shift 2
+  local tmp; tmp="$(mktemp)" || return 1
+  ITEMS="$items" awk -v path="$*" '
+    function keyof(s) { sub(/^ */, "", s); sub(/:.*/, "", s); gsub(/^"|"$/, "", s); return s }
+    BEGIN { n = split(path, want, " "); lvl = 1; parent = -1; m = split(ENVIRON["ITEMS"], item, " ") }
+    lvl > n || /^ *(#|$)/ { print; next }
+    eating {
+      if ($0 ~ /^ *- /) next                                        # drop the old sequence entries
+      eating = 0; lvl = n + 1; print; next
+    }
+    {
+      match($0, /^ */); ind = RLENGTH
+      if (ind <= parent || (lvl == 1 && ind != 0)) { print; next }
+      if ($0 !~ /^ *[^ ]+:/ || keyof($0) != want[lvl]) { print; next }
+      if (lvl < n) { parent = ind; lvl++; print; next }
+      tail = ""; if (match($0, / +#.*$/)) tail = substr($0, RSTART)
+      pre = substr($0, 1, ind)
+      print pre want[n] ":" (m ? "" : " []") tail
+      for (i = 1; i <= m; i++) print pre "  - " item[i]
+      eating = 1
+    }
+  ' "$f" > "$tmp" && cat "$tmp" > "$f"
+  rm -f "$tmp"
+}
 
 # Auto-yes when the caller set ASSUME_YES=true.
 confirm() {
@@ -150,7 +203,8 @@ vy_protect_on() {
       print "  deletionProtection: true    # always true in steady state; flip to false only to delete it"; next
     }
     { print }
-  ' "$f" > "$tmp" && mv "$tmp" "$f"
+  ' "$f" > "$tmp" && cat "$tmp" > "$f"
+  rm -f "$tmp"
 }
 
 CLUSTER_DIR="${REPO_ROOT}/secrets"   # the only real talosconfig + kubeconfig; a symlink to an off-repo store

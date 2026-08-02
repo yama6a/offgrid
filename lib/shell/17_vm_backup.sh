@@ -58,10 +58,8 @@ SAK="$(terraform -chdir="$TF_DIR" output -raw backup_secret_access_key 2>/dev/nu
 ok "got writer access key id + secret from terraform"
 
 say "enabling backups: injecting bucket/region into ${VB_VALUES} (the CronJob renders once bucket is set)"
-BUCKET="$S3_BACKUP_BUCKET" REGION="$AWS_REGION" yq -i '
-  .bucket = strenv(BUCKET)
-  | .region = strenv(REGION)
-' "$VB_VALUES"
+ys_set "$VB_VALUES" "\"${S3_BACKUP_BUCKET}\"" bucket
+ys_set "$VB_VALUES" "\"${AWS_REGION}\""       region
 # verify the writes round-tripped
 [ "$(yq -r '.bucket' "$VB_VALUES")" = "$S3_BACKUP_BUCKET" ] && ok "bucket=${S3_BACKUP_BUCKET}" || bad "bucket not set"
 [ "$(yq -r '.region' "$VB_VALUES")" = "$AWS_REGION" ]       && ok "region=${AWS_REGION}"       || bad "region not set"

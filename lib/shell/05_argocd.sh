@@ -106,17 +106,26 @@ say "handing off to GitOps (kubectl apply root)"
 # their own repoURL, so pointing at a fork means rewriting those too.
 # Temp-file rewrite, not `sed -i`: portable across BSD and GNU sed.
 RA_TMP="$(mktemp)" || die "mktemp failed"
-if sed -E "s|^([[:space:]]*repoURL:[[:space:]]*).*|\1${REPO_URL}|" "$ROOT_APP" > "$RA_TMP" && mv "$RA_TMP" "$ROOT_APP"; then
-  ok "root repoURL -> ${REPO_URL}"
-else
+if ! sed -E "s|^([[:space:]]*repoURL:[[:space:]]*).*|\1${REPO_URL}|" "$ROOT_APP" > "$RA_TMP"; then
   rm -f "$RA_TMP"
   bad "could not rewrite repoURL in ${ROOT_APP}"
+elif cmp -s "$RA_TMP" "$ROOT_APP"; then
+  rm -f "$RA_TMP"
+  ok "root repoURL already ${REPO_URL}"
+elif mv "$RA_TMP" "$ROOT_APP"; then
+  ok "root repoURL -> ${REPO_URL} (locally modified, commit it)"
+else
+  rm -f "$RA_TMP"
+  bad "could not replace ${ROOT_APP}"
 fi
 
 # ArgoCD clones the PUSHED repo, so local-only changes are invisible to the root app. Flags uncommitted
 # changes under argo_apps/ or the shared lib/helm/ charts it resolves, and unpushed commits on the branch.
+# root.yaml is the ONE exemption: kubectl applies it from the working tree just below and nothing reads it
+# from the remote (the root's path is argo_apps/roots), so counting the rewrite above would fail this gate on
+# a fork or a REPO_URL change with no way to satisfy it.
 if [ -n "$REPO_ROOT" ]; then
-  [ -n "$(git -C "$REPO_ROOT" status --porcelain -- argo_apps lib/helm 2>/dev/null)" ] \
+  [ -n "$(git -C "$REPO_ROOT" status --porcelain -- argo_apps lib/helm ':!argo_apps/root.yaml' 2>/dev/null)" ] \
     && bad "uncommitted changes under argo_apps/ or lib/helm/, commit & push them, then re-run"
   ahead="$(git -C "$REPO_ROOT" rev-list --count '@{u}..HEAD' 2>/dev/null || echo 0)"
   [ "${ahead:-0}" -gt 0 ] \

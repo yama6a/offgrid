@@ -142,9 +142,9 @@ every HTTPS host lives on its own per-app Gateway, all merged onto the one Envoy
 - `argo_apps/platform/charts/03_gateway/`: the `:80` Gateway plus the ClusterIssuers.
 - A one-line `enableGatewayAPI: true` in `02_cert_manager/values.yaml`.
 - `lib/shell/07_gateway.sh`: writes `.env`'s `LE_EMAIL` into `acme.email` and propagates
-  `CLOUDFLARE_WILDCARD_DOMAINS` into `acme.cloudflare.zones` here AND the ingress chart's `cloudflareZones`. Pure
-  `yq`, no cluster access, so it runs early at bootstrap step 7, before ArgoCD. Non-interactive; commit the
-  rewritten files.
+  `CLOUDFLARE_WILDCARD_DOMAINS` into `acme.cloudflare.zones` here AND the ingress chart's `cloudflareZones`.
+  Values only, no cluster access, so it runs early at bootstrap step 7, before ArgoCD. Non-interactive; commit
+  the rewritten files. Writes go through `ys_set`/`ys_set_list`, not `yq -i`: see 05_gitops.md.
 - `lib/shell/07_cloudflare_token.sh`: seals `CLOUDFLARE_API_TOKEN_SECRET` into `cert-manager`. Split out because
   sealing needs the live sealed-secrets controller, so it runs AFTER ArgoCD is up. `make
   configure-cloudflare-token`. Skips and cleans up if the token is empty.

@@ -75,7 +75,8 @@ vy_restore_on() {
     inb { buf[++n] = $0; next }
     { print }
     END { if (inb) flush() }
-  ' "$f" > "$tmp" && mv "$tmp" "$f"
+  ' "$f" > "$tmp" && cat "$tmp" > "$f"
+  rm -f "$tmp"
 }
 
 # vy_restore_off <file> <alias>: drop the `restore:` block plus the comment line above it
@@ -88,7 +89,8 @@ vy_restore_off() {
     inb && /^  restore:/ { skip=1; next }
     skip { if (/^    /) next; skip=0 }
     { print }
-  ' "$f" > "$tmp" && mv "$tmp" "$f"
+  ' "$f" > "$tmp" && cat "$tmp" > "$f"
+  rm -f "$tmp"
 }
 
 

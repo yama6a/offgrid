@@ -44,12 +44,10 @@ say "injecting bucket/region/RPO into ${OVERLAY}"
 # Barman's ObjectStore retentionPolicy must be a non-empty duration (the CRD rejects null/empty); align it to the
 # S3 lifecycle expiry so the two agree. Format: "<days>d" (e.g. 180d).
 RETENTION="${S3_BACKUP_RETENTION_DAYS}d"
-BUCKET="$S3_BACKUP_BUCKET" REGION="$AWS_REGION" RPO="$CNPG_BACKUP_RPO" RETENTION="$RETENTION" yq -i '
-  .bucket = strenv(BUCKET)
-  | .region = strenv(REGION)
-  | .retentionPolicy = strenv(RETENTION)
-  | .archiveTimeout = strenv(RPO)
-' "$OVERLAY"
+ys_set "$OVERLAY" "\"${S3_BACKUP_BUCKET}\"" bucket
+ys_set "$OVERLAY" "\"${AWS_REGION}\""       region
+ys_set "$OVERLAY" "\"${RETENTION}\""        retentionPolicy
+ys_set "$OVERLAY" "\"${CNPG_BACKUP_RPO}\""  archiveTimeout
 # verify the writes round-tripped
 [ "$(yq -r '.bucket' "$OVERLAY")" = "$S3_BACKUP_BUCKET" ] && ok "bucket=${S3_BACKUP_BUCKET}" || bad "bucket not set"
 [ "$(yq -r '.region' "$OVERLAY")" = "$AWS_REGION" ]       && ok "region=${AWS_REGION}"       || bad "region not set"
@@ -68,10 +66,8 @@ SEALED_SAK="$(seal_raw "$SAK")"
 case "$SEALED_AKID" in Ag*) ok "ACCESS_KEY_ID sealed" ;; *) bad "ACCESS_KEY_ID ciphertext malformed (no Ag prefix)" ;; esac
 case "$SEALED_SAK"  in Ag*) ok "ACCESS_SECRET_KEY sealed" ;; *) bad "ACCESS_SECRET_KEY ciphertext malformed (no Ag prefix)" ;; esac
 
-CT_ID="$SEALED_AKID" CT_SAK="$SEALED_SAK" yq -i '
-  .sealed.ACCESS_KEY_ID = strenv(CT_ID)
-  | .sealed.ACCESS_SECRET_KEY = strenv(CT_SAK)
-' "$OVERLAY"
+ys_set "$OVERLAY" "\"${SEALED_AKID}\"" sealed ACCESS_KEY_ID
+ys_set "$OVERLAY" "\"${SEALED_SAK}\"" sealed ACCESS_SECRET_KEY
 # verify the ciphertext landed, and NO plaintext creds leaked into the committed overlay
 [ "$(yq -r '.sealed.ACCESS_KEY_ID' "$OVERLAY")" = "$SEALED_AKID" ]     && ok "sealed ACCESS_KEY_ID written"     || bad "ACCESS_KEY_ID not written"
 [ "$(yq -r '.sealed.ACCESS_SECRET_KEY' "$OVERLAY")" = "$SEALED_SAK" ]  && ok "sealed ACCESS_SECRET_KEY written"  || bad "ACCESS_SECRET_KEY not written"

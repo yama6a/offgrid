@@ -39,16 +39,14 @@ ok "Kubernetes API reachable"
 
 # Edits the chart's plain-YAML values, NOT the helm-templated cilium-lb.yaml that references them.
 # Committing values.yaml is what keeps ArgoCD's render in sync with this bootstrap.
-# The IPs go through yq's strenv() so they stay quoted strings; without it yq writes 192.168.100.10 unquoted
-# and Cilium's CRD rejects it as a non-string.
+# The IPs are written WITH their quotes: Cilium's CRD rejects an unquoted 192.168.100.10 as a non-string.
 say "LB-IPAM range -> values.yaml (${LB_RANGE_START}-${LB_RANGE_STOP})"
-if LB_RANGE_START="$LB_RANGE_START" LB_RANGE_STOP="$LB_RANGE_STOP" \
-     yq -i '.loadBalancer.ipPool.start = strenv(LB_RANGE_START)
-          | .loadBalancer.ipPool.stop  = strenv(LB_RANGE_STOP)' "$VALUES"; then
-  ok "LB range written to values.yaml (commit this so ArgoCD renders the same pool)"
-else
-  bad "yq failed to write LB range into ${VALUES}"
-fi
+ys_set "$VALUES" "\"${LB_RANGE_START}\"" loadBalancer ipPool start
+ys_set "$VALUES" "\"${LB_RANGE_STOP}\""  loadBalancer ipPool stop
+[ "$(yq -r '.loadBalancer.ipPool.start' "$VALUES")" = "$LB_RANGE_START" ] \
+  && ok "ipPool.start=${LB_RANGE_START} (commit this so ArgoCD renders the same pool)" || bad "ipPool.start not written to ${VALUES}"
+[ "$(yq -r '.loadBalancer.ipPool.stop' "$VALUES")" = "$LB_RANGE_STOP" ] \
+  && ok "ipPool.stop=${LB_RANGE_STOP}" || bad "ipPool.stop not written to ${VALUES}"
 
 # cilium's chart HARD-FAILS at template time if the monitoring.coreos.com CRDs are absent, and on a fresh
 # cluster ArgoCD's CRD app only lands at step 05. So install them here first, rendered from that SAME pinned

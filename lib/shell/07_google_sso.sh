@@ -57,11 +57,8 @@ case "$CLIENT_ID" in *.apps.googleusercontent.com) ;; *)
 esac
 
 say "writing clientID into ${SSO_VALUES}"
-if CLIENT_ID="$CLIENT_ID" yq -i '.oidc.clientID = strenv(CLIENT_ID)' "$SSO_VALUES"; then
-  [ "$(yq -r '.oidc.clientID' "$SSO_VALUES")" = "$CLIENT_ID" ] && ok "oidc.clientID set" || bad "clientID not written"
-else
-  bad "yq failed to write oidc.clientID"
-fi
+ys_set "$SSO_VALUES" "\"${CLIENT_ID}\"" oidc clientID
+[ "$(yq -r '.oidc.clientID' "$SSO_VALUES")" = "$CLIENT_ID" ] && ok "oidc.clientID set" || bad "clientID not written"
 
 # One key: ${CLIENT_SECRET_KEY} (what Envoy Gateway's OIDC clientSecret reads). --dry-run=client builds the
 # manifest locally; kubeseal encrypts it against THIS cluster's controller key. Strict scope binds it to

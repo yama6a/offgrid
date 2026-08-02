@@ -1,6 +1,6 @@
 #!/usr/bin/env bash
 # Propagates the gateway and ACME knobs from .env into the chart values ArgoCD renders, so the shell side and
-# ArgoCD agree. Pure yq, NO cluster access, so it is safe to run before ArgoCD and sealed-secrets exist.
+# ArgoCD agree. Values-only, NO cluster access, so it is safe to run before ArgoCD and sealed-secrets exist.
 # The Cloudflare token is NOT sealed here (07_cloudflare_token.sh does that once the controller is up). Here
 # it only GATES the zones: an empty token forces zones to [], because a dns01 solver with no token would
 # reference a missing Secret and fail every challenge.
@@ -25,14 +25,10 @@ require yq
 [ -n "${LE_EMAIL}" ] || die "LE_EMAIL is empty (set it in .env)"
 ok "yq present, charts + values found, knobs set"
 
-# yq edits the chart's plain-YAML values; committing it keeps ArgoCD's render in sync with .env. strenv()
-# forces it to stay a quoted string.
+# Committing the rewritten values is what keeps ArgoCD's render in sync with .env. Values are passed WITH
+# their quotes so they stay strings.
 say ".env -> 03_gateway values  (email=${LE_EMAIL})"
-if LE_EMAIL="$LE_EMAIL" yq -i '.acme.email = strenv(LE_EMAIL)' "$GW_VALUES"; then
-  ok "email written"
-else
-  bad "yq failed to write email into ${GW_VALUES}"
-fi
+ys_set "$GW_VALUES" "\"${LE_EMAIL}\"" acme email
 
 # DNS-01 needs the token; without it a rendered dns01 solver would reference a missing Secret and every
 # challenge would fail. So the token gates the zones: no token => force zones to [] (HTTP-01 for all).
@@ -42,17 +38,9 @@ if [ -z "${CLOUDFLARE_API_TOKEN_SECRET}" ] && [ -n "${CLOUDFLARE_WILDCARD_DOMAIN
   EFFECTIVE_ZONES=""
 fi
 say ".env CLOUDFLARE_WILDCARD_DOMAINS -> gateway + ingress-lib values  (${EFFECTIVE_ZONES:-<none, HTTP-01 for all>})"
-# split(" ") + map(select) turns the space-separated scalar into a YAML list, and "" -> [] (not [""]).
-if CF_ZONES="$EFFECTIVE_ZONES" yq -i '.acme.cloudflare.zones = (strenv(CF_ZONES) | split(" ") | map(select(. != "")))' "$GW_VALUES"; then
-  ok "03_gateway acme.cloudflare.zones written"
-else
-  bad "yq failed writing acme.cloudflare.zones into ${GW_VALUES}"
-fi
-if CF_ZONES="$EFFECTIVE_ZONES" yq -i '.cloudflareZones = (strenv(CF_ZONES) | split(" ") | map(select(. != "")))' "$LIB_VALUES"; then
-  ok "ingress-lib cloudflareZones written (re-vendor consumers to propagate)"
-else
-  bad "yq failed writing cloudflareZones into ${LIB_VALUES}"
-fi
+# ys_set_list turns the space-separated scalar into a block sequence, and "" into an inline [] (not [""]).
+ys_set_list "$GW_VALUES"  "$EFFECTIVE_ZONES" acme cloudflare zones
+ys_set_list "$LIB_VALUES" "$EFFECTIVE_ZONES" cloudflareZones
 
 say "verify"
 got_email="$(yq -r '.acme.email' "$GW_VALUES" 2>/dev/null)"
