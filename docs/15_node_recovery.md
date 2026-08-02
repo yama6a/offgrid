@@ -24,7 +24,7 @@ Longhorn is unaffected: its replicas live on the other nodes, so it just rebuild
 
 | Storage | Used by | On node replacement |
 |---|---|---|
-| `longhorn-r2-ephemeral` | Redis, general workload volumes | survives. Longhorn rebuilds the replica, no action |
+| `longhorn-r2-ephemeral` | Redis, general workload volumes | data survives, replicas rebuild themselves. The node's disk RECORD does not: it needs resetting, step 8 |
 | `local-path` | CNPG Postgres | PVC survives EMPTY. Delete it; CNPG re-clones from the primary |
 | `local-path-ephemeral` | RabbitMQ quorum logs | PVC survives EMPTY. Delete it; the broker re-syncs from the quorum |
 | none | stateless Deployments | reschedule on their own |
@@ -118,7 +118,42 @@ Nodes are addressed by IP throughout; `pi-cp3` / `192.168.10.203` below is the e
    kubectl -n <ns> delete pod <pod>
    ```
 
-8. Verify everything converged.
+8. Reset the Longhorn disk record. Longhorn stores the disk's UUID in BOTH the node CR and a
+   `longhorn-disk.cfg` on the disk itself. The reflash made a fresh filesystem, so the manager wrote a new
+   cfg with a new UUID while the CR still held the old one, and Longhorn refuses the disk rather than risk
+   using the wrong one:
+
+   ```
+   Ready=False  DiskFilesystemChanged  record diskUUID doesn't match the one on the disk
+   ```
+
+   The node itself reports `Ready`, so this hides unless you look at the disk. Confirm zero replicas on it
+   first, then disable, remove and re-add:
+
+   ```bash
+   D=$(kubectl -n longhorn-system get nodes.longhorn.io pi-cp3 \
+       -o go-template='{{range $k,$v := .spec.disks}}{{$k}}{{end}}')
+   kubectl -n longhorn-system get replicas.longhorn.io -o jsonpath='{range .items[?(@.spec.nodeID=="pi-cp3")]}{.metadata.name}{"\n"}{end}'   # must be empty
+
+   kubectl -n longhorn-system patch nodes.longhorn.io pi-cp3 --type merge \
+     -p "{\"spec\":{\"disks\":{\"$D\":{\"allowScheduling\":false}}}}"
+   kubectl -n longhorn-system patch nodes.longhorn.io pi-cp3 --type json \
+     -p "[{\"op\":\"remove\",\"path\":\"/spec/disks/$D\"}]"
+   ```
+
+   Then re-add it with the same spec as a healthy node's (`kubectl -n longhorn-system get nodes.longhorn.io
+   pi-cp1 -o jsonpath='{.spec.disks}'`), and confirm:
+
+   ```bash
+   kubectl -n longhorn-system get nodes.longhorn.io pi-cp3 \
+     -o jsonpath='{range .status.diskStatus.*}{.diskUUID}{" avail="}{.storageAvailable}{"\n"}{end}'
+   ```
+
+   Two gotchas that cost time. The validating webhook refuses to remove a disk that is still schedulable, so
+   `allowScheduling: false` has to land first. And a merge patch of `{"disks":{}}` is a NO-OP, because JSON
+   merge patch deletes keys only when they are set to `null`; use a json patch `remove` op instead.
+
+9. Verify everything converged.
 
    ```bash
    kubectl get nodes                                                    # 3 Ready
@@ -127,6 +162,7 @@ Nodes are addressed by IP throughout; `pi-cp3` / `192.168.10.203` below is the e
    kubectl get clusters.postgresql.cnpg.io -A                           # "Cluster in healthy state"
    kubectl -n rabbitmq get rabbitmqcluster rabbitmq                     # AllReplicasReady True
    kubectl -n longhorn-system get volumes.longhorn.io                   # no degraded, no faulted
+   kubectl -n longhorn-system get nodes.longhorn.io -o wide             # every node AND its disk Ready
    kubectl -n argocd get applications                                   # all Synced + Healthy
    ```
 
@@ -134,7 +170,10 @@ Nodes are addressed by IP throughout; `pi-cp3` / `192.168.10.203` below is the e
 
 ### Longhorn
 
-Nothing to do. Replicas rebuild from the surviving nodes automatically. Watch, do not touch:
+Replicas rebuild from the surviving nodes on their own. The disk RECORD does not: see step 8 above, which
+is mandatory after a reflash and is the one Longhorn thing that needs hands.
+
+Once the disk is back, watch the replicas and do not touch them:
 
 ```bash
 kubectl -n longhorn-system get volumes.longhorn.io -o custom-columns=\
@@ -146,6 +185,12 @@ with `make restore-longhorn`.
 
 Do not start work on a second node until robustness is `healthy` everywhere. With 2 replicas on 3 nodes,
 a rebuild in flight means some volume is one failure from `faulted`.
+
+Expect the replaced node to stay EMPTY afterwards. `replica-auto-balance` is `disabled`, so Longhorn never
+moves a healthy replica, and every volume that was rebuilt during the outage picked the two survivors. That is
+not a fault, but it does mean losing either survivor now degrades every volume at once and rebuilds all of
+them onto the one empty node. If that concentration bothers you, `replica-auto-balance: best-effort` in
+`02_longhorn`'s values spreads them back over time.
 
 ### CNPG, HA cluster (`highAvailability: true`)
 
@@ -238,7 +283,8 @@ this scenario. See [09_monitoring.md](09_monitoring.md). The gap is remediation,
 
 | Layer | Self-heals | Why not |
 |---|---|---|
-| Longhorn | yes | replicas are network-replicated, the manager rebuilds |
+| Longhorn replicas | yes | network-replicated, the manager rebuilds |
+| Longhorn disk record | no | the CR's diskUUID outlives the filesystem, and Longhorn will not guess which is right |
 | Redis | yes | rides Longhorn |
 | Stateless Deployments | yes | the scheduler reschedules them |
 | Control-plane VIP | yes | Talos fails it over |

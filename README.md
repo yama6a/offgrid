@@ -301,6 +301,5 @@ MIT. See [LICENSE](LICENSE).
 - 
 - read and shorten all md files.
 - improve then apply comment rules from claude.md to all yaml and other code files.
-
-- can we make sure that all longhorn-dependent pods get scheduled on a node that has that volume locally to reduce network latency and traffic?
+- 
 - test and measure the performance (especially latency) impact of putting rabbitmq and cnpg onto longhorn-r2 (without backups) so that node-failure recovery is automatic'er

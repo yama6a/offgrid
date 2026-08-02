@@ -83,17 +83,60 @@ groups:
               conditions:
                 - type: query
                   evaluator: {type: gt, params: [0]}
-      # A disk that cannot accept new replicas fails future provisioning and post-node-loss rebuilds.
+      # The disk itself, not the node: a node reports Ready while its only disk is rejected, so without this the
+      # only signal is disk-unschedulable below, which reads like a capacity problem and sends you to free space.
+      - uid: longhorn-disk-not-ready
+        title: Longhorn disk not ready
+        condition: C
+        for: 10m
+        labels: {severity: warning}
+        annotations:
+          summary: 'Longhorn disk {{ $labels.disk }} on node {{ $labels.node }} is not ready'
+          description: |
+            - disk {{ $labels.disk }} on {{ $labels.node }} is rejected outright: it holds no replicas and takes none
+            - the node can still report Ready, so check the DISK conditions: kubectl -n longhorn-system get nodes.longhorn.io {{ $labels.node }} -o yaml
+            - DiskFilesystemChanged, "record diskUUID doesn't match", means that node was replaced or reflashed
+              and the CR still records the old filesystem. Reset the disk: docs/15_node_recovery.md
+            - otherwise suspect the /var/mnt/longhorn mount, or iscsi/multipathd on that node
+        noDataState: OK
+        execErrState: KeepLast
+        data:
+          - refId: A
+            relativeTimeRange: {from: 600, to: 0}
+            datasourceUid: VictoriaMetrics
+            model:
+              refId: A
+              instant: true
+              expr: 'max by (node, disk) (longhorn_disk_status{condition="ready"}) == bool 0'
+          - refId: B
+            relativeTimeRange: {from: 600, to: 0}
+            datasourceUid: __expr__
+            model: {refId: B, type: reduce, expression: A, reducer: last, datasource: {type: __expr__, uid: __expr__}}
+          - refId: C
+            relativeTimeRange: {from: 600, to: 0}
+            datasourceUid: __expr__
+            model:
+              refId: C
+              type: threshold
+              expression: B
+              datasource: {type: __expr__, uid: __expr__}
+              conditions:
+                - type: query
+                  evaluator: {type: gt, params: [0]}
+      # A disk that cannot accept new replicas fails future provisioning and post-node-loss rebuilds. Fires for
+      # ANY cause, including a not-ready disk, so the summary stays cause-neutral and disk-not-ready above is
+      # what tells the two apart.
       - uid: longhorn-disk-unschedulable
         title: Longhorn disk unschedulable
         condition: C
         for: 10m
         labels: {severity: warning}
         annotations:
-          summary: 'Longhorn disk {{ $labels.disk }} on node {{ $labels.node }} is unschedulable (no room for new replicas)'
+          summary: 'Longhorn disk {{ $labels.disk }} on node {{ $labels.node }} is unschedulable'
           description: |
             - disk {{ $labels.disk }} on {{ $labels.node }} can't take new replicas: new provisioning + rebuilds will fail
-            - usual cause: disk full or over storage-reserved; check the Longhorn UI Node page
+            - if disk-not-ready fired for the same disk, that is the cause; fix that and ignore this one
+            - otherwise the disk is full or over storage-reserved; check the Longhorn UI Node page
             - free space or raise the disk's storage-reserved: kubectl -n longhorn-system get nodes.longhorn.io {{ $labels.node }} -o yaml
         noDataState: OK
         execErrState: KeepLast
