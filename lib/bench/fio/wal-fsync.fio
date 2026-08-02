@@ -1,0 +1,20 @@
+# Serialized write-then-fdatasync, the shape of the Postgres WAL writer and RabbitMQ's Ra log.
+# This is the primary number: on Longhorn every fdatasync waits on the second replica over the wire.
+
+[global]
+filename=/data/fio-wal
+ioengine=psync        # WAL and Ra sync serially; libaio would measure the drive's queue, which neither uses
+direct=0              # Postgres does not open WAL with O_DIRECT under the default wal_sync_method
+fdatasync=1
+rw=write              # WAL and Raft logs are append-only
+bs=8k                 # Postgres wal_block_size
+size=512m
+numjobs=1
+iodepth=1
+time_based=1
+ramp_time=10
+runtime=60
+group_reporting=1
+percentile_list=50:95:99:99.9:100
+
+[wal]

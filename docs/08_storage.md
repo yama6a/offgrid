@@ -115,6 +115,12 @@ the Longhorn engine and CSI in the hot path, and the app competing with Longhorn
 local-path gives them node-local storage on a dedicated partition, so the app layer is the only replication
 layer.
 
+The cost of that choice is a manual PVC deletion after a node is replaced under the same name
+([15_node_recovery.md](15_node_recovery.md)). Measured, it buys a lot: Longhorn r2 roughly doubles a
+Postgres WAL fsync here (1.28 ms to 2.39 ms), for 1.5x commit p99 and ~20% fewer transactions. The
+"write amplification" above is about 2x, and `dataLocality: best-effort` recovers only 4% of it because
+a durable write has to reach both replicas either way. See [16_storage_bench.md](16_storage_bench.md).
+
 ### Why local-path, not TopoLVM or OpenEBS-LVM
 
 The capacity-awareness and PVC-size enforcement those buy would do nothing for us: hostname anti-affinity puts one

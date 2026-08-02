@@ -137,6 +137,8 @@ Deliberately NOT policed, listed so it reads as a decision rather than an omissi
 - `vm-operator` and `local-path-provisioner`, tiny apiserver-only surfaces.
 - `03_gateway` and `google-sso`, which have no or thin pods.
 - `kube-system` and Cilium itself. Policing those risks cutting the cluster off its own network.
+- The `storage-bench` namespace, which exists for hours at a time and holds no data. See
+  [16_storage_bench.md](16_storage_bench.md).
 
 Rollout is audit-first: with Cilium's global `policyAuditMode` on, every policy stages as log-only (`hubble
 observe --verdict AUDIT`) until validated, then gets enforced by turning audit off.

@@ -308,7 +308,16 @@ Three changes would remove most of the manual work, in descending order of value
    directory looks empty is a controller that eventually deletes a good one. Keeping it in a script a human
    runs, against a node they know they just replaced, is the right amount of automation.
 
-Not worth doing: moving CNPG or RabbitMQ onto Longhorn to dodge this. Both replicate at the application
-layer already, and putting Postgres behind a network-replicated block device trades a rare manual step for a
-permanent write-latency cost and a storage engine in the DB's data path. See
-[08_storage.md](08_storage.md).
+Not worth doing: moving CNPG or RabbitMQ onto Longhorn to dodge this. Now measured rather than asserted
+(see [16_storage_bench.md](16_storage_bench.md)). Longhorn r2 roughly doubles a Postgres WAL fsync on
+this hardware, 1.28 ms to 2.39 ms by Postgres' own `pg_stat_io` counter, landing as 1.5x commit p99 and
+about a 20% throughput loss.
+
+The part that settles it: `dataLocality: best-effort` recovers only 4% of that, because a durable write
+must reach both replicas before it is acknowledged, so one is always a network hop away wherever the pod
+sits. There is no configuration that buys automatic recovery without the write tax. For two systems that
+already replicate at the application layer, a permanent latency cost to remove a rare manual step is the
+wrong trade.
+
+RabbitMQ specifically is unresolved: too few clean repeats to call, and what data exists looks worse than
+Postgres, not better.

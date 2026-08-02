@@ -1,0 +1,20 @@
+# --smoke only. Same shape as wal-fsync, seconds instead of minutes: proves the PVC mounts, fio runs
+# and the JSON parses. The numbers it produces are meaningless, and --smoke stamps the run as such.
+
+[global]
+filename=/data/fio-smoke
+ioengine=psync
+direct=0
+fdatasync=1
+rw=write
+bs=8k
+size=32m
+numjobs=1
+iodepth=1
+time_based=1
+ramp_time=1
+runtime=5
+group_reporting=1
+percentile_list=50:95:99:99.9:100
+
+[smoke]

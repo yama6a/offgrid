@@ -176,6 +176,20 @@ krr-json: ## Rightsizing: same as `krr` but emits JSON.
 krr-yaml: ## Rightsizing: same as `krr` but emits YAML.
 	bash lib/shell/krr.sh -f yaml
 
+##@ Benchmarks  (NOT read-only: create a throwaway namespace and load the live cluster for hours)
+
+.PHONY: storage-bench
+storage-bench: ## Measure write latency of local-path vs Longhorn r2 (local replica vs over the network); prints p50/p95/p99.
+	bash lib/shell/storage_bench.sh run
+
+.PHONY: storage-bench-fio
+storage-bench-fio: ## Same, fio fsync only: the fast (~1h) read on the question, no CNPG or RabbitMQ.
+	bash lib/shell/storage_bench.sh run --workload fio
+
+.PHONY: storage-bench-teardown
+storage-bench-teardown: ## Remove everything the benchmark created (namespace, bench StorageClasses, node tags, operator CNP).
+	bash lib/shell/storage_bench.sh teardown
+
 # Words after `make talosctl ...` (get, members, services, ...) are extra goals to Make; this no-op catch-all
 # swallows them so they're passed to talosctl instead of erroring. Explicit targets above still take priority,
 # so a mistyped real target quietly no-ops rather than erroring, the one cost of positional passthrough args.
