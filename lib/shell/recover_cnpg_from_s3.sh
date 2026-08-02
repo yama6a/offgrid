@@ -328,7 +328,17 @@ if [ "$RECOVERED" != "yes" ] || [ "$LIVE_READY" != "$LIVE_WANT" ] || [ -z "$LIVE
     fi
     ok "ArgoCD has synced the restore render onto the live Cluster"
     warn "deleting Cluster ${NS}/${SOURCE}. Its PVCs go with it; the recovery reads the S3 catalog, which is untouched."
+    # A SERVING Cluster here is either the rewind you asked for in phase 1 or a recovery this run misjudged,
+    # and as little as 30s of clock separates the two, so it always gets a real prompt: --yes must not be able
+    # to drop a database that is up. A broken one is unambiguous and stays automatable. Restored right after,
+    # so the rest of the run is still unattended.
+    WAS_YES="$ASSUME_YES"
+    if [ -n "$LIVE_READY" ] && [ "$LIVE_READY" = "$LIVE_WANT" ]; then
+      warn "it is SERVING (${LIVE_READY}/${LIVE_WANT}), so this needs a typed answer even under --yes"
+      ASSUME_YES=false
+    fi
     if confirm "Delete it so ArgoCD recreates it with bootstrap.recovery?"; then
+      ASSUME_YES="$WAS_YES"
       kubectl -n "$NS" delete cluster.postgresql.cnpg.io "$SOURCE" || die "delete failed"
       ok "deleted"
       kubectl -n argocd annotate app "$APP_NAME" argocd.argoproj.io/refresh=hard --overwrite >/dev/null 2>&1 \

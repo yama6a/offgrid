@@ -464,7 +464,9 @@ Between phases you run the `git add/commit/push` it prints. No script here runs 
 
 Phase 2 has to tell the `Cluster` it must delete from the one the restore already rebuilt, or a re-run would wipe a
 good recovery. It uses the `-full-recovery` bootstrap job while that exists, and afterwards the `Cluster` being
-newer than the commit that enabled the restore, since CNPG deletes the job once the recovery lands.
+newer than the commit that enabled the restore, since CNPG deletes the job once the recovery lands. Those can be
+under a minute apart, so `--yes` cannot delete a `Cluster` that is SERVING: that one always asks, whichever way it
+read the clocks. A broken `Cluster` is unambiguous and stays automatable.
 
 Three facts the script relies on, worth knowing when it goes sideways:
 
