@@ -64,7 +64,7 @@ analyticsdb:
   # renovate: datasource=docker depName=ghcr.io/cloudnative-pg/postgresql
   postgresVersion: "18"
   highAvailability: false
-  deletionProtection: true
+  deletionProtection: false   # temporarily off for the S3 restore; back to true once it lands
   resources:
     requests:
       cpu: 100m
