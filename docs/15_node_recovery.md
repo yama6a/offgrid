@@ -52,7 +52,7 @@ Nodes are addressed by IP throughout; `pi-cp3` / `192.168.10.203` below is the e
    until the third is back.
 
    ```bash
-   make talosctl -n 192.168.10.201 etcd members    # expect 3, one unreachable
+   make talosctl -- -n 192.168.10.201 etcd members    # expect 3, one unreachable
    kubectl get nodes
    ```
 
@@ -60,15 +60,15 @@ Nodes are addressed by IP throughout; `pi-cp3` / `192.168.10.203` below is the e
    entry at the same peer URL blocks a clean join. Takes the member ID, not the hostname.
 
    ```bash
-   make talosctl -n 192.168.10.201 etcd remove-member f54813b437fd8f2e
-   make talosctl -n 192.168.10.201 etcd members    # expect 2
+   make talosctl -- -n 192.168.10.201 etcd remove-member f54813b437fd8f2e
+   make talosctl -- -n 192.168.10.201 etcd members    # expect 2
    ```
 
 4. Reflash and boot it. `make flash-talos-nvme`, then power on with no SD card. It comes up in maintenance
    mode, which answers `--insecure` and rejects a secure call with an unknown-CA error:
 
    ```bash
-   make talosctl -n 192.168.10.203 version --insecure
+   make talosctl -- -n 192.168.10.203 version --insecure
    ```
 
 5. Apply that node's machine config. `03d` re-renders from the durable `secrets/secrets.yaml`, so PKI is
@@ -76,18 +76,26 @@ Nodes are addressed by IP throughout; `pi-cp3` / `192.168.10.203` below is the e
    off before that:
 
    ```bash
-   sed -e '27a HOSTNAMES=(pi-cp3); IPS=(192.168.10.203)' \
+   sed -e '27a ALL_IPS=("${IPS[@]}"); HOSTNAMES=(pi-cp3); IPS=(192.168.10.203)' \
+       -e '85s/IPS\[@\]/ALL_IPS[@]/' \
+       -e '211s/IPS\[@\]/ALL_IPS[@]/' \
+       -e '212s/IPS\[0\]/ALL_IPS[0]/' \
        -e '235,$d' \
        lib/shell/03d_talos_cluster_config.sh > lib/shell/zz_rejoin.sh
    grep -c 'talosctl bootstrap' lib/shell/zz_rejoin.sh   # MUST print 0
+   bash -n lib/shell/zz_rejoin.sh                        # syntax, before it touches a node
    bash lib/shell/zz_rejoin.sh && rm lib/shell/zz_rejoin.sh
    ```
+
+   Only the two apply loops want the single node. Three other lines read `IPS` for cluster-wide things, so
+   they get the full list back via `ALL_IPS`, or the rejoined node ends up with an apiserver cert naming only
+   itself (85), and `secrets/talosconfig` is rewritten to know only that one endpoint (211, 212).
 
    Expect `Applied configuration without a reboot`, then the node ready. It joins etcd by itself; control
    plane nodes auto-join when a cluster already exists.
 
    ```bash
-   make talosctl -n 192.168.10.201 etcd members    # expect 3, new ID for the replaced node
+   make talosctl -- -n 192.168.10.201 etcd members    # expect 3, new ID for the replaced node
    ```
 
 6. Uncordon, once the kubelet reports Ready.
@@ -127,37 +135,57 @@ Nodes are addressed by IP throughout; `pi-cp3` / `192.168.10.203` below is the e
    Ready=False  DiskFilesystemChanged  record diskUUID doesn't match the one on the disk
    ```
 
-   The node itself reports `Ready`, so this hides unless you look at the disk. Confirm zero replicas on it
-   first, then disable, remove and re-add:
+   The node itself reports `Ready`, so this hides unless you look at the disk.
+
+   The node comes back still listing its old replicas, now `stopped` with `failedAt` set: they describe data
+   on a filesystem that no longer exists. Delete them, having checked each of their volumes still has a
+   `running` replica on another node, and only then touch the disk:
+
+   ```bash
+   kubectl -n longhorn-system get replicas.longhorn.io \
+     -o custom-columns=VOL:.spec.volumeName,NODE:.spec.nodeID,STATE:.status.currentState | sort   # one running elsewhere per volume
+   kubectl -n longhorn-system get replicas.longhorn.io \
+     -o jsonpath='{range .items[?(@.spec.nodeID=="pi-cp3")]}{.metadata.name}{"\n"}{end}' \
+     | xargs -r kubectl -n longhorn-system delete replicas.longhorn.io
+   ```
+
+   Then disable, remove and re-add the disk, with the same spec as a healthy node's:
 
    ```bash
    D=$(kubectl -n longhorn-system get nodes.longhorn.io pi-cp3 \
        -o go-template='{{range $k,$v := .spec.disks}}{{$k}}{{end}}')
-   kubectl -n longhorn-system get replicas.longhorn.io -o jsonpath='{range .items[?(@.spec.nodeID=="pi-cp3")]}{.metadata.name}{"\n"}{end}'   # must be empty
+   SPEC=$(kubectl -n longhorn-system get nodes.longhorn.io pi-cp1 -o jsonpath='{.spec.disks}')
 
    kubectl -n longhorn-system patch nodes.longhorn.io pi-cp3 --type merge \
      -p "{\"spec\":{\"disks\":{\"$D\":{\"allowScheduling\":false}}}}"
    kubectl -n longhorn-system patch nodes.longhorn.io pi-cp3 --type json \
      -p "[{\"op\":\"remove\",\"path\":\"/spec/disks/$D\"}]"
+   kubectl -n longhorn-system patch nodes.longhorn.io pi-cp3 --type merge \
+     -p "{\"spec\":{\"disks\":$SPEC}}"        # retry this one, see below
    ```
 
-   Then re-add it with the same spec as a healthy node's (`kubectl -n longhorn-system get nodes.longhorn.io
-   pi-cp1 -o jsonpath='{.spec.disks}'`), and confirm:
+   Confirm a NEW diskUUID, `Ready=True` and `Schedulable=True`:
 
    ```bash
-   kubectl -n longhorn-system get nodes.longhorn.io pi-cp3 \
-     -o jsonpath='{range .status.diskStatus.*}{.diskUUID}{" avail="}{.storageAvailable}{"\n"}{end}'
+   kubectl -n longhorn-system get nodes.longhorn.io pi-cp3 -o jsonpath=\
+'{range .status.diskStatus.*}{.diskUUID}{" "}{range .conditions[*]}{.type}={.status} {end}{" avail="}{.storageAvailable}{"\n"}{end}'
    ```
 
-   Two gotchas that cost time. The validating webhook refuses to remove a disk that is still schedulable, so
-   `allowScheduling: false` has to land first. And a merge patch of `{"disks":{}}` is a NO-OP, because JSON
-   merge patch deletes keys only when they are set to `null`; use a json patch `remove` op instead.
+   Three gotchas that cost time. The validating webhook refuses to remove a disk that is still schedulable,
+   so `allowScheduling: false` has to land first. A merge patch of `{"disks":{}}` is a NO-OP, because JSON
+   merge patch deletes keys only when they are set to `null`; use a json patch `remove` op instead. And the
+   re-add is rejected once with `spec and status of disks on node pi-cp3 are being syncing and please retry
+   later`, because the manager has not finished reacting to the removal; wait ~10s and repeat it.
+
+   Rebuilds do not start the moment the node returns. `replica-replenishment-wait-interval` is 1800, so
+   Longhorn holds a failed replica for 30 minutes before replacing it, in case the node comes back with its
+   data. Deleting the stale replicas above is what ends that wait.
 
 9. Verify everything converged.
 
    ```bash
    kubectl get nodes                                                    # 3 Ready
-   make talosctl -n 192.168.10.201 etcd members                         # 3 members
+   make talosctl -- -n 192.168.10.201 etcd members                      # 3 members
    kubectl get pods -A | grep -Ev 'Running|Completed'                   # empty
    kubectl get clusters.postgresql.cnpg.io -A                           # "Cluster in healthy state"
    kubectl -n rabbitmq get rabbitmqcluster rabbitmq                     # AllReplicasReady True
@@ -205,27 +233,39 @@ kubectl -n <ns> get cluster <cluster> -w      # back to "Cluster in healthy stat
 
 Recovery is a full base clone over the network, so give it minutes, not seconds.
 
+CNPG will not leave a primary on a cordoned node: cordon one to steer a pod somewhere and it switches over
+first, so the instance you meant to move may not be the one that moves. Check
+`kubectl get pods -l cnpg.io/podRole=instance -A -L cnpg.io/instanceRole` before and after.
+
 ### CNPG, single instance (`highAvailability: false`)
 
 No peer, so the data is gone with the node. This is the only case that needs the S3 catalog.
 
 CNPG reads `spec.bootstrap` once, at create time, so an in-place restore only works on a Cluster that does
 not exist yet. With `selfHeal` on, the order matters: enable the restore in git FIRST, then delete the
-Cluster, so Argo recreates it already carrying the recovery bootstrap.
+Cluster, so Argo recreates it already carrying the recovery bootstrap. Deleting it while the restore is
+still off just gets you a fresh empty database from `initdb`.
 
-1. Set `deletionProtection: false` on that instance in its workload `values.yaml`, commit, push, wait for the
-   sync.
-2. Set `restore.enabled: true` on the same instance, commit, push, wait for the sync.
-3. Delete the Cluster. Argo recreates it with `bootstrap.recovery` and CNPG runs a `-full-recovery` job that
-   pulls the newest base backup and replays the WAL catalog.
-4. Verify the data, then revert both flags in one commit.
-5. Roll anything that mounts the `<cluster>-app` Secret. Deleting the Cluster regenerated it, so consumers
-   are holding a stale password.
+`make restore-cnpg` drives the whole thing across two runs. Answer `in-place`, the namespace and the DB name:
 
-`make restore-cnpg` drives steps 1, 2, 4 and 5 and is the supported path; it refuses while the Cluster is
-still live, which is what step 3 is for. Full detail in [13_backups.md](13_backups.md).
+```bash
+make restore-cnpg   # run 1: sets deletionProtection false + restore.enabled true, prints the commit
+git add argo_apps/workloads/charts/<app>/values.yaml && git commit -m "restore <db> from S3" && git push
+make restore-cnpg   # run 2: deletes the Cluster, watches the rebuild, verifies, reverts both flags
+git add argo_apps/workloads/charts/<app>/values.yaml && git commit -m "<db>: restore done, re-protect" && git push
+```
 
-The real fix is not to be in this situation: see below.
+What run 2 does, in order: refuses until the live Cluster carries `cnpg.io/skipEmptyWalArchiveCheck`, which
+is the proof Argo has synced the restore render; deletes the Cluster; watches Argo recreate it and CNPG run a
+`-full-recovery` job that pulls the newest base backup and replays the WAL catalog; prints every restored
+table with its row count and the new timeline; rolls anything mounting the regenerated `<cluster>-app`
+Secret, whose password changed when the old Cluster was deleted; and turns `restore` back off and
+`deletionProtection` back on.
+
+It refuses to touch a HEALTHY live database without an explicit confirmation, because continuing rewinds it
+to the catalog. To read old rows from a DB that is fine, use `--mode side` instead.
+
+Full detail in [13_backups.md](13_backups.md). The real fix is not to be in this situation: see below.
 
 ### RabbitMQ
 
@@ -257,9 +297,9 @@ A brief availability gap while it reschedules, which is the accepted trade-off i
 When it is not coming back, tell all three layers, in this order:
 
 ```bash
-make talosctl -n 192.168.10.201 etcd members                       # find the ID
-make talosctl -n 192.168.10.201 etcd remove-member <id>            # etcd
-kubectl delete node pi-cp3                                         # kubernetes
+make talosctl -- -n 192.168.10.201 etcd members             # find the ID
+make talosctl -- -n 192.168.10.201 etcd remove-member <id>  # etcd
+kubectl delete node pi-cp3                                 # kubernetes
 ```
 
 Then remove it from `CLUSTER_NODES` in `.env`, so `03c` to `03f` stop targeting it.

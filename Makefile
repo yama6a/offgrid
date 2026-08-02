@@ -153,7 +153,7 @@ check-health: ## Talos: wait for and report overall cluster health.
 	@bash -c 'source lib/shell/common.sh && talosctl health'
 
 .PHONY: talosctl
-talosctl: ## Run dockerized talosctl with args, e.g. `make talosctl get members` or `make talosctl services`.
+talosctl: ## Run dockerized talosctl, e.g. `make talosctl get members`. Any FLAG needs a `--` first: `make talosctl -- -n <ip> etcd members`.
 	@bash -c 'source lib/shell/common.sh && talosctl $(filter-out $@,$(MAKECMDGOALS))'
 
 .PHONY: print-kubeconfig
@@ -193,5 +193,9 @@ storage-bench-teardown: ## Remove everything the benchmark created (namespace, b
 # Words after `make talosctl ...` (get, members, services, ...) are extra goals to Make; this no-op catch-all
 # swallows them so they're passed to talosctl instead of erroring. Explicit targets above still take priority,
 # so a mistyped real target quietly no-ops rather than erroring, the one cost of positional passthrough args.
+#
+# A flag never reaches talosctl on its own: Make claims it first, and `-n` is Make's own --just-print, so
+# `make talosctl -n <ip> etcd members` silently prints the command instead of running it. Put a `--` before
+# the first flag and Make stops parsing options: `make talosctl -- -n <ip> etcd members`.
 %:
 	@:

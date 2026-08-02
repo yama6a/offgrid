@@ -445,21 +445,26 @@ Mode `side` applies one throwaway single-instance `Cluster` named `<db>-restore`
 a PITR timestamp. It does not archive WAL and is not a GitOps object. Data at `<name>-rw.<ns>`; delete it when done.
 Refuses to overwrite an existing cluster.
 
-Mode `in-place` drives the chart's `restore` knob, so it spans your commits and is RESUMABLE: run it, push what it
-edited, run it again. It prints its phase every time.
+Mode `in-place` drives the chart's `restore` and `deletionProtection` knobs, so it spans your commits and is
+RESUMABLE: run it, push what it edited, run it again. It prints its phase every time.
 
 1. Enable. Finds the workload chart and alias owning the DB, sets `<alias>.restore.enabled: true` plus `targetTime`
-   for PITR, and prints the commit. Refuses if the `Cluster` still exists, since `spec.bootstrap` is only read at
-   create time.
-2. Wait. Watches the sync, the base-backup pull, WAL replay, promotion and the replica join. The recovery job is
-   one-shot and the operator never retries it, so a failed attempt is offered for deletion. That is the normal way
-   to resume after fixing anything.
+   for PITR, drops `deletionProtection` to false, and prints the commit. A HEALTHY live `Cluster` gets a
+   confirmation prompt first, since continuing rewinds it to the catalog; a broken or absent one just proceeds.
+2. Delete and wait. Refuses until the live `Cluster` carries `cnpg.io/skipEmptyWalArchiveCheck`, which is what
+   proves ArgoCD has synced the restore render, then deletes it so ArgoCD recreates it already carrying
+   `bootstrap.recovery`. Watches the base-backup pull, WAL replay, promotion and the replica join. The recovery job
+   is one-shot and the operator never retries it, so a failed attempt is offered for deletion. That is the normal
+   way to resume after fixing anything.
 3. Verify and finish. Prints `cnpg status`, every restored table with its live row count, the new timeline, and
    whether the restored DB is backed up again. Offers to roll every workload referencing the regenerated
-   `<db>-app` Secret. Then removes `restore`, sets `deletionProtection: true` if it was false, and prints the final
-   commit.
+   `<db>-app` Secret. Then removes `restore`, sets `deletionProtection: true`, and prints the final commit.
 
 Between phases you run the `git add/commit/push` it prints. No script here runs git.
+
+Phase 2 has to tell the `Cluster` it must delete from the one the restore already rebuilt, or a re-run would wipe a
+good recovery. It uses the `-full-recovery` bootstrap job while that exists, and afterwards the `Cluster` being
+newer than the commit that enabled the restore, since CNPG deletes the job once the recovery lands.
 
 Three facts the script relies on, worth knowing when it goes sideways:
 
@@ -516,6 +521,9 @@ bucket survives.
    that catches an empty catalog sitting behind healthy WAL archiving.
 6. Alerts: confirm the metric name and label against `/metrics`, then break archiving (for example revoke the IAM
    key briefly) so `cnpg-wal-archive-failing` fires, and restore so it clears.
+
+Spell out `backups.postgresql.cnpg.io` in full whenever you list them. Longhorn ships a `Backup` kind too, and it
+wins the short name, so a bare `kubectl get backup` reports `not found` for a CNPG backup that is right there.
 
 ## Why we render the ObjectStore ourselves
 

@@ -193,7 +193,8 @@ wl_find_alias() {
 vy_read() { ALIAS="$2" K="$3" yq -r '.[strenv(ALIAS)][strenv(K)] // ""' "$1" 2>/dev/null; }
 
 # SUBSTITUTES an existing line rather than inserting one, which is safe because both charts make the knob
-# REQUIRED. Callers still assert with vy_read afterwards.
+# REQUIRED. Callers still assert with vy_read afterwards. Each writes the WHOLE line, comment included, so the
+# pair round-trips: whichever ran last leaves no orphan comment from the other.
 vy_protect_on() {
   local f="$1" alias="$2" tmp; tmp="$(mktemp)"
   awk -v alias="$alias" '
@@ -201,6 +202,19 @@ vy_protect_on() {
     inb && /^[^[:space:]#]/ { inb=0 }
     inb && /^  deletionProtection:/ {
       print "  deletionProtection: true    # always true in steady state; flip to false only to delete it"; next
+    }
+    { print }
+  ' "$f" > "$tmp" && cat "$tmp" > "$f"
+  rm -f "$tmp"
+}
+
+vy_protect_off() {
+  local f="$1" alias="$2" tmp; tmp="$(mktemp)"
+  awk -v alias="$alias" '
+    $0 ~ "^"alias":" { inb=1; print; next }
+    inb && /^[^[:space:]#]/ { inb=0 }
+    inb && /^  deletionProtection:/ {
+      print "  deletionProtection: false   # TRANSIENT (DR restore): re-protected once the restore is verified"; next
     }
     { print }
   ' "$f" > "$tmp" && cat "$tmp" > "$f"

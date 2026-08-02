@@ -1,9 +1,11 @@
 #!/usr/bin/env bash
 # The CNPG recovery runbook, executable. Restores a Postgres database from the S3 backups. Two modes:
 #
-#   in-place  the DB is GONE and you want it back AS ITSELF: same name, same -rw Service, still
-#             GitOps-managed. Drives the pg-cluster `restore` knob, so it spans your git commits and is
-#             RESUMABLE: run it, commit and push what it edited, run it again. It prints its phase each time.
+#   in-place  the DB is GONE or broken and you want it back AS ITSELF: same name, same -rw Service, still
+#             GitOps-managed. Drives the pg-cluster `restore` and `deletionProtection` knobs, so it spans your
+#             git commits and is RESUMABLE: run it, commit and push what it edited, run it again. Two runs:
+#             the first edits, the second deletes the old Cluster and watches the rebuild. Prints its phase
+#             each time.
 #   side      the DB is FINE, or you only want to look: bootstraps a SEPARATE, unmanaged single-instance
 #             cluster from the same catalog to verify a backup, read old rows, or test a PITR target.
 #
@@ -97,7 +99,7 @@ vy_restore_off() {
 if [ -z "$MODE" ]; then
   say "CNPG recovery from S3"
   cat <<'MODES'
-  in-place   the DB is GONE; bring it back as itself, under its own name, GitOps-managed.
+  in-place   the DB is GONE or broken; bring it back as itself, under its own name, GitOps-managed.
              Edits the workload's values.yaml; you commit+push; re-run to continue. Resumable.
   side       the DB is fine, or you just want to look: build a separate throwaway cluster
              from the same catalog to verify a backup / read old data / test a PITR target.
@@ -235,26 +237,40 @@ LIVE_READY="$(kubectl -n "$NS" get cluster.postgresql.cnpg.io "$SOURCE" -o jsonp
 LIVE_WANT="$(kubectl -n "$NS" get cluster.postgresql.cnpg.io "$SOURCE" -o jsonpath='{.status.instances}' 2>/dev/null)"
 LIVE_EXISTS="no"; kubectl -n "$NS" get cluster.postgresql.cnpg.io "$SOURCE" >/dev/null 2>&1 && LIVE_EXISTS="yes"
 DIRTY="no"; git -C "$REPO_ROOT" diff --quiet -- "$VALUES" 2>/dev/null || DIRTY="yes"
+# Tells a Cluster the restore already rebuilt apart from the stale one it has to replace, which is the whole
+# question phase B turns on. Two signals, because neither covers the window alone:
+#   the `-full-recovery-` bootstrap job, definitive while the recovery runs, but CNPG deletes it once it lands;
+#   the Cluster being NEWER than the commit that enabled the restore, which is what survives afterwards.
+# Both timestamps are printed as UTC to the second, so a plain string compare orders them. That needs
+# format-LOCAL plus TZ=UTC: plain `format:` renders in whatever zone the commit recorded, which on a +02:00
+# machine reads two hours ahead and calls a freshly recovered Cluster stale.
+LIVE_CREATED="$(kubectl -n "$NS" get cluster.postgresql.cnpg.io "$SOURCE" -o jsonpath='{.metadata.creationTimestamp}' 2>/dev/null)"
+ENABLED_AT="$(TZ=UTC git -C "$REPO_ROOT" log -1 --format=%cd --date=format-local:'%Y-%m-%dT%H:%M:%SZ' -- "$VALUES" 2>/dev/null)"
+RECOVERED="no"
+kubectl -n "$NS" get job -l "cnpg.io/cluster=${SOURCE}" -o name 2>/dev/null | grep -q -- '-full-recovery' && RECOVERED="yes"
+[ -n "$LIVE_CREATED" ] && [ -n "$ENABLED_AT" ] && [[ "$LIVE_CREATED" > "$ENABLED_AT" ]] && RECOVERED="yes"
 
 APP_NAME="$(basename "$(dirname "$VALUES")" | tr '_' '-')"
 
 say "State"
 echo "    database          : ${NS}/${SOURCE}"
 echo "    live Cluster      : ${LIVE_EXISTS} (ready ${LIVE_READY:-0}/${LIVE_WANT:-?})"
+echo "    Cluster is post-restore: ${RECOVERED} (created ${LIVE_CREATED:-n/a}, restore enabled ${ENABLED_AT:-n/a})"
 echo "    git restore.enabled: ${GIT_RESTORE}"
 echo "    git deletionProtection: ${GIT_PROTECT}"
 echo "    uncommitted edits to that values.yaml: ${DIRTY}"
 
 # --- phase A: turn the restore on -------------------------------------------
 if [ "$GIT_RESTORE" != "true" ]; then
-  if [ "$LIVE_EXISTS" = "yes" ]; then
-    warn "Cluster ${NS}/${SOURCE} is still live. An in-place restore only bootstraps a cluster that does NOT exist:"
-    warn "CNPG reads spec.bootstrap once, at create time, so turning restore on now would change nothing."
-    warn "To rewind a LIVE database you must delete it first (deletionProtection false, then remove it: docs/13_backups.md),"
-    warn "or read the old data with --mode side and copy across."
-    summary; exit 1
-  fi
   say "PHASE 1/3, enable the restore"
+  # A healthy live DB is the one case worth stopping for: continuing REWINDS it, and everything it has written
+  # since the last archived WAL segment goes with it. A broken one is the DR case this script exists for.
+  if [ "$LIVE_EXISTS" = "yes" ] && [ -n "$LIVE_READY" ] && [ "$LIVE_READY" = "$LIVE_WANT" ]; then
+    warn "Cluster ${NS}/${SOURCE} is LIVE and serving (${LIVE_READY}/${LIVE_WANT})."
+    warn "An in-place restore DELETES it and rebuilds from the catalog, so anything not yet archived is lost."
+    warn "To read old rows without touching the running DB, answer no and re-run with --mode side."
+    confirm "Rewind it to the catalog?" || { warn "nothing changed"; summary; exit 0; }
+  fi
   if [ "$TARGET" = "latest" ]; then
     echo "    target: latest (newest base backup, then replay every WAL in the catalog)"
     vy_restore_on "$VALUES" "$ALIAS" || die "edit failed"
@@ -264,29 +280,65 @@ if [ "$GIT_RESTORE" != "true" ]; then
   fi
   [ "$(vy_read "$VALUES" "$ALIAS" restore)" != "" ] || die "post-edit check failed: ${ALIAS}.restore is not set in ${VALUES}"
   ok "set ${ALIAS}.restore.enabled=true in ${VALUES#${REPO_ROOT}/}"
+  # The next run deletes the Cluster, which the chart's Prune=false,Delete=false annotations do not block, but
+  # leaving them on through a deliberate delete contradicts what they are there to say.
+  if [ "$GIT_PROTECT" = "true" ]; then
+    vy_protect_off "$VALUES" "$ALIAS" || die "edit failed"
+    # Read straight, not through vy_read: its `// ""` is yq's alternative operator, which fires on false as
+    # well as null, so a correctly-written `false` would come back empty and fail this check.
+    [ "$(ALIAS="$ALIAS" yq -r '.[strenv(ALIAS)].deletionProtection' "$VALUES")" = "false" ] \
+      || die "post-edit check failed: ${ALIAS}.deletionProtection is not false in ${VALUES}"
+    ok "set ${ALIAS}.deletionProtection=false (put back in phase 3)"
+  fi
   git -C "$REPO_ROOT" --no-pager diff --stat -- "$VALUES" | sed 's/^/    /'
   cat <<NEXT
 
-Now commit and push, so ArgoCD builds the recovered cluster:
+Now commit and push, so ArgoCD renders the recovery bootstrap:
 
     git add ${VALUES#${REPO_ROOT}/}
     git commit -m "restore ${SOURCE} from S3"
     git push
 
-Then re-run this script (same answers) to watch it and finish up:
+Then re-run this script (same answers) to finish:
 
     make restore-cnpg
 
-What the next run does: waits for the sync, watches the base-backup pull and WAL replay, clears the recovery
-job if it is stuck, verifies the data, rolls the consumers, and turns the restore flag back off.
+What the next run does: waits for the sync to reach the live Cluster, deletes it so ArgoCD recreates it already
+carrying bootstrap.recovery, watches the base-backup pull and WAL replay, clears the recovery job if it is
+stuck, verifies the data, rolls the consumers, and puts both flags back.
 NEXT
   summary; exit 0
 fi
 
-# --- phase B: wait for the recovery to land ---------------------------------
-if [ "$LIVE_READY" != "$LIVE_WANT" ] || [ -z "$LIVE_READY" ]; then
+# --- phase B: delete the stale Cluster, then wait for the recovery ----------
+if [ "$RECOVERED" != "yes" ] || [ "$LIVE_READY" != "$LIVE_WANT" ] || [ -z "$LIVE_READY" ]; then
   say "PHASE 2/3, wait for the restore"
   [ "$DIRTY" = "yes" ] && { warn "${VALUES#${REPO_ROOT}/} has uncommitted changes: ArgoCD syncs the pushed remote, not your working tree."; warn "commit + push first, then re-run."; summary; exit 1; }
+
+  # CNPG reads spec.bootstrap once, at create time, so the Cluster that is running now can never become the
+  # recovered one however long you wait: it has to be deleted and rebuilt by ArgoCD. The skipEmptyWalArchiveCheck
+  # annotation is the proof that the sync has landed, since the chart stamps it only when restore is on.
+  if [ "$LIVE_EXISTS" = "yes" ] && [ "$RECOVERED" != "yes" ]; then
+    SYNCED="$(kubectl -n "$NS" get cluster.postgresql.cnpg.io "$SOURCE" \
+              -o jsonpath='{.metadata.annotations.cnpg\.io/skipEmptyWalArchiveCheck}' 2>/dev/null)"
+    if [ "$SYNCED" != "enabled" ]; then
+      bad "the live Cluster does not carry cnpg.io/skipEmptyWalArchiveCheck, so ArgoCD has not synced the restore yet"
+      warn "push the phase-1 commit, then watch it land (up to ${SYNC_WAIT}s):  kubectl -n argocd get app ${APP_NAME} -w"
+      summary; exit 1
+    fi
+    ok "ArgoCD has synced the restore render onto the live Cluster"
+    warn "deleting Cluster ${NS}/${SOURCE}. Its PVCs go with it; the recovery reads the S3 catalog, which is untouched."
+    if confirm "Delete it so ArgoCD recreates it with bootstrap.recovery?"; then
+      kubectl -n "$NS" delete cluster.postgresql.cnpg.io "$SOURCE" || die "delete failed"
+      ok "deleted"
+      kubectl -n argocd annotate app "$APP_NAME" argocd.argoproj.io/refresh=hard --overwrite >/dev/null 2>&1 \
+        && ok "asked ArgoCD to refresh ${APP_NAME} now rather than on its next poll" \
+        || warn "could not poke ArgoCD; it recreates the Cluster on its next reconciliation regardless"
+    else
+      warn "not deleted, so nothing will happen: the running Cluster can never become the recovered one"
+      summary; exit 1
+    fi
+  fi
 
   # The recovery job is one-shot: once it has failed, the operator does NOT retry it. Nearly always a stale
   # attempt from before a fix landed, so clear it and let a fresh one run.
