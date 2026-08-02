@@ -301,6 +301,3 @@ MIT. See [LICENSE](LICENSE).
 - check log accumulation and metrics cardinality, drop noise so storage doesn't grow meaninglessly
 - 
 - read and shorten all md files.
-- improve then apply comment rules from claude.md to all yaml and other code files.
-- 
-- re-run `make storage-bench --workload amqp --repeats 7`: the RabbitMQ half of docs/16 is still unresolved (3 repeats was too noisy)
