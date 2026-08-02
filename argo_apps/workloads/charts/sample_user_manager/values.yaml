@@ -74,6 +74,9 @@ analyticsdb:
       memory: 256Mi
   allowedClients:
     - matchLabels: { app: sample-user-manager }
+  # TRANSIENT (DR restore): rebuild from S3 instead of initdb. Removed again once verified.
+  restore:
+    enabled: true
 
 # The two Redis instances deliberately showcase BOTH persistence modes.
 
