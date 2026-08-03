@@ -301,3 +301,4 @@ MIT. See [LICENSE](LICENSE).
 - check log accumulation and metrics cardinality, drop noise so storage doesn't grow meaninglessly
 - 
 - read and shorten all md files.
+- which workloads should have HARD anti-affinity rules instead of soft ones?
