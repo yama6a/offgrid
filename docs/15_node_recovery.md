@@ -35,8 +35,21 @@ The one case with no peer to rebuild from is a **single-instance CNPG cluster**
 
 ## Replace a node
 
-Nodes are addressed by IP throughout; `pi-cp3` / `192.168.10.203` below is the example. Do not run
-`talosctl bootstrap` at any point: that is for creating a cluster, not joining one.
+```bash
+make flash-talos-nvme                # only if the NVMe itself is being replaced; power on with no SD card
+make recover-node NODE=pi-cp3        # steps 3 and 5 to 8 below, in order, idempotent
+make restore-cnpg                    # only if a single-instance DB lived there; recover-node names it
+make rebalance-workloads             # once everything is healthy
+```
+
+`recover_node.sh` does the mechanical part: drops the stale etcd member, applies that node's machine config,
+waits for the kubelet, deletes the local-path PVCs bound to it (forgetting a RabbitMQ broker first), drops the
+stale Longhorn replicas and resets the disk record. It re-checks before every action, so re-running it is how
+you get past a step that needed more time.
+
+The rest of this section is what it does and why, which is what you need when it stops half way. Nodes are
+addressed by IP throughout; `pi-cp3` / `192.168.10.203` is the example. Do not run `talosctl bootstrap` at any
+point: that is for creating a cluster, not joining one.
 
 1. Confirm the node is really gone, not just slow to boot.
 
@@ -72,24 +85,15 @@ Nodes are addressed by IP throughout; `pi-cp3` / `192.168.10.203` below is the e
    ```
 
 5. Apply that node's machine config. `03d` re-renders from the durable `secrets/secrets.yaml`, so PKI is
-   preserved, but it ends by bootstrapping etcd, which must not run here. Pin it to the one node and cut it
-   off before that:
+   preserved. Give it a hostname and it applies to that node alone and skips the etcd bootstrap:
 
    ```bash
-   sed -e '27a ALL_IPS=("${IPS[@]}"); HOSTNAMES=(pi-cp3); IPS=(192.168.10.203)' \
-       -e '85s/IPS\[@\]/ALL_IPS[@]/' \
-       -e '211s/IPS\[@\]/ALL_IPS[@]/' \
-       -e '212s/IPS\[0\]/ALL_IPS[0]/' \
-       -e '235,$d' \
-       lib/shell/03d_talos_cluster_config.sh > lib/shell/zz_rejoin.sh
-   grep -c 'talosctl bootstrap' lib/shell/zz_rejoin.sh   # MUST print 0
-   bash -n lib/shell/zz_rejoin.sh                        # syntax, before it touches a node
-   bash lib/shell/zz_rejoin.sh && rm lib/shell/zz_rejoin.sh
+   bash lib/shell/03d_talos_cluster_config.sh pi-cp3
    ```
 
-   Only the two apply loops want the single node. Three other lines read `IPS` for cluster-wide things, so
-   they get the full list back via `ALL_IPS`, or the rejoined node ends up with an apiserver cert naming only
-   itself (85), and `secrets/talosconfig` is rewritten to know only that one endpoint (211, 212).
+   Only the apply and its two waits narrow to the one node. certSANs and the `secrets/talosconfig` endpoints
+   still come from the whole `CLUSTER_NODES` list, or the rejoined node would trust an apiserver cert naming
+   just itself and `talosctl` would forget the other two.
 
    Expect `Applied configuration without a reboot`, then the node ready. It joins etcd by itself; control
    plane nodes auto-join when a cluster already exists.
@@ -125,6 +129,10 @@ Nodes are addressed by IP throughout; `pi-cp3` / `192.168.10.203` below is the e
    kubectl -n <ns> delete pvc <name>
    kubectl -n <ns> delete pod <pod>
    ```
+
+   Two exceptions, both covered below. A **RabbitMQ** broker must be forgotten by a peer BEFORE its PVC goes,
+   or it cannot rejoin. A **single-instance CNPG** PVC should be left alone: its only copy died with the node,
+   so an empty PVC is not what is wrong and the S3 restore takes the PVC with the Cluster anyway.
 
 8. Reset the Longhorn disk record. Longhorn stores the disk's UUID in BOTH the node CR and a
    `longhorn-disk.cfg` on the disk itself. The reflash made a fresh filesystem, so the manager wrote a new
@@ -269,17 +277,33 @@ Full detail in [13_backups.md](13_backups.md). The real fix is not to be in this
 
 ### RabbitMQ
 
-Quorum queues tolerate one broker down out of three. Delete the PVC and pod; the replacement starts empty and
-replays the Ra logs from the two healthy peers.
+Quorum queues tolerate one broker down out of three, so no messages are at risk. Getting the broker back is
+the part with a trap in it.
+
+**Forget it from a peer BEFORE you delete its PVC.** Quorum keeps the cluster available while a known member
+is away; it says nothing about re-admitting one. Re-admission is a Raft membership change, and Raft tracks
+members by name along with what log each one should have. A member that returns under its old name with an
+empty log is a contradiction: the survivors believe it holds state it demonstrably does not. Raft cannot tell
+"blank because someone wiped the disk" from "blank because I cannot read my disk yet", so it refuses rather
+than guess. Same shape as the local-path PVC problem at the top of this doc.
 
 ```bash
-kubectl -n rabbitmq delete pvc persistence-rabbitmq-server-<n>
-kubectl -n rabbitmq delete pod rabbitmq-server-<n>
+N=rabbit@rabbitmq-server-0.rabbitmq-nodes.rabbitmq       # <pod>.<RabbitmqCluster>-nodes.<namespace>
+kubectl -n rabbitmq exec rabbitmq-server-0 -c rabbitmq -- rabbitmqctl stop_app   # skip if the pod is gone
+kubectl -n rabbitmq exec rabbitmq-server-1 -c rabbitmq -- rabbitmqctl forget_cluster_node "$N"
+kubectl -n rabbitmq delete pvc persistence-rabbitmq-server-0
+kubectl -n rabbitmq delete pod rabbitmq-server-0
 ```
 
-It rejoins the cluster and takes leadership of queues within a minute or two, but the startup probe
-(`reached-target-cluster-size`) returns 503 while it catches up and will restart the container once. That is
-normal; one restart is not a failure. Confirm from a HEALTHY peer:
+`forget_cluster_node` needs the target stopped, which is what `stop_app` is for. It rejoins as a NEW member,
+Ready in about 90s, and the quorum queues take it back on their own via periodic membership reconciliation, so
+there is no `grow` to run.
+
+Skipping the forget sometimes works anyway: an empty log is something the leader can repair by shipping a
+snapshot. Do not rely on it. It fails outright for the lowest-ordered broker, below.
+
+The startup probe (`reached-target-cluster-size`) returns 503 while the broker catches up and will restart the
+container once. That is normal; one restart is not a failure. Confirm from a HEALTHY peer:
 
 ```bash
 kubectl -n rabbitmq exec rabbitmq-server-1 -c rabbitmq -- rabbitmqctl cluster_status
@@ -287,9 +311,9 @@ kubectl -n rabbitmq exec rabbitmq-server-1 -c rabbitmq -- rabbitmqctl cluster_st
 
 All three under `Running Nodes` means it is back, even if the pod is not Ready yet.
 
-#### When the returning broker never goes Ready
+#### If you wiped without forgetting, and it never goes Ready
 
-A peer's view is not enough on its own: ask the RETURNING node what IT can see.
+A peer's view is not enough to diagnose this: ask the RETURNING node what IT can see.
 
 ```bash
 kubectl -n rabbitmq exec rabbitmq-server-0 -c rabbitmq -- rabbitmqctl eval 'rabbit_nodes:list_running().'
@@ -298,27 +322,16 @@ kubectl -n rabbitmq exec rabbitmq-server-0 -c rabbitmq -- rabbitmqctl eval 'rabb
 If the peers list all three but the returning node lists only itself, it did not join, it FORMED a second
 cluster. Its container then restarts every ~5 minutes forever, because `reached-target-cluster-size` counts
 1 of 3, and the log loops `RabbitMQ metadata store: term mismatch ... Asking leader to resend from N` every
-30s.
+30s. Ra is stuck in `await_condition` and waiting does not fix it.
 
-Peer discovery is `rabbit_peer_discovery_k8s`, which picks the lowest-ordered broker to auto-cluster onto.
-That is `rabbitmq-server-0`, so a wiped server-0 comes back and SEEDS a fresh metadata store instead of
-joining one (`DB: virgin node -> run peer discovery` then `node 'rabbit@rabbitmq-server-0...' selected for
-auto-clustering`). Ra usually reconciles that against the survivors; when it does not, the node is wedged in
-`await_condition` and no amount of waiting fixes it. Wiping server-1 or server-2 does not hit this, because
-they auto-cluster ONTO server-0.
+Worst for `rabbitmq-server-0`. `rabbit_peer_discovery_k8s` auto-clusters onto the lowest-ordered broker, and
+for server-0 that is itself, so it logs `DB: virgin node -> run peer discovery` then `node
+'rabbit@rabbitmq-server-0...' selected for auto-clustering` and seeds its own store. It then arrives with
+divergent history of its own rather than an empty log, which is the case no snapshot can repair. server-1 and
+server-2 auto-cluster ONTO server-0, so they only ever arrive empty, which is the recoverable case.
 
-The survivors still hold it as a metadata-store member, and a member that comes back blank is rejected. Take
-it out explicitly, then let it return as a new one:
-
-```bash
-N0=rabbit@rabbitmq-server-0.rabbitmq-nodes.rabbitmq
-kubectl -n rabbitmq exec rabbitmq-server-0 -c rabbitmq -- rabbitmqctl stop_app          # forget needs it stopped
-kubectl -n rabbitmq exec rabbitmq-server-1 -c rabbitmq -- rabbitmqctl forget_cluster_node "$N0"
-kubectl -n rabbitmq delete pvc persistence-rabbitmq-server-0
-kubectl -n rabbitmq delete pod rabbitmq-server-0
-```
-
-Ready in about 90s. Quorum queues take the member back on their own, no `grow` needed:
+The fix is the same forget, just after the fact: `stop_app`, `forget_cluster_node` from a peer, then delete the
+PVC and pod AGAIN. Confirm the member came back:
 
 ```bash
 kubectl -n rabbitmq exec rabbitmq-server-1 -c rabbitmq -- rabbitmq-queues quorum_status --vhost apps <queue>
@@ -368,21 +381,16 @@ this scenario. See [09_monitoring.md](09_monitoring.md). The gap is remediation,
 | etcd membership | no | nothing prunes a member whose node was replaced |
 | local-path PVCs | no | an empty PVC is indistinguishable from a corrupt one, so no operator will delete it |
 | CNPG replica | no, then yes | needs the PVC gone; after that CNPG clones by itself |
-| RabbitMQ broker 1 or 2 | no, then yes | same |
-| RabbitMQ broker 0 | sometimes not even then | it is the auto-clustering seed, so a blank one can form a second cluster and needs forgetting first |
+| RabbitMQ broker | no, then yes | needs forgetting AND the PVC gone; Raft will not re-admit a member that returns blank under its old name |
 | Single-instance CNPG | no | no peer, needs the S3 catalog |
 
-Three changes would remove most of the manual work, in descending order of value:
+`make recover-node NODE=<host>` now drives every "no, then yes" row above. What is left:
 
 1. **Make every CNPG cluster HA.** `highAvailability: true` turns the one case that needs an S3 restore into
-   the case that needs a PVC deleted. `sample-user-manager-analytics` is the current exception, and it costs
-   one line in its `values.yaml` plus a second instance's worth of memory. Nothing else on this cluster gives
-   a comparable reduction in recovery work.
-2. **Write `make recover-node NODE=pi-cp3`.** Steps 3 and 5 to 7 above are entirely mechanical: read the
-   member ID, remove it, apply the pinned config, uncordon, find and delete the node's local-path PVCs, wait
-   for convergence. It is the same shape as the existing `03f`, including its replication-health gate, and it
-   would turn an hour of careful work into one command. Everything it needs to know is already derivable.
-3. **Do not automate the PVC deletion beyond that script.** A controller that deletes PVCs whose backing
+   the case `recover-node` already handles. `sample-user-manager-analytics` is the current exception, and it
+   costs one line in its `values.yaml` plus a second instance's worth of memory. Nothing else on this cluster
+   gives a comparable reduction in recovery work.
+2. **Do not automate the PVC deletion beyond that script.** A controller that deletes PVCs whose backing
    directory looks empty is a controller that eventually deletes a good one. Keeping it in a script a human
    runs, against a node they know they just replaced, is the right amount of automation.
 

@@ -26,10 +26,25 @@ NODE_INSTANCE_TYPE="rpi5"   # node.kubernetes.io/instance-type label (nic-keeper
 HOSTNAMES=(); IPS=()
 for e in "${CLUSTER_NODES[@]}"; do HOSTNAMES+=("${e%%:*}"); IPS+=("${e##*:}"); done
 
+# One optional arg: a hostname to apply to ALONE, for putting a single replaced node back into a cluster that
+# already exists (recover_node.sh). It narrows only the apply and the two waits; certSANs and the talosconfig
+# endpoints still come from the full list, or the rejoined node would trust an apiserver cert naming just
+# itself and talosctl would forget the other two. It also skips the etcd bootstrap, which creates a cluster
+# rather than joining one.
+TARGETS=("${!IPS[@]}")
+JOIN_ONE=""
+if [ $# -gt 0 ]; then
+  JOIN_ONE="$1"
+  TARGETS=()
+  for i in "${!HOSTNAMES[@]}"; do [ "${HOSTNAMES[$i]}" = "$JOIN_ONE" ] && TARGETS=("$i"); done
+  [ "${#TARGETS[@]}" -eq 1 ] || die "unknown node '${JOIN_ONE}': .env CLUSTER_NODES has ${HOSTNAMES[*]}"
+fi
+
 echo "== Talos cluster setup (talosctl ${TALOSCTL_VERSION}, dockerized) =="
 echo "Cluster:  ${CLUSTER}     VIP: ${VIP}     NIC: ${IFACE}     k8s: ${KVER}"
 echo "Disk:     ${DISK}        EPHEMERAL cap: ${EPHEMERAL}"
 for i in "${!IPS[@]}"; do echo "  ${HOSTNAMES[$i]}  ->  ${IPS[$i]}"; done
+[ -n "$JOIN_ONE" ] && echo "Applying to ${JOIN_ONE} ONLY, and NOT bootstrapping etcd (single-node rejoin)"
 echo "Output:   ${OUTDIR}"
 
 # Bakes a machine.registries auth into the CP patch, so the kubelet authenticates EVERY pull from GHCR on
@@ -180,7 +195,7 @@ cat "${TALOS_SCRATCH}/volumes.yaml" >> "${TALOS_SCRATCH}/cp.yaml"
 #     node mid-reboot. On a first install (straight off 03b) the nodes are already in maintenance, so
 #     this returns immediately.
 say "waiting for nodes in maintenance (up to 5 min each)..."
-for i in "${!IPS[@]}"; do
+for i in "${TARGETS[@]}"; do
   ip="${IPS[$i]}"; host="${HOSTNAMES[$i]}"
   printf '   %-8s %-15s ' "$host" "$ip"
   deadline=$(( $(date +%s) + 300 ))
@@ -195,7 +210,7 @@ done
 #    container (the rest of the paths are relative to /work). Hostname goes through the HostnameConfig
 #    document (needs Talos >= 1.12), not machine.network.hostname: gen config already ships a HostnameConfig
 #    (auto: stable), and setting both errors with "static hostname is already set in v1alpha1 config".
-for i in "${!IPS[@]}"; do
+for i in "${TARGETS[@]}"; do
   ip="${IPS[$i]}"; host="${HOSTNAMES[$i]}"
   say "applying config to ${host} (${ip})"
   talosctl apply-config --insecure -n "${ip}" -f /scratch/cp.yaml \
@@ -218,7 +233,7 @@ talosctl config node "${IPS[0]}"
 #    fixed wait. nc gates the call so we don't hang on a node that's mid-reboot.
 say "waiting for nodes to reboot into their configured state (up to 5 min each)..."
 sleep 10   # let the reboots actually begin (avoids a false 'ready' before reboot)
-for i in "${!IPS[@]}"; do
+for i in "${TARGETS[@]}"; do
   ip="${IPS[$i]}"; host="${HOSTNAMES[$i]}"
   printf '   %-8s %-15s ' "$host" "$ip"
   deadline=$(( $(date +%s) + 300 ))
@@ -230,6 +245,12 @@ for i in "${!IPS[@]}"; do
 done
 
 sleep 10
+
+if [ -n "$JOIN_ONE" ]; then
+  say "${JOIN_ONE} has its config and is rebooting into it; it joins etcd on its own."
+  say "Not bootstrapping and not re-fetching the kubeconfig: this cluster already exists."
+  exit 0
+fi
 
 # 8. Bootstrap etcd ONCE, on the first node only
 talosctl bootstrap -n "${IPS[0]}"

@@ -59,6 +59,11 @@ upgrade-k8s: ## 03g: rolling in-place upgrade of Kubernetes to the pinned versio
 rebalance-workloads: ## 03h: rolling-restart the stateless Deployments so the scheduler re-spreads them (03f runs this).
 	bash lib/shell/03h_rebalance_workloads.sh
 
+.PHONY: recover-node
+recover-node: ## 15: rejoin ONE wiped/replaced node and fix what does not self-heal. Needs NODE=<hostname>.
+	@test -n "$(NODE)" || { echo "usage: make recover-node NODE=pi-cp3"; exit 1; }
+	bash lib/shell/recover_node.sh $(NODE)
+
 ##@ Cluster delivery  (step 04-09; native helm/kubectl)
 .PHONY: install-cilium
 install-cilium: ## 04: install/upgrade the Cilium CNI (+ monitoring CRDs, LB-IPAM/L2, Hubble).
