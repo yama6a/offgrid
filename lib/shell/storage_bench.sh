@@ -82,6 +82,7 @@ RUN_DIR=""
 BENCH_NODE=""
 OFF_NODE=""
 SMOKE=false
+RESUME_DIR=""
 FIO_JOBS=(wal-fsync wal-group-commit seq-throughput)
 
 # --smoke: prove the plumbing, not the storage. Every code path runs once at the shortest settings
@@ -107,12 +108,17 @@ apply_smoke_knobs() {
 usage() {
   cat <<EOF
 usage: storage_bench.sh [run] [--workload fio|pgbench|amqp|pgsync|all] [--repeats N] [--smoke]
+                              [--resume <run-dir>]
        storage_bench.sh teardown
        storage_bench.sh report <run-dir>
        storage_bench.sh corroborate <run-dir>
 
   --smoke   exercise every code path once at minimum runtime and throw the numbers away.
             Use this after editing the script, NOT to answer anything about storage.
+
+  --resume  reuse an existing run dir and skip the arms that already finished, for picking a long
+            run back up after it was interrupted. The cells then span two points in time, so check
+            the pgbench -S control before trusting a comparison across them.
 
   pgsync    what SYNCHRONOUS replication costs, local-path against longhorn r2. NOT part of `all`:
             it is another ~85 min and it answers a storage-choice question, not the locality
@@ -669,9 +675,13 @@ pgbench_arm() {
   kb exec pgclient -- psql "$conn" -Atc \
     "SELECT backend_type,object,context,writes,write_time,fsyncs,fsync_time FROM pg_stat_io WHERE object='wal';
      SELECT wal_records,wal_fpi,wal_bytes,wal_buffers_full FROM pg_stat_wal;
-     SELECT blk_write_time,blk_read_time,xact_commit FROM pg_stat_database WHERE datname='app';
-     SELECT application_name,sync_state,write_lag,flush_lag,replay_lag FROM pg_stat_replication;" \
+     SELECT blk_write_time,blk_read_time,xact_commit FROM pg_stat_database WHERE datname='app';" \
     > "${out}/pgstat.before" 2>&1
+  # Separately, and as postgres from inside the primary: pg_stat_replication hides sync_state and the
+  # lag columns from unprivileged roles, so via pgclient's app user they all come back NULL.
+  kb exec "$pri" -c postgres -- psql -U postgres -Atc \
+    'SELECT application_name,sync_state,write_lag,flush_lag,replay_lag FROM pg_stat_replication;' \
+    > "${out}/replication.before" 2>&1
 
   local run
   for run in c1 c8; do
@@ -696,9 +706,13 @@ pgbench_arm() {
   kb exec pgclient -- psql "$conn" -Atc \
     "SELECT backend_type,object,context,writes,write_time,fsyncs,fsync_time FROM pg_stat_io WHERE object='wal';
      SELECT wal_records,wal_fpi,wal_bytes,wal_buffers_full FROM pg_stat_wal;
-     SELECT blk_write_time,blk_read_time,xact_commit FROM pg_stat_database WHERE datname='app';
-     SELECT application_name,sync_state,write_lag,flush_lag,replay_lag FROM pg_stat_replication;" \
+     SELECT blk_write_time,blk_read_time,xact_commit FROM pg_stat_database WHERE datname='app';" \
     > "${out}/pgstat.after" 2>&1
+  # Separately, and as postgres from inside the primary: pg_stat_replication hides sync_state and the
+  # lag columns from unprivileged roles, so via pgclient's app user they all come back NULL.
+  kb exec "$pri" -c postgres -- psql -U postgres -Atc \
+    'SELECT application_name,sync_state,write_lag,flush_lag,replay_lag FROM pg_stat_replication;' \
+    > "${out}/replication.after" 2>&1
 }
 
 # ---------------------------------------------------------------- rabbitmq
@@ -870,6 +884,12 @@ do_run() {
 
   RUN_DIR="${REPO_ROOT}/.cache/storage-bench/$(date -u +%Y%m%dT%H%MZ)"
   $SMOKE && RUN_DIR="${RUN_DIR}-SMOKE"   # in the path, so nobody quotes these numbers by accident
+  if [ -n "$RESUME_DIR" ]; then
+    [ -d "$RESUME_DIR" ] || die "--resume: no such run dir: ${RESUME_DIR}"
+    RUN_DIR="$RESUME_DIR"
+    warn "resuming into ${RUN_DIR}: finished arms are skipped, so cells will span two points in time."
+    warn "the pgbench -S control is what says whether they are still comparable. Check it before reading the grid."
+  fi
   mkdir -p "${RUN_DIR}"/{fio,pgbench,amqp,pgsync}
   trap 'teardown' EXIT
   setup_ns
@@ -948,6 +968,9 @@ do_run() {
     for arm in "${syncset[@]}"; do
       id="${arm%%|*}"; sc="$(cut -d'|' -f2 <<< "$arm")"
       local inst syn; inst="$(cut -d'|' -f3 <<< "$arm")"; syn="$(cut -d'|' -f4 <<< "$arm")"
+      if [ -f "${RUN_DIR}/pgsync/${id}/r${REPEATS}/c8.pctl" ]; then
+        ok "pgsync: ${id} already complete, skipping (--resume)"; continue
+      fi
       say "pgsync: ${id} (${sc}, ${inst} instance(s), sync ${syn})"
       if pg_arm_up "$id" "$sc" "$inst" "$syn"; then
         # An arm that claims to be synchronous and is not would report "sync is free", so it is proved
@@ -1145,6 +1168,7 @@ while [ $# -gt 0 ]; do
                 shift 2 ;;
     --repeats)  REPEATS="$2"; shift 2 ;;
     --smoke)    SMOKE=true; shift ;;
+    --resume)   RESUME_DIR="$2"; shift 2 ;;
     -h|--help)  usage ;;
     *)          break ;;
   esac

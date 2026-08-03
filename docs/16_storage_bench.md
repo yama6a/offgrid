@@ -408,6 +408,57 @@ local-path (1.28 to 2.39ms, measured above), the sync arms should differ by roug
 both the primary's and the standby's fsync move onto Longhorn. If `g-e` lands far from 2x `f-d`, either
 the network dominates both and storage barely matters, or a cell is invalid.
 
-### Result
+### Result: PROVISIONAL, because the `-S` control is not a control
 
-Not yet run.
+Run `20260803T1603Z`, 2 repeats, arms d/e/f measured together and g resumed ~3.5h later after a
+laptop restart killed the run mid-arm.
+
+commit p50 ms, mean of 2 repeats:
+
+| | local-path | longhorn-r2 | price of longhorn |
+|---|---|---|---|
+| async, 1 instance, c1 | 5.40 | 6.73 | +1.33 |
+| sync any 1 required, 3 instances, c1 | 7.57 | 9.66 | +2.09 |
+| **price of sync, c1** | **+2.17** | **+2.93** | |
+| async, 1 instance, c8 | 7.55 | 11.44 | +3.89 |
+| sync any 1 required, 3 instances, c8 | 10.12 | 17.27 | +7.15 |
+| **price of sync, c8** | **+2.57** | **+5.83** | |
+
+Throughput at c1: 167 / 122 / 135 / 95 tps for d/e/f/g. At c8: 740 / 562 / 550 / 383.
+
+**The prediction written above was wrong.** The sync arms do NOT differ by ~2x the async gap. At c1 the
+gap is 7.14ms async against 7.79ms sync, essentially flat; at c8 it goes DOWN, 14.37 to 10.15. The
+first branch of the stated alternative is what happened: the replication round-trip dominates, and the
+storage under it barely moves the total.
+
+Two independent measurements corroborate that, and neither depends on the broken gate:
+
+- `pg_test_fsync` on the volume, no network and no Postgres: local-path 1024 ops/sec (0.98 ms),
+  longhorn 693 ops/sec (1.44 ms). Longhorn costs **0.46 ms per fsync**, 1.47x.
+- `pg_stat_replication.flush_lag` on the sync primary: **2.4 to 2.7 ms**. That predicts the observed
+  price of sync at c1 (2.17 and 2.93 ms) almost exactly, on both storages.
+
+So the standby round-trip is ~2.5 ms and the storage difference under it is ~0.5 ms. Sync costs about
+five times what the storage choice does.
+
+### Why this is provisional, and what it says about the published result above
+
+The `-S` read-only control FAILED: 4952 tps down to 2447 across arms, a 2.02x spread against a 10%
+tolerance. By this document's own rule that means no verdict.
+
+But the gate is mis-specified, and **the published Longhorn result above violates it too**. Its run
+(`20260802T1433Z`) recorded a-local at 4820/4814/4856 against b-lh-remote at 1947/3245/3438: a 2.5x
+spread, and a 1.77x spread within one arm's own repeats. That conclusion was published anyway.
+
+The premise is what is wrong. The gate says "reads come from cache, so this MUST match across arms",
+but `PGBENCH_SCALE=20` is ~300MB against `shared_buffers` of 128MB, chosen deliberately so writes
+reach the volume. So `-S` reads hit storage by construction, and a control that varies with the
+variable under test is not a control. It cannot pass while comparing storage classes, and never has.
+
+The pgsync run is better behaved than the published one on every gate that does work: repeat spread
+1.003x to 1.078x (against 1.5x), no cell flagged for CPU drift, the primary on pi-cp3 in all 8 cells,
+and both sync arms proved synchronous against Postgres.
+
+Fixing it means a control that does not touch storage at all, for example a CPU-bound
+`SELECT sum(i) FROM generate_series(...)`, and re-running. Until then these numbers are the best
+available reading, not a verdict.
