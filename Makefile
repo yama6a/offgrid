@@ -191,6 +191,10 @@ storage-bench: ## Measure write latency of local-path vs Longhorn r2 (local repl
 storage-bench-fio: ## Same, fio fsync only: the fast (~1h) read on the question, no CNPG or RabbitMQ.
 	bash lib/shell/storage_bench.sh run --workload fio
 
+.PHONY: storage-bench-sync
+storage-bench-sync: ## What SYNCHRONOUS replication costs CNPG, local-path vs longhorn r2 (~85min, 2x2 grid).
+	bash lib/shell/storage_bench.sh run --workload pgsync --repeats 2
+
 .PHONY: storage-bench-teardown
 storage-bench-teardown: ## Remove everything the benchmark created (namespace, bench StorageClasses, node tags, operator CNP).
 	bash lib/shell/storage_bench.sh teardown

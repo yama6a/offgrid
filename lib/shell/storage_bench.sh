@@ -3,6 +3,10 @@
 # Measures what Longhorn r2 costs CNPG and RabbitMQ in write latency, against the node-local
 # local-path they run on today. Creates a throwaway namespace, runs fio + pgbench + rabbitmq-perf-test
 # across three storage arms, prints p50/p95/p99, tears everything down.
+#
+# `--workload pgsync` answers a second, separate question on its own four arms: what SYNCHRONOUS
+# replication costs, on each storage. Not in `all`, because it is another ~100 min.
+#
 # Subcommands: run (default) | teardown | report <dir> | corroborate <dir>
 # See docs/16_storage_bench.md.
 
@@ -56,6 +60,23 @@ ARMS=(
   "c-lh-local|${BENCH_SC_LOCAL}|longhorn r2 best-effort, one replica local, only the 2nd write crosses"
 )
 
+# The `pgsync` workload's own arms, a 2x2 of storage against replication mode. Answers a different
+# question from ARMS above, which is why it does not share them: ARMS isolates replica LOCALITY for a
+# single-node DB, this isolates what SYNCHRONOUS replication costs on each storage. Read as two
+# differences: e-d and g-f give the price of sync, f-d and g-e give the price of Longhorn.
+# Fields: id|storageClass|instances|sync|label
+#
+# Uses the SHIPPED longhorn class, not the two bench ones, because the decision this feeds is "should
+# the real databases move", so the real class settings (dataLocality disabled included) are the ones
+# that matter. 3 instances because `any 1` of two standbys is the config worth running: it survives
+# one node being drained without stalling writes, which is what makes a rolling Talos upgrade safe.
+SYNC_ARMS=(
+  "d-local-async|local-path|1|off|local-path, single instance, no replication (baseline)"
+  "e-local-sync|local-path|3|on|local-path, 3 instances, synchronous any 1 required"
+  "f-lh-async|longhorn-r2-ephemeral|1|off|longhorn r2, single instance, no replication"
+  "g-lh-sync|longhorn-r2-ephemeral|3|on|longhorn r2, 3 instances, synchronous any 1 required"
+)
+
 WORKLOADS="all"
 RUN_DIR=""
 BENCH_NODE=""
@@ -85,13 +106,17 @@ apply_smoke_knobs() {
 
 usage() {
   cat <<EOF
-usage: storage_bench.sh [run] [--workload fio|pgbench|amqp|all] [--repeats N] [--smoke]
+usage: storage_bench.sh [run] [--workload fio|pgbench|amqp|pgsync|all] [--repeats N] [--smoke]
        storage_bench.sh teardown
        storage_bench.sh report <run-dir>
        storage_bench.sh corroborate <run-dir>
 
   --smoke   exercise every code path once at minimum runtime and throw the numbers away.
             Use this after editing the script, NOT to answer anything about storage.
+
+  pgsync    what SYNCHRONOUS replication costs, local-path against longhorn r2. NOT part of `all`:
+            it is another ~85 min and it answers a storage-choice question, not the locality
+            question the other three share. See docs/16_storage_bench.md.
 EOF
   exit 1
 }
@@ -127,6 +152,60 @@ replica_nodes() {
 # Pull one KEY=value out of a pctl.awk line, without eval'ing file content.
 kv() { awk -v k="$1" '{for(i=1;i<=NF;i++){split($i,a,"="); if(a[1]==k){print a[2]; exit}}}' <<< "$2"; }
 
+# Retry an IDEMPOTENT `kb exec ...`, writing stdout to a file. `kubectl exec` streams through the
+# apiserver, and a reset on that connection ("next reader: read tcp ...: connection reset by peer")
+# truncates the output with no fault in the thing being measured. A run is an hour of these, so the
+# read-only probes retry rather than costing a validity gate. NOT for the pgbench runs themselves: a
+# half-written transaction log has to stay a visible failure, not be silently replaced.
+kb_exec_retry() {
+  local what="$1" dest="$2" tries="${3:-3}"; shift 3
+  local i
+  for i in $(seq 1 "$tries"); do
+    if kb exec "$@" > "$dest" 2>&1 && ! grep -q 'error reading from error stream\|connection reset by peer' "$dest"; then
+      ok "${what}"; return 0
+    fi
+    sleep 5
+  done
+  bad "${what} (${tries} attempts, last: $(tail -1 "$dest" | cut -c1-80))"
+  return 1
+}
+
+# Mean p99 for one pgsync arm and pgbench run, across the repeats. Empty if the arm never produced a
+# cell, which is what a skipped (non-synchronous) arm looks like.
+mean_p99() {
+  local dir="$1" arm="$2" run="$3" f v t=0 n=0
+  for f in "${dir}"/pgsync/"${arm}"/r*/"${run}".pctl; do
+    [ -f "$f" ] || continue
+    v="$(kv p99 "$(cat "$f")")"
+    case "$v" in ''|*[!0-9.]*) continue ;; esac
+    t="$(awk -v a="$t" -v b="$v" 'BEGIN{printf "%.4f", a+b}')"; n=$((n + 1))
+  done
+  [ "$n" -gt 0 ] && awk -v t="$t" -v n="$n" 'BEGIN{printf "%.2f", t/n}'
+}
+
+# "b-a (x.yx)". Both empty-safe, because a skipped arm must read as a gap rather than as zero cost.
+delta() {
+  { [ -n "$1" ] && [ -n "$2" ]; } || { printf 'n/a'; return; }
+  awk -v a="$1" -v b="$2" 'BEGIN{ printf "+%.2f (%.2fx)", b-a, (a>0 ? b/a : 0) }'
+}
+
+# The 2x2 the run exists to produce, with the subtraction done. Columns are storage, rows are
+# replication mode, so the right margin is the price of Longhorn and the bottom margin the price of
+# sync. p99 in ms, meaned over the repeats.
+pgsync_grid() {
+  local dir="$1" run da ea fa ga
+  compgen -G "${dir}/pgsync/*" >/dev/null 2>&1 || return 0
+  for run in c1 c8; do
+    da="$(mean_p99 "$dir" d-local-async "$run")"; ea="$(mean_p99 "$dir" e-local-sync "$run")"
+    fa="$(mean_p99 "$dir" f-lh-async  "$run")";  ga="$(mean_p99 "$dir" g-lh-sync   "$run")"
+    printf '\n#### pgsync %s, commit p99 ms (mean of %s repeats)\n\n' "$run" "$REPEATS"
+    printf '| | local-path | longhorn-r2 | price of longhorn |\n|---|---|---|---|\n'
+    printf '| async (1 instance) | %s | %s | %s |\n' "${da:-n/a}" "${fa:-n/a}" "$(delta "$da" "$fa")"
+    printf '| sync any 1 required (3 instances) | %s | %s | %s |\n' "${ea:-n/a}" "${ga:-n/a}" "$(delta "$ea" "$ga")"
+    printf '| price of sync | %s | %s | |\n' "$(delta "$da" "$ea")" "$(delta "$fa" "$ga")"
+  done
+}
+
 pg_conn() {
   local pw; pw="$(kb get secret "pg-${1}-app" -o jsonpath='{.data.password}' | base64 -d)"
   printf 'postgresql://app:%s@pg-%s-rw.%s.svc:5432/app' "$pw" "$1" "$BENCH_NS"
@@ -137,6 +216,10 @@ pg_conn() {
 pvc_bound()   { [ "$(kb get pvc "$1" -o jsonpath='{.status.phase}' 2>/dev/null)" = "Bound" ]; }
 pg_healthy()  { [ "$(kb get cluster.postgresql.cnpg.io "$1" -o jsonpath='{.status.phase}' 2>/dev/null)" \
                   = "Cluster in healthy state" ]; }
+# Which pod is primary, and on which node. Never assume `-1`: with several instances CNPG picks, and
+# after any switchover the answer changes.
+pg_primary()      { kb get cluster.postgresql.cnpg.io "$1" -o jsonpath='{.status.currentPrimary}' 2>/dev/null; }
+pg_primary_node() { kb get pod "$(pg_primary "$1")" -o jsonpath='{.spec.nodeName}' 2>/dev/null; }
 mq_ready()    { [ "$(kb get rabbitmqcluster "$1" \
                   -o jsonpath='{.status.conditions[?(@.type=="AllReplicasReady")].status}' 2>/dev/null)" = "True" ]; }
 pod_done()    { case "$(kb get pod "$1" -o jsonpath='{.status.phase}' 2>/dev/null)" in
@@ -477,21 +560,35 @@ YAML
 # ---------------------------------------------------------------- pgbench
 
 pg_arm_up() {
-  local arm="$1" sc="$2"
+  local arm="$1" sc="$2" instances="${3:-1}" sync="${4:-off}"
+
+  # One instance is pinned to BENCH_NODE so storage is the only variable, which is what the three
+  # locality arms need. Several instances cannot be: they have to sit on DIFFERENT nodes or the
+  # synchronous ack never crosses the network and the measurement is meaningless. So required
+  # anti-affinity spreads them one per node instead, and which node ends up primary is recorded
+  # per cell rather than controlled. See the threats section in docs/16_storage_bench.md.
+  local placement="    nodeSelector: { kubernetes.io/hostname: ${BENCH_NODE} }"
+  [ "$instances" -gt 1 ] && placement="    podAntiAffinityType: required
+    topologyKey: kubernetes.io/hostname"
+
+  local syncblock=""
+  [ "$sync" = on ] && syncblock="    synchronous: { method: any, number: 1, dataDurability: required }"
+
   kubectl apply -f - >/dev/null <<YAML
 apiVersion: postgresql.cnpg.io/v1
 kind: Cluster
 metadata: { name: pg-${arm}, namespace: ${BENCH_NS}, labels: { $(labelled) } }
 spec:
-  instances: 1
+  instances: ${instances}
   imageName: ${PG_IMAGE}
   postgresUID: 26
   postgresGID: 26
   storage: { size: ${PVC_SIZE}, storageClass: ${sc} }
   affinity:
-    nodeSelector: { kubernetes.io/hostname: ${BENCH_NODE} }
+${placement}
   enableSuperuserAccess: false
   postgresql:
+${syncblock}
     parameters:
       # The live pg-cluster values verbatim, plus the two timing counters. Everything that decides
       # commit cost (synchronous_commit, fsync, full_page_writes, checkpoint_timeout) stays at its
@@ -507,6 +604,28 @@ spec:
     limits: { cpu: "1", memory: 512Mi }
 YAML
   wait_for "pg-${arm} healthy" 900 pg_healthy "pg-${arm}"
+}
+
+# The one failure that would silently ruin a pgsync run: CNPG ignoring a malformed `synchronous` block,
+# so the arm measures async and the grid reports "sync is free". Postgres itself is asked, twice, and a
+# failure SKIPS the arm rather than recording a number nobody can trust. Written to synchronous.txt as
+# the run's evidence that the arm was what it claimed.
+pg_assert_sync() {
+  local arm="$1" out="$2" names states pod
+  pod="$(pg_primary "pg-${arm}")"
+  [ -n "$pod" ] || { bad "${arm}: no primary to interrogate"; return 1; }
+  mkdir -p "$out"
+  # -At leaves psql's default '|' between columns, which avoids quoting a separator into the SQL.
+  names="$(kb exec "$pod" -c postgres -- psql -U postgres -Atc 'show synchronous_standby_names;' 2>/dev/null)"
+  states="$(kb exec "$pod" -c postgres -- psql -U postgres -Atc \
+            'select application_name, sync_state from pg_stat_replication;' 2>/dev/null)"
+  printf 'primary: %s on %s\nsynchronous_standby_names: %s\npg_stat_replication:\n%s\n' \
+    "$pod" "$(pg_primary_node "pg-${arm}")" "${names:-<empty>}" "${states:-<none>}" > "${out}/synchronous.txt"
+
+  [ -n "$names" ] || { bad "${arm}: synchronous_standby_names is EMPTY, so this arm is async; skipping"; return 1; }
+  grep -qE '\|(sync|quorum)$' <<< "$states" \
+    || { bad "${arm}: no standby reports sync_state sync/quorum (${states:-none}); skipping"; return 1; }
+  ok "${arm} is genuinely synchronous (${names})"
 }
 
 pg_client_up() {
@@ -528,24 +647,30 @@ YAML
 }
 
 pgbench_arm() {
-  local arm="$1" sc="$2" rep="$3" out="${RUN_DIR}/pgbench/${1}/r${3}"
+  # 4th arg is the workload dir, so pgsync's cells land beside pgbench's rather than mixed in with them.
+  # The cell body is identical for both: only how the cluster was provisioned differs.
+  local arm="$1" sc="$2" rep="$3" kind="${4:-pgbench}" out="${RUN_DIR}/${4:-pgbench}/${1}/r${3}"
   mkdir -p "$out"
   local bin="/usr/lib/postgresql/${PG_MAJOR}/bin"
   local conn; conn="$(pg_conn "$arm")"
+  # Resolved, not assumed: with several instances the primary is whichever CNPG picked, and every
+  # probe below has to hit THAT pod or it measures a standby's storage instead.
+  local pri; pri="$(pg_primary "pg-${arm}")"
+  [ -n "$pri" ] || { bad "${arm} r${rep}: no primary, skipping cell"; return 1; }
 
-  replica_nodes "pg-${arm}-1" > "${out}/replica-nodes.txt" 2>/dev/null
+  replica_nodes "${pri}" > "${out}/replica-nodes.txt" 2>/dev/null
+  pg_primary_node "pg-${arm}" > "${out}/primary-node.txt" 2>/dev/null
 
   # Zero-network cross-check on the same volume. If it disagrees with fio's sync p50 the fio job is wrong.
-  kb exec "pg-${arm}-1" -c postgres -- \
-    "${bin}/pg_test_fsync" -f /var/lib/postgresql/data/pgdata/fsync-probe -s 5 \
-    > "${out}/pg_test_fsync.txt" 2>&1 \
-    && ok "${arm} r${rep} pg_test_fsync" || bad "${arm} r${rep} pg_test_fsync failed"
-  kb exec "pg-${arm}-1" -c postgres -- rm -f /var/lib/postgresql/data/pgdata/fsync-probe >/dev/null 2>&1
+  kb_exec_retry "${arm} r${rep} pg_test_fsync" "${out}/pg_test_fsync.txt" 3 \
+    "$pri" -c postgres -- "${bin}/pg_test_fsync" -f /var/lib/postgresql/data/pgdata/fsync-probe -s 5
+  kb exec "$pri" -c postgres -- rm -f /var/lib/postgresql/data/pgdata/fsync-probe >/dev/null 2>&1
 
   kb exec pgclient -- psql "$conn" -Atc \
     "SELECT backend_type,object,context,writes,write_time,fsyncs,fsync_time FROM pg_stat_io WHERE object='wal';
      SELECT wal_records,wal_fpi,wal_bytes,wal_buffers_full FROM pg_stat_wal;
-     SELECT blk_write_time,blk_read_time,xact_commit FROM pg_stat_database WHERE datname='app';" \
+     SELECT blk_write_time,blk_read_time,xact_commit FROM pg_stat_database WHERE datname='app';
+     SELECT application_name,sync_state,write_lag,flush_lag,replay_lag FROM pg_stat_replication;" \
     > "${out}/pgstat.before" 2>&1
 
   local run
@@ -571,7 +696,8 @@ pgbench_arm() {
   kb exec pgclient -- psql "$conn" -Atc \
     "SELECT backend_type,object,context,writes,write_time,fsyncs,fsync_time FROM pg_stat_io WHERE object='wal';
      SELECT wal_records,wal_fpi,wal_bytes,wal_buffers_full FROM pg_stat_wal;
-     SELECT blk_write_time,blk_read_time,xact_commit FROM pg_stat_database WHERE datname='app';" \
+     SELECT blk_write_time,blk_read_time,xact_commit FROM pg_stat_database WHERE datname='app';
+     SELECT application_name,sync_state,write_lag,flush_lag,replay_lag FROM pg_stat_replication;" \
     > "${out}/pgstat.after" 2>&1
 }
 
@@ -685,7 +811,7 @@ cell() {
 
   case "$kind" in
     fio)     fio_arm "$arm" "$sc" "$rep" ;;
-    pgbench) pgbench_arm "$arm" "$sc" "$rep" ;;
+    pgbench|pgsync) pgbench_arm "$arm" "$sc" "$rep" "$kind" ;;
     amqp)    amqp_arm "$arm" "$rep" ;;
   esac
 
@@ -714,8 +840,10 @@ do_run() {
   preflight   # before the prompt: no point asking for hours of cluster time if it would fail anyway
 
   # Per arm: a one-off provisioning cost, plus a per-repeat measuring cost. Seconds, then minutes.
-  local n_arms=${#ARMS[@]} slow_arms=${#ARMS[@]} fio_m=0 pg_m=0 mq_m=0 est
+  local n_arms=${#ARMS[@]} slow_arms=${#ARMS[@]} fio_m=0 pg_m=0 mq_m=0 sy_m=0 est
+  local sync_arms=${#SYNC_ARMS[@]}
   $SMOKE && slow_arms=1
+  $SMOKE && sync_arms=2
   local fio_run=175; $SMOKE && fio_run=10
   case "$WORKLOADS" in fio|all)
     fio_m=$(( n_arms * (90 + REPEATS * (fio_run + INTER_CELL_SLEEP)) )) ;;
@@ -726,23 +854,31 @@ do_run() {
   case "$WORKLOADS" in amqp|all)
     mq_m=$(( slow_arms * (240 + 90 + REPEATS * (2 * PERFTEST_SECONDS + INTER_CELL_SLEEP)) )) ;;
   esac
-  est=$(( (fio_m + pg_m + mq_m) / 60 ))
+  # A 3-instance cluster takes longer to form than a 1-instance one, hence 300 rather than 210.
+  case "$WORKLOADS" in pgsync)
+    sy_m=$(( sync_arms * (300 + 150 + 90 + REPEATS * (2 * PGBENCH_SECONDS + 60 + INTER_CELL_SLEEP)) )) ;;
+  esac
+  est=$(( (fio_m + pg_m + mq_m + sy_m) / 60 ))
 
   if $SMOKE; then
     say "SMOKE: ~${est} min. Exercises every path once; the numbers are garbage on purpose."
   else
-    say "estimate: ~${est} min (fio $((fio_m/60)), pgbench $((pg_m/60)), amqp $((mq_m/60))) at --repeats ${REPEATS}"
+    say "estimate: ~${est} min (fio $((fio_m/60)), pgbench $((pg_m/60)), amqp $((mq_m/60)), pgsync $((sy_m/60))) at --repeats ${REPEATS}"
     warn "the cluster is loaded the whole time; live apps will be slower. --workload fio is the shortest real answer."
   fi
   confirm "run the benchmark now?" || die "aborted"
 
   RUN_DIR="${REPO_ROOT}/.cache/storage-bench/$(date -u +%Y%m%dT%H%MZ)"
   $SMOKE && RUN_DIR="${RUN_DIR}-SMOKE"   # in the path, so nobody quotes these numbers by accident
-  mkdir -p "${RUN_DIR}"/{fio,pgbench,amqp}
+  mkdir -p "${RUN_DIR}"/{fio,pgbench,amqp,pgsync}
   trap 'teardown' EXIT
   setup_ns
   pick_nodes            # must run before the classes: the tag they select on is "not the bench node"
-  setup_classes
+  # pgsync measures the shipped longhorn class, so it needs neither bench class nor the replica tag.
+  # No reason to tag every Longhorn node for a run that never selects on it.
+  case "$WORKLOADS" in pgsync) say "skipping the bench StorageClasses: pgsync uses the shipped class" ;;
+    *) setup_classes ;;
+  esac
   setup_support
 
   {
@@ -798,6 +934,38 @@ do_run() {
         kb delete pvc -l "cnpg.io/cluster=pg-${id}" --wait=true --timeout=180s >/dev/null 2>&1
       else
         bad "${id}: CNPG cluster never became healthy, skipping pgbench"
+      fi
+    done
+    ;;
+  esac
+
+  # pgsync: same cell body, different provisioning. Under --smoke only the two sync arms, since the
+  # async ones are just pgbench again and prove nothing new about the synchronous path.
+  local syncset=("${SYNC_ARMS[@]}")
+  $SMOKE && syncset=("${SYNC_ARMS[1]}" "${SYNC_ARMS[3]}")
+
+  case "$WORKLOADS" in pgsync)
+    for arm in "${syncset[@]}"; do
+      id="${arm%%|*}"; sc="$(cut -d'|' -f2 <<< "$arm")"
+      local inst syn; inst="$(cut -d'|' -f3 <<< "$arm")"; syn="$(cut -d'|' -f4 <<< "$arm")"
+      say "pgsync: ${id} (${sc}, ${inst} instance(s), sync ${syn})"
+      if pg_arm_up "$id" "$sc" "$inst" "$syn"; then
+        # An arm that claims to be synchronous and is not would report "sync is free", so it is proved
+        # against Postgres before a single number is taken, and skipped rather than half-trusted.
+        if [ "$syn" = on ] && ! pg_assert_sync "$id" "${RUN_DIR}/pgsync/${id}"; then
+          kb delete cluster.postgresql.cnpg.io "pg-${id}" --wait=true --timeout=180s >/dev/null 2>&1
+          kb delete pvc -l "cnpg.io/cluster=pg-${id}" --wait=true --timeout=180s >/dev/null 2>&1
+          continue
+        fi
+        pg_client_up
+        kb exec pgclient -- "/usr/lib/postgresql/${PG_MAJOR}/bin/pgbench" \
+          -i -s "$PGBENCH_SCALE" "$(pg_conn "$id")" >/dev/null 2>&1 \
+          && ok "${id} pgbench -i -s ${PGBENCH_SCALE}" || bad "${id} pgbench init failed"
+        for ((rep = 1; rep <= REPEATS; rep++)); do cell pgsync "$id" "$sc" "$rep"; done
+        kb delete cluster.postgresql.cnpg.io "pg-${id}" --wait=true --timeout=180s >/dev/null 2>&1
+        kb delete pvc -l "cnpg.io/cluster=pg-${id}" --wait=true --timeout=180s >/dev/null 2>&1
+      else
+        bad "${id}: CNPG cluster never became healthy, skipping pgsync"
       fi
     done
     ;;
@@ -869,6 +1037,17 @@ PY
         "$(kv max "$line")" "$(kv tps "$line")"
     done
 
+    for f in "${dir}"/pgsync/*/r*/c1.pctl "${dir}"/pgsync/*/r*/c8.pctl; do
+      [ -f "$f" ] || continue
+      rep="$(basename "$(dirname "$f")")"; arm="$(basename "$(dirname "$(dirname "$f")")")"
+      line="$(cat "$f")"
+      [ "$(kv n "$line")" = "0" ] && continue
+      printf '| pgsync %s | %s | %s | %s | %s | %s | %s | %s tps |\n' \
+        "$(basename "$f" .pctl)" "$arm" "$rep" \
+        "$(kv p50 "$line")" "$(kv p95 "$line")" "$(kv p99 "$line")" \
+        "$(kv max "$line")" "$(kv tps "$line")"
+    done
+
     # perf-test's closing summary, e.g.
     #   confirm latency min/median/75th/95th/99th/max 3219/5697/6025/7984/10703/48067 us
     # The per-interval lines carry the same numbers but "confirm latency" there is a column HEADER,
@@ -891,11 +1070,20 @@ PY
     echo
     echo '## Validity gates'
     echo
+    pgsync_grid "$dir"
+    echo
+    echo '#### validity gates'
     echo '- [ ] pgbench -S read-only control within 10% across arms (see per-arm select.txt)'
     echo '- [ ] max/min of p99 across repeats under 1.5x in every cell'
     echo '- [ ] pg_test_fsync and fio sync p50 within 2x AND ranking the arms the same way'
     echo '- [ ] no cell flagged by the CPU-drift guard (see fio/load.txt, pgbench/load.txt)'
     echo '- [ ] c-lh-local had a local replica and b-lh-remote did not (replica-nodes.txt per cell)'
+    if compgen -G "${dir}/pgsync/*" >/dev/null; then
+      echo '- [ ] both sync arms show a real sync/quorum standby (pgsync/*/synchronous.txt)'
+      echo '- [ ] primary on the same node in every pgsync arm (pgsync/*/r*/primary-node.txt)'
+      echo '- [ ] g-lh-sync minus e-local-sync is near 2x the f-lh-async minus d-local-async gap;'
+      echo '      far off means the network dominates both, or a cell is invalid'
+    fi
     echo
     echo 'Any unchecked box means INVALID: publish no verdict.'
   } > "$md"
@@ -950,7 +1138,11 @@ esac
 
 while [ $# -gt 0 ]; do
   case "$1" in
-    --workload) WORKLOADS="$2"; shift 2 ;;
+    --workload) WORKLOADS="$2"
+                case "$WORKLOADS" in fio|pgbench|amqp|pgsync|all) ;;
+                  *) die "unknown --workload '${WORKLOADS}': every case below would miss it and the run would do nothing" ;;
+                esac
+                shift 2 ;;
     --repeats)  REPEATS="$2"; shift 2 ;;
     --smoke)    SMOKE=true; shift ;;
     -h|--help)  usage ;;

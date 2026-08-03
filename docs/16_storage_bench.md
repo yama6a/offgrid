@@ -338,3 +338,76 @@ namespace hangs in `Terminating` forever.
 The bench broker sets `terminationGracePeriodSeconds: 30`. The live one is `604800` (7 days);
 inheriting that would wedge teardown for a week. That is the one place the bench deliberately breaks
 parity with production.
+
+## `pgsync`: what synchronous replication costs
+
+A separate question from the three arms above, and a separate workload. Those isolate replica
+LOCALITY for a single-node database. This isolates what SYNCHRONOUS replication costs, on each
+storage, because that is the choice that decides where the HA database lives.
+
+`make storage-bench-sync`. Not part of `--workload all`: it is another ~85 min, and folding it in
+would invalidate the runtime figures above.
+
+### Why the question exists
+
+The HA cluster replicates ASYNCHRONOUSLY today (`sync_state=async`, `synchronous_standby_names`
+empty; `pg-cluster` never configures it). So a promotion can discard transactions the client was told
+had committed, with no error anywhere. The database is never corrupt, only behind, and when the old
+primary returns CNPG `pg_rewind`s it and throws its divergent WAL away. Silent, which is why it is
+worth closing.
+
+Closing it means `synchronous` with `dataDurability: required`. On Longhorn that makes a commit wait
+for the primary's WAL on 2 replicas AND a standby's WAL on 2 replicas: four network fsyncs. Whether
+that is affordable on three Pi 5s is what this measures.
+
+### The four arms
+
+| arm | storage | instances | replication |
+|---|---|---|---|
+| `d-local-async` | `local-path` | 1 | none (baseline) |
+| `e-local-sync` | `local-path` | 3 | `any 1`, `required` |
+| `f-lh-async` | `longhorn-r2-ephemeral` | 1 | none |
+| `g-lh-sync` | `longhorn-r2-ephemeral` | 3 | `any 1`, `required` |
+
+Read as margins: `f-d` and `g-e` are the price of Longhorn, `e-d` and `g-f` the price of sync. The
+report prints the grid with both subtractions already done.
+
+The SHIPPED `longhorn-r2-ephemeral`, not the two bench classes, because the decision this feeds is
+whether the real databases move, so the real settings (`dataLocality: disabled` included) are the ones
+that matter.
+
+3 instances, not 2, because `any 1` of two standbys is the config worth running: it survives one node
+being drained without stalling writes, which is what makes a rolling Talos upgrade safe under
+`required`. `03f`'s `wait_replication_healthy` gate is what stops the next drain starting before the
+displaced instance is back in sync.
+
+### The assertion that matters
+
+A malformed `synchronous` block that CNPG ignores would produce a full set of numbers saying sync is
+free. So before any cell runs, Postgres itself is asked: `synchronous_standby_names` must be non-empty
+AND some standby must report `sync_state` of `sync` or `quorum`. Failure SKIPS the arm. The answers are
+kept in `pgsync/<arm>/synchronous.txt` as the run's evidence it measured what it claimed.
+
+### Threats specific to these arms
+
+- **The client is no longer uncontended.** 3 instances on 3 nodes means every node hosts a database,
+  so `pgclient` on `OFF_NODE` shares a node with one. Identical across both sync arms, so it largely
+  cancels in the comparison, but it makes these arms NOT comparable to `a-local`/`b-lh-remote`.
+- **Primary placement is not controllable** with 3 instances: CNPG picks. Recorded per cell in
+  `primary-node.txt` and gated in the report, not eliminated.
+- **`any 1` is best-of-two.** The primary waits for the faster standby, so these numbers are mildly
+  optimistic against a 2-instance cluster waiting on one specific peer.
+- `pg_stat_io` WAL `fsync_time` isolates the LOCAL fsync; `pg_stat_replication` (captured before and
+  after each cell) covers the standby side. Together they decompose a commit into storage and network,
+  which is what tells you whether a disappointing number is the disk or the wire.
+
+### Expected shape, written down before the run
+
+A sync commit adds a round-trip plus a remote WAL fsync. If Longhorn costs ~1.1ms per fsync over
+local-path (1.28 to 2.39ms, measured above), the sync arms should differ by roughly TWICE that, since
+both the primary's and the standby's fsync move onto Longhorn. If `g-e` lands far from 2x `f-d`, either
+the network dominates both and storage barely matters, or a cell is invalid.
+
+### Result
+
+Not yet run.
