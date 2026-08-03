@@ -291,7 +291,6 @@ MIT. See [LICENSE](LICENSE).
 ## Todos
 
 - add a worker node (4th bay in the rack)
-- check cnpg backup accumulation, ensure it doesn't build up too much. consider extending WAL backup time.
 - migrate old pi stuff to cluster
 - fork my personal cluster project for OSS version
 - rewrite git history to remove secrets and email addresses and domains from past commits

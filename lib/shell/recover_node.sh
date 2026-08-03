@@ -18,8 +18,9 @@ source "${SCRIPT_DIR}/common.sh"
 MAINT_WAIT=600      # secs to wait for the node to answer in maintenance mode before giving up
 READY_WAIT=900      # secs to wait for the kubelet to register and report Ready after the config apply
 SETTLE_WAIT=300     # secs to wait for a recreated CNPG/RabbitMQ pod to come back Ready
-DISK_RETRIES=12     # re-add attempts for the Longhorn disk; its webhook refuses while the manager resyncs
+DISK_RETRIES=12     # attempts per Longhorn disk patch; its webhook refuses every one while the manager resyncs
 DISK_RETRY_SLEEP=10
+DISK_WAIT=180       # secs for the re-added disk to report a UUID and Ready; it is slower than the patch
 POLL=10
 LH_NS="longhorn-system"
 
@@ -93,12 +94,22 @@ echo "    Its data is already gone; this deletes the API objects that still poin
 echo
 confirm "Proceed?" || { warn "nothing changed"; exit 0; }
 
+# Probed ONCE, before anything acts on it. A maintenance node answers --insecure and rejects a secure call; a
+# configured one is the reverse. Every step below branches on this rather than re-probing, so a re-run against
+# a node that has already come back cannot mistake it for one that is still down.
+ADOPTED="no"
+talosctl -n "$IP" -e "$IP" version >/dev/null 2>&1 && ADOPTED="yes"
+
 # --- 2. etcd: drop the member whose peer URL is this node -----------------------------------------------
 # A wiped node comes back with a NEW etcd identity, and the old entry at the same peer URL blocks the join.
 say "2/7 etcd membership"
 MEMBER="$(talosctl -n "$SURVIVOR_IP" -e "$SURVIVOR_IP" etcd members 2>/dev/null | awk -v ip="$IP" '$0 ~ ip {print $2}' | head -1)"
 if [ -z "$MEMBER" ]; then
   ok "no etcd member at ${IP} (already removed, or the node never joined)"
+elif [ "$ADOPTED" = "yes" ]; then
+  # The member belongs to a node that is UP and holding our config, so it is the real one, not a leftover.
+  # Removing it would evict a working control-plane node and leave its etcd restarting forever.
+  ok "${NODE} is already back and holds etcd member ${MEMBER}; leaving it alone"
 else
   if talosctl -n "$SURVIVOR_IP" -e "$SURVIVOR_IP" etcd remove-member "$MEMBER" >/dev/null 2>&1; then
     ok "removed stale etcd member ${MEMBER}"
@@ -108,10 +119,8 @@ else
 fi
 
 # --- 3. machine config ---------------------------------------------------------------------------------
-# A maintenance node answers --insecure and rejects a secure call; a configured one is the reverse. That is
-# how we tell "waiting to be adopted" from "already adopted", which is what makes this step re-runnable.
 say "3/7 machine config"
-if talosctl -n "$IP" -e "$IP" version >/dev/null 2>&1; then
+if [ "$ADOPTED" = "yes" ]; then
   ok "${IP} already answers securely, so it holds our config; not re-applying"
 else
   printf '    waiting for %s in maintenance mode (up to %ss) ' "$IP" "$MAINT_WAIT"
@@ -155,6 +164,26 @@ if [ "$(kubectl get node "$NODE" -o jsonpath='{.spec.unschedulable}')" = "true" 
   kubectl uncordon "$NODE" >/dev/null 2>&1 && ok "uncordoned ${NODE}" || bad "could not uncordon ${NODE}"
 fi
 
+# A node that reports Ready is still bringing its DaemonSets up, and both steps below read state those pods
+# publish: the consumers that mount the local-path PVCs, and the longhorn-manager that writes diskStatus. Judge
+# any of it too early and a perfectly good volume looks broken. Waiting here is what makes a re-run safe.
+printf '    letting %s settle: longhorn-manager (up to %ss) ' "$NODE" "$SETTLE_WAIT"
+deadline=$(( $(date +%s) + SETTLE_WAIT ))
+while :; do
+  LHM="$(kubectl -n "$LH_NS" get pods -l app=longhorn-manager \
+         --field-selector="spec.nodeName=${NODE}" -o jsonpath='{.items[0].status.containerStatuses[0].ready}' 2>/dev/null)"
+  [ "$LHM" = "true" ] && { echo "ready"; break; }
+  [ "$(date +%s)" -ge "$deadline" ] && { echo "TIMEOUT"; warn "longhorn-manager on ${NODE} is not Ready; its disk state may read stale below"; break; }
+  printf '.'; sleep "$POLL"
+done
+
+# pod_settled <ns> <pod>: true once the pod is Running with every container ready. Give it time before calling
+# a volume stale, because "not ready yet" and "wedged on an empty volume" look identical in the first minute.
+pod_settled() {
+  [ "$(kubectl -n "$1" get pod "$2" -o jsonpath='{.status.phase}' 2>/dev/null)" = "Running" ] || return 1
+  ! kubectl -n "$1" get pod "$2" -o jsonpath='{.status.containerStatuses[*].ready}' 2>/dev/null | grep -q false
+}
+
 # --- 5. local-path PVCs bound to this node -------------------------------------------------------------
 # The wipe took their contents; the PVC and PV objects survived, still Bound and still node-affine, pointing
 # at an empty directory. No operator will delete a PVC that might hold the last copy of something, so they
@@ -192,6 +221,26 @@ elif l.get("app.kubernetes.io/name") == "rabbitmq": print("rabbitmq\t\t")
 else: print("other\t\t")')"
     IFS=$'\t' read -r kind owner instance <<< "$KIND"
 
+    # A consumer that reaches Ready is proof the volume under it works, which is the one signal separating
+    # "empty since the wipe" from "already rebuilt by an earlier run of this script". Give it the full settle
+    # window before concluding otherwise: a broker replaying Ra logs is not ready for a minute or two either.
+    CONSUMER="$instance"
+    [ "$kind" = "rabbitmq" ] && CONSUMER="${pvc#persistence-}"
+    if [ -n "$CONSUMER" ] && kubectl -n "$ns" get pod "$CONSUMER" >/dev/null 2>&1; then
+      printf '    %s/%s: waiting to see if %s comes up (up to %ss) ' "$ns" "$pvc" "$CONSUMER" "$SETTLE_WAIT"
+      deadline=$(( $(date +%s) + SETTLE_WAIT ))
+      SETTLED="no"
+      while :; do
+        pod_settled "$ns" "$CONSUMER" && { SETTLED="yes"; echo "up"; break; }
+        [ "$(date +%s)" -ge "$deadline" ] && { echo "no"; break; }
+        printf '.'; sleep "$POLL"
+      done
+      if [ "$SETTLED" = "yes" ]; then
+        ok "${ns}/${pvc}: ${CONSUMER} is Ready, so its volume is fine; leaving it"
+        continue
+      fi
+    fi
+
     case "$kind" in
       cnpg)
         WANT="$(kubectl -n "$ns" get cluster.postgresql.cnpg.io "$owner" -o jsonpath='{.spec.instances}' 2>/dev/null)"
@@ -224,19 +273,43 @@ else: print("other\t\t")')"
           bad "  no Ready broker to forget ${ERL} from; fix the quorum first, then re-run"
           continue
         fi
-        # MANDATORY before the wipe, not a remedy afterwards: the survivors still hold this broker as a
-        # metadata-store member, and a member that comes back blank is refused. Worst for the lowest-ordered
-        # broker, which peer discovery makes seed a SECOND cluster instead of joining.
+        PEER_ERL="rabbit@${PEER_POD}.${RMQ}-nodes.${ns}"
+        rmq_is_member() {   # is $ERL in the metadata store membership the peer knows about?
+          kubectl -n "$ns" exec "$PEER_POD" -c rabbitmq -- \
+            rabbitmqctl eval 'ra:members({rabbitmq_metadata, node()}).' 2>/dev/null | grep -q "$POD\."
+        }
+        # MANDATORY before the wipe, not a remedy afterwards: the survivors hold this broker as a metadata-store
+        # member, and a member that comes back blank is refused. So the wipe only happens if the forget worked.
         kubectl -n "$ns" exec "$POD" -c rabbitmq -- rabbitmqctl stop_app >/dev/null 2>&1 \
-          && ok "  stopped the app on ${POD}" || warn "  ${POD} was not reachable to stop, continuing"
-        if kubectl -n "$ns" exec "$PEER_POD" -c rabbitmq -- rabbitmqctl forget_cluster_node "$ERL" >/dev/null 2>&1; then
-          ok "  ${PEER_POD} forgot ${ERL}"
-        else
-          warn "  ${PEER_POD} would not forget ${ERL} (already forgotten, or it still looks running)"
+          && ok "  stopped the app on ${POD}" || warn "  ${POD} was not reachable to stop (gone with the node?)"
+        kubectl -n "$ns" exec "$PEER_POD" -c rabbitmq -- rabbitmqctl forget_cluster_node "$ERL" >/dev/null 2>&1
+        if rmq_is_member; then
+          bad "  ${PEER_POD} still holds ${ERL} as a member; NOT wiping, it could not rejoin"
+          warn "  it usually means the peer still sees it running. Stop it, then re-run:"
+          warn "    kubectl -n ${ns} exec ${POD} -c rabbitmq -- rabbitmqctl stop_app"
+          continue
         fi
+        ok "  ${ERL} is no longer a member, safe to wipe"
         kubectl -n "$ns" delete pvc "$pvc" --wait=false >/dev/null 2>&1
         kubectl -n "$ns" delete pod "$POD" --wait=false >/dev/null 2>&1
-        ok "  deleted ${ns}/${pvc} + pod ${POD}; it rejoins as a new member"
+        ok "  deleted ${ns}/${pvc} + pod ${POD}"
+        # Peer discovery auto-clusters onto the LOWEST-ordered broker, so for that one (server-0) a blank start
+        # seeds its own cluster of one and nothing ever pulls it in. An explicit join is deterministic for all
+        # of them, so just always do it once the broker is back up.
+        printf '    waiting for %s to come back (up to %ss) ' "$POD" "$SETTLE_WAIT"
+        deadline=$(( $(date +%s) + SETTLE_WAIT ))
+        while :; do
+          [ "$(kubectl -n "$ns" get pod "$POD" -o jsonpath='{.status.phase}' 2>/dev/null)" = "Running" ] && { echo "up"; break; }
+          [ "$(date +%s)" -ge "$deadline" ] && { echo "no"; break; }
+          printf '.'; sleep "$POLL"
+        done
+        if kubectl -n "$ns" exec "$POD" -c rabbitmq -- rabbitmqctl eval 'rabbit_nodes:list_running().' 2>/dev/null | grep -q "$PEER_POD\."; then
+          ok "  ${POD} joined on its own"
+        elif kubectl -n "$ns" exec "$POD" -c rabbitmq -- rabbitmqctl join_cluster "$PEER_ERL" >/dev/null 2>&1; then
+          ok "  joined ${POD} to ${PEER_ERL} explicitly"
+        else
+          bad "  ${POD} is not clustered and would not join ${PEER_ERL}; check its logs"
+        fi
         ;;
       *)
         warn "${ns}/${pvc} is on local-path but is neither CNPG nor RabbitMQ; leaving it. Its owner knows what"
@@ -262,6 +335,25 @@ else
   ok "no replicas recorded on ${NODE}"
 fi
 
+# Longhorn's validating webhook rejects EVERY step here while the manager is still catching up with the
+# replica deletions above ("are being syncing", "remove all replicas first"), so each one is retried rather
+# than attempted once. LAST_ERR keeps the final rejection, because a bare exit code says nothing useful.
+LAST_ERR=""
+lh_retry() {   # lh_retry <what> <kubectl patch args...>
+  local what="$1"; shift
+  local i
+  for i in $(seq 1 "$DISK_RETRIES"); do
+    if LAST_ERR="$(kubectl -n "$LH_NS" patch nodes.longhorn.io "$NODE" "$@" 2>&1)"; then
+      ok "${what} (attempt ${i})"; return 0
+    fi
+    sleep "$DISK_RETRY_SLEEP"
+  done
+  bad "${what}: refused ${DISK_RETRIES} times"
+  warn "  last error: ${LAST_ERR##*: }"
+  return 1
+}
+
+DISK_UUID_BEFORE="$(kubectl -n "$LH_NS" get nodes.longhorn.io "$NODE" -o jsonpath='{range .status.diskStatus.*}{.diskUUID}{end}' 2>/dev/null)"
 DISK_COND="$(kubectl -n "$LH_NS" get nodes.longhorn.io "$NODE" -o jsonpath='{range .status.diskStatus.*}{range .conditions[?(@.type=="Ready")]}{.status}{end}{end}' 2>/dev/null)"
 if [ "$DISK_COND" = "True" ]; then
   ok "the disk record already matches the disk; nothing to reset"
@@ -269,32 +361,55 @@ else
   DKEY="$(kubectl -n "$LH_NS" get nodes.longhorn.io "$NODE" -o go-template='{{range $k,$v := .spec.disks}}{{$k}}{{end}}' 2>/dev/null)"
   SPEC="$(kubectl -n "$LH_NS" get nodes.longhorn.io "$SURVIVOR" -o jsonpath='{.spec.disks}' 2>/dev/null)"
   [ -n "$SPEC" ] || die "could not read ${SURVIVOR}'s disk spec to copy"
+  REMOVED="yes"
   if [ -n "$DKEY" ]; then
-    # The webhook refuses to remove a schedulable disk, so allowScheduling has to land first. And a merge
-    # patch of {"disks":{}} is a no-op, because JSON merge patch only deletes a key set to null.
-    kubectl -n "$LH_NS" patch nodes.longhorn.io "$NODE" --type merge \
-      -p "{\"spec\":{\"disks\":{\"${DKEY}\":{\"allowScheduling\":false}}}}" >/dev/null 2>&1 \
-      && ok "disabled scheduling on ${DKEY}" || bad "could not disable scheduling on ${DKEY}"
-    kubectl -n "$LH_NS" patch nodes.longhorn.io "$NODE" --type json \
-      -p "[{\"op\":\"remove\",\"path\":\"/spec/disks/${DKEY}\"}]" >/dev/null 2>&1 \
-      && ok "removed the stale disk record ${DKEY}" || bad "could not remove ${DKEY}"
+    # allowScheduling has to land first, the webhook will not remove a schedulable disk. And a merge patch of
+    # {"disks":{}} is a no-op, because JSON merge patch only deletes a key set to null.
+    lh_retry "disabled scheduling on ${DKEY}" --type merge \
+      -p "{\"spec\":{\"disks\":{\"${DKEY}\":{\"allowScheduling\":false}}}}"
+    lh_retry "removed the stale disk record ${DKEY}" --type json \
+      -p "[{\"op\":\"remove\",\"path\":\"/spec/disks/${DKEY}\"}]" || REMOVED="no"
   fi
-  ADDED="no"
-  for i in $(seq 1 "$DISK_RETRIES"); do
-    if kubectl -n "$LH_NS" patch nodes.longhorn.io "$NODE" --type merge \
-         -p "{\"spec\":{\"disks\":${SPEC}}}" >/dev/null 2>&1; then
-      ok "re-added the disk from ${SURVIVOR}'s spec (attempt ${i})"; ADDED="yes"; break
-    fi
-    sleep "$DISK_RETRY_SLEEP"   # "spec and status of disks ... are being syncing": the manager is mid-resync
-  done
-  [ "$ADDED" = "yes" ] || bad "the disk re-add was refused ${DISK_RETRIES} times; retry: make recover-node NODE=${NODE}"
+  # Re-adding before the remove landed is worse than doing nothing: the survivor's spec carries
+  # allowScheduling true, so it would re-enable the STALE record and read as success.
+  if [ "$REMOVED" = "yes" ]; then
+    lh_retry "re-added the disk from ${SURVIVOR}'s spec" --type merge -p "{\"spec\":{\"disks\":${SPEC}}}"
+  else
+    warn "not re-adding while ${DKEY} is still there; it would just re-enable the stale record"
+  fi
+fi
+
+# Judge the outcome on the disk, not on whether the patches returned 0: a new UUID with Ready=True is the only
+# thing that means the manager accepted it. Polled, because populating diskStatus after a re-add takes it well
+# past a single check.
+printf '    waiting for the disk to come Ready (up to %ss) ' "$DISK_WAIT"
+deadline=$(( $(date +%s) + DISK_WAIT ))
+while :; do
+  DISK_UUID_AFTER="$(kubectl -n "$LH_NS" get nodes.longhorn.io "$NODE" -o jsonpath='{range .status.diskStatus.*}{.diskUUID}{end}' 2>/dev/null)"
+  DISK_COND="$(kubectl -n "$LH_NS" get nodes.longhorn.io "$NODE" -o jsonpath='{range .status.diskStatus.*}{range .conditions[?(@.type=="Ready")]}{.status}{end}{end}' 2>/dev/null)"
+  [ "$DISK_COND" = "True" ] && [ -n "$DISK_UUID_AFTER" ] && { echo "ready"; break; }
+  [ "$(date +%s)" -ge "$deadline" ] && { echo "TIMEOUT"; break; }
+  printf '.'; sleep "$POLL"
+done
+if [ "$DISK_COND" = "True" ]; then
+  if [ "$DISK_UUID_AFTER" = "$DISK_UUID_BEFORE" ]; then
+    ok "disk Ready on ${NODE}, UUID ${DISK_UUID_AFTER} (unchanged, so it was never stale)"
+  else
+    ok "disk Ready on ${NODE}, UUID ${DISK_UUID_AFTER} (was ${DISK_UUID_BEFORE:-none})"
+  fi
+else
+  bad "${NODE}'s disk is still not Ready (UUID ${DISK_UUID_AFTER:-none}, was ${DISK_UUID_BEFORE:-none})"
+  warn "  Longhorn will not schedule replicas here until it is. Re-run once the manager settles:"
+  warn "    make recover-node NODE=${NODE} YES=1"
 fi
 
 # --- 7. converge ---------------------------------------------------------------------------------------
+# Counts LIVE pods only. A pod whose node died is left behind in phase Failed and never becomes Running, so
+# counting those means waiting for something that cannot happen. They are reported once, at the end, as cruft.
 say "7/7 waiting for things to come back (up to ${SETTLE_WAIT}s)"
 deadline=$(( $(date +%s) + SETTLE_WAIT ))
 while :; do
-  PENDING="$(kubectl get pods -A --no-headers 2>/dev/null | grep -Evc 'Running|Completed')"
+  PENDING="$(kubectl get pods -A --field-selector=status.phase!=Failed --no-headers 2>/dev/null | grep -Evc 'Running|Completed')"
   DEG="$(kubectl -n "$LH_NS" get volumes.longhorn.io -o jsonpath='{range .items[*]}{.status.robustness}{"\n"}{end}' 2>/dev/null | grep -vc '^healthy$')"
   printf '    pods not running: %s   volumes not healthy: %s\n' "${PENDING:-?}" "${DEG:-?}"
   [ "${PENDING:-1}" -eq 0 ] && [ "${DEG:-1}" -eq 0 ] && break
@@ -302,16 +417,23 @@ while :; do
   sleep "$POLL"
 done
 
-DISK_UUID="$(kubectl -n "$LH_NS" get nodes.longhorn.io "$NODE" -o jsonpath='{range .status.diskStatus.*}{.diskUUID}{end}' 2>/dev/null)"
-[ -n "$DISK_UUID" ] && ok "${NODE} Longhorn disk ${DISK_UUID}"
 MCOUNT="$(talosctl -n "$SURVIVOR_IP" -e "$SURVIVOR_IP" etcd members 2>/dev/null | grep -c '^' )"
 [ "${MCOUNT:-0}" -gt 1 ] && ok "etcd has $(( MCOUNT - 1 )) members"
+
+# Pods their node died under. Harmless, but they show up in every `get pods` from here on.
+ORPHANS="$(kubectl get pods -A --field-selector=status.phase=Failed -o jsonpath='{range .items[*]}{.metadata.namespace}/{.metadata.name}{"\n"}{end}' 2>/dev/null | grep -c . )"
 
 cat <<NEXT
 
 Left for you, because neither is mechanical:
   - any SINGLE-INSTANCE CNPG named above: make restore-cnpg
   - re-spread the stateless Deployments once everything is healthy: make rebalance-workloads
+NEXT
+[ "${ORPHANS:-0}" -gt 0 ] && cat <<NEXT
+  - ${ORPHANS} pod(s) left in phase Failed by the outage, which nothing garbage-collects:
+      kubectl delete pods -A --field-selector=status.phase=Failed
+NEXT
+cat <<NEXT
 
 Then walk docs/15_node_recovery.md step 9 to confirm.
 NEXT
