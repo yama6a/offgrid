@@ -37,7 +37,7 @@ MIN_FREE_MEM_MI=700       # per node, before the bench adds ~1.5Gi cluster-wide
 MIN_FREE_LONGHORN_GI=50
 
 # renovate: datasource=docker
-FIO_IMAGE="alpine:3.22"                       # no maintained multi-arch fio image exists; apk add instead
+FIO_IMAGE="alpine:3.24"                       # no maintained multi-arch fio image exists; apk add instead
 # renovate: datasource=docker
 PERFTEST_IMAGE="pivotalrabbitmq/perf-test:2.25.0"   # 2.25.0 is the first line with linux/arm64 manifests
 MQ_IMAGE="rabbitmq:4.3.4-management-alpine"   # matches the live broker (03_rabbitmq values)
