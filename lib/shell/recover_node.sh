@@ -21,6 +21,8 @@ SETTLE_WAIT=300     # secs to wait for a recreated CNPG/RabbitMQ pod to come bac
 DISK_RETRIES=12     # attempts per Longhorn disk patch; its webhook refuses every one while the manager resyncs
 DISK_RETRY_SLEEP=10
 DISK_WAIT=180       # secs for the re-added disk to report a UUID and Ready; it is slower than the patch
+CRASH_RESTARTS=2    # restarts at which a pod is stuck rather than starting, so the settle wait can stop early
+RMQ_RETRIES=6       # attempts for forget_cluster_node / join_cluster; both need the brokers to agree first
 POLL=10
 LH_NS="longhorn-system"
 
@@ -184,6 +186,20 @@ pod_settled() {
   ! kubectl -n "$1" get pod "$2" -o jsonpath='{.status.containerStatuses[*].ready}' 2>/dev/null | grep -q false
 }
 
+# pod_stuck <ns> <pod>: the pod has answered the question the other way. Restarting on a loop is not the same as
+# starting slowly, and after a wipe every consumer on the node is in it, so waiting the full window three times
+# over just to be told what this already says costs a quarter of an hour.
+pod_stuck() {
+  local most
+  most="$(kubectl -n "$1" get pod "$2" \
+          -o jsonpath='{range .status.containerStatuses[*]}{.restartCount}{"\n"}{end}{range .status.initContainerStatuses[*]}{.restartCount}{"\n"}{end}' \
+          2>/dev/null | sort -rn | head -1)"
+  [ "${most:-0}" -ge "$CRASH_RESTARTS" ] || return 1
+  kubectl -n "$1" get pod "$2" \
+    -o jsonpath='{range .status.containerStatuses[*]}{.state.waiting.reason} {end}{range .status.initContainerStatuses[*]}{.state.waiting.reason} {end}' \
+    2>/dev/null | grep -q CrashLoopBackOff
+}
+
 # --- 5. local-path PVCs bound to this node -------------------------------------------------------------
 # The wipe took their contents; the PVC and PV objects survived, still Bound and still node-affine, pointing
 # at an empty directory. No operator will delete a PVC that might hold the last copy of something, so they
@@ -232,6 +248,7 @@ else: print("other\t\t")')"
       SETTLED="no"
       while :; do
         pod_settled "$ns" "$CONSUMER" && { SETTLED="yes"; echo "up"; break; }
+        pod_stuck "$ns" "$CONSUMER" && { echo "crashlooping"; break; }
         [ "$(date +%s)" -ge "$deadline" ] && { echo "no"; break; }
         printf '.'; sleep "$POLL"
       done
@@ -282,34 +299,54 @@ else: print("other\t\t")')"
         # member, and a member that comes back blank is refused. So the wipe only happens if the forget worked.
         kubectl -n "$ns" exec "$POD" -c rabbitmq -- rabbitmqctl stop_app >/dev/null 2>&1 \
           && ok "  stopped the app on ${POD}" || warn "  ${POD} was not reachable to stop (gone with the node?)"
-        kubectl -n "$ns" exec "$PEER_POD" -c rabbitmq -- rabbitmqctl forget_cluster_node "$ERL" >/dev/null 2>&1
-        if rmq_is_member; then
+        # Retried, because the peer refuses while it still believes the broker is running, and it takes a moment
+        # to notice otherwise. Membership is the verdict; forget_cluster_node's own exit code is not enough.
+        FORGOTTEN="no"
+        for i in $(seq 1 "$RMQ_RETRIES"); do
+          rmq_is_member || { FORGOTTEN="yes"; break; }
+          kubectl -n "$ns" exec "$PEER_POD" -c rabbitmq -- rabbitmqctl forget_cluster_node "$ERL" >/dev/null 2>&1
+          rmq_is_member || { FORGOTTEN="yes"; ok "  ${PEER_POD} forgot ${ERL} (attempt ${i})"; break; }
+          sleep "$POLL"
+        done
+        if [ "$FORGOTTEN" != "yes" ]; then
           bad "  ${PEER_POD} still holds ${ERL} as a member; NOT wiping, it could not rejoin"
           warn "  it usually means the peer still sees it running. Stop it, then re-run:"
           warn "    kubectl -n ${ns} exec ${POD} -c rabbitmq -- rabbitmqctl stop_app"
           continue
         fi
         ok "  ${ERL} is no longer a member, safe to wipe"
+        OLD_UID="$(kubectl -n "$ns" get pod "$POD" -o jsonpath='{.metadata.uid}' 2>/dev/null)"
         kubectl -n "$ns" delete pvc "$pvc" --wait=false >/dev/null 2>&1
         kubectl -n "$ns" delete pod "$POD" --wait=false >/dev/null 2>&1
         ok "  deleted ${ns}/${pvc} + pod ${POD}"
-        # Peer discovery auto-clusters onto the LOWEST-ordered broker, so for that one (server-0) a blank start
-        # seeds its own cluster of one and nothing ever pulls it in. An explicit join is deterministic for all
-        # of them, so just always do it once the broker is back up.
-        printf '    waiting for %s to come back (up to %ss) ' "$POD" "$SETTLE_WAIT"
+        # Waits for the REPLACEMENT, by uid and by the absence of a deletionTimestamp. The pod being deleted keeps
+        # reporting phase Running the whole time it terminates, so matching on phase alone lands on the dying one
+        # and every exec below then talks to a container that is going away.
+        printf '    waiting for a fresh %s (up to %ss) ' "$POD" "$SETTLE_WAIT"
         deadline=$(( $(date +%s) + SETTLE_WAIT ))
         while :; do
-          [ "$(kubectl -n "$ns" get pod "$POD" -o jsonpath='{.status.phase}' 2>/dev/null)" = "Running" ] && { echo "up"; break; }
-          [ "$(date +%s)" -ge "$deadline" ] && { echo "no"; break; }
+          NEW_UID="$(kubectl -n "$ns" get pod "$POD" -o jsonpath='{.metadata.uid}' 2>/dev/null)"
+          if [ -n "$NEW_UID" ] && [ "$NEW_UID" != "$OLD_UID" ] \
+             && [ -z "$(kubectl -n "$ns" get pod "$POD" -o jsonpath='{.metadata.deletionTimestamp}' 2>/dev/null)" ] \
+             && [ "$(kubectl -n "$ns" get pod "$POD" -o jsonpath='{.status.phase}' 2>/dev/null)" = "Running" ]; then
+            echo "up"; break
+          fi
+          [ "$(date +%s)" -ge "$deadline" ] && { echo "TIMEOUT"; break; }
           printf '.'; sleep "$POLL"
         done
-        if kubectl -n "$ns" exec "$POD" -c rabbitmq -- rabbitmqctl eval 'rabbit_nodes:list_running().' 2>/dev/null | grep -q "$PEER_POD\."; then
-          ok "  ${POD} joined on its own"
-        elif kubectl -n "$ns" exec "$POD" -c rabbitmq -- rabbitmqctl join_cluster "$PEER_ERL" >/dev/null 2>&1; then
-          ok "  joined ${POD} to ${PEER_ERL} explicitly"
-        else
-          bad "  ${POD} is not clustered and would not join ${PEER_ERL}; check its logs"
-        fi
+        # Peer discovery auto-clusters onto the LOWEST-ordered broker, so for that one (server-0) a blank start
+        # seeds its own cluster of one and nothing ever pulls it in. An explicit join is deterministic for all of
+        # them. Retried because Running is not booted: rabbitmqctl refuses until the app is up.
+        JOINED="no"
+        for i in $(seq 1 "$RMQ_RETRIES"); do
+          if kubectl -n "$ns" exec "$POD" -c rabbitmq -- rabbitmqctl eval 'rabbit_nodes:list_running().' 2>/dev/null | grep -q "$PEER_POD\."; then
+            JOINED="yes"; ok "  ${POD} is clustered with ${PEER_POD}"; break
+          fi
+          kubectl -n "$ns" exec "$POD" -c rabbitmq -- rabbitmqctl join_cluster "$PEER_ERL" >/dev/null 2>&1 \
+            && { JOINED="yes"; ok "  joined ${POD} to ${PEER_ERL} explicitly (attempt ${i})"; break; }
+          sleep "$POLL"
+        done
+        [ "$JOINED" = "yes" ] || bad "  ${POD} would not cluster with ${PEER_ERL}; check: kubectl -n ${ns} logs ${POD} -c rabbitmq"
         ;;
       *)
         warn "${ns}/${pvc} is on local-path but is neither CNPG nor RabbitMQ; leaving it. Its owner knows what"
