@@ -295,9 +295,26 @@ kubectl -n rabbitmq delete pvc persistence-rabbitmq-server-0
 kubectl -n rabbitmq delete pod rabbitmq-server-0
 ```
 
-`forget_cluster_node` needs the target stopped, which is what `stop_app` is for. It rejoins as a NEW member,
-Ready in about 90s, and the quorum queues take it back on their own via periodic membership reconciliation, so
-there is no `grow` to run.
+`forget_cluster_node` needs the target stopped, which is what `stop_app` is for. Check it actually took, because
+a peer that still thinks the broker is running refuses and says nothing useful:
+
+```bash
+kubectl -n rabbitmq exec rabbitmq-server-1 -c rabbitmq -- rabbitmqctl eval 'ra:members({rabbitmq_metadata, node()}).'
+```
+
+If the broker is still listed, do NOT wipe it. Wiping a member the survivors still hold is the whole problem.
+
+Once it is out and the PVC is gone, the replacement comes up blank and, for `rabbitmq-server-0`, sits in a
+cluster of its own: peer discovery auto-clusters onto the lowest-ordered broker, which for that one is itself.
+Join it by hand rather than hoping. This is safe and a no-op if it already joined:
+
+```bash
+kubectl -n rabbitmq exec rabbitmq-server-0 -c rabbitmq -- \
+  rabbitmqctl join_cluster rabbit@rabbitmq-server-1.rabbitmq-nodes.rabbitmq
+```
+
+Ready in about 90s after that, and the quorum queues take the member back on their own via periodic membership
+reconciliation, so there is no `grow` to run.
 
 Skipping the forget sometimes works anyway: an empty log is something the leader can repair by shipping a
 snapshot. Do not rely on it. It fails outright for the lowest-ordered broker, below.
@@ -331,7 +348,14 @@ divergent history of its own rather than an empty log, which is the case no snap
 server-2 auto-cluster ONTO server-0, so they only ever arrive empty, which is the recoverable case.
 
 The fix is the same forget, just after the fact: `stop_app`, `forget_cluster_node` from a peer, then delete the
-PVC and pod AGAIN. Confirm the member came back:
+PVC and pod AGAIN, then `join_cluster`.
+
+The other end of the same problem looks almost identical: the broker is out of the membership and standalone,
+because it WAS forgotten and then never rejoined. Same symptom from the returning node (`list_running` shows
+only itself), but the peer's `ra:members` does NOT list it. That one needs no wipe at all, only the
+`join_cluster` above.
+
+Either way, confirm the member came back:
 
 ```bash
 kubectl -n rabbitmq exec rabbitmq-server-1 -c rabbitmq -- rabbitmq-queues quorum_status --vhost apps <queue>
