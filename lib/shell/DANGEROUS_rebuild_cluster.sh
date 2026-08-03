@@ -4,8 +4,8 @@
 # Sequence:
 #   0. git add/commit/push             : ArgoCD deploys the REMOTE repo, not your laptop, so sync it first
 #   1. DANGEROUS_reset_talos_cluster.sh: wipe STATE+EPHEMERAL+u-longhorn+u-localpath, reboot to maintenance
-#   2. 03d_talos_cluster_config.sh     : wait for maintenance, apply config, bootstrap etcd
-#   3. 03e_nic_hardening.sh            : NIC hardening
+#   2. 03c_talos_cluster_config.sh     : wait for maintenance, apply config, bootstrap etcd
+#   3. 03d_nic_hardening.sh            : NIC hardening
 #   4. 04_cilium.sh                    : CNI + prometheus-operator CRDs + LB-IPAM/L2 + Hubble
 #   5. git add/commit/push             : 04 wrote the LB range into the chart values; 05 refuses a dirty argo_apps/
 #   6. 05_argocd.sh                    : bootstrap ArgoCD, which then deploys everything else from git
@@ -24,7 +24,7 @@
 # about-to-be-wiped cluster's key. Back up DELIBERATELY beforehand so step 7 has something to restore. With
 # no backup, step 7 fails cleanly and you re-seal instead.
 #
-# Skips 03a/03b/03c: a reset keeps BOOT/EFI/META, so the OS is already on the NVMe and 03d waits for
+# Skips 03a/03b: a reset keeps BOOT/EFI/META, so the OS is already on the NVMe and 03c waits for
 # maintenance itself. Steps 0-6 abort on the first failure; 7 onwards are best-effort.
 #
 # Needs Docker (host networking), git, kubectl.
@@ -59,7 +59,7 @@ cat <<EOF
 This will DESTROY and REBUILD the entire Talos cluster:
   nodes : ${IPS[*]}
   wipe  : STATE + EPHEMERAL + u-longhorn + u-localpath  (ALL k8s state AND all Longhorn + local-path data, gone for good)
-  flow  : commit+push -> reset -> 03d -> 03e -> 04 -> commit+push -> 05 -> restore sealed-secrets key -> WIPE S3 backups -> seed ntfy
+  flow  : commit+push -> reset -> 03c -> 03d -> 04 -> commit+push -> 05 -> restore sealed-secrets key -> WIPE S3 backups -> seed ntfy
           (ArgoCD then redeploys cilium/cert-manager/longhorn/gateway/SSO/monitoring from git)
   note  : FULL fresh start, wipes local CNPG data AND the S3 backups. The DBs come back EMPTY. If you want
           the old data, restore from S3 BEFORE rebuilding (make restore-cnpg); a rebuild discards it.
@@ -87,8 +87,8 @@ step "reset to maintenance (DANGEROUS_reset_talos_cluster.sh)"
 printf 'YES\n' | REBUILD_IN_PROGRESS=1 bash "$RESET" || die "reset failed"
 ok "reset issued"
 
-run_step "waits for maintenance, applies config, bootstraps etcd" "$STEP_DIR" 03d_talos_cluster_config.sh
-run_step "NIC hardening (EEE/watchdog)"                            "$STEP_DIR" 03e_nic_hardening.sh
+run_step "waits for maintenance, applies config, bootstraps etcd" "$STEP_DIR" 03c_talos_cluster_config.sh
+run_step "NIC hardening (EEE/watchdog)"                            "$STEP_DIR" 03d_nic_hardening.sh
 run_step "CNI + monitoring CRDs + LB/L2 + Hubble"                 "$STEP_DIR" 04_cilium.sh
 
 # 04_cilium writes the .env LB-IPAM range into 00_cilium's values.yaml, AFTER the commit above, and 05 refuses
@@ -133,7 +133,7 @@ fi
 # against this rebuild's pushed commit + the STEP-7 key restore right away (the webhook isn't up yet, the poll
 # is 300s), and nudges any straggler to Synced+Healthy. Settle first so the platform has created its apps.
 # Best-effort; never fails the rebuild. See 05_gitops.md.
-export KUBECONFIG="$KUBECONFIG_FILE"           # 03d regenerated it above; needed by converge_argocd_apps
+export KUBECONFIG="$KUBECONFIG_FILE"           # 03c regenerated it above; needed by converge_argocd_apps
 step "let ArgoCD settle ${CONVERGE_SETTLE}s, then converge all apps to Synced+Healthy (backstop, up to ${CONVERGE_WAIT}s)"
 sleep "$CONVERGE_SETTLE"
 converge_argocd_apps "$CONVERGE_WAIT" || true

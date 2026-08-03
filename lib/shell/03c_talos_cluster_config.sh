@@ -1,5 +1,5 @@
 #!/usr/bin/env bash
-# Brings up the Talos control-plane cluster from NVMes already flashed (03b) and booted into maintenance at
+# Brings up the Talos control-plane cluster from NVMes already flashed (03a) and booted into maintenance at
 # their router-reserved IPs. Generated configs land in secrets/, which the talosctl container mounts as
 # /work so every call sees the same files.
 #
@@ -48,8 +48,8 @@ for i in "${!IPS[@]}"; do echo "  ${HOSTNAMES[$i]}  ->  ${IPS[$i]}"; done
 echo "Output:   ${OUTDIR}"
 
 # Bakes a machine.registries auth into the CP patch, so the kubelet authenticates EVERY pull from GHCR on
-# every node, with no per-namespace imagePullSecrets. It is the read:packages PULL token, NOT the
-# write:packages one 03a uses, so a compromised node cannot push. It lands only in the gitignored
+# every node, with no per-namespace imagePullSecrets. It is a read:packages PULL token for YOUR private
+# images; the Talos image package is public and needs none. It lands only in the gitignored
 # secrets dir, never in git. Empty means no auth block, which is fine if every image is public.
 # GitHub Packages only authenticates with a CLASSIC token.
 echo
@@ -192,7 +192,7 @@ cat "${TALOS_SCRATCH}/volumes.yaml" >> "${TALOS_SCRATCH}/cp.yaml"
 #     yet. A maintenance node answers --insecure; a CONFIGURED one does not (and a freshly-reset node
 #     can't boot configured, STATE is wiped), so this check is never fooled by the pre-reset instance:
 #     it blocks until the node is genuinely back in maintenance. nc gates the call so we don't hang on a
-#     node mid-reboot. On a first install (straight off 03b) the nodes are already in maintenance, so
+#     node mid-reboot. On a first install (straight off 03a) the nodes are already in maintenance, so
 #     this returns immediately.
 say "waiting for nodes in maintenance (up to 5 min each)..."
 for i in "${TARGETS[@]}"; do

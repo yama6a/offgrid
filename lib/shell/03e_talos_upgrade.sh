@@ -1,11 +1,12 @@
 #!/usr/bin/env bash
-# Rolling, in-place upgrade of the running Talos cluster to the installer image 03a published to GHCR.
+# Rolling, in-place upgrade of the running Talos cluster to the installer image of the release pinned by
+# TALOS_IMAGE_RELEASE in versions.env (built by github.com/yama6a/talos-raspberry-pi5).
 # No reflash: Talos upgrades are atomic A/B with rollback, and talosctl refuses to proceed if a reboot would
 # break etcd quorum.
 # We CORDON + DRAIN each node ourselves before `talosctl upgrade`, so Talos's own in-upgrade drain finds an
 # empty node and cannot hang on a PDB or a slow-terminating pod. A Longhorn volume-health gate runs first, so
 # we never reboot a node holding a volume's last healthy replica.
-# This upgrades the OS ONLY. Kubernetes is a separate, no-reboot roll: 03g. If both changed, run 03f then 03g.
+# This upgrades the OS ONLY. Kubernetes is a separate, no-reboot roll: 03f. If both changed, run 03e then 03f.
 # Re-run-safe: a node already on the target image is a clean no-op, so a re-run resumes.
 set -euo pipefail
 
@@ -27,7 +28,7 @@ FORCE_GRACE=20              # secs: grace-period on the force-delete of straggle
 
 require docker kubectl
 docker info >/dev/null 2>&1 || die "docker not responding (start Rancher/Docker Desktop)"
-[ -f "${CLUSTER_DIR}/talosconfig" ] || die "missing ${CLUSTER_DIR}/talosconfig, run step 03 (03d) first"
+[ -f "${CLUSTER_DIR}/talosconfig" ] || die "missing ${CLUSTER_DIR}/talosconfig, run step 03 (03c) first"
 use_kubeconfig                                    # KUBECONFIG from secrets/ (native kubectl drives the drain)
 assert_api                                        # kubectl must reach the API before we start rebooting
 
@@ -153,10 +154,10 @@ for ip in "${IPS[@]}"; do
   DRAINING_NODE=""
 done
 
-bash "${SCRIPT_DIR}/03h_rebalance_workloads.sh" \
+bash "${SCRIPT_DIR}/03g_rebalance_workloads.sh" \
   || warn "rebalance had failures (the upgrade itself succeeded); re-run: make rebalance-workloads"
 
 say "ROLLING UPGRADE COMPLETE"
 echo "   image:  ${INSTALLER_REF}"
 echo "   verify: talosctl version   (server tag on every node)   /   kubectl get nodes"
-echo "   note:   this did NOT change the k8s version; for that run 03g_k8s_upgrade.sh"
+echo "   note:   this did NOT change the k8s version; for that run 03f_k8s_upgrade.sh"

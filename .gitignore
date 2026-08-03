@@ -2,14 +2,16 @@
 # git. Copy the committed template and edit:  cp .env.example .env  (the version recipe is the COMMITTED
 # versions.env is deliberately NOT ignored; only bare `.env` is, so `.env.example`/`versions.env` are tracked.)
 .env
+.env.bak
+.env.bak.*
 
 # Live cluster credentials (talosconfig, kubeconfig, secrets.yaml, sealed-secrets master key), written by
-# 03d into `secrets/`, which is a symlink to an off-repo store (a synced drive). Never commit the symlink
+# 03c into `secrets/`, which is a symlink to an off-repo store (a synced drive). Never commit the symlink
 # or anything it points at: the creds live and are backed up outside the repo.
 /secrets
 
-# Build scratch + output for the step-03 image build (03a writes, 03b reads): talos-builder checkouts,
-# kernel tarball, staged image. Can grow to >100 GB; never commit it.
+# Downloaded Talos image releases (03a caches one .raw.xz + its decompressed copy per release tag) and other
+# scratch. A few hundred MB per release; never commit it.
 /.cache/
 
 # Vendored Helm dependency blobs. `helm dependency build` pulls each chart's deps into its own charts/ dir;

@@ -26,7 +26,7 @@ NODES=(); for e in "${CLUSTER_NODES[@]}"; do NODES+=("${e##*:}"); done
 # pipeline's exit code is sed's, not talosctl's, so PIPESTATUS[0] is how we still see whether talosctl failed.
 #
 # --system-labels-to-wipe takes partition labels resolved against each node's VolumeStatus, not a fixed set.
-# Wiping the two user volumes here is what guarantees no orphaned replica or DB data survives; 03d re-creates
+# Wiping the two user volumes here is what guarantees no orphaned replica or DB data survives; 03c re-creates
 # those partitions on the next config apply.
 say "resetting ${#NODES[@]} nodes in parallel (STATE,EPHEMERAL,u-longhorn,u-localpath) -> maintenance"
 pids=()

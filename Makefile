@@ -22,42 +22,38 @@ rebuild-cluster: ## DANGER: wipe a RUNNING cluster and rebuild end-to-end (resto
 reset-cluster: ## DANGER: wipe all nodes (STATE + EPHEMERAL + Longhorn) back to maintenance.
 	bash lib/shell/DANGEROUS_reset_talos_cluster.sh
 
-##@ Node image & Talos bring-up  (step 02-03; image work runs in Docker)
+##@ Node image & Talos bring-up  (step 02-03; the talos steps run their tooling in Docker)
 .PHONY: build-eeprom-card
 build-eeprom-card: ## 02: build a reusable SD card that flashes the Pi 5 EEPROM (boot order / PCIe probe).
 	bash lib/shell/02_raspi_eeprom.sh
 
-.PHONY: build-talos-image
-build-talos-image: ## 03a: build (and optionally publish) the custom Pi 5 Talos installer image.
-	bash lib/shell/03a_talos_image_builder.sh
-
 .PHONY: flash-talos-nvme
-flash-talos-nvme: ## 03b: write the built Talos image to an NVMe SSD over USB (once per drive).
-	bash lib/shell/03b_talos_image_flasher.sh
+flash-talos-nvme: ## 03a: download the pinned Talos Pi 5 image release and write it to an NVMe SSD over USB.
+	bash lib/shell/03a_talos_image_flasher.sh
 
 .PHONY: verify-talos-boot
-verify-talos-boot: ## 03c: verify freshly-flashed nodes boot into maintenance mode.
-	bash lib/shell/03c_talos_boot_verify.sh
+verify-talos-boot: ## 03b: verify freshly-flashed nodes boot into maintenance mode.
+	bash lib/shell/03b_talos_boot_verify.sh
 
 .PHONY: configure-talos
-configure-talos: ## 03d: generate + apply machine config, bootstrap etcd, write kube/talosconfig.
-	bash lib/shell/03d_talos_cluster_config.sh
+configure-talos: ## 03c: generate + apply machine config, bootstrap etcd, write kube/talosconfig.
+	bash lib/shell/03c_talos_cluster_config.sh
 
 .PHONY: harden-nics
-harden-nics: ## 03e: apply NIC hardening (disable EEE / watchdog) to every node.
-	bash lib/shell/03e_nic_hardening.sh
+harden-nics: ## 03d: apply NIC hardening (disable EEE / watchdog) to every node.
+	bash lib/shell/03d_nic_hardening.sh
 
 .PHONY: upgrade-talos
-upgrade-talos: ## 03f: rolling in-place upgrade of the Talos OS to the pinned installer image.
-	bash lib/shell/03f_talos_upgrade.sh
+upgrade-talos: ## 03e: rolling in-place upgrade of the Talos OS to the pinned installer image.
+	bash lib/shell/03e_talos_upgrade.sh
 
 .PHONY: upgrade-k8s
-upgrade-k8s: ## 03g: rolling in-place upgrade of Kubernetes to the pinned version.
-	bash lib/shell/03g_k8s_upgrade.sh
+upgrade-k8s: ## 03f: rolling in-place upgrade of Kubernetes to the pinned version.
+	bash lib/shell/03f_k8s_upgrade.sh
 
 .PHONY: rebalance-workloads
-rebalance-workloads: ## 03h: rolling-restart the stateless Deployments so the scheduler re-spreads them (03f runs this).
-	bash lib/shell/03h_rebalance_workloads.sh
+rebalance-workloads: ## 03g: rolling-restart the stateless Deployments so the scheduler re-spreads them (03e runs this).
+	bash lib/shell/03g_rebalance_workloads.sh
 
 .PHONY: recover-node
 recover-node: ## 15: rejoin ONE wiped/replaced node and fix what does not self-heal. NODE=<hostname>, add YES=1 to skip the prompt.
@@ -152,7 +148,7 @@ restore-vm: ## Restore VictoriaMetrics/Logs from an S3 export: stream it into th
 fix-chart-locks: ## Regenerate any stale Chart.lock (out of sync with Chart.yaml) across all charts; no git.
 	bash lib/shell/fix_chart_locks.sh
 
-##@ Health & inspection  (read-only; use the dockerized talosctl + the 03d kubeconfig)
+##@ Health & inspection  (read-only; use the dockerized talosctl + the 03c kubeconfig)
 .PHONY: check-health
 check-health: ## Talos: wait for and report overall cluster health.
 	@bash -c 'source lib/shell/common.sh && talosctl health'
@@ -162,7 +158,7 @@ talosctl: ## Run dockerized talosctl, e.g. `make talosctl get members`. Any FLAG
 	@bash -c 'source lib/shell/common.sh && talosctl $(filter-out $@,$(MAKECMDGOALS))'
 
 .PHONY: print-kubeconfig
-print-kubeconfig: ## Print the 03d kubeconfig export line (eval it to point your kubectl at the cluster).
+print-kubeconfig: ## Print the 03c kubeconfig export line (eval it to point your kubectl at the cluster).
 	@bash -c 'source lib/shell/common.sh && echo "export KUBECONFIG=$$CLUSTER_DIR/kubeconfig"'
 
 .PHONY: view-credentials

@@ -58,8 +58,8 @@ feat_fixed()  { grep -qE "^[[:space:]]*$2:[[:space:]]+(on|off)[[:space:]]+\[fixe
 say "checking prerequisites"
 require docker
 docker info >/dev/null 2>&1 || die "docker not responding (start Rancher/Docker Desktop)"
-[ -f "${OUTDIR}/talosconfig" ] || die "missing ${OUTDIR}/talosconfig, run 03d first"
-[ -f "${OUTDIR}/kubeconfig" ]  || die "missing ${OUTDIR}/kubeconfig, run 03d first"
+[ -f "${OUTDIR}/talosconfig" ] || die "missing ${OUTDIR}/talosconfig, run 03c first"
+[ -f "${OUTDIR}/kubeconfig" ]  || die "missing ${OUTDIR}/kubeconfig, run 03c first"
 
 say "discovering nodes"
 ENDPOINTS="$(talosctl config info 2>/dev/null | awk -F: '/^Endpoints/{print $2}' | tr ',' ' ')"

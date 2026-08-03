@@ -41,4 +41,4 @@ order, hence the custom card.
 2. Fast green LED blink, green screen on HDMI: success. Red plus a blink code: failure.
 3. Power off, pull the card, next board.
 
-Then flash the OS image to each NVMe over the USB adapter (03b), slot it in, and boot.
+Then flash the OS image to each NVMe over the USB adapter (03a), slot it in, and boot.

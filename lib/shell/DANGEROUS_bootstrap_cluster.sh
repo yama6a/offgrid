@@ -1,15 +1,15 @@
 #!/usr/bin/env bash
-# One-shot orchestrator for a FIRST-TIME cluster init. Assumes freshly-flashed nodes (03a/03b done) sitting
+# One-shot orchestrator for a FIRST-TIME cluster init. Assumes freshly-flashed nodes (03a done) sitting
 # in MAINTENANCE mode, and takes them to a fully delivered cluster. One confirmation up front,
 # non-interactive after that. To re-initialize a RUNNING cluster use DANGEROUS_rebuild_cluster.sh instead.
 #
 # Sequence (STEP N/23):
 #   1. maintenance preflight        : every node must answer the INSECURE API, fast-fail if any is already
 #                                      configured (that is a rebuild, not a bootstrap)
-#   2. 03c_talos_boot_verify.sh     : deep per-node verify, a hard gate BEFORE we archive creds or mint PKI
-#   3. archive local creds          : move the old secrets into secrets/backup_<ts>/ so 03d mints a NEW PKI
-#   4. 03d_talos_cluster_config.sh  : generate fresh config, apply, bootstrap etcd, write kube/talosconfig
-#   5. 03e_nic_hardening.sh         : NIC hardening
+#   2. 03b_talos_boot_verify.sh     : deep per-node verify, a hard gate BEFORE we archive creds or mint PKI
+#   3. archive local creds          : move the old secrets into secrets/backup_<ts>/ so 03c mints a NEW PKI
+#   4. 03c_talos_cluster_config.sh  : generate fresh config, apply, bootstrap etcd, write kube/talosconfig
+#   5. 03d_nic_hardening.sh         : NIC hardening
 #   6. 04_cilium.sh                 : CNI + prometheus-operator CRDs + LB-IPAM/L2 + Hubble
 #   7. 07_gateway.sh                : write LE_EMAIL + Cloudflare zones into the chart values
 #   8. git add/commit/push          : 05 refuses a dirty argo_apps/ tree; ArgoCD deploys the REMOTE
@@ -35,7 +35,7 @@
 #
 # Steps 1-10 abort on the first failure with a resume hint; 11-23 are best-effort, so a slow ArgoCD never
 # wedges the run.
-# Archiving secrets.yaml makes 03d mint a NEW Talos CA, so the archived talosconfig and kubeconfig stop
+# Archiving secrets.yaml makes 03c mint a NEW Talos CA, so the archived talosconfig and kubeconfig stop
 # working. That is intended for a genuine from-scratch init.
 #
 # Needs Docker (host networking), git, kubectl, helm, yq, kubeseal.
@@ -60,7 +60,7 @@ COMMIT_MSG_SEAL="bootstrap: re-seal SSO + argocd webhook secrets + CNPG/Redis S3
 
 require docker git kubectl helm yq kubeseal
 docker info >/dev/null 2>&1 || die "docker not responding (start Rancher/Docker Desktop)"
-[ -f "${STEP_DIR}/03d_talos_cluster_config.sh" ] || die "missing 03d, run from the repo root"
+[ -f "${STEP_DIR}/03c_talos_cluster_config.sh" ] || die "missing 03c, run from the repo root"
 IPS=(); for e in "${CLUSTER_NODES[@]}"; do IPS+=("${e##*:}"); done
 [ "${#IPS[@]}" -gt 0 ] || die "no nodes set, edit CLUSTER_NODES in .env"
 
@@ -68,12 +68,12 @@ cat <<EOF
 
 This will BOOTSTRAP a FIRST-TIME Talos cluster on freshly-flashed nodes:
   nodes   : ${IPS[*]}
-  archive : secrets.yaml + kubeconfig + talosconfig + sealed-secrets-master.key (+ 03d scratch)
-            -> secrets/backup_<timestamp>/   (03d then mints a NEW Talos CA; the old creds stop working)
-  flow    : preflight -> 03c verify -> archive -> 03d -> 03e -> 04 -> 07_gateway -> commit/push -> 05 (ArgoCD)
+  archive : secrets.yaml + kubeconfig + talosconfig + sealed-secrets-master.key (+ 03c scratch)
+            -> secrets/backup_<timestamp>/   (03c then mints a NEW Talos CA; the old creds stop working)
+  flow    : preflight -> 03b verify -> archive -> 03c -> 03d -> 04 -> 07_gateway -> commit/push -> 05 (ArgoCD)
             -> re-seal SSO -> commit/push -> converge -> seed ntfy -> back up the new key -> verify ingress
 
-Requires nodes in MAINTENANCE mode (03a/03b done; 03c boot-verify is run for you below). To re-initialize
+Requires nodes in MAINTENANCE mode (03a done; 03b boot-verify is run for you below). To re-initialize
 a RUNNING cluster instead, abort and use DANGEROUS_rebuild_cluster.sh (it wipes first).
 EOF
 read -r -p ">> type BOOTSTRAP to proceed: " ans
@@ -82,7 +82,7 @@ read -r -p ">> type BOOTSTRAP to proceed: " ans
 say "pulling ghcr.io/siderolabs/talosctl:${TALOSCTL_VERSION} (first run only)"
 docker pull -q "ghcr.io/siderolabs/talosctl:${TALOSCTL_VERSION}" >/dev/null 2>&1 || true
 
-# A maintenance node answers the INSECURE API; a CONFIGURED one does NOT (see 03d). So requiring the
+# A maintenance node answers the INSECURE API; a CONFIGURED one does NOT (see 03c). So requiring the
 # insecure `version` to succeed proves the node is fresh-in-maintenance, not already running a cluster.
 # --insecure needs no talosconfig, so this works even though we're about to archive it.
 step "checking every node is in MAINTENANCE mode (fresh-init preflight)"
@@ -91,23 +91,23 @@ for ip in "${IPS[@]}"; do
   deadline=$(( $(date +%s) + MAINT_TIMEOUT ))
   until nc -z -G2 "$ip" "$API_PORT" >/dev/null 2>&1 && talosctl -e "$ip" -n "$ip" version --insecure >/dev/null 2>&1; do
     [ "$(date +%s)" -lt "$deadline" ] || { echo "NOT IN MAINTENANCE"; \
-      die "${ip} is not answering the maintenance API within ${MAINT_TIMEOUT}s. Bootstrap needs freshly-flashed nodes in maintenance mode (03b/03c). If this is a RUNNING cluster, use DANGEROUS_rebuild_cluster.sh to wipe first."; }
+      die "${ip} is not answering the maintenance API within ${MAINT_TIMEOUT}s. Bootstrap needs freshly-flashed nodes in maintenance mode (03a/03b). If this is a RUNNING cluster, use DANGEROUS_rebuild_cluster.sh to wipe first."; }
     printf '.'; sleep 3
   done
   echo "maintenance"
 done
 ok "all nodes in maintenance"
 
-# STEP 1 only proves the maintenance API answers. 03c additionally asserts each node booted OUR image
+# STEP 1 only proves the maintenance API answers. 03b additionally asserts each node booted OUR image
 # (Talos version + rpi5 overlay in the kernel cmdline), sees its NVMe, and has its wired NIC: exactly the
-# failure modes that would otherwise surface confusingly deep inside 03d/04. It's a one-shot snapshot (no
-# wait of its own), which is why STEP 1's maintenance poll runs first. Fatal run_step: 03c exits non-zero
+# failure modes that would otherwise surface confusingly deep inside 03c/04. It's a one-shot snapshot (no
+# wait of its own), which is why STEP 1's maintenance poll runs first. Fatal run_step: 03b exits non-zero
 # on any FAIL, so we die here, before archiving creds / minting fresh PKI, rather than proceed on a bad node.
-run_step "boot-verify every node (our image/NIC/NVMe/overlay)" "$STEP_DIR" 03c_talos_boot_verify.sh
+run_step "boot-verify every node (our image/NIC/NVMe/overlay)" "$STEP_DIR" 03b_talos_boot_verify.sh
 
-# Clears secrets/ of every file holding PKI so 03d generates a FRESH secrets.yaml, and with it a new CA. Moves EVERY file present (incl. dotfiles like a stray .env.other-secrets) into the dated backup,
-# so nothing lingers to make 03d reuse the old identity, and there is no fixed allowlist to keep in sync now that
-# 03d/03e's render scratch lives in an OS temp dir, not here. Skips DIRECTORIES (so prior backup_<ts>/ dirs
+# Clears secrets/ of every file holding PKI so 03c generates a FRESH secrets.yaml, and with it a new CA. Moves EVERY file present (incl. dotfiles like a stray .env.other-secrets) into the dated backup,
+# so nothing lingers to make 03c reuse the old identity, and there is no fixed allowlist to keep in sync now that
+# 03c/03d's render scratch lives in an OS temp dir, not here. Skips DIRECTORIES (so prior backup_<ts>/ dirs
 # are never re-nested into the new one) and .DS_Store (macOS noise, not a cred).
 TS="$(date +%Y%m%d-%H%M%S)"
 BACKUP_SUBDIR="${CLUSTER_DIR}/backup_${TS}"
@@ -123,8 +123,8 @@ for path in "${CLUSTER_DIR}"/* "${CLUSTER_DIR}"/.[!.]*; do
 done
 if [ "$moved" -gt 0 ]; then ok "archived ${moved} file(s)"; else rmdir "$BACKUP_SUBDIR" 2>/dev/null; ok "nothing to archive (already a clean start)"; fi
 
-run_step "fresh PKI, apply config, bootstrap etcd" "$STEP_DIR" 03d_talos_cluster_config.sh
-run_step "NIC hardening (EEE/watchdog)"            "$STEP_DIR" 03e_nic_hardening.sh
+run_step "fresh PKI, apply config, bootstrap etcd" "$STEP_DIR" 03c_talos_cluster_config.sh
+run_step "NIC hardening (EEE/watchdog)"            "$STEP_DIR" 03d_nic_hardening.sh
 
 run_step "CNI + monitoring CRDs + LB/L2 + Hubble" "$STEP_DIR" 04_cilium.sh
 

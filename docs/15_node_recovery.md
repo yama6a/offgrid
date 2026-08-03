@@ -84,11 +84,11 @@ point: that is for creating a cluster, not joining one.
    make talosctl -- -n 192.168.10.203 version --insecure
    ```
 
-5. Apply that node's machine config. `03d` re-renders from the durable `secrets/secrets.yaml`, so PKI is
+5. Apply that node's machine config. `03c` re-renders from the durable `secrets/secrets.yaml`, so PKI is
    preserved. Give it a hostname and it applies to that node alone and skips the etcd bootstrap:
 
    ```bash
-   bash lib/shell/03d_talos_cluster_config.sh pi-cp3
+   bash lib/shell/03c_talos_cluster_config.sh pi-cp3
    ```
 
    Only the apply and its two waits narrow to the one node. certSANs and the `secrets/talosconfig` endpoints
@@ -376,7 +376,7 @@ make talosctl -- -n 192.168.10.201 etcd remove-member <id>  # etcd
 kubectl delete node pi-cp3                                 # kubernetes
 ```
 
-Then remove it from `CLUSTER_NODES` in `.env`, so `03c` to `03f` stop targeting it.
+Then remove it from `CLUSTER_NODES` in `.env`, so `03b` to `03e` stop targeting it.
 
 What this costs, on a 3-node cluster:
 

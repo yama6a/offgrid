@@ -366,7 +366,7 @@ The security gain of the secure path is marginal here. It is a pod-to-kubelet ho
 NIC-hardened L2 (see [03_operating_system.md](03_operating_system.md)), and the connection is encrypted either
 way. Only the cert identity goes unchecked, so we take the one-flag, zero-OS-change route.
 
-The secure-path upgrade stays open. To drop the flag: add `rotate-server-certificates: true` to 03d's
+The secure-path upgrade stays open. To drop the flag: add `rotate-server-certificates: true` to 03c's
 `cp-patch.yaml` and re-apply to all three nodes, add a CSR-approver platform app (Kubernetes never auto-approves
 `kubernetes.io/kubelet-serving` CSRs, and the Talos-documented `alex1989hu/...` ships raw kustomize which breaks
 the wrapper-chart convention, so the Helm-native `postfinance/kubelet-csr-approver` with SAN and IP-regex config
@@ -405,7 +405,7 @@ read the table, hand-edit the relevant chart `values.yaml`.
 
 It also matches the repo's tooling conventions. KRR runs dockerized like `talosctl()`, reaching the metrics store
 over the same documented break-glass port-forward that `05_victoria_metrics_k8s_stack` already advertises, and the
-kube API via the 03d kubeconfig. It reuses `MONITORING_NS` and adds no cluster workload, no ArgoCD app and no SSO
+kube API via the 03c kubeconfig. It reuses `MONITORING_NS` and adds no cluster workload, no ArgoCD app and no SSO
 host.
 
 ### The `conservative` strategy

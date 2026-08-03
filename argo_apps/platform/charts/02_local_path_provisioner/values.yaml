@@ -12,7 +12,7 @@ helperImage:
   repository: docker.io/library/busybox
   tag: "1.38"
 
-# The dedicated XFS volume 03d mounts. Node-local: every node uses this path for its OWN disk, not a share.
+# The dedicated XFS volume 03c mounts. Node-local: every node uses this path for its OWN disk, not a share.
 dataPath: /var/mnt/localpath
 
 # Neither is the cluster default, Longhorn is; a consumer opts in by name. WaitForFirstConsumer is mandatory

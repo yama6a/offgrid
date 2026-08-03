@@ -13,7 +13,7 @@ eeeReassertEachCycle: false
 ssKillFilter: "dport = :6443" # post-recovery socket drop, so kubelet reconnects to the VIP cleanly
 
 # Every node here IS control-plane, so a node-role.kubernetes.io/control-plane:DoesNotExist selector would match
-# zero nodes. 03d stamps instance-type via Talos machine.nodeLabels.
+# zero nodes. 03c stamps instance-type via Talos machine.nodeLabels.
 nodeSelector:
   node.kubernetes.io/instance-type: rpi5
 

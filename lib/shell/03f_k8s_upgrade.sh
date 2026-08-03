@@ -1,9 +1,9 @@
 #!/usr/bin/env bash
 # Rolling, in-place upgrade of the cluster's KUBERNETES version to KUBERNETES_VERSION, via
-# `talosctl upgrade-k8s`. The counterpart to 03f, which upgrades the OS; the two are independent, so bumping
-# only KUBERNETES_VERSION means running THIS, not 03f. It rolls the control-plane static pods and kubelet
+# `talosctl upgrade-k8s`. The counterpart to 03e, which upgrades the OS; the two are independent, so bumping
+# only KUBERNETES_VERSION means running THIS, not 03e. It rolls the control-plane static pods and kubelet
 # versions and reboots nothing.
-# KUBERNETES_VERSION cannot exceed the pinned Talos's default: bump TALOS_VERSION and run 03a/03f before
+# KUBERNETES_VERSION cannot exceed the pinned Talos's default: bump TALOS_IMAGE_RELEASE and run 03e before
 # raising it past that ceiling, or upgrade-k8s rejects it.
 # Re-run-safe: a cluster already at the target version is a clean no-op.
 set -euo pipefail
@@ -14,7 +14,7 @@ source "${SCRIPT_DIR}/common.sh"
 
 require docker
 docker info >/dev/null 2>&1 || die "docker not responding (start Rancher/Docker Desktop)"
-[ -f "${CLUSTER_DIR}/talosconfig" ] || die "missing ${CLUSTER_DIR}/talosconfig, run step 03 (03d) first"
+[ -f "${CLUSTER_DIR}/talosconfig" ] || die "missing ${CLUSTER_DIR}/talosconfig, run step 03 (03c) first"
 
 read -ra IPS <<< "$NODES"
 [ "${#IPS[@]}" -gt 0 ] || die "no nodes set, edit CLUSTER_NODES in .env"

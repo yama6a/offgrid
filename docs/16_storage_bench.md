@@ -299,7 +299,7 @@ wipe the cluster; diluting that signal would make it useless.
 Every app here is `automated` + `selfHeal` + `prune`. Argo would recreate each bench object the moment
 teardown deleted it and fight the teardown indefinitely. A benchmark's whole lifecycle is
 create-measure-destroy inside one invocation, which is the opposite of a reconciled steady state.
-Applied imperatively, like `03e`'s probe pod and the `recover_*` scripts' temp pods.
+Applied imperatively, like `03d`'s probe pod and the `recover_*` scripts' temp pods.
 
 ### Pod Security
 
@@ -378,7 +378,7 @@ that matter.
 
 3 instances, not 2, because `any 1` of two standbys is the config worth running: it survives one node
 being drained without stalling writes, which is what makes a rolling Talos upgrade safe under
-`required`. `03f`'s `wait_replication_healthy` gate is what stops the next drain starting before the
+`required`. `03e`'s `wait_replication_healthy` gate is what stops the next drain starting before the
 displaced instance is back in sync.
 
 ### The assertion that matters

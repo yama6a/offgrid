@@ -4,7 +4,7 @@
   //   helm-values     container images in values.yaml
   //   terraform       the aws provider (versions.tf + .terraform.lock.hcl)
   //   github-actions  the renovate workflow's own action pins
-  //   customManagers  images in chart templates + shell scripts, and the versions.env Talos/kernel recipe
+  //   customManagers  images in chart templates + shell scripts, and the versions.env pins
   // Cadence is the cron in .github/workflows/renovate.yaml, not an internal `schedule`, so a manual
   // workflow_dispatch works too. Docs: docs/14_renovate.md.
   $schema: "https://docs.renovatebot.com/renovate-schema.json",
@@ -80,25 +80,15 @@
       datasourceTemplate: "docker",
     },
     {
-      // Scalar vars in versions.env carrying a full `# renovate:` annotation. SBCOVERLAY is separate, below.
+      // Scalar vars in versions.env carrying a full `# renovate:` annotation. TALOS_IMAGE_RELEASE's
+      // annotation also carries a `versioning=regex:...`, because its `-<build revision>` suffix would
+      // otherwise read as a semver prerelease and be skipped as unstable.
       customType: "regex",
       description: "annotated version scalars in versions.env",
       managerFilePatterns: ["/^versions\\.env$/"],
       matchStrings: [
         "# renovate: datasource=(?<datasource>[a-z-]+) depName=(?<depName>\\S+)(?: versioning=(?<versioning>\\S+))?\\s+\\w+=\"(?<currentValue>[^\"]+)\"",
       ],
-    },
-    {
-      // Pinned to a bare commit SHA because the repo has no tags; 03a clones main then checks out this SHA.
-      // Track main's HEAD via git-refs so the SHA stays fresh.
-      customType: "regex",
-      description: "sbc-raspberrypi5 overlay commit pin",
-      managerFilePatterns: ["/^versions\\.env$/"],
-      matchStrings: ["SBCOVERLAY_VERSION=\"(?<currentDigest>[a-f0-9]{40})\""],
-      currentValueTemplate: "main",
-      depNameTemplate: "talos-rpi5/sbc-raspberrypi5",
-      packageNameTemplate: "https://github.com/talos-rpi5/sbc-raspberrypi5",
-      datasourceTemplate: "git-refs",
     },
   ],
 
@@ -107,9 +97,9 @@
       // ONE combined, auto-merged PR for every NON-major update, gated on the required CI checks.
       // WARNING: a merged bump reaches the LIVE cluster unattended via ArgoCD self-heal, including Cilium,
       // which can cut the cluster off its own network, and any local-path tag bump, which really needs a
-      // manual re-vendor. It also bumps the Talos recipe in versions.env, which a merge does NOT apply, that
-      // still needs 03a. Accepted for a hands-off homelab; to de-risk, add minimumReleaseAge or drop
-      // automerge from the deps you want to gate.
+      // manual re-vendor. It also bumps TALOS_IMAGE_RELEASE, which a merge does NOT apply: that still needs
+      // 03e (and 03a for a reflash). Accepted for a hands-off homelab; to de-risk, add minimumReleaseAge or
+      // drop automerge from the deps you want to gate.
       description: "combine all non-major updates into one auto-merged PR",
       matchUpdateTypes: ["minor", "patch", "digest", "pin", "lockFileMaintenance"],
       groupName: "all non-major dependencies",

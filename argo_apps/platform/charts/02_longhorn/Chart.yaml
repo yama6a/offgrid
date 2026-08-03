@@ -1,6 +1,6 @@
 apiVersion: v2
 name: longhorn
-description: Longhorn, the cluster's distributed block storage and default StorageClass, on the XFS 'longhorn' volume 03d mounts.
+description: Longhorn, the cluster's distributed block storage and default StorageClass, on the XFS 'longhorn' volume 03c mounts.
 type: application
 version: 0.1.0 # local chart, never bump version
 

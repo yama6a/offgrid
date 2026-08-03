@@ -1,4 +1,4 @@
-# Longhorn: distributed block storage and the default StorageClass, on the XFS 'longhorn' volume 03d mounts.
+# Longhorn: distributed block storage and the default StorageClass, on the XFS 'longhorn' volume 03c mounts.
 apiVersion: argoproj.io/v1alpha1
 kind: Application
 metadata:

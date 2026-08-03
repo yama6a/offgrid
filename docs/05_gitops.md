@@ -344,7 +344,7 @@ port-forward is the escape hatch if you ever wedge it.
 ## What `05_argocd.sh` does
 
 Native `helm` and `kubectl`, erroring out if either is missing, like `04_cilium.sh` and unlike the dockerized
-03a-03e scripts. Talks to the cluster via `secrets/kubeconfig`. Idempotent.
+03b-03d scripts. Talks to the cluster via `secrets/kubeconfig`. Idempotent.
 
 1. Prereqs: `kubectl` and `helm` present, kubeconfig reachable, the chart and root app exist, and Cilium is up,
    since the GitOps layer needs a working pod network.

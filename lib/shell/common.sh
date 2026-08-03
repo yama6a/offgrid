@@ -32,8 +32,7 @@ source "$ENV_FILE"
 
 # Scripts run under `set -u`, so default every key here: an older .env missing one must not trip it.
 # Empty means "skip the feature it enables", see each key's comment in .env.example.
-: "${GITHUB_GHCR_PULL_TOKEN_SECRET:=}"    # 03d bakes into node machine config (kubelet pulls private ghcr.io)
-: "${GITHUB_GHCR_PUSH_TOKEN_SECRET:=}"    # 03a docker-login + push of the installer image (build host only)
+: "${GITHUB_GHCR_PULL_TOKEN_SECRET:=}"    # 03c bakes into node machine config (kubelet pulls private ghcr.io)
 : "${ARGOCD_GITHUB_PAT_SECRET:=}"         # 05 seeds ArgoCD's repo-creds Secret
 : "${NTFY_PHONE_PASSWORD_SECRET:=}"       # 10 seeds the ntfy 'phone' user (Grafana pushes alerts to ntfy, phone subscribes)
 : "${GOOGLE_SSO_CLIENT_ID:=}"      # 07 writes into the google-sso values
@@ -54,8 +53,8 @@ source "$ENV_FILE"
 EXPECT_NIC="end0"          # Pi 5 wired NIC (the VIP binds to it)
 EXPECT_DISK="nvme0n1"      # the NVMe (install target)
 API_PORT=50000            # Talos API port
-GHCR_SERVER="ghcr.io"     # registry the GHCR tokens + installer package are scoped to
-INSTALLER_PACKAGE="talos-installer"                           # GHCR package 03a publishes the installer to (03f pulls it)
+GHCR_SERVER="ghcr.io"     # registry the GHCR pull token is scoped to
+TALOS_IMAGE_REPO="ghcr.io/yama6a/talos-raspberry-pi5"        # the Pi 5 Talos image; TALOS_IMAGE_RELEASE pins the tag
 SS_CONTROLLER_NS="sealed-secrets"                            # kubeseal --controller-namespace (== 02_sealed_secrets)
 SS_CONTROLLER_NAME="sealed-secrets"                          # kubeseal --controller-name
 SS_POD_SELECTOR="app.kubernetes.io/name=sealed-secrets"     # the controller pods (readiness probe)
@@ -68,18 +67,11 @@ read -ra CLUSTER_NODES <<< "${CLUSTER_NODES}"   # .env CLUSTER_NODES is a space-
 NODES="${CLUSTER_NODES[*]##*:}"                 # IPs only (space-separated); used by boot-verify + reset
 IFACE="${EXPECT_NIC}"                           # wired NIC the VIP binds to (dhcp + vip)
 INSTALL_DISK="/dev/"
-MACHINERY_VERSION="${TALOS_VERSION}"            # overlay rebuilt against this (must match TALOS_VERSION)
+# The image release tag is `<talos version>-<build revision>`; everything Talos-side wants just the version.
+TALOS_VERSION="${TALOS_IMAGE_RELEASE%-*}"
 TALOSCTL_VERSION="${TALOS_VERSION}"             # talosctl container (talosctl() below; boot-verify)
-# Keyed by the pinned build inputs so 03a and 03b resolve the SAME paths, and a version bump lands in a
-# fresh .cache/<key>/.
-BUILD_KEY="${TALOS_VERSION}-$(printf '%s' \
-  "${BUILDER_VERSION}|${SBCOVERLAY_VERSION}|${MACHINERY_VERSION}|${ISCSI_EXT}|${UTIL_EXT}" \
-  | shasum -a 256 | cut -c1-8)"
-BUILD_DIR="${REPO_ROOT}/.cache/${BUILD_KEY}"   # build scratch + output (gitignored; repo-root .cache/)
-OUT_DIR="${BUILD_DIR}/out"                      # final image is staged here for the flasher
-# Tag off TALOS_VERSION, not the build's `git describe`, so 03a and 03f compute the same ref with no git state.
-INSTALLER_IMAGE="${GHCR_SERVER}/${GHCR_USER}/${INSTALLER_PACKAGE}"  # e.g. ghcr.io/<user>/talos-installer
-INSTALLER_REF="${INSTALLER_IMAGE}:${TALOS_VERSION}-arm64"           # exact tag 03a pushes / 03f pulls
+INSTALLER_REF="${TALOS_IMAGE_REPO}:${TALOS_IMAGE_RELEASE}"   # exact installer image 03e upgrades nodes to
+IMAGE_CACHE="${REPO_ROOT}/.cache/images"        # 03a downloads the release's raw image here (gitignored)
 
 say()  { printf '\n\033[1;36m>> %s\033[0m\n' "$*"; }
 die()  { printf '\033[1;31mERROR: %s\033[0m\n' "$*" >&2; exit 1; }
@@ -224,8 +216,8 @@ vy_protect_off() {
 CLUSTER_DIR="${REPO_ROOT}/secrets"   # the only real talosconfig + kubeconfig; a symlink to an off-repo store
 
 use_kubeconfig() {
-  export KUBECONFIG="${CLUSTER_DIR}/kubeconfig"   # the 03d kubeconfig (points at the VIP)
-  [ -f "$KUBECONFIG" ] || die "missing ${KUBECONFIG}, run step 03 (03d) first"
+  export KUBECONFIG="${CLUSTER_DIR}/kubeconfig"   # the 03c kubeconfig (points at the VIP)
+  [ -f "$KUBECONFIG" ] || die "missing ${KUBECONFIG}, run step 03 (03c) first"
 }
 assert_api() { kubectl get nodes >/dev/null 2>&1 || die "kubectl can't reach the API via ${KUBECONFIG}"; }
 

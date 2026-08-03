@@ -1,4 +1,4 @@
-# nic-keeper DaemonSet: the runtime half of the Pi 5 macb NIC-wedge mitigation (03e is the machine-config half).
+# nic-keeper DaemonSet: the runtime half of the Pi 5 macb NIC-wedge mitigation (03d is the machine-config half).
 apiVersion: argoproj.io/v1alpha1
 kind: Application
 metadata:

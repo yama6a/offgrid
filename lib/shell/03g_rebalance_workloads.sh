@@ -1,6 +1,6 @@
 #!/usr/bin/env bash
-# Rolling-restarts the stateless Deployments so the scheduler re-spreads them after 03f's node-by-node drain.
-# A nudge, not guaranteed balance: the scheduler scores each pod alone. Not needed after 03g, which moves no pods.
+# Rolling-restarts the stateless Deployments so the scheduler re-spreads them after 03e's node-by-node drain.
+# A nudge, not guaranteed balance: the scheduler scores each pod alone. Not needed after 03f, which moves no pods.
 set -uo pipefail
 
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"

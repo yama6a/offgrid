@@ -138,12 +138,12 @@ else
     printf '.'; sleep 5
   done
   echo "ready"
-  # 03d with a hostname applies to that node alone and skips the bootstrap, while still building certSANs and
+  # 03c with a hostname applies to that node alone and skips the bootstrap, while still building certSANs and
   # the talosconfig endpoints from the full list.
-  if bash "${SCRIPT_DIR}/03d_talos_cluster_config.sh" "$NODE"; then
+  if bash "${SCRIPT_DIR}/03c_talos_cluster_config.sh" "$NODE"; then
     ok "applied ${NODE}'s machine config"
   else
-    bad "03d failed for ${NODE}"; summary; exit 1
+    bad "03c failed for ${NODE}"; summary; exit 1
   fi
 fi
 

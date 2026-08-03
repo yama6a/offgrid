@@ -1,14 +1,14 @@
 #!/usr/bin/env bash
-# Verifies each node after flashing (03b) and booting from NVMe with no SD card: our image, Talos version,
+# Verifies each node after flashing (03a) and booting from NVMe with no SD card: our image, Talos version,
 # rpi5 overlay, NVMe and wired NIC. Nodes are still in MAINTENANCE mode, hence `--insecure`.
-# The last per-node gate before cluster bring-up (03d).
+# The last per-node gate before cluster bring-up (03c).
 set -u
 
 # Config (API port, CLUSTER_NODES, the EXPECT_* checks) in .env; NODES/TALOSCTL_VERSION derived in lib/shell/common.sh.
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 source "${SCRIPT_DIR}/common.sh"
 
-# ---- 03c-only boot-verify expectations --------------------------------------
+# ---- 03b-only boot-verify expectations --------------------------------------
 EXPECT_TALOS="$TALOS_VERSION"                # our build's Talos version (a local "-dirty" build matches too)
 EXPECT_CMDLINE="console=ttyAMA0,115200"      # rpi5 overlay signature in the kernel cmdline
 
@@ -95,7 +95,7 @@ done
 
 summary
 if [ "$FAIL" -eq 0 ]; then
-  echo "All nodes good. Next: cluster bring-up, ./03d_talos_cluster_config.sh"
+  echo "All nodes good. Next: cluster bring-up, ./03c_talos_cluster_config.sh"
 else
   echo "Some checks failed. This script runs talosctl via the container to avoid the"
   echo "native macOS 'no route to host' gotcha."

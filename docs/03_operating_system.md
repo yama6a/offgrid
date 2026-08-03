@@ -1,7 +1,8 @@
 # Talos: OS choice, custom NVMe image & cluster bring-up
 
 OS for the 3-node Pi 5 cluster: Talos Linux. Immutable, API-managed, Kubernetes-only.
-Talos has no official Pi 5 image, so we build our own against the latest Talos on a recent Raspberry Pi kernel.
+Talos has no official Pi 5 image, so the node image is built separately, in
+[yama6a/talos-raspberry-pi5](https://github.com/yama6a/talos-raspberry-pi5).
 
 ## Why Talos
 
@@ -16,8 +17,7 @@ Talos has no official Pi 5 image, so we build our own against the latest Talos o
 ## Trade-offs
 
 - Talos ships no Pi 5 image; BCM2712 + RP1 needs drivers that only exist in the `raspberrypi/linux` fork.
-- Upgrading Talos = rebuild the image.
-- We own the build. New Talos release -> re-run the builder, possibly re-apply the rebases too.
+- Upgrading Talos means a new image build, which is a separate repo and its own maintenance.
 - API-only, no shell. A hung node gets rebooted, not SSH'd into.
 
 ## OSes considered
@@ -32,178 +32,59 @@ Talos has no official Pi 5 image, so we build our own against the latest Talos o
 | Flatcar / Fedora CoreOS / openSUSE MicroOS | Also immutable, but Pi 5 support is thinner/younger. Talos wins on the declarative side.                  |
 | Harvester                                  | Not even close. Full HCI/KubeVirt stack, needs x86_64 and a lot of RAM.                                   |
 
-## Why build our own instead of using the community release
+## Where the image comes from
 
-The [talos-rpi5](https://github.com/talos-rpi5/talos-builder) project publishes a prebuilt Pi 5 image, but it lags
-well behind latest Talos (and ships an older kernel). We want latest Talos + a recent Pi kernel + control over the
-upgrade path, and that combination doesn't exist as a published image anywhere:
+`metal-arm64` does not work on a Pi 5: it carries no Pi 5 boot chain (u-boot + BCM2712 device tree) at all. So
+the image is built separately, in
+[yama6a/talos-raspberry-pi5](https://github.com/yama6a/talos-raspberry-pi5): current Talos on a Raspberry Pi
+kernel, with the boot chain and two system extensions baked in. That repo owns the build, the kernel decisions
+and the release stream. This one is a consumer of its releases:
 
-- Raspberry Pi OS ships a Pi 5 kernel, but it's not a Talos kernel. Talos welds a hardened, clang/ThinLTO kernel into
-  its initramfs/installer, so you can't just drop a foreign kernel in.
-- The official Talos `metal-arm64` image won't boot a Pi 5 headlessly. Even though recent Talos ships a similarly
-  recent kernel, it's missing the fork-only RP1 bring-up (`MFD_RP1`) and has no Pi 5 boot chain (u-boot + BCM2712
-  device tree).
-- The only prebuilt Talos Pi 5 image is the community one, which is old.
+- `03a` flashes the release's raw disk image onto each NVMe, once per drive.
+- `03e` upgrades running nodes to the release's installer image over the network.
 
-So we drive the `talos-rpi5` pipeline but rebase it onto latest Talos. A recent Pi kernel is the reason the whole
-build exists: it carries the upstream RP1 patches, and without them step 04 cannot disable EEE on the NIC.
+`siderolabs/sbc-raspberrypi` does ship an `rpi_5` overlay now, and its kernel side is fine: vanilla carries the
+Pi 5 NIC as of Linux 6.18 and stock Talos enables it. What it cannot do is boot from NVMe. It ships u-boot built
+for the Pi 4, with no `brcm,bcm2712-pcie` driver, so u-boot cannot read the disk the firmware just loaded it
+from. Tested on a node here: the upgrade applied cleanly, then the board went dark with no layer-2 presence at
+all. These nodes boot from NVMe, so that is fatal. The evidence, the full audit of which of the custom build's
+steps are still load-bearing, and the plan to retire it are in that repo's `docs/upstream.md` and
+`FUTURE_WORK.md`.
 
 ## Versions
 
-Every pin lives in the committed `versions.env`; Renovate opens PRs to bump them, grouped as the "talos
-build recipe" and PR-only: merging one changes only `versions.env`, and a real bump needs a manual image
-rebuild (below). What each is, and the constraints that matter:
+Every pin lives in the committed `versions.env`; Renovate opens PRs to bump them.
 
-- Talos (`TALOS_VERSION`, `siderolabs/talos`): the release we rebase onto.
-- Kubernetes (`KUBERNETES_VERSION`): the pin `03d` passes to `gen config` and `03g` upgrades to. Capped by the Talos
-  release's own k8s default, so raise it only after bumping Talos.
-- pkgs (`siderolabs/pkgs`): stock arm64 kernel config, already 4K pages, plus kernel patches. No pin, derived from
-  `TALOS_VERSION`: Talos's `PKGS ?=` Makefile line names the commit it built against, and `03a` clones
-  `release-<talos minor>` then checks that out. That checkout's describe tags the kernel image and is passed on as
-  `PKGS=` to the overlay and `PKG_KERNEL=` to the installer, so `03a` hard-fails on a mismatch.
-- Kernel: no pin, derived from `TALOS_VERSION`. This is the reason for the custom build, because the kernel line
-  carries the RP1 patches step 04 needs to disable the NIC's power-saving mode. There is deliberately no kernel
-  version to pin: `03a` reads the version Talos expects (`DefaultKernelVersion`) from the pinned Talos and resolves
-  the exact `raspberrypi/linux` commit at build time via `raspberrypi/firmware`'s `extra/git_hash`. See "The kernel
-  version must match Talos" below. So the kernel follows `TALOS_VERSION` by construction, and that is the only knob
-  Renovate manages for it.
-- Overlay (`SBCOVERLAY_VERSION`, `talos-rpi5/sbc-raspberrypi5`@`main`): u-boot, rpi firmware and the Pi 5 boot
-  chain, ported to the pinned Talos machinery at build time.
-- Extensions (`ISCSI_EXT`, `UTIL_EXT`): digest-pinned system extensions from the Image Factory.
+- Talos image (`TALOS_IMAGE_RELEASE`): which release of the image repo above, as
+  `<talos version>-<build revision>`. `common.sh` derives `TALOS_VERSION` from the part before the dash, and
+  that is the talosctl client version, the expected server version, and what `03c` and `03f` reason about.
+  One pin, so the client can never drift from the image.
+- Kubernetes (`KUBERNETES_VERSION`): the pin `03c` passes to `gen config` and `03f` upgrades to. Capped by
+  the Talos release's own k8s default, so raise it only after bumping the image.
 
-## The build
-
-Script: `03a_talos_image_builder.sh` (MacOS, Apple Silicon). The version recipe (version knobs, kernel ref,
-extensions) lives in the committed `versions.env`, the registry/user in `.env` (build-cache output path derived in
-`lib/shell/common.sh`), shared by all the step-03 scripts.
-A clean run builds and validates; it exits non-zero if anything goes wrong.
-
-What it does:
-
-1. spins up a local registry + a mergeop-capable buildx builder
-2. clones and checks out `talos-builder`
-3. applies the four rebases
-4. builds kernel
-5. overlay
-6. installer
-7. raw image
-8. runs offline validation
-
-**The kernel version must match Talos.** Talos hardcodes the version it expects (`DefaultKernelVersion` in
-`pkg/machinery/constants`), and the imager stamps THAT onto the UKI's `.uname` regardless of what we compile.
-
-- If they differ the image ships mislabeled: the running kernel is real and correct, but the UKI, and anything
-  reading it like `kubectl` or `talosctl`, reports Talos's version.
-- So the kernel is DERIVED, not pinned. In REBASE 1 `03a` reads `DefaultKernelVersion` from the pinned Talos, finds
-  the exact `raspberrypi/linux` commit for that version, and builds it. It matches by construction.
-- It resolves the commit by scanning `raspberrypi/firmware`, whose `extra/git_hash` at each ref is the linux commit
-  that ref's kernel was built from. First the channel HEADs (`master`, `stable`, `next`, `oldstable`, and `master`
-  usually matches), then as a failsafe `master`'s `extra/git_hash` history, a dense index of every recent 6.18.x.
-- The offline validation re-checks the built kernel against the UKI label at the end.
-
-**If kernel resolution fails** (`03a` found no firmware ref carrying the version Talos wants, so a very old Talos
-rebuild, or a patch RPi skipped): inspect by hand, then either wait for a firmware channel to ship that version or
-align `TALOS_VERSION`. Channel HEADs, and (for older versions) master's `git_hash` history:
-
-    for b in master stable next oldstable; do
-      h=$(curl -fsSL "https://raw.githubusercontent.com/raspberrypi/firmware/$b/extra/git_hash" | tr -d '[:space:]')
-      v=$(curl -fsSL "https://raw.githubusercontent.com/raspberrypi/linux/$h/Makefile" \
-            | awk -F' = ' '/^VERSION/{a=$2}/^PATCHLEVEL/{p=$2}/^SUBLEVEL/{c=$2} END{print a"."p"."c}')
-      echo "$b -> $v ($h)"
-    done
-    # older versions: the linux commit == the git_hash at each historical master commit that changed it:
-    #   gh api "repos/raspberrypi/firmware/commits?path=extra/git_hash&sha=master" --jq '.[].sha'
-
-Prerequisites (the script checks all of these, with the `brew` fix for each):
-
-- GNU make >= 4 (`brew install make` -> use `gmake`). MacOS ships make 3.81, which the kres Makefiles refuse to run.
-- xz, zstd, jq, curl, go, and Docker (Rancher Desktop works) with an arm64 Linux VM.
-- Disk space: give the Docker VM >= 120 GB. We had 98 GB and ran out mid-kernel-build.
-
-The four rebases (things the upstream pipeline can't handle at this Talos version, all automated by the script):
-
-1. Kernel source + config: Point the kernel at `raspberrypi/linux@<tag>` and layer a small Pi 5/RP1 config fragment on
-   top of the stock kernel config, then reconcile with `make olddefconfig` under the real clang toolchain. The build fails
-   immediately if any required symbol didn't make it in (4K pages, NVMe, MACB, watchdog, RP1, BCM2712). Also gates
-   pkgs' own kernel patches on a dry-run, see "pkgs kernel patches" below.
-2. Module list: Filter `hack/modules-arm64.txt` to what the rpi kernel actually built. The stock list references
-   drivers our config doesn't include (e.g. `bnxt_re`), and `nvme` is now built-in rather than a module. The script
-   regenerates the list by intersecting against the real kernel module tree.
-3. Overlay port: The overlay (copies u-boot/config.txt/dtb to disk) was written against older machinery; a newer
-   Talos's overlay API added a `ctx` argument. The script bumps machinery to match and patches `main.go` in the overlay.
-4. Grub profile: Build with the overlay's `rpi5` grub profile, not `metal`. Talos's `metal` default is
-   sd-boot, and sd-boot's image path silently skips the overlay installer entirely. So a Pi 5 image built as `metal`
-   has the kernel but no u-boot/config.txt/dtb and won't boot. The grub profile runs the overlay install
-   properly and the EFI partition ends up with the boot bits it needs.
-
-### pkgs kernel patches
-
-pkgs carries its own kernel patches, written against vanilla kernel.org. We build `raspberrypi/linux`, so some are
-already in that tree or collide with how it fixed the same thing. REBASE 1 gates each patch on a `patch --dry-run`:
-apply what applies, skip only what `PKGS_PATCH_SKIP` in `03a` names, fail the build on anything else. So a pkgs bump
-that adds a patch we cannot apply stops the build instead of quietly dropping a fix.
-
-Entries are subject slugs, the filename minus its `NNNN-` prefix, because pkgs renumbers patch files (their
-sequence already skips `0005`). An entry matching no patch also fails the build, before the kernel download rather
-than during it. First thing to check there is a rename: the `die` prints every slug pkgs currently ships, so a
-reworded subject is visible side by side.
-
-Currently skipped, both from the Pi 5 macb TX-stall series that `raspberrypi/linux` merged its own version of
-(PR #7340). Note the two are different in kind, only the second is a standing judgment call:
-
-| Slug | Why |
-|---|---|
-| `net-macb-flush-PCIe-posted-write-after-TSTART-doorbe` | duplicate, already in the rpi tree, which assigns `MACB_CAPS_PCIE_POSTED_WRITES` a different bit |
-| `net-macb-add-TX-stall-watchdog-to-recover-from-lost-` | NOT in the rpi tree. It recovers lost TCOMP with a `tx_pending` breadcrumb in the TSR read path instead of a per-queue `delayed_work`, and we take that over stacking both. Conflicts only on context, an unrelated `bool tx_pending;` mid-hunk, which fuzz cannot bridge |
-
-To re-check the list after a pkgs bump, extract the kernel tarball `03a` cached under `.cache/<key>/srcserve/` and
-dry-run each patch against it:
-
-    for p in .cache/<key>/talos-builder/checkouts/pkgs/kernel/build/patches/*.patch; do
-      patch -d "$SRC" -p1 -N --dry-run --silent < "$p" >/dev/null 2>&1 \
-        && echo "applies  $(basename "$p")" || echo "CONFLICT $(basename "$p")"
-    done
-
-A conflict is not automatically a skip: check whether the rpi tree already carries the fix (grep for a symbol the
-patch adds) before adding it to `PKGS_PATCH_SKIP`.
-
-```bash
-lib/shell/03a_talos_image_builder.sh
-```
-
-The first run takes a while. Full clang/ThinLTO kernel compile is 30-40 min on 12 cores (macBook Pro, M2 Pro). Later
-runs faster with cache kernel layer.
+Merging a bump changes only `versions.env`. Applying it needs `03e`, and `03a` for a fresh drive.
 
 ## What's baked into the image
 
-- 4K kernel pages (`CONFIG_ARM64_4K_PAGES=y`, not the Pi defconfig's 16K). Etcd and Kubernetes are fine on 16K, but
-  there is some software that has 16K compatibility issues. 4K is also what stock Talos `metal-arm64` uses. We Keep page
-  size the same on all three nodes.
-- System extensions (baked at the installer step): `iscsi-tools` (iscsid, required by Longhorn) and
-  `util-linux-tools` (fstrim).
-- Radios off: `dtoverlay=disable-wifi` + `dtoverlay=disable-bt` in the overlay's `config.txt`, plus the `.dtbo`
-  files. This saves some marginal power and CPU cycles (kernel probes). And we will never use WiFi or Bluetooth anyway.
-- Built-in (`=y`) drivers needed for step 04 (hardening) and Longhorn: Pi 5 watchdog (`BCM2835_WDT`), NVMe + PCIe
-  (`PCIE_BRCMSTB`), the Pi 5 NIC (`MACB` + PHYLINK/PHYLIB/BROADCOM_PHY), RP1 bring-up (`MFD_RP1`, `BCM2712_MIP`, ...).
+Decided and documented in the image repo. What matters on this cluster:
 
-## Registry & upgrades
+- 4K kernel pages, not the Pi defconfig's 16K, matching stock Talos `metal-arm64` and keeping all three nodes
+  the same. Some storage software does not cope with 16K.
+- System extensions `iscsi-tools` (Longhorn needs `iscsid`) and `util-linux-tools` (`fstrim`).
+- Built-in drivers that `03d` and Longhorn depend on: the Pi 5 watchdog (`BCM2835_WDT`), NVMe over PCIe
+  (`PCIE_BRCMSTB`), the NIC (`MACB`), RP1 bring-up (`MFD_RP1`, `FIRMWARE_RP1`, ...), and
+  `INET_DIAG_DESTROY`, which is what lets `nic-keeper` force-close sockets with `ss -K`.
+- WiFi and Bluetooth disabled at the device-tree level, which is also why `03c` binds the VIP to
+  `interface: end0` rather than `physical: true`.
 
-The build runs against a **local** registry (`localhost:5010`): it's fast, supports the BuildKit mergeop `bldr` needs,
-and works offline. That's where we put the kernel, overlay, and installer layers which `03a` builds.
+## Upgrades
 
-**Publishing the installer (for network upgrades).** After validation, `03a` optionally publishes the finished
-installer image to GHCR that can be used for talos upgrades (`03f`). For that, set `GITHUB_GHCR_PUSH_TOKEN_SECRET` (a
-classic token scoped `write:packages`) in `.env`. This will let `03a` push the installer image to
-`ghcr.io/<GHCR_USER>/<INSTALLER_PACKAGE>:<TALOS_VERSION>-arm64`. Id you leave the token empty to skip publishing. This
-allows a first bootstrap of all nodes, but later upgrades won't work.
+During first setup the NVMe is flashed once (`03a`). After that, Talos upgrades are atomic A/B over the
+network with no reflash. Bump `TALOS_IMAGE_RELEASE` in `versions.env`, then run **`03e_talos_upgrade.sh`**,
+which runs `talosctl upgrade --image "$INSTALLER_REF"` one node at a time. Re-run-safe: a node already on the
+target image is a no-op. The image package is public, so nodes need no registry auth to pull it.
 
-**Upgrading the cluster.** During first setup, the NVMe is flashed once (`03b`). After that, Talos upgrades are
-atomic A/B over the network without needing manua reflashing. For that, bump the Talos version in `versions.env`, re-run
-`03a` to build + publish the new installer, then run **`03f_talos_upgrade.sh`** which runs
-`talosctl upgrade --image "$INSTALLER_REF"` one node at a time. This is re-run-safe (an already-upgraded node is a
-no-op). The nodes pull the installer using the `read:packages` auth `03d` baked into their machine config in `03d`.
-
-**Draining during the upgrade (why `03f` cordons/drains itself).** Talos's upgrade sequence cordons the node and
+**Draining during the upgrade (why `03e` cordons/drains itself).** Talos's upgrade sequence cordons the node and
 drains it (honoring the eviction API / PodDisruptionBudgets) before the reboot. On this cluster that drain used to
 *hang*, three pods it cannot gracefully evict, each for a different reason:
 
@@ -221,7 +102,7 @@ drains it (honoring the eviction API / PodDisruptionBudgets) before the reboot. 
 None of these pods can relocate, because of node-local storage, a per-node storage engine, or hard anti-affinity. So
 a graceful drain can only kill them, and they come back on the same node after the reboot.
 
-`03f` therefore takes the drain into its own hands, with native `kubectl`. Per node it:
+`03e` therefore takes the drain into its own hands, with native `kubectl`. Per node it:
 
 1. Waits until every replicated store is healthy and in sync (see below).
 2. Cordons, runs a bounded graceful drain, then force-deletes any straggler so the node can always reboot.
@@ -234,7 +115,7 @@ replica-2 layout. The health gate is the lighter, self-correcting equivalent: Lo
 volume onto the spare node on its own while we wait.
 
 **The replication-health gate (run before draining *each* node).** A node reboot is a replication event for every
-replicated store that has data on it, so before taking a node down `03f` blocks until they're all healthy *and* in
+replicated store that has data on it, so before taking a node down `03e` blocks until they're all healthy *and* in
 sync, which crucially also waits out the PREVIOUS node's post-reboot resync before we touch the next one. Gated:
 
 - Longhorn volumes: no volume `degraded` or `faulted`. `healthy` IS Longhorn's all-replicas-in-sync signal (it
@@ -252,19 +133,19 @@ sync, which crucially also waits out the PREVIOUS node's post-reboot resync befo
   data lives on Longhorn (covered above), and it simply restarts after the reboot.
 
 A store that isn't installed (its CRD absent) is treated as healthy, so the gate is a no-op where it doesn't apply.
-Each check waits up to `REPLICATION_HEALTH_TIMEOUT`. On timeout `03f` aborts naming the laggards, so fix and re-run;
+Each check waits up to `REPLICATION_HEALTH_TIMEOUT`. On timeout `03e` aborts naming the laggards, so fix and re-run;
 idempotent, done nodes are no-ops) rather than reboot into a degraded store. (Caveat: CNPG "in sync" here means the
 standby is *ready/streaming*, not zero-lag; the operator does a controlled switchover on drain, which needs a
 caught-up standby. `readyInstances` is the practical proxy; we do not query `pg_stat_replication` lag.)
 
 **Upgrading Kubernetes (separate from the OS).** The Talos OS version and the Kubernetes version upgrade independently.
-`03g_k8s_upgrade.sh` updates the k8s control plane (`talosctl upgrade-k8s --to "$KUBERNETES_VERSION"`). So bump *only*
-`KUBERNETES_VERSION` in `versions.env`, and then run `03g`. `KUBERNETES_VERSION` can't exceed the pinned Talos release's default
+`03f_k8s_upgrade.sh` updates the k8s control plane (`talosctl upgrade-k8s --to "$KUBERNETES_VERSION"`). So bump *only*
+`KUBERNETES_VERSION` in `versions.env`, and then run `03f`. `KUBERNETES_VERSION` can't exceed the pinned Talos release's default
 k8s version (its supported ceiling). So it is useful to always first bump Talos.
 
-**Rebalancing after the upgrade (`03h`).** Draining node by node leaves the pods bunched on whichever nodes were
+**Rebalancing after the upgrade (`03g`).** Draining node by node leaves the pods bunched on whichever nodes were
 up last, and nothing moves them back: no descheduler, and `topologySpreadConstraints` only on argocd.
-`03h_rebalance_workloads.sh` rolling-restarts the stateless Deployments so the scheduler re-places them. `03f`
+`03g_rebalance_workloads.sh` rolling-restarts the stateless Deployments so the scheduler re-places them. `03e`
 runs it; `make rebalance-workloads` runs it alone. A measured run went 39/40/15 to 31/32/32.
 
 - A nudge, not guaranteed balance. The scheduler scores each pod alone, so a run can still clump. The real fix,
@@ -276,40 +157,29 @@ runs it; `make rebalance-workloads` runs it alone. A measured run went 39/40/15 
   `envoy-gateway-system` ingress data plane), when it mounts a PVC (not stateless, and moving it costs a Longhorn
   detach/attach), or when it is scaled to 0. The PVC test is a property, so operator-generated names like
   `vmsingle-<cr>` cannot rot a list.
-- NOT wired into `03g`: `upgrade-k8s` rolls the control plane and kubelet in place and moves no pods.
-
-## Validation (offline, no hardware)
-
-Runs at the end of the builder. MacOS can't loop-mount Linux filesystems, so this runs inside a privileged Linux
-container. Exits non-zero on any failure.
-
-- Integrity + size: `xz -t` passes; compressed image size is in a reasonable range.
-- Partition layout: loop-mount the raw image; confirm `EFI` + `BOOT` + `META` (grub layout). `STATE` and
-  `EPHEMERAL` don't exist yet, they're created on first boot.
-- Pi 5 boot bits in the EFI partition: `config.txt` (with the disable-wifi/bt lines), `u-boot.bin`,
-  `bcm2712-rpi-5-b.dtb`, `overlays/disable-{wifi,bt}.dtbo`.
-- Kernel version: pulled from the installer UKI's `.uname` section. Asserts the expected rpi kernel line, which proves
-  the kernel actually got swapped out.
-- Extensions baked: decompress the UKI's `.initrd` and confirm `iscsi-tools` and `util-linux-tools` are in there.
+- NOT wired into `03f`: `upgrade-k8s` rolls the control plane and kubelet in place and moves no pods.
 
 ## Flash the NVMe
 
-Script: `03b_talos_image_flasher.sh` (MacOS). `dd`s the locally built image (`.raw.xz`) to an NVMe over a USB adapter.
-Has the usual safeguards: lists disks, requires typing `YES`, writes to `/dev/rdiskN`, ejects.
+Script: `03a_talos_image_flasher.sh` (MacOS). Downloads the pinned release's `.raw.xz`, checks its sha256
+against the release's `sha256sums.txt`, then `dd`s it to an NVMe over a USB adapter. Cached per release tag,
+so the second and third drives re-download nothing. Usual safeguards: lists disks, requires typing `YES`,
+writes to `/dev/rdiskN`, ejects.
 
 ### Per drive
 
-Run the script, pick the USB-NVMe adapter's disk id, confirm. Repeat for each SSD, just swap drives in the adapter. Then
-slot the SSD into a Pi, power on with no SD card -> Talos boots into maintenance mode (no role assigned yet).
+Run the script, pick the USB-NVMe adapter's disk id, confirm. Repeat for each SSD, just swap drives in the
+adapter. Then slot the SSD into a Pi, power on with no SD card -> Talos boots into maintenance mode (no role
+assigned yet).
 
 ## Boot & verify (per node)
 
-Script: `03c_talos_boot_verify.sh`, reads the node IPs (`CLUSTER_NODES` in `.env`) and runs the checklist below against
+Script: `03b_talos_boot_verify.sh`, reads the node IPs (`CLUSTER_NODES` in `.env`) and runs the checklist below against
 each (maintenance mode, `--insecure`), inspecting each output and printing PASS/FAIL + a summary. It uses the talosctl
 container (sidesteps the MacOS gotcha below); `ping`/`nc` run natively.
 
 ```bash
-./03c_talos_boot_verify.sh        # checks the nodes listed in .env
+./03b_talos_boot_verify.sh        # checks the nodes listed in .env
 ```
 
 What it checks per node:
@@ -370,7 +240,7 @@ so I picked `192.168.100.1` for the VIP (inside the subnet, outside the DHCP ran
 - Docker, with host networking enabled in Docker Desktop. The script runs `talosctl` as a pinned container, so no host
   `talosctl`/`kubectl` is required for bring-up.
 
-### What `03d_talos_cluster_config.sh` does
+### What `03c_talos_cluster_config.sh` does
 
 1. Reads cluster name, install disk, EPHEMERAL cap, NIC, the VIP, and each node's hostname + IP from
    `.env`, prints a summary, and waits for a `YES` confirmation.
@@ -390,7 +260,7 @@ so I picked `192.168.100.1` for the VIP (inside the subnet, outside the DHCP ran
    true`, `certSANs` (VIP + node IPs), the node label `machine.nodeLabels: node.kubernetes.io/instance-type=rpi5`
    (so the `nic-keeper` DaemonSet targets rpi5 hardware only,
    see [Runtime: the recovery DaemonSet](#runtime-the-recovery-daemonset-nic-keeper-gitops);
-   `NODE_INSTANCE_TYPE` knob in `03d`), and the Cilium prep: `cluster.network.cni.name: none`,
+   `NODE_INSTANCE_TYPE` knob in `03c`), and the Cilium prep: `cluster.network.cni.name: none`,
    `cluster.proxy.disabled: true` (Cilium does kube-proxy replacement), and `machine.features.kubePrism.enabled: true`
    (Cilium's API endpoint at `localhost:7445`; default-on in recent Talos, set explicitly here to document the dependency).
    Finally it raises etcd's timeouts (`cluster.etcd.extraArgs: {heartbeat-interval: "500", election-timeout: "5000"}`),
@@ -419,23 +289,22 @@ so I picked `192.168.100.1` for the VIP (inside the subnet, outside the DHCP ran
 > never latch onto WiFi. Confirm the name on a live node with `talosctl get links` if unsure (`EXPECT_NIC` constant
 > in `common.sh`, default `end0`).
 
-> GHCR registry auth (optional, global): to pull private container images, `03d` reads `GITHUB_GHCR_PULL_TOKEN_SECRET`
+> GHCR registry auth (optional, global): to pull private container images, `03c` reads `GITHUB_GHCR_PULL_TOKEN_SECRET`
 > (a GitHub classic token scoped `read:packages`) from the gitignored `.env` and bakes a
 > `machine.registries.config."ghcr.io".auth` block into the control-plane patch. The kubelet/CRI then authenticates
 > every pull from `ghcr.io` on every node, cluster-wide, with no per-namespace `imagePullSecrets` to wire into
 > workloads. We chose node-level auth over an in-cluster (sealed-secret) pull secret precisely because it's global
 > and namespace-agnostic; the cost is that the token lives in the machine config (in the gitignored
 > `secrets/cp-patch.yaml`, never committed) rather than in the sealed-secrets pipeline, and rotating it means
-> editing `.env` and re-running `03d`. The username is plain `.env` config (`GHCR_USER`); the registry host
+> editing `.env` and re-running `03c`. The username is plain `.env` config (`GHCR_USER`); the registry host
 > (`GHCR_SERVER`) is a fixed constant in `common.sh`. Leave `GITHUB_GHCR_PULL_TOKEN_SECRET` empty to skip, which
-> simply omits the auth block. This is the PULL token, distinct from the `write:packages`
-> `GITHUB_GHCR_PUSH_TOKEN_SECRET` that `03a` uses to publish, which never touches node config. GHCR only accepts a
-> classic token; fine-grained tokens do not work for package pulls.
+> simply omits the auth block. It is only for YOUR private images: the Talos image package is public and needs
+> no auth. GHCR only accepts a classic token; fine-grained tokens do not work for package pulls.
 
 ### Run
 
 ```bash
-./03d_talos_cluster_config.sh
+./03c_talos_cluster_config.sh
 ```
 
 All values come from `.env`; review the printed summary, then type `YES`. After `apply-config` the nodes
@@ -457,7 +326,7 @@ talosctl -n <cp1-ip> etcd members          # 3 members
 Once the cluster is up (nodes NotReady, no CNI yet), in order:
 
 1. NIC machine-config defences: `EthernetConfig` + `WatchdogTimerConfig`. Done by
-   `03e_nic_hardening.sh`, see [NIC hardening](#nic-hardening-the-macb-wedge). Run before Cilium, so the NIC is
+   `03d_nic_hardening.sh`, see [NIC hardening](#nic-hardening-the-macb-wedge). Run before Cilium, so the NIC is
    hardened ahead of the network-heavy CNI rollout.
 2. Cilium: CNI + LoadBalancer + gateway + WireGuard encryption; this is what flips the nodes to Ready. Done
    by `04_cilium.sh` (step 04), decision basis + detail in [04_networking.md](04_networking.md). The one
@@ -477,19 +346,19 @@ the defence for each:
 
 | macb trigger                    | defence                                                    | where                  |
 |---------------------------------|------------------------------------------------------------|------------------------|
-| silent TSO/GSO TX-ring hang     | offloads off + RX/TX rings -> NIC max (`EthernetConfig`)   | `03e` now              |
-| full node hang                  | hardware watchdog reboots the node (`WatchdogTimerConfig`) | `03e` now              |
+| silent TSO/GSO TX-ring hang     | offloads off + RX/TX rings -> NIC max (`EthernetConfig`)   | `03d` now              |
+| full node hang                  | hardware watchdog reboots the node (`WatchdogTimerConfig`) | `03d` now              |
 | EEE LPI-wake race               | `ethtool --set-eee end0 eee off`                           | `nic-keeper` DaemonSet |
 | post-wedge kubelet socket stall | `ss -K` after recovery                                     | `nic-keeper` DaemonSet |
 | silent-wedge detection/recovery | link-watchdog: `ip link` down/up                           | `nic-keeper` DaemonSet |
 
-### `03e_nic_hardening.sh` (implemented now)
+### `03d_nic_hardening.sh` (implemented now)
 
 Fully automated, idempotent, safe to re-run. Reuses the dockerized `talosctl` + `kubectl`
 and `secrets/` from cluster bring-up.
 
 ```bash
-./03e_nic_hardening.sh
+./03d_nic_hardening.sh
 ```
 
 What it does:
@@ -516,11 +385,11 @@ What it does:
    rings, which bounces `end0`'s link for a few seconds, and the control-plane VIP rides on
    `end0`. The verify in (5) only proves the config landed (`talosctl` hits node IPs directly),
    not that the VIP is reachable again; that blip is exactly what made a following `04_cilium`
-   run hit `dial 192.168.100.1:6443: network is unreachable`. So before exiting, 03e polls the
+   run hit `dial 192.168.100.1:6443: network is unreachable`. So before exiting, 03d polls the
    apiserver over the VIP (`kubectl get --raw=/readyz`) and requires `SETTLE_STREAK` (default 5)
    consecutive OKs within `SETTLE_WAIT` (default 60s); one success isn't enough (a single good
    hit is what fooled 04). A non-steady API fails the step, so `DANGEROUS_rebuild_cluster.sh`
-   aborts at 03e instead of cascading a confusing failure into 04.
+   aborts at 03d instead of cascading a confusing failure into 04.
 7. Cleans up the probe pod.
 
 Reading the output: `[PASS]`/`[FAIL]` per check, then `summary: N passed, M failed`.
@@ -539,7 +408,7 @@ hostNetwork), delivered by ArgoCD ([05_gitops.md](05_gitops.md)) at sync-wave 2.
 step. Chart: `argo_apps/platform/charts/02_nic_keeper/`; Application:
 `argo_apps/platform/apps/02_nic_keeper.yaml`.
 
-The three runtime `macb` failure modes machine-config can't reach (the other two are `03e`'s, see
+The three runtime `macb` failure modes machine-config can't reach (the other two are `03d`'s, see
 the [table above](#nic-hardening-the-macb-wedge)):
 
 | runtime trigger                    | what happens                                                    | defence                                       |
@@ -572,7 +441,7 @@ Decisions:
 | Active ping, not carrier       | the wedge is link-up-no-traffic; carrier reads healthy, only a probe catches it.                                                                                                                                                                                                                                                                                                                                    |
 | `NET_ADMIN` + `NET_RAW`        | NET_ADMIN covers `ethtool` EEE / `ip link` / `ss -K`; NET_RAW is required for `ping`'s ICMP socket. Still least-privilege, beats `privileged: true`.                                                                                                                                                                                                                                                                |
 | Auto-sync (prune + selfHeal)   | safe leaf: it cannot cut the cluster off its own network, so drift just auto-corrects. Cilium (wave 0) runs the SAME prune+selfHeal even though it CAN cut the cluster off its own network: a convenience trade-off, knowingly accepted.                                                                                                                                                                                                                                |
-| `instance-type: rpi5` selector | the macb wedge is Pi 5-only. Stamped by Talos `machine.nodeLabels` in [`03d`](#what-03d_talos_cluster_configsh-does) (`NODE_INSTANCE_TYPE` knob in `03d`); that key works because it's on the kubelet NodeRestriction allowlist (an arbitrary `kubernetes.io/*` label is rejected by admission). Not `os: linux` (too broad) nor `control-plane:DoesNotExist` (every node here is control-plane -> matches zero nodes). |
+| `instance-type: rpi5` selector | the macb wedge is Pi 5-only. Stamped by Talos `machine.nodeLabels` in [`03c`](#what-03c_talos_cluster_configsh-does) (`NODE_INSTANCE_TYPE` knob in `03c`); that key works because it's on the kubelet NodeRestriction allowlist (an arbitrary `kubernetes.io/*` label is rejected by admission). Not `os: linux` (too broad) nor `control-plane:DoesNotExist` (every node here is control-plane -> matches zero nodes). |
 
 Caveats / preconditions:
 
@@ -581,7 +450,7 @@ Caveats / preconditions:
 - `CONFIG_INET_DIAG_DESTROY` is required for `ss -K`; absent, the loop logs `event=ss-k-unsupported`
   once and skips the socket-drop (link bounce + EEE still run).
 - A brief link bounce (~2s, `linkDownSeconds`) is expected on every recovery.
-- Never trips the `03e` hardware watchdog: every action is short and the loop always makes progress
+- Never trips the `03d` hardware watchdog: every action is short and the loop always makes progress
   (no unbounded waits).
 - Thresholds are tunable in `values.yaml` (`checkIntervalSeconds`, `failThreshold`, `linkDownSeconds`,
   `cooldownSeconds`, `ssKillFilter`, `pingTarget`). The agent only ever touches `iface` (`end0`).
@@ -604,8 +473,8 @@ A recovery, in the affected node's pod logs:
 ... event=recovery link bounced + eee re-asserted; cooldown=60s
 ```
 
-> Live cluster (label not yet present): if the cluster predates the `03d` change, stamp the label
-> without a reboot the same way `03e` patches config:
+> Live cluster (label not yet present): if the cluster predates the `03c` change, stamp the label
+> without a reboot the same way `03d` patches config:
 >
 `talosctl -n <node-ip> patch mc --mode no-reboot --patch '{"machine":{"nodeLabels":{"node.kubernetes.io/instance-type":"rpi5"}}}'`
 > (repeat per node). Otherwise the DaemonSet has nothing to schedule onto.
@@ -616,35 +485,32 @@ A recovery, in the affected node's pod logs:
   (and `EthernetStatus`) use `tx-tcp-segmentation` / `tx-generic-segmentation` / `rx-gro`,
   not the umbrella `tcp-segmentation-offload` etc. Talos accepts a wrong key but it
   fails the whole ethtool reconcile (`bit name not found`), so every offload silently
-  stays on. `03e` sources the keys from `EthernetStatus` to avoid this; don't hand-edit.
+  stays on. `03d` sources the keys from `EthernetStatus` to avoid this; don't hand-edit.
 - `features` map is replaced, not merged. Strategic merge unions maps, so a stale or
-  renamed key would linger and break the reconcile. `03e` deletes the `EthernetConfig`
+  renamed key would linger and break the reconcile. `03d` deletes the `EthernetConfig`
   document (`$patch: delete`) then re-adds it, authoritative + idempotent each run.
 - Discovered, not hardcoded: ring max + the watchdog device/timeout ceiling are
-  driver/hardware-specific (Pi `bcm2712` watchdog max ~15s; Talos min 10s), `03e` reads
+  driver/hardware-specific (Pi `bcm2712` watchdog max ~15s; Talos min 10s), `03d` reads
   them live and clamps.
 - certSAN-preserving apply: only `talosctl patch mc` (document merge). Never
   `apply-config`/full replace, which would clobber the live certSAN fix.
 - `kube-system` PSS exemption: Talos applies Pod Security elsewhere; the privileged
   probe pod runs in `kube-system`, which is exempt.
-- Image: see step 03a (build) for the recent kernel that makes EEE controllable; the EEE
+- Image: the recent kernel that makes EEE controllable comes from the image repo; the EEE
   step itself is in the deferred DaemonSet, not the image.
 
 ## Troubleshooting
 
-Build:
+Image build:
 
-- `ping failed` can happen because of the NIC bug. Re-run the validator a few times. If it fails occasionally, just move
-  on, we will fix/mitigate this in a later step.
-- `missing separator` in a Makefile -> you're on make 3.81; use `gmake` (the script already does this).
-- `mergeop has been disabled` -> Rancher's default builder can't run siderolabs `bldr`; the script creates a
-  `docker-container` buildx builder that can.
-- `no space left on device` during kernel finalize -> Docker VM disk is too small; bump it in Rancher Desktop ->
-  Virtual Machine, or via a Lima `disk:` override + recreate.
-- `BAKE-IN MISSING: <SYM>` -> a kernel config symbol didn't reconcile (unmet dependency); adjust the config fragment.
-- `cannot stat .../<mod>.ko` at initramfs -> module list drifted; the script's filter handles this, just re-run.
-- `digest mismatch` on the kernel source -> GitHub `/archive/` tarballs aren't byte-stable across requests. The builder
-  hashes one download and serves it from a local HTTP server for the rest of the build. Nothing to do.
+- Problems building the image live in its own repo, see
+  [docs/build.md](https://github.com/yama6a/talos-raspberry-pi5/blob/main/docs/build.md).
+
+Flash:
+
+- `download failed` -> `TALOS_IMAGE_RELEASE` names a release that does not exist. Check the image repo's
+  releases page.
+- `checksum mismatch` -> a truncated download. Delete `.cache/images/<release>/` and re-run.
 
 Boot:
 
@@ -653,18 +519,15 @@ Boot:
   `ttyAMA10`) to see what's happening.
 - Won't boot at all -> EEPROM boot order / `PCIE_PROBE` (step 02).
 - NVMe not detected -> PCIe probe / `dtparam`; confirm Gen 2 link with step 02's checks.
-- Node is gone for good and needs replacing -> [15_node_recovery.md](15_node_recovery.md). Do NOT re-run `03d`
+- Node is gone for good and needs replacing -> [15_node_recovery.md](15_node_recovery.md). Do NOT re-run `03c`
   as-is: it ends by bootstrapping etcd, which is for creating a cluster, not rejoining one.
 
 (Cilium / networking troubleshooting lives in [04_networking.md](04_networking.md).)
 
 ## Reference
 
-- talos-builder: <https://github.com/talos-rpi5/talos-builder>
-- raspberrypi/linux: <https://github.com/raspberrypi/linux>
+- Pi 5 Talos image (the build, the kernel, the releases): <https://github.com/yama6a/talos-raspberry-pi5>
 - Talos releases: <https://github.com/siderolabs/talos/releases>
-- extensions: <https://github.com/siderolabs/extensions>
-- Boot assets / imager: <https://www.talos.dev/latest/talos-guides/install/boot-assets/>
 - Upgrades: <https://www.talos.dev/latest/talos-guides/upgrading-talos/>
 - Pi 5 macb wedge (why the NIC fix lives in step 04 config, not the
   image): <https://github.com/siderolabs/sbc-raspberrypi/issues/91>
@@ -674,5 +537,3 @@ Boot:
   disabled): <https://gateway.envoyproxy.io/>
 - Cilium LB-IPAM + L2 announcements: <https://docs.cilium.io/en/stable/network/lb-ipam/>
 - ingress-nginx retirement (why Gateway API): <https://kubernetes.io/blog/2025/11/11/ingress-nginx-retirement/>
-- Worked examples: <https://kcirtap.io/posts/talos-rpi5-custom-kernel-build/>
-  and <https://rcwz.pl/2025-10-04-installing-talos-on-raspberry-pi-5/>

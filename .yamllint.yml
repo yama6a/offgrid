@@ -11,7 +11,7 @@ rules:
     min-spaces-from-content: 1  # the default wants two spaces before a trailing `#`; this repo writes one
 
 # Skipped trees (one gitignore-style pattern per line; `#` is NOT a comment inside this block scalar):
-#   .cache/       gitignored build scratch (>100 GB)
+#   .cache/       gitignored scratch: downloaded Talos images + benchmark output
 #   secrets/      gitignored off-repo credential symlink
 #   **/templates/ Helm templates are Go-templated, NOT valid YAML
 ignore: |

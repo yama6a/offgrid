@@ -36,8 +36,9 @@
 ## Overview
 
 - Three Raspberry Pi 5s, every node a control-plane node: HA etcd, workloads co-located.
-- Booting Talos off NVMe. Talos ships no official Pi 5 image, so this repo builds its own: a custom installer
-  with a Raspberry Pi kernel at 4K pages (Longhorn and XFS need that), plus the extensions the cluster needs.
+- Booting Talos off NVMe. Talos ships no official Pi 5 image, so this one flashes a release of
+  [yama6a/talos-raspberry-pi5](https://github.com/yama6a/talos-raspberry-pi5): a Raspberry Pi kernel at 4K pages
+  (Longhorn and XFS need that), plus the extensions the cluster needs.
 - The shell steps do only what must exist before GitOps: flash Talos onto the NVMe, bootstrap etcd, install the
   Cilium CNI, install Argo CD.
 - Everything after that is GitOps. Argo CD reconciles `argo_apps/` and delivers the platform (ingress, TLS, SSO,
@@ -112,8 +113,8 @@ its own via unbounded retry.
 flowchart LR
     subgraph imp["Shell bootstrap - make"]
         direction TB
-        HW["Hardware + EEPROM<br/>docs 01-02"] --> IMG["Build + flash custom<br/>Talos Pi 5 image, 03a-03c"]
-        IMG --> TAL["Talos machine config<br/>+ etcd + NIC hardening, 03d-03e"]
+        HW["Hardware + EEPROM<br/>docs 01-02"] --> IMG["Flash the Talos Pi 5<br/>image release, 03a-03b"]
+        IMG --> TAL["Talos machine config<br/>+ etcd + NIC hardening, 03c-03d"]
         TAL --> CIL["Cilium CNI, 04"]
         CIL --> ARGO["Argo CD, 05"]
     end
@@ -161,7 +162,6 @@ POSIX-y environment.
 On your machine:
 
 - `docker` (with host networking), `git`, `kubectl`, `helm`, `yq`, `kubeseal`
-- building the Talos image (03a) also needs `go`, `zstd`, `xz`, `jq`, `curl`
 - no native `talosctl` needed: it runs dockerized via `make talosctl`, because the macOS build is unreliable
   however you install it
 
@@ -178,19 +178,16 @@ make build-eeprom-card              # 02 - write the EEPROM boot config to a mic
 # 1. Configure - versions.env is committed; copy the config+secrets template
 cp .env.example .env                # then edit: node IPs, domains, secrets. Go over everything, to be sure.
 
-# 2. Build the custom Talos image
-make build-talos-image              # 03a - build (+ optionally publish) a Talos image w/ custom kernel + extensions
+# 2. Flash the NVMe drives: connect each NVMe to your laptop (e.g. via a USB adapter) and run, per drive:
+make flash-talos-nvme               # 03a - download the pinned Talos Pi 5 image release and write it (repeat per drive)
 
-# 3. Flash the NVMe drives: connect each NVMe to your laptop (e.g. via a USB adapter) and run, per drive:
-make flash-talos-nvme               # 03b - write to each NVMe (repeat per drive)
+# 3. Verify the nodes boot into Talos maintenance mode
+make verify-talos-boot              # 03b - confirm each node boots into maintenance mode
 
-# 4. Verify the nodes boot into Talos maintenance mode
-make verify-talos-boot              # 03c - confirm each node boots into maintenance mode
-
-# 5. Bootstrap the cluster
+# 4. Bootstrap the cluster
 make bootstrap-cluster              # config + etcd + Cilium + Argo CD + seed secrets
 
-# 6. Verify
+# 5. Verify
 make check-health                   # Talos cluster health
 eval "$(make print-kubeconfig)"     # point kubectl at the cluster
 kubectl get applications -n argocd  # watch Argo CD deliver the platform, then workloads
@@ -228,8 +225,8 @@ Hardware caveats before you commit:
 
 | Task                      | Command                                                                          | Notes                                                                                                               |
 |---------------------------|----------------------------------------------------------------------------------|---------------------------------------------------------------------------------------------------------------------|
-| Upgrade Talos             | `make upgrade-talos`                                                             | Rolling A/B in-place to the pinned installer (03f) (bump `TALOS_VERSION` in `versions.env`)                         |
-| Upgrade Kubernetes        | `make upgrade-k8s`                                                               | Rolling, no reboot (03g). (Bump `KUBERNETES_VERSION` in `versions.env`)                                             |
+| Upgrade Talos             | `make upgrade-talos`                                                             | Rolling A/B in-place to the pinned installer (03e) (bump `TALOS_VERSION` in `versions.env`)                         |
+| Upgrade Kubernetes        | `make upgrade-k8s`                                                               | Rolling, no reboot (03f). (Bump `KUBERNETES_VERSION` in `versions.env`)                                             |
 | Restore a datastore       | `make restore-cnpg`, `restore-redis`, `restore-longhorn`, `restore-vm`            | From the off-cluster S3 backups ([docs/13](docs/13_backups.md)).                                                     |
 | Recover a lost node       | `make recover-node NODE=pi-cp3`                                                  | Rejoins one wiped/replaced node and fixes etcd, the local-path PVCs and Longhorn's disk record ([docs/15](docs/15_node_recovery.md)). |
 | Rightsize requests        | `make krr`                                                                       | Prints current requests next to what usage history suggests. Read-only; you hand-edit the chart values.             |
@@ -248,7 +245,7 @@ Hardware caveats before you commit:
   stateful CR removed from a live app is kept, not pruned ([docs/13](docs/13_backups.md)).
 - **LoadBalancer IP stuck `<pending>`**: the Cilium LB pool must be on the nodes' L2, avoiding the DHCP range
   and the VIP ([docs/04](docs/04_networking.md)).
-- **Intermittent NIC drops on a Pi 5**: the `macb` wedge, handled by NIC hardening (03e) plus the `nic-keeper`
+- **Intermittent NIC drops on a Pi 5**: the `macb` wedge, handled by NIC hardening (03d) plus the `nic-keeper`
   DaemonSet ([docs/03](docs/03_operating_system.md)).
 
 ## Documentation
@@ -259,7 +256,7 @@ Each doc holds the why behind a step, with verification commands:
 |----------------------------------------------------|---------------------------------------------------------------------------------|
 | [01_hardware](docs/01_hardware.md)                 | Bill of materials + the reasoning behind every part.                            |
 | [02_raspi_eeprom](docs/02_raspi_eeprom.md)         | Flashing a common Pi 5 EEPROM boot config.                                      |
-| [03_operating_system](docs/03_operating_system.md) | Talos: OS choice, the custom Pi 5 image build, cluster bring-up, NIC hardening. |
+| [03_operating_system](docs/03_operating_system.md) | Talos: OS choice, where the Pi 5 image comes from, cluster bring-up, NIC hardening. |
 | [04_networking](docs/04_networking.md)             | Cilium as CNI + LoadBalancer + WireGuard (the last imperative infra).           |
 | [05_gitops](docs/05_gitops.md)                     | Argo CD, the two-tree app-of-apps, sync-wave convention.                        |
 | [06_secrets](docs/06_secrets.md)                   | Sealed Secrets + the master-key custody you can't lose.                         |
@@ -281,8 +278,9 @@ Built on the work of the Talos/[Sidero](https://www.talos.dev/), [Cilium](https:
 [Argo CD](https://argo-cd.readthedocs.io/), [cert-manager](https://cert-manager.io/),
 [Envoy Gateway](https://gateway.envoyproxy.io/), [Sealed Secrets](https://github.com/bitnami-labs/sealed-secrets),
 [Longhorn](https://longhorn.io/), [CloudNativePG](https://cloudnative-pg.io/),
-[VictoriaMetrics](https://victoriametrics.com/) and [Grafana](https://grafana.com/) communities. The custom
-Pi 5 Talos image builds on [talos-rpi5/talos-builder](https://github.com/talos-rpi5)
+[VictoriaMetrics](https://victoriametrics.com/) and [Grafana](https://grafana.com/) communities. The Pi 5 Talos
+image comes from [yama6a/talos-raspberry-pi5](https://github.com/yama6a/talos-raspberry-pi5), which credits its
+own upstreams.
 
 ## License
 

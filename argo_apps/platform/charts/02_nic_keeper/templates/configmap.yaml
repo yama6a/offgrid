@@ -11,7 +11,7 @@ data:
   nic-keeper.sh: |
     #!/bin/sh
     # Only ever touches $IFACE. Every sleep is bounded so the loop always makes progress and never
-    # trips the 03e hardware watchdog.
+    # trips the 03d hardware watchdog.
     set -u
 
     IFACE="${IFACE:-end0}"

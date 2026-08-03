@@ -42,8 +42,8 @@ Decisions:
 
 ## What `04_cilium.sh` does
 
-Native `helm` + `kubectl`, erroring out if either is missing, unlike the dockerized 03a-03e scripts. Talks to the
-cluster via `secrets/kubeconfig` (written by 03d). Idempotent.
+Native `helm` + `kubectl`, erroring out if either is missing, unlike the dockerized 03b-03d scripts. Talks to the
+cluster via `secrets/kubeconfig` (written by 03c). Idempotent.
 
 1. `helm dependency build argo_apps/platform/charts/00_cilium` pulls the pinned `cilium/cilium` subchart into
    `charts/`, falling back to `helm dependency update` to generate `Chart.lock` on a first run.
@@ -145,7 +145,7 @@ observe --verdict AUDIT`) until validated, then gets enforced by turning audit o
 
 ## Caveats
 
-- Run order: 03e before 04. Harden the NIC ahead of Cilium's network-heavy rollout. The script's only
+- Run order: 03d before 04. Harden the NIC ahead of Cilium's network-heavy rollout. The script's only
   cluster-side dependency is a reachable API, which works over the VIP even with no CNI.
 - All nodes are control-plane, so the L2 policy selects every Linux node. The `node-role.kubernetes.io/control-plane:
   DoesNotExist` selector from upstream examples would match zero nodes here and nothing would answer ARP.

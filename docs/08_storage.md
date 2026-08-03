@@ -10,7 +10,7 @@ one Talos host prerequisite from [`03_operating_system.md`](03_operating_system.
 
 There is **no default StorageClass**. Every PVC names one, or it stays `Pending`.
 
-Per-node NVMe layout, carved by [`03d`](03_operating_system.md): EPHEMERAL 64 GiB, then a fixed 50 GiB
+Per-node NVMe layout, carved by [`03c`](03_operating_system.md): EPHEMERAL 64 GiB, then a fixed 50 GiB
 `localpath` slice, then `longhorn` takes the remainder.
 
 ## Longhorn
@@ -28,7 +28,7 @@ on low-power nodes. Revisit if upstream fixes it.
 ### Talos prerequisites
 
 From step 03: the `iscsi-tools` and `util-linux-tools` extensions, 4K kernel pages (XFS will not mount on 16K),
-and the `/var/mnt/longhorn` XFS volume. Longhorn adds one thing, a kubelet bind-mount in `03d`'s `cp-patch.yaml`:
+and the `/var/mnt/longhorn` XFS volume. Longhorn adds one thing, a kubelet bind-mount in `03c`'s `cp-patch.yaml`:
 
 ```yaml
 machine:
@@ -44,7 +44,7 @@ Talos runs the kubelet in a container and does not auto-propagate host mounts un
 without the bind Longhorn's pods see an empty directory. `rshared` is required so per-replica sub-mounts
 propagate back to the host, matching Longhorn's own Talos guidance.
 
-`03d` is the source of truth, so any rebuild gets it. On a live cluster apply just this patch per node
+`03c` is the source of truth, so any rebuild gets it. On a live cluster apply just this patch per node
 (`talosctl patch machineconfig ... --mode=auto`) BEFORE the Longhorn app syncs, or the manager pods come up with
 every node's disk unschedulable.
 
@@ -143,7 +143,7 @@ node before the pod is scheduled.
 
 ### Talos prerequisite
 
-Two things from [`03d`](03_operating_system.md): the fixed-size XFS volume at `/var/mnt/localpath` (50 GiB,
+Two things from [`03c`](03_operating_system.md): the fixed-size XFS volume at `/var/mnt/localpath` (50 GiB,
 `min == max` so it cannot grow into Longhorn's space), and a kubelet bind-mount of it in `cp-patch.yaml`. Same
 reason as Longhorn, but plain `[bind, rw]` suffices, since there are no per-replica sub-mounts to propagate.
 

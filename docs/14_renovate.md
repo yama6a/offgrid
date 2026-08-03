@@ -119,8 +119,8 @@ bumps bake before they are eligible, or drop `automerge` from the specific deps 
   that chart's README, not a line edit.
 - VictoriaMetrics charts are grouped. The CRD chart's app version must match its operator, which is a human
   check on the grouped PR. See [09_monitoring.md](09_monitoring.md).
-- The kernel is not a Renovate dependency, it is derived from Talos. raspberrypi/linux has no per-version tags,
-  and its `stable_YYYYMMDD` tags jump kernel lines, so there is nothing safe to track. Instead `03a` reads the
-  kernel version Talos expects (`DefaultKernelVersion`) at build time and resolves the exact `raspberrypi/linux`
-  commit via `raspberrypi/firmware`'s `extra/git_hash`. Bumping `TALOS_VERSION` carries the kernel with it, with
-  no separate pin. See [03_operating_system.md](03_operating_system.md).
+- The Talos image is ONE pin, `TALOS_IMAGE_RELEASE`, tracking releases of
+  [yama6a/talos-raspberry-pi5](https://github.com/yama6a/talos-raspberry-pi5). Its `-<build revision>` suffix
+  would read as a semver prerelease and be skipped as unstable, so its annotation carries a custom
+  `versioning=regex:` that treats the revision as a 4th component. `common.sh` derives `TALOS_VERSION` from it,
+  and the kernel, pkgs and overlay pins live in that repo. See [03_operating_system.md](03_operating_system.md).
