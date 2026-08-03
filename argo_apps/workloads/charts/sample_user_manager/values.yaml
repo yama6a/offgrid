@@ -64,7 +64,7 @@ analyticsdb:
   # renovate: datasource=docker depName=ghcr.io/cloudnative-pg/postgresql
   postgresVersion: "18"
   highAvailability: false
-  deletionProtection: false   # TRANSIENT (DR restore): re-protected once the restore is verified
+  deletionProtection: true    # always true in steady state; flip to false only to delete it
   resources:
     requests:
       cpu: 100m
@@ -74,9 +74,6 @@ analyticsdb:
       memory: 256Mi
   allowedClients:
     - matchLabels: { app: sample-user-manager }
-  # TRANSIENT (DR restore): rebuild from S3 instead of initdb. Removed again once verified.
-  restore:
-    enabled: true
 
 # The two Redis instances deliberately showcase BOTH persistence modes.
 
