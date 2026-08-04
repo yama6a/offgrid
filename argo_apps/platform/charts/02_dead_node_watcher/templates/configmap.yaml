@@ -58,9 +58,10 @@ data:
               || log taint-failed "node=${node}"
             ;;
           clear)
-            # Kubernetes never removes this one, and a node that keeps it takes no pods back.
+            # Kubernetes never removes this one, and a node that keeps it takes no pods back. No effect in the
+            # `key-` form, so it also clears one a human applied as NoSchedule rather than NoExecute.
             log recovered "node=${node} (removing ${TAINT})"
-            kubectl taint node "$node" "${TAINT}:NoExecute-" \
+            kubectl taint node "$node" "${TAINT}-" \
               || log untaint-failed "node=${node}"
             ;;
         esac
