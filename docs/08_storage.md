@@ -185,7 +185,7 @@ So there are now two independent layers of redundancy, and each covers a differe
 
 | Layer | Covers |
 |---|---|
-| Postgres replication (`highAvailability: true`) | the primary dying: a standby is already caught up and gets promoted in seconds |
+| Postgres replication (`highAvailability: true`) | the primary dying: a standby is already caught up and gets promoted, measured at ~97s of write unavailability |
 | Longhorn's 2 replicas | the volume's node dying: the volume reattaches elsewhere with its data intact |
 
 Which means a machine loss is uneventful either way:

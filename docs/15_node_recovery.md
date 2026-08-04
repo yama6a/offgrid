@@ -32,6 +32,11 @@ it automatically, on purpose, because only an operator can make that call. `dead
 Timeline for a machine that dies: ~40s for Kubernetes to mark it NotReady, then the watcher's 60s grace, so a
 displaced pod is running on a survivor in about two minutes instead of six-plus.
 
+**It deliberately does nothing for a reboot.** A Pi 5 Talos reboot is back inside ~90s, which is shorter than
+Kubernetes' own NotReady delay plus the 60s grace, so the node returns before the watcher would act and the
+volume never needed to move. Measured on a `talosctl reboot --mode force`: the watcher logged nothing at all.
+So it earns its keep only when a machine is down for good, or for many minutes.
+
 Three guards, each of which matters:
 
 - **It skips a cordoned node.** A cordon means a human or `03e` is draining on purpose, so the machine is not
@@ -66,8 +71,20 @@ Hard anti-affinity means a workload that already has one copy per machine has no
 | Workload | Machine dies | Machine returns |
 |---|---|---|
 | `sample-user-manager-analytics`, Redis, monitoring stores, ntfy | moves to a survivor in ~2 min | nothing to do |
-| `sample-user-manager-db`, 3 instances | serves on 2 of 3, a standby is promoted, writes continue | the third instance schedules back by itself |
+| `sample-user-manager-db`, 3 instances | a standby is promoted, then serves on 2 of 3 | the third instance schedules back by itself |
 | RabbitMQ, 3 brokers | serves on 2 of 3, no messages lost | the broker returns with its own data |
+
+Measured outage, killing the machine that held both the db primary and the single instance with
+`talosctl reboot --mode force`, probed by an insert every 200ms:
+
+| | Unavailable for | Why that long |
+|---|---|---|
+| `sample-user-manager-db` (HA) writes | 97s | CNPG will not promote until it is sure the primary is gone, and that wait is Kubernetes' node-monitor grace, not a CNPG setting |
+| `sample-user-manager-analytics` (single) | 244s | no standby, so it waits out the whole reboot plus its own crash recovery |
+
+Neither number is "seconds". Synchronous replication buys you no LOST transactions, not a fast failover: the
+promoted standby is guaranteed to hold every acknowledged commit, and the application still sees ~1.5 minutes
+of failed writes. Anything that needs better than that needs a client that retries, not a storage change.
 
 So the 3-copy workloads stay available but lose their spare until the machine is repaired, and a second loss in
 that window stops writes. A 4th machine removes this.
