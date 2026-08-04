@@ -527,6 +527,15 @@ kubectl -n <ns> exec <primary> -c postgres -- psql -U postgres -tAc 'select pg_s
 Archiving recovers within a minute. Then take a base backup at once, with a `Backup` CR using `method: plugin`,
 rather than waiting for the 02:00 schedule: until one completes there is no restore point at all.
 
+A base backup is not restorable the moment it reports `completed`. Recovery needs the WAL segment holding the
+backup-end record, and that only reaches S3 after `archive_timeout` (15 min) or a segment fill, so a restore
+attempted before then dies on `WAL ends before end of online backup` and retries until the segment lands. To
+restore immediately, force the switch:
+
+```bash
+kubectl -n <ns> exec <primary> -c postgres -- psql -U postgres -tAc 'select pg_switch_wal()'
+```
+
 A RESET (`make reset-cluster`) goes further: it empties the bucket AND `terraform destroy`s it plus the IAM writer.
 The full teardown. A rebuild calls reset internally with `REBUILD_IN_PROGRESS=1`, which skips that destroy so the
 bucket survives.
