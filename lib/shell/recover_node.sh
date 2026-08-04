@@ -296,7 +296,7 @@ NEXT
 NEXT
 cat <<NEXT
 
-Then walk docs/15_node_recovery.md step 9 to confirm.
+Then walk docs/15_node_recovery.md step 7 to confirm.
 NEXT
 
 summary || exit 1
