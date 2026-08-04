@@ -502,6 +502,31 @@ a clean history.
 So a rebuild DISCARDS your backups. If you want the old data, restore it BEFORE rebuilding, or do not rebuild. To
 recover specific data without a rebuild, use `make restore-cnpg` against the live bucket.
 
+### Recreating ONE cluster hits the same wall
+
+Deleting and recreating a single `Cluster` under the same name, e.g. to change its storage class, which is
+immutable, gives it a new `initdb` systemID against a catalog that still holds the old one. Barman refuses:
+
+```
+WAL archive check failed for server <name>: Expected empty archive
+```
+
+`ContinuousArchiving` goes `False` and stays there. The database serves fine and nothing else looks wrong, so
+check that condition after any recreate. `restore.enabled` is NOT the fix, and neither is stamping
+`cnpg.io/skipEmptyWalArchiveCheck` permanently: that only silences the guard against mixing two systemIDs in one
+catalog.
+
+Empty just that server's prefix, not the whole bucket:
+
+```bash
+aws s3 rm --recursive "s3://<bucket>/cnpg/<namespace>/<cluster>/"
+kubectl -n <ns> delete backups.postgresql.cnpg.io --all   # they point at objects that are now gone
+kubectl -n <ns> exec <primary> -c postgres -- psql -U postgres -tAc 'select pg_switch_wal()'
+```
+
+Archiving recovers within a minute. Then take a base backup at once, with a `Backup` CR using `method: plugin`,
+rather than waiting for the 02:00 schedule: until one completes there is no restore point at all.
+
 A RESET (`make reset-cluster`) goes further: it empties the bucket AND `terraform destroy`s it plus the IAM writer.
 The full teardown. A rebuild calls reset internally with `REBUILD_IN_PROGRESS=1`, which skips that destroy so the
 bucket survives.
