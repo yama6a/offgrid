@@ -167,6 +167,10 @@ ok "${NODE} is Ready"
 if [ "$(kubectl get node "$NODE" -o jsonpath='{.spec.unschedulable}')" = "true" ]; then
   kubectl uncordon "$NODE" >/dev/null 2>&1 && ok "uncordoned ${NODE}" || bad "could not uncordon ${NODE}"
 fi
+# dead-node-watcher clears its own taint once the node is Ready, but a node that keeps it accepts no pods, so
+# don't make the convergence wait below depend on that loop being up.
+kubectl taint node "$NODE" node.kubernetes.io/out-of-service- >/dev/null 2>&1 \
+  && ok "removed the out-of-service taint from ${NODE}"
 
 # A node that reports Ready is still bringing its DaemonSets up, and the disk step below reads what one of them
 # publishes: the longhorn-manager that writes diskStatus. Judge that too early and a perfectly good disk looks

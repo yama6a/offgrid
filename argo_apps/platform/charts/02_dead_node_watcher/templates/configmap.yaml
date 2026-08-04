@@ -20,13 +20,15 @@ data:
       "$(date -u +%Y-%m-%dT%H:%M:%SZ)" "$ev" "$*"; }
 
     # One line per node needing action: "taint <node> <readyStatus> <secondsNotReady>" or "clear <node>".
-    # A NotReady node is left alone while it is inside the grace window, already tainted, or cordoned, the
-    # last because a cordon means a human or 03e is draining it on purpose, NOT that it died.
+    # A NotReady node is left alone only while it is inside the grace window or already tainted.
+    # A cordon is NOT a reason to skip: a Ready node never reaches the taint branch at all, so an ordinary
+    # drain is already untouched, while `talosctl reset` cordons a node that is genuinely never coming back
+    # and skipping that one cost 5+ minutes of stuck volumes. 03e removes the taint itself after each node,
+    # so a rolling upgrade does not depend on this loop being alive to un-taint.
     decide() {
       kubectl get nodes -o json | jq -r --argjson grace "$GRACE" --argjson max "$MAX_UNREADY" --arg taint "$TAINT" '
         [.items[] | {
           name:     .metadata.name,
-          cordoned: (.spec.unschedulable // false),
           tainted:  ((.spec.taints // []) | any(.key == $taint)),
           ready:    (.status.conditions[] | select(.type == "Ready") | .status),
           notReadyFor: (now - (.status.conditions[] | select(.type == "Ready") | .lastTransitionTime | fromdateiso8601))
@@ -36,7 +38,7 @@ data:
         | if .ready == "True" then
             (if .tainted then "clear \(.name)" else empty end)
           elif $unready > $max then empty
-          elif .tainted or .cordoned or (.notReadyFor < $grace) then empty
+          elif .tainted or (.notReadyFor < $grace) then empty
           else "taint \(.name) \(.ready) \(.notReadyFor | floor)"
           end'
     }

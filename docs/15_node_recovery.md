@@ -39,12 +39,21 @@ So it earns its keep only when a machine is down for good, or for many minutes.
 
 Three guards, each of which matters:
 
-- **It skips a cordoned node.** A cordon means a human or `03e` is draining on purpose, so the machine is not
-  dead and its volumes must not be yanked out from under it.
+- **It never touches a Ready node.** That is what protects an ordinary drain: `kubectl drain` and `03e` cordon a
+  machine that is still up, and a Ready node cannot reach the taint branch at all. A cordon on its own is NOT a
+  reason to skip, because `talosctl reset` cordons a machine that is never coming back, and skipping that one
+  measured 5.5 minutes of stuck volumes.
 - **It refuses when more than one node is NotReady.** That is a cluster event, not a machine failure: there is
   nowhere to reschedule to, and force-detaching everything at once is not what you want a loop deciding.
 - **It removes the taint when the node is Ready again.** Kubernetes requires that and nothing else does it; a
-  node that keeps the taint takes no pods back.
+  node that keeps the taint takes no pods back. `03e` and `recover_node.sh` also clear it next to their own
+  `uncordon`, so neither depends on this loop being alive to un-taint a machine they just brought back.
+
+Cost of dropping the cordon guard: a rolling upgrade now taints each machine during its reboot, which
+force-deletes the three Longhorn DaemonSet pods there (`longhorn-manager`, `longhorn-csi-plugin`,
+`engine-image`; cilium, nic-keeper, node-exporter and the log collector tolerate every taint). They are
+recreated when the machine returns, and the drain already moved everything else, so there is nothing else on it
+to evict.
 
 It is safe because Longhorn refuses to attach one volume in two places, which is the corruption the six-minute
 wait exists to prevent.

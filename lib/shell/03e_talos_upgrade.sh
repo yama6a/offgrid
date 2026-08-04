@@ -100,9 +100,11 @@ drain_node() {
   fi
 }
 
-# Don't strand a node cordoned if we die mid-node (drain/upgrade failure); Talos also uncordons on rejoin.
+# Don't strand a node cordoned OR tainted if we die mid-node (drain/upgrade failure); Talos also uncordons on
+# rejoin. The out-of-service taint is dead-node-watcher's: it fires on the reboot (cordoned + NotReady past its
+# grace), and a node keeping it accepts no pods, so clear it here rather than depending on that loop being up.
 DRAINING_NODE=""
-trap '[ -n "$DRAINING_NODE" ] && kubectl uncordon "$DRAINING_NODE" >/dev/null 2>&1 || true' EXIT
+trap '[ -n "$DRAINING_NODE" ] && { kubectl uncordon "$DRAINING_NODE"; kubectl taint node "$DRAINING_NODE" node.kubernetes.io/out-of-service-; } >/dev/null 2>&1 || true' EXIT
 
 read -ra IPS <<< "$NODES"
 [ "${#IPS[@]}" -gt 0 ] || die "no nodes set, edit CLUSTER_NODES in .env"
@@ -151,6 +153,7 @@ for ip in "${IPS[@]}"; do
     || die "cluster not healthy after upgrading ${ip}; stopping. Investigate, then re-run to resume."
 
   kubectl uncordon "$node" >/dev/null 2>&1 || true   # Talos uncordons on rejoin; make it explicit/idempotent
+  kubectl taint node "$node" node.kubernetes.io/out-of-service- >/dev/null 2>&1 || true   # see the trap above
   DRAINING_NODE=""
 done
 
