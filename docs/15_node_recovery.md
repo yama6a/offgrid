@@ -83,17 +83,38 @@ Hard anti-affinity means a workload that already has one copy per machine has no
 | `sample-user-manager-db`, 3 instances | a standby is promoted, then serves on 2 of 3 | the third instance schedules back by itself |
 | RabbitMQ, 3 brokers | serves on 2 of 3, no messages lost | the broker returns with its own data |
 
-Measured outage, killing the machine that held both the db primary and the single instance with
-`talosctl reboot --mode force`, probed by an insert every 200ms:
+Measured outage, in each case killing the machine that held BOTH the db primary and the single instance, and
+probing with an insert every 200ms:
 
-| | Unavailable for | Why that long |
-|---|---|---|
-| `sample-user-manager-db` (HA) writes | 97s | CNPG will not promote until it is sure the primary is gone, and that wait is Kubernetes' node-monitor grace, not a CNPG setting |
-| `sample-user-manager-analytics` (single) | 244s | no standby, so it waits out the whole reboot plus its own crash recovery |
+| Failure | HA writes | Single instance | Watcher |
+|---|---|---|---|
+| ethernet unplugged (a real unplanned death) | **184s** | **191s** | fired at t+116s |
+| `talosctl reset` (before the guard was narrowed) | 328s | 402s | suppressed by the cordon |
+| `talosctl reboot --mode force` (back in ~90s) | 97s | 244s | correctly never fired |
+
+So the taint is worth 144s on the HA cluster and 211s on the single instance. The cable-pull breakdown: 53s for
+Kubernetes to mark the node `Unknown`, 62s of the watcher's grace, then ~70s for CNPG to promote and for the
+single instance to reattach and finish crash recovery.
 
 Neither number is "seconds". Synchronous replication buys you no LOST transactions, not a fast failover: the
-promoted standby is guaranteed to hold every acknowledged commit, and the application still sees ~1.5 minutes
-of failed writes. Anything that needs better than that needs a client that retries, not a storage change.
+promoted standby is guaranteed to hold every acknowledged commit, and the application still sees ~3 minutes of
+failed writes. Anything needing better than that needs a client that retries, not a storage change.
+
+### Force-detaching a machine that is still alive is safe, and here is why
+
+The cable-pull case is the one the six-minute wait exists for: the machine keeps running, Postgres keeps its
+volume mounted, and its `longhorn-manager` cannot be told to stand down because it cannot reach the API. Tainting
+it force-attaches the same volume on a survivor, so two engines briefly hold a copy each.
+
+Measured: Longhorn stamped `failedAt` on the isolated machine's replica 5 seconds after the taint landed, and
+kept serving from the survivor's replica. On rejoin the fenced replica was rebuilt from the authoritative one,
+and CNPG discarded the diverged ex-primary entirely, recovering it from a base backup on the old timeline and
+then streaming from the new one. A 50-row checksum taken before the pull was byte-identical afterwards.
+
+Two costs to know about, both self-healing. The returning machine's Longhorn DaemonSets were force-deleted by
+the taint, so the first pod scheduled back there fails to mount for ~35s with `CSINode <node> does not contain
+driver driver.longhorn.io` until the CSI plugin re-registers. And an instance that cannot reschedule under hard
+anti-affinity waits out the whole outage Pending, which is correct but looks alarming.
 
 So the 3-copy workloads stay available but lose their spare until the machine is repaired, and a second loss in
 that window stops writes. A 4th machine removes this.
