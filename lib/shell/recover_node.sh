@@ -76,16 +76,20 @@ n = 0
 for r in json.load(sys.stdin)["items"]:
     s = r.get("spec") or {}
     if s.get("volumeName") != vol or s.get("nodeID") == node: continue
-    if (r.get("status") or {}).get("currentState") == "running" and not s.get("failedAt"): n += 1
+    if s.get("failedAt"): continue
+    # NOT currentState == running: a workload whose pod cannot reschedule leaves its volume DETACHED, and
+    # every replica of a detached volume reads `stopped`, so that test throws away good copies and refuses
+    # the recovery that would give them a node to run on again. healthyAt is the durable signal.
+    if s.get("healthyAt") or (r.get("status") or {}).get("currentState") == "running": n += 1
 print(n)')"
-  if [ "${elsewhere:-0}" -eq 0 ]; then bad "${vol} has no running replica off ${NODE}"; SAFE="no"; fi
+  if [ "${elsewhere:-0}" -eq 0 ]; then bad "${vol} has no healthy replica off ${NODE}"; SAFE="no"; fi
 done <<< "$(kubectl -n "$LH_NS" get volumes.longhorn.io -o jsonpath='{range .items[*]}{.metadata.name}{"\n"}{end}' 2>/dev/null)"
 if [ "$SAFE" != "yes" ]; then
   warn "those volumes would be destroyed, not rebuilt. Restore them first (make restore-longhorn), or wait if a"
   warn "rebuild is still running: kubectl -n ${LH_NS} get volumes.longhorn.io"
   summary; exit 1
 fi
-ok "every Longhorn volume has a running replica off ${NODE}"
+ok "every Longhorn volume has a healthy replica off ${NODE}"
 
 echo
 echo "    About to, on ${NODE}: drop its stale etcd member, apply its machine config, and reset its"
