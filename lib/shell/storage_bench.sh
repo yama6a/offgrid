@@ -943,6 +943,9 @@ do_run() {
   case "$WORKLOADS" in pgbench|all)
     for arm in "${slow[@]}"; do
       id="${arm%%|*}"; sc="$(cut -d'|' -f2 <<< "$arm")"
+      if [ -f "${RUN_DIR}/pgbench/${id}/r${REPEATS}/c8.txt" ]; then
+        ok "pgbench: ${id} already complete, skipping (--resume)"; continue
+      fi
       say "pgbench: ${id} (${sc})"
       if pg_arm_up "$id" "$sc"; then
         pg_client_up
@@ -997,6 +1000,9 @@ do_run() {
   case "$WORKLOADS" in amqp|all)
     for arm in "${slow[@]}"; do
       id="${arm%%|*}"; sc="$(cut -d'|' -f2 <<< "$arm")"
+      if [ -f "${RUN_DIR}/amqp/${id}/r${REPEATS}/c100.txt" ]; then
+        ok "amqp: ${id} already complete, skipping (--resume)"; continue
+      fi
       say "amqp: ${id} (${sc})"
       if mq_arm_up "$id" "$sc"; then
         for ((rep = 1; rep <= REPEATS; rep++)); do cell amqp "$id" "$sc" "$rep"; done

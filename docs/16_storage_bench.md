@@ -96,10 +96,7 @@ Confidence rests on the gates that do work, and on agreement between runs:
   file against a p99 over 512MB, and fdatasync cost grows with dirty extent count. The gate needs
   rewriting as ranking-only.
 
-**RabbitMQ has no verdict.** The drift guard voided two of three repeats, leaving n=1 on one arm and a
-2.22x spread on another. Directionally `perf-test -c 1` p99 was 7.97 ms local-path against 20.60 ms on
-Longhorn at 51% throughput, which is mechanically plausible since a quorum queue fsyncs per Raft batch
-across three brokers. If it ever needs deciding: `--workload amqp --repeats 7`.
+RabbitMQ was re-run at `--repeats 7`; see its own table below.
 
 **Tail latency is bad on every arm, local-path included.** Worst single observation: local-path 8,050 ms,
 lh-remote 545 ms, lh-best-effort 1,233 ms. That is Pi 5 scheduling, 1GbE jitter and a consumer NVMe
@@ -263,6 +260,59 @@ wedge teardown for a week. The one place the bench breaks parity with production
 - NVMe with power-loss protection, which would take fsync from ~1 ms to tens of microseconds and remove
   most of the tail. Does not exist in a Pi-friendly form factor.
 
+## RabbitMQ, against managed queues
+
+Run `20260803T2021Z`, 7 repeats. Median across repeats. `perf-test` confirm latency is publish to
+Raft-majority fsync across 3 brokers, a DURABILITY ack, not a delivery.
+
+| # | Config | Measures | p50 ms | p99 ms | msg/s | Basis |
+|---|---|---|---|---|---|---|
+| 1 | local-path, 1 publisher | confirm | 4.8 | 9.4 | 188 | measured |
+| 2 | longhorn-r2, both replicas remote, 1 pub | confirm | 10.5 | 26.7 | 86 | measured |
+| 3 | longhorn-r2 `best-effort`, 1 pub | confirm | 9.1 | 18.4 | 102 | measured |
+| 4 | local-path, 100 publishers | confirm | 50.7 | 96.1 | 1870 | measured |
+| 5 | longhorn-r2 remote, 100 pub | confirm | 54.2 | 122.5 | 1608 | measured |
+| 6 | longhorn-r2 `best-effort`, 100 pub | confirm | 53.5 | 107.8 | 1750 | measured |
+| 7 | SQS, server side | AWS processing time alone | 5-10 | | | AWS support, via an SDK issue |
+| 8 | SQS Standard | producer to consumer, eu-west-1 | 16.2 | 105 | | third-party, 2022 |
+| 9 | SQS FIFO | producer to consumer | 28.1 | 645 | | third-party, 2022 |
+| 10 | Pub/Sub publish | publish to ack | ~16 | 60-70 at p95 | | Google's own prober jobs |
+
+- Longhorn costs RabbitMQ **2.8x on confirm p99 at one publisher** and 54% of throughput. Far worse than
+  the 1.5x it costs Postgres, because a quorum queue fsyncs per Raft batch on every broker, so the
+  storage penalty is paid three times and the confirm waits for the majority.
+- **Under load the gap nearly closes**: 1.27x on p99 and 86% of throughput at 100 publishers. Raft
+  batching amortizes the fsync, so the single-publisher figure is the worst case, not the typical one.
+- **`dataLocality: best-effort` recovers 31% here** (18.4 against 26.7), where it recovered 4% for
+  Postgres. Not explained by the both-replicas argument that covers Postgres. Unresolved; do not build
+  on it without a repeat.
+- RabbitMQ beats both managed queues on latency even on Longhorn, which is unsurprising and not the
+  point: they replicate across zones or regions behind an API. A Google engineer states plainly that
+  sub-10 ms is out of reach for Pub/Sub by design. What they sell is unbounded scale and no operations,
+  which this table cannot show.
+- Rows 1-6 are a durability ack. Rows 8 and 9 include the consumer poll, so they are NOT like-for-like.
+  Rows 7 and 10 are the honest analogues.
+- Neither vendor publishes a latency SLO. AWS documents "tens or low hundreds of milliseconds"; Google's
+  SLA covers availability and points at `topic/send_request_latencies` to measure yourself.
+
+### The variance gate is the wrong statistic
+
+Two of three arms fail it at one publisher, on 2 outlying repeats out of 7:
+
+| arm | sorted p99 across 7 repeats | range gate |
+|---|---|---|
+| `a-local` | 7.5 8.0 9.4 9.4 9.5 9.8 9.9 | 1.33x, pass |
+| `b-lh-remote` | 24.2 24.3 25.4 26.7 27.3 **32.7 37.7** | 1.56x, fail |
+| `c-lh-local` | 16.9 16.9 17.1 18.4 19.6 **29.9 39.9** | 2.36x, fail |
+
+Five of seven cluster tightly in every arm, so the medians hold. The gate does not, and cannot: it is
+max/min, and **the range of a sample grows with sample size**. Raising repeats makes a range gate
+strictly MORE likely to fail, so this doc's own prescription of `--repeats 7` could never have fixed it.
+Replace it with a robust statistic, an interquartile spread or a median-of-repeats tolerance.
+
+A warm-up artifact was suspected from the 3-repeat data, where both Longhorn arms fell monotonically.
+Wrong: at 7 repeats the outliers land on r3 and r7, not r1.
+
 ## Sources
 
 [RDS Multi-AZ](https://aws.amazon.com/rds/features/multi-az/) .
@@ -270,4 +320,7 @@ wedge teardown for a week. The one place the bench breaks parity with production
 [Multi-AZ DB cluster](https://aws.amazon.com/blogs/aws/amazon-rds-multi-az-db-cluster) .
 [Cloud SQL HA](https://docs.cloud.google.com/sql/docs/postgres/high-availability) .
 [rows 7 and 11](https://hostim.dev/blog/postgres-benchmark-rds-vs-hostim-vs-self-hosted/) .
-[the 2-5ms adder](https://thebuild.com/blog/2026/04/28/managed-postgres-examined-amazon-rds-for-postgresql)
+[the 2-5ms adder](https://thebuild.com/blog/2026/04/28/managed-postgres-examined-amazon-rds-for-postgresql) .
+[SQS and SNS percentiles](https://lucvandonkersgoed.com/2022/09/06/serverless-messaging-latency-compared/) .
+[SQS latency guidance](https://aws.amazon.com/sqs/faqs/) .
+[Pub/Sub troubleshooting and publish latency](https://docs.cloud.google.com/pubsub/docs/topic-troubleshooting)
