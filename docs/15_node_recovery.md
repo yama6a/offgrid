@@ -100,6 +100,38 @@ Neither number is "seconds". Synchronous replication buys you no LOST transactio
 promoted standby is guaranteed to hold every acknowledged commit, and the application still sees ~3 minutes of
 failed writes. Anything needing better than that needs a client that retries, not a storage change.
 
+### A planned drain: 64s of write outage down to 20s
+
+`03e` cordons and drains each machine before rebooting it, and CNPG is designed to switch the primary away
+first: it puts a second PDB on the primary alone with `disruptionsAllowed: 0`, so the eviction is REFUSED
+until the handover is done. Three separate things were defeating that. Measured on a graceful drain of the
+machine holding the primary, probed by an insert every 100ms:
+
+| | Write outage |
+|---|---|
+| originally | 64s |
+| after `smartShutdownTimeout: 15` | 41s |
+| after the operator went to 2 replicas | **19.6s** |
+
+1. **`smartShutdownTimeout`, default 180s.** Shutdown stage 1 refuses new connections but WAITS for existing
+   ones, and an app holding an idle pooled connection never closes it. So the drain blew through `03e`'s 120s
+   graceful window, `03e` force-deleted the primary, and CNPG got a hard failover instead of the switchover it
+   was trying to perform. At 15s the old primary is down in ~3s and the drain finishes in ~33s, well inside the
+   window, so the force-delete never fires and no change to `03e` was needed.
+2. **A single-replica operator.** The `-rw` Service selects `cnpg.io/instanceRole=primary`, and only the
+   operator moves that label, so while it is down there is no writable endpoint even though a promoted Postgres
+   is up. The drain that needs a switchover was also evicting the only thing that can finish one: a 33s gap
+   between "new primary accepting connections" and "labels swapped".
+3. Nothing else. The remaining ~20s is CNPG's own cadence, roughly 7s to decide, 6s for Postgres to promote and
+   replay, 6s to relabel. Not reachable from the Cluster spec.
+
+So ~20s is the practical floor here, not the 2-5s that "negligible downtime" suggests. It is a real
+interruption: with no pod labelled primary the `-rw` Service has NO endpoints, so a client retry does not
+paper over it, it just retries into a closed door for 20s.
+
+Still one replica, so still able to stall a switchover: the barman-cloud plugin. It holds a lease like the
+operator does, but it ships as a vendored upstream manifest with `replicas` hardcoded.
+
 ### Force-detaching a machine that is still alive is safe, and here is why
 
 The cable-pull case is the one the six-minute wait exists for: the machine keeps running, Postgres keeps its
