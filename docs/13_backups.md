@@ -1,8 +1,8 @@
 # 13: Off-cluster backups, CNPG Postgres + Redis + Longhorn + VM/VL to S3
 
-Until now durability was entirely in-cluster: Postgres replication across 2 instances, plus orphan-not-delete
-([08_storage.md](08_storage.md)). That survives a node loss, but not a bad `DROP`, data corruption, losing more
-than one node, or a full rebuild.
+Until now durability was entirely in-cluster: Postgres replication across the instances, Longhorn's 2 volume
+replicas under them, plus orphan-not-delete ([08_storage.md](08_storage.md)). That survives a machine loss
+unaided, but not a bad `DROP`, data corruption, losing every replica of a volume, or a full rebuild.
 
 This step adds the off-cluster tier: continuous WAL archiving plus daily base backups from every CloudNativePG
 cluster to S3, via the Barman Cloud CNPG-I plugin, giving point-in-time recovery and a roughly 180-day window.
@@ -419,8 +419,9 @@ Durability is two layers, and only the second has a recovery step:
   git do NOT delete the `Cluster`, thanks to `Prune=false,Delete=false` on the whole DB unit, so it keeps running
   unmanaged and restoring the files re-adopts it. `05_orphan_exporter` plus the `orphan` alert group make that
   state loud.
-- Off-cluster in S3: Barman Cloud, continuous WAL plus a daily base, for real data loss. `local-path` is
-  node-pinned, so a lost node's data exists only here.
+- Off-cluster in S3: Barman Cloud, continuous WAL plus a daily base, for real data loss: a dropped table, a bad
+  migration, or losing every replica of a volume at once. Losing a MACHINE no longer needs it, since the volume
+  reattaches on a survivor ([15_node_recovery.md](15_node_recovery.md)).
 
 Pick by what is actually wrong:
 
@@ -490,8 +491,8 @@ Never leave a DB sitting on `false`.
 
 ### Rebuild vs reset, and why rebuild wipes the backups
 
-A REBUILD is a deliberate full fresh start: it wipes local-path AND empties the S3 bucket via `13 wipe`, keeping
-the bucket and IAM.
+A REBUILD is a deliberate full fresh start: it wipes every Longhorn volume AND empties the S3 bucket via
+`13 wipe`, keeping the bucket and IAM.
 
 Wiping the backups is required for correctness, not a side effect. The rebuilt, same-named clusters would
 otherwise inherit the old backup path, and Barman refuses to mix a new Postgres systemID into an existing server's

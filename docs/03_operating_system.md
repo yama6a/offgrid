@@ -122,8 +122,9 @@ sync, which crucially also waits out the PREVIOUS node's post-reboot resync befo
   drops to `degraded` while a replica rebuilds), so this both avoids a last-replica reboot and waits for rebuilds.
 - CNPG clusters: `phase == "Cluster in healthy state"`, `readyInstances == spec.instances` (the streaming
   standby is up + caught up), and `currentPrimary == targetPrimary` (no switchover/failover mid-flight). So we never
-  reboot the node hosting a primary while its standby is still catching up (`maindb` is 2 instances on node-local
-  storage, so the standby must be current before we can safely switch over to it).
+  reboot the node hosting a primary while its standby is still catching up. `maindb` is 3 instances with
+  synchronous `any 1`, so the drained instance's absence does not stall writes, but a standby still has to be
+  current before we can safely switch over to it.
 - RabbitMQ: `AllReplicasReady` + `ClusterAvailable`, so all three brokers are up and quorum queues have full
   membership before we take one down. The `NoWarnings` condition is intentionally ignored: it is `False` for a
   benign reason (memory request not equal to limit) and would block forever.
@@ -270,11 +271,10 @@ so I picked `192.168.100.1` for the VIP (inside the subnet, outside the DHCP ran
    cert-manager's HTTP-01 solver endpoints fail to program in time, wedging cert issuance). The 5s election timeout
    rides out the stalls. The only cost is ~5s instead of ~1s failover when a leader really is gone, which does not
    matter on this cluster.
-4. Appends the partition layout: `EPHEMERAL` capped (default 64 GiB) + a fixed-size `localpath` user volume
-   (default 50 GiB, `min == max`, at `/var/mnt/localpath`, node-local storage for CNPG + RabbitMQ via
-   [local-path-provisioner](08_storage.md)) + a `longhorn` user volume taking the rest of the NVMe
-   (`/var/mnt/longhorn`). Both `/var/mnt` paths also get a `kubelet.extraMounts` bind so the containerized kubelet
-   can see them. Sit empty until their apps sync (step 04+).
+4. Appends the partition layout: `EPHEMERAL` capped (default 64 GiB) + a `longhorn` user volume taking the whole
+   rest of the NVMe (`/var/mnt/longhorn`, no `maxSize`, so it claims what is left once at provision time). That
+   path also gets a `kubelet.extraMounts` bind so the containerized kubelet can see it. Sits empty until
+   [Longhorn](08_storage.md) syncs (step 04+).
 5. `apply-config` to each node (only the hostname differs), then deletes the rendered scratch (`cp.yaml`,
    `controlplane.yaml`, and their inputs `cp-patch.yaml` + `volumes.yaml`), so the nodes now hold their own
    live config, so the only config left on disk is the durable `secrets.yaml` (plus the

@@ -1,8 +1,8 @@
-# local-path-provisioner: node-local dynamic PVs on the XFS 'localpath' volume 03c mounts, isolated from Longhorn.
+# dead-node-watcher: declares a NotReady node dead so its volumes detach in seconds, not ~6 minutes.
 apiVersion: argoproj.io/v1alpha1
 kind: Application
 metadata:
-  name: local-path-provisioner
+  name: dead-node-watcher
   namespace: argocd
   finalizers:
     - resources-finalizer.argocd.argoproj.io
@@ -14,16 +14,11 @@ spec:
   source:
     repoURL: https://github.com/yama6a/offgrid
     targetRevision: HEAD
-    path: argo_apps/platform/charts/02_local_path_provisioner
+    path: argo_apps/platform/charts/02_dead_node_watcher
   destination:
     server: https://kubernetes.default.svc
-    namespace: local-path-storage
+    namespace: dead-node-watcher
   syncPolicy:
-    managedNamespaceMetadata: # the mkdir/rm helper pods mount hostPath, which Talos' default `baseline` pod-security level forbids
-      labels:
-        pod-security.kubernetes.io/enforce: privileged
-        pod-security.kubernetes.io/warn: privileged
-        pod-security.kubernetes.io/audit: privileged
     automated:
       prune: true
       selfHeal: true

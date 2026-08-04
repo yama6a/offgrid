@@ -1,17 +1,42 @@
 # 08: Storage & database
 
-Two storage layers and a database operator, all pure-GitOps wave-2 leaves with no imperative script. Each needs
+One storage layer and a database operator, all pure-GitOps wave-2 leaves with no imperative script. Each needs
 one Talos host prerequisite from [`03_operating_system.md`](03_operating_system.md).
 
-| Layer | Class | Replicates at | Backs |
+| Layer | Classes | Replicates at | Backs |
 |---|---|---|---|
-| [Longhorn](#longhorn) | `longhorn-r2-ephemeral`, `longhorn-r2-retained-with-backups` | the volume | Redis, the monitoring stores, ntfy |
-| [local-path-provisioner](#local-path-provisioner) | `local-path`, `local-path-ephemeral` | the app | [CloudNativePG](#cloudnativepg), RabbitMQ |
+| [Longhorn](#longhorn) | `longhorn-r2-ephemeral`, `longhorn-r2-ephemeral-local`, `longhorn-r2-retained-with-backups` | the volume | everything: Postgres, RabbitMQ, Redis, the monitoring stores, ntfy |
 
 There is **no default StorageClass**. Every PVC names one, or it stays `Pending`.
 
-Per-node NVMe layout, carved by [`03c`](03_operating_system.md): EPHEMERAL 64 GiB, then a fixed 50 GiB
-`localpath` slice, then `longhorn` takes the remainder.
+Per-node NVMe layout, carved by [`03c`](03_operating_system.md): EPHEMERAL 64 GiB, then `longhorn` takes the
+whole remainder.
+
+## Why everything is on Longhorn, including the apps that replicate themselves
+
+Postgres has streaming replication and RabbitMQ has Raft quorum queues, so replicating the block device under
+them is redundant work. Node-local storage is nonetheless **not** used, and the reason is recovery, not
+performance.
+
+A node-local PV is pinned to one machine. Replace or wipe that machine and the PVC stays `Bound`, node-affine,
+and pointing at an empty directory. Nothing resolves that on its own: an empty volume and a corrupt one look
+identical from the outside, so no operator will delete a PVC that might hold the last copy of something. The pod
+crashloops until a human deletes it by hand.
+
+- CNPG: `pg_controldata: exit status 1`, forever.
+- RabbitMQ: `Ra could not create its data directory`, forever.
+
+The cost is not the deleting, which a script can do. It is the **noticing**, which nothing bounds. Until someone
+looks, a 3-broker RabbitMQ runs at 2/3 with no spare, and a second machine loss drops it below majority and stops
+accepting writes. A single-instance Postgres needs a full S3 restore, two git commits and a password roll.
+
+On Longhorn the volume is not tied to the dead machine, so the pod reattaches on a survivor and comes back by
+itself, with [the dead-node watcher](15_node_recovery.md) cutting the wait to about a minute.
+
+The price is latency, and it is small: Postgres commit p50 6.02 to 7.50 ms, RabbitMQ confirm p99 9.4 to 18.4 ms
+with a local replica. Both land inside what RDS Multi-AZ, Cloud SQL HA, SQS and Pub/Sub deliver, so the numbers
+we give up are ones a managed service would not have given us either. Full tables in
+[16_storage_bench.md](16_storage_bench.md).
 
 ## Longhorn
 
@@ -62,17 +87,38 @@ Why 2 replicas and not 3: 2 on 3 nodes survives the single node loss we design f
 rebuild the lost replica onto. At 3 replicas with hard anti-affinity there is no spare, so a volume stays
 degraded until the dead node returns.
 
-### The two StorageClasses
+### The three StorageClasses
 
-Rendered by `templates/storageclasses.yaml`, both `numberOfReplicas: 2`. They differ only in off-cluster backup.
+Rendered by `templates/storageclasses.yaml`, all `numberOfReplicas: 2`.
 
-| Class | reclaimPolicy | S3 backup | Use for |
-|---|---|---|---|
-| `longhorn-r2-ephemeral` | Delete | none | the general-purpose tier, and the only one in use |
-| `longhorn-r2-retained-with-backups` | Retain | daily + weekly | precious data with no app-level backup (sqlite, config) |
+| Class | reclaimPolicy | dataLocality | S3 backup | Use for |
+|---|---|---|---|---|
+| `longhorn-r2-ephemeral` | Delete | disabled | none | the general-purpose tier |
+| `longhorn-r2-ephemeral-local` | Delete | best-effort | none | small volumes where write latency matters: RabbitMQ |
+| `longhorn-r2-retained-with-backups` | Retain | disabled | daily + weekly | precious data with no app-level backup (sqlite, config). No consumer yet |
 
 The `-with-backups` class adds off-cluster S3 backups via `recurringJobSelector`; see
 [13_backups.md](13_backups.md).
+
+**`dataLocality: best-effort`** keeps one of the two replicas on whichever node the pod runs on, so reads and
+half the write path stay on that SSD. Worth 31% off RabbitMQ's confirm p99, and only 4% for Postgres, because a
+durable Postgres write has to reach both replicas either way. The catch is that Longhorn drags a full local copy
+along on every reschedule, so it is right for a queue whose consumers keep it near-empty and wrong for a database
+that can grow: it would pull the whole thing across 1GbE on every failover.
+
+**Sizes are ceilings, not reservations.** Longhorn is thin, so a volume occupies only what has been written to
+it. What the spec size does consume is Longhorn's per-node *scheduling* budget, which counts the full number, and
+it is what the >90%-full alert measures against. So set a real ceiling, not a generous one.
+
+A weekly `filesystem-trim` RecurringJob (`templates/recurringjobs.yaml`) returns blocks the filesystem has freed,
+which is what keeps a thin volume thin. It reaches every volume through Longhorn's `default` group: a volume with
+no recurring job of its own is put there automatically. Chosen over mounting with `discard`, which would put
+reclaim inline in the write path on a consumer NVMe whose tail latency is already the weak point. It reclaims
+real space for RabbitMQ, whose segments are deleted once consumed, and very little for Postgres, which reuses
+pages internally and recycles WAL by rename.
+
+A StorageClass's `parameters` are **immutable**. Adding a key to a class that already exists means deleting the
+class by hand first; ArgoCD will otherwise report the sync failure forever.
 
 **Why there is no plain Retain class.** Every stateful app stamps `deletionProtection`
 (`Prune=false,Delete=false`) on the CR or PVC owning its storage, so it is already immune to the accidental
@@ -100,93 +146,12 @@ also the restore target in `recover_longhorn_from_s3.sh`.
 talosctl -n 192.168.10.201 read /proc/mounts | grep longhorn   # /var/mnt/longhorn present (after the patch)
 kubectl -n longhorn-system get pods                            # manager on all 3 nodes + CSI Running
 kubectl -n longhorn-system get nodes.longhorn.io -o wide       # each node's disk Schedulable
-kubectl get storageclass                                       # the two longhorn-r2-* classes, NO default
+kubectl get storageclass                                       # the three longhorn-r2-* classes, NO default
+kubectl -n longhorn-system get recurringjob                    # filesystem-trim-weekly (+ the backup jobs)
 ```
 
 Smoke test: apply a 1Gi PVC with `storageClassName: longhorn-r2-ephemeral` plus a pod, confirm it goes `Bound`
 and the volume shows 2 healthy replicas on two distinct nodes.
-
-## local-path-provisioner
-
-Longhorn is the wrong layer for anything that already replicates itself. Postgres has streaming replication and
-RabbitMQ has Raft quorum queues, so replicated block storage underneath is redundant work: write amplification,
-the Longhorn engine and CSI in the hot path, and the app competing with Longhorn for one big XFS partition.
-
-local-path gives them node-local storage on a dedicated partition, so the app layer is the only replication
-layer.
-
-The cost of that choice is a manual PVC deletion after a node is replaced under the same name
-([15_node_recovery.md](15_node_recovery.md)). Measured, it buys a lot: Longhorn r2 roughly doubles a
-Postgres WAL fsync here (1.28 ms to 2.39 ms), for 1.5x commit p99 and ~20% fewer transactions. The
-"write amplification" above is about 2x, and `dataLocality: best-effort` recovers only 4% of it because
-a durable write has to reach both replicas either way. See [16_storage_bench.md](16_storage_bench.md).
-
-### Why local-path, not TopoLVM or OpenEBS-LVM
-
-The capacity-awareness and PVC-size enforcement those buy would do nothing for us: hostname anti-affinity puts one
-CNPG instance per node on a dedicated 50 GiB partition, so there is nothing to overcommit and a runaway DB is
-already bounded to that partition. LVM provisioners also need a raw block device for a volume group plus an
-`lvmd` daemon, which is awkward on Talos' shell-less immutable OS.
-
-local-path is a single Deployment that creates a directory per PV.
-
-The trade: it does **not** reserve or enforce the PVC `size` (thin, grow-on-write), so a runaway DB can fill the
-50 GiB partition. Contained to that partition, and CNPG's disk-usage alerts cover it. Real reservation plus
-online auto-grow would be the signal to revisit TopoLVM.
-
-### WaitForFirstConsumer is mandatory
-
-For true node-local storage the volume physically exists on only one node, so the scheduler must place the pod
-first (honoring CNPG's `kubernetes.io/hostname` anti-affinity) and then provision the volume wherever it landed.
-`Immediate` is fine for network-reachable CSI like Longhorn but wrong here: it would bind a PV to an arbitrary
-node before the pod is scheduled.
-
-### Talos prerequisite
-
-Two things from [`03c`](03_operating_system.md): the fixed-size XFS volume at `/var/mnt/localpath` (50 GiB,
-`min == max` so it cannot grow into Longhorn's space), and a kubelet bind-mount of it in `cp-patch.yaml`. Same
-reason as Longhorn, but plain `[bind, rw]` suffices, since there are no per-replica sub-mounts to propagate.
-
-### Vendored, not a dependency pin
-
-There is no usable public Helm repo (Rancher's registry is auth-gated, which breaks ArgoCD's repo-server; the
-community mirror is stale), so the chart vendors the upstream manifests under `templates/`, parameterized from
-`values.yaml` and pinned to `appVersion`. No `Chart.lock`, nothing to resolve.
-
-To bump: edit `image.tag` and `helperImage.tag` plus `appVersion`, then re-diff `templates/` against the upstream
-`deploy/local-path-storage.yaml` at the new tag.
-
-### Config worth calling out
-
-- `dataPath: /var/mnt/localpath`, node-local via the `DEFAULT_PATH_FOR_NON_LISTED_NODES` catch-all, so every node
-  uses this path on its own disk. Shared by both classes: RabbitMQ's quorum-log volumes co-tenant the 50 GiB
-  slice with Postgres. They are tiny, so this is accepted. See [11_messaging.md](11_messaging.md).
-- `storageClasses`: two classes on the one provisioner, both `defaultClass: false`, both
-  `WaitForFirstConsumer`, both `reclaimPolicy: Delete`. `local-path` for CNPG, `local-path-ephemeral` for
-  RabbitMQ.
-- `helperImage` pinned for reproducibility.
-
-CNPG does not need Retain: its data is protected from a GitOps prune by orphan-not-delete, and Delete auto-cleans
-a per-volume dir on a legitimate PVC delete (replica scale-down, intentional cluster delete) rather than leaking
-it on the shared slice.
-
-### Privileged PSA required
-
-The provisioner itself runs unprivileged, but the short-lived helper pods it stamps out to mkdir and rm
-per-volume dirs mount the node data path as a `hostPath`, which Talos' `baseline` default forbids.
-`managedNamespaceMetadata` labels `local-path-storage` privileged; without it the helper pods are rejected at
-admission and PVC provisioning fails. No CRDs, so no SSA needed.
-
-### Verify
-
-```bash
-helm template argo_apps/platform/charts/02_local_path_provisioner   # Deployment + 2 SCs + RBAC + ConfigMap
-export KUBECONFIG=secrets/kubeconfig
-talosctl -n 192.168.10.201 get volumestatus | grep -E 'localpath|longhorn'  # u-localpath (50GiB) + u-longhorn
-talosctl -n 192.168.10.201 read /proc/mounts | grep /var/mnt/localpath      # mounted + visible to the kubelet
-kubectl -n local-path-storage get pods                                 # provisioner Running
-kubectl get sc local-path -o jsonpath='{.volumeBindingMode}'; echo     # == WaitForFirstConsumer
-```
 
 ## CloudNativePG
 
@@ -197,7 +162,7 @@ and database land in dependency order (see [`05_gitops.md`](05_gitops.md)):
 | App | Tree | What |
 |-----|------|------|
 | `cnpg-operator` (`platform/charts/02_cnpg_operator`) | platform, wave 2 | the controller + its CRDs, an independent leaf |
-| `sample-user-manager` (`workloads/charts/sample_user_manager`) | workloads, no wave | two Postgres `Cluster`s on the `local-path` class |
+| `sample-user-manager` (`workloads/charts/sample_user_manager`) | workloads, no wave | two Postgres `Cluster`s on the `longhorn-r2-ephemeral` class |
 
 Workloads carry no `sync-wave`. The root-of-roots creates the workloads tree about 5s after the platform tree
 with no health gate, so a `Cluster` CR applied before its CRD registers fails its sync and retries until the
@@ -210,17 +175,25 @@ and pins the `ghcr.io/cloudnative-pg/postgresql` image itself. Postgres only, no
 A workload declares `pg-cluster` as an **aliased** `file://` dependency, once per database, so the alias is the
 values key and its knobs sit flat under it.
 
-### Storage: node-local, off Longhorn
+### Storage and what a node loss costs
 
-CNPG runs on `local-path`, on the dedicated 50 GiB partition, so there is no Longhorn engine or CSI in the
-Postgres data path and the two cannot starve each other. Postgres streaming replication is the only replication
-layer: an HA cluster survives a node loss, because CNPG promotes the surviving instance and re-clones the lost
-one from it. Full reasoning in [local-path-provisioner](#local-path-provisioner).
+`longhorn-r2-ephemeral`, `dataLocality: disabled`. Not the `-local` variant: it would buy 4% and pay by hauling
+the whole database across 1GbE on every failover. Reasoning for Longhorn at all is
+[above](#why-everything-is-on-longhorn-including-the-apps-that-replicate-themselves).
 
-That re-clone is not automatic when the node comes BACK under the same name. A reflash empties the directory
-but leaves the PVC Bound, and CNPG will not destroy a PVC that might still hold data, so the instance
-crashloops on `pg_controldata: exit status 1` until you delete the PVC yourself. Runbook in
-[15_node_recovery.md](15_node_recovery.md).
+So there are now two independent layers of redundancy, and each covers a different failure:
+
+| Layer | Covers |
+|---|---|
+| Postgres replication (`highAvailability: true`) | the primary dying: a standby is already caught up and gets promoted in seconds |
+| Longhorn's 2 replicas | the volume's node dying: the volume reattaches elsewhere with its data intact |
+
+Which means a machine loss is uneventful either way:
+
+- `highAvailability: true`: 3 instances, one per node. One dies, a standby is promoted, writes continue. The
+  third instance has nowhere to go while only 3 machines exist, so it stays Pending until the machine returns.
+- `highAvailability: false`: the single instance moves to a survivor with its volume and restarts there. Crash
+  recovery replays WAL, which is what a `kill -9` on any Postgres does. No S3 restore.
 
 ### Operator values
 
@@ -239,7 +212,8 @@ Most of the tree is pre-baked in the `pg-cluster` wrapper. A workload sets only 
 |---|---|---|
 | `name` | yes | used verbatim: the Cluster, its `<name>-rw`/`-ro`/`-r` Services, the `<name>-app` Secret |
 | `postgresVersion` | yes | a MAJOR, and a key into the wrapper's pinned image map |
-| `highAvailability` | yes | one bool: true = 2 instances + PDB + switchover, false = 1 instance, PDB off, in-place restart |
+| `highAvailability` | yes | one bool: true = 3 instances + synchronous `any 1` + PDB + switchover, false = 1 instance, no sync, PDB off, in-place restart |
+| `size` | yes | per-instance disk CEILING; thin, so it reserves nothing, but it does spend Longhorn's scheduling budget |
 | `resources` | yes | per-instance, no default; forced choice on a Pi |
 | `allowedClients` | yes | who may open 5432; also drives the client-side egress policy |
 | `deletionProtection` | yes | one bool, no default; the only thing between a stray prune and gone data |
@@ -247,11 +221,19 @@ Most of the tree is pre-baked in the `pg-cluster` wrapper. A workload sets only 
 
 Wrapper-baked, worth knowing:
 
-- `affinity.topologyKey: kubernetes.io/hostname`. The chart default spreads by
-  `topology.kubernetes.io/zone`, but bare Pi nodes carry no zone label, so both instances could land on one
-  node. Spreading by hostname forces distinct nodes, which is the node-loss HA that node-local storage relies on.
-- `storage.size: 45Gi` is a no-op under local-path (Postgres sees the whole partition via `statfs`) but the CR
-  requires it, so it is set to the honest partition budget in case the class is ever swapped.
+- `affinity.topologyKey: kubernetes.io/hostname` plus `podAntiAffinityType: required`. The chart default spreads
+  by `topology.kubernetes.io/zone`, but bare Pi nodes carry no zone label, so every instance could land on one
+  node. `required` refuses to place two on one node rather than merely preferring not to, so two instances can
+  never share a machine and a machine loss can never take two at once. The price: with 3 machines the third
+  instance has nowhere to schedule while one is down, and it waits rather than doubling up.
+- `postgresql.synchronous: {method: any, number: 1, dataDurability: required}`, only when `highAvailability`. A
+  commit waits for one of the two standbys to flush it, so a promoted standby can never be missing a transaction
+  the application was told had committed. `required` means that if no standby can acknowledge, writes STALL
+  rather than silently degrading to asynchronous, which is the whole point: `preferred` would quietly reopen the
+  hole. With 3 instances, `any 1` of two standbys still acknowledges while one node is drained, which is what
+  makes a rolling Talos upgrade safe. Measured cost: about 2 ms on commit p99.
+- One bool, not three knobs: 3 instances and synchronous replication are exactly the same case, since 1 instance
+  has no standby to be synchronous with. 2 instances and more than 3 are out of scope.
 - `postgresql.parameters` sized for the Pi 5s, overridable per workload.
 - `initdb: { database: app, owner: app }`. The operator auto-generates the owner's credentials into the
   `<name>-app` Secret, so no sealed secret is needed.
@@ -260,14 +242,15 @@ Wrapper-baked, worth knowing:
 
 ### Reclaim & durability
 
-`local-path` is `reclaimPolicy: Delete`. Data safety does not rest on Retain: the DB unit is protected from a
+`longhorn-r2-ephemeral` is `reclaimPolicy: Delete`. Data safety does not rest on Retain: the DB unit is protected from a
 GitOps prune by orphan-not-delete (`Prune=false,Delete=false` on the Cluster plus its ObjectStore,
 ScheduledBackup, PodMonitor, NetworkPolicy and S3-creds SealedSecret). Removing a workload from git leaves its
 `Cluster` and PVCs running, and restoring the files re-adopts them with no data movement.
 
 Two durability tiers:
 
-1. **In-cluster**: Postgres replication across the instances, plus orphan-not-delete.
+1. **In-cluster**: Postgres replication across the instances, Longhorn's 2 volume replicas under them, plus
+   orphan-not-delete.
 2. **Off-cluster**: S3 backups, continuous WAL archiving plus daily base backups via the
    `cnpg/plugin-barman-cloud` plugin, for real PITR and total-loss recovery. Turned on from `.env` by
    `14_cnpg_backup.sh`. See [13_backups.md](13_backups.md).
@@ -281,11 +264,13 @@ because the CRDs and the `Cluster` CR blow the client-side annotation limit.
 helm dependency build argo_apps/platform/charts/02_cnpg_operator
 export KUBECONFIG=secrets/kubeconfig
 kubectl -n cnpg-system rollout status deploy/cnpg-operator-cloudnative-pg   # operator Healthy (platform)
-kubectl -n sample-user-manager get pods -o wide                             # 2 instances Running, distinct nodes
-kubectl -n sample-user-manager get pvc -o custom-columns=NAME:.metadata.name,SC:.spec.storageClassName  # local-path
+kubectl -n sample-user-manager get pods -o wide                             # 3 instances Running, distinct nodes
+kubectl -n sample-user-manager get pvc -o custom-columns=NAME:.metadata.name,SC:.spec.storageClassName  # longhorn-r2-*
+kubectl -n sample-user-manager exec sample-user-manager-db-1 -- \
+  psql -U postgres -tAc 'show synchronous_standby_names'                   # non-empty on the HA cluster
 kubectl get vmpodscrape -A | grep -i cnpg                                   # metrics wired into VictoriaMetrics
 ```
 
-Smoke test: delete the primary pod (`sample-user-manager-db-1`) and watch CNPG promote the replica, then heal
-back to 2. The `app` role's credentials live in the auto-generated `sample-user-manager-db-app` Secret; connect
+Smoke test: delete the primary pod (`sample-user-manager-db-1`) and watch CNPG promote a standby, then heal
+back to 3. The `app` role's credentials live in the auto-generated `sample-user-manager-db-app` Secret; connect
 via the `sample-user-manager-db-rw` Service.

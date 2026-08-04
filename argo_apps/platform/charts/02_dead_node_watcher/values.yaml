@@ -1,0 +1,15 @@
+# Kubernetes waits ~6 minutes before it lets another node take over the disks of an unreachable one, in case
+# that node is still alive and writing. The out-of-service taint says "it is really dead, go now"; nothing in
+# Kubernetes applies it on its own, because only an operator can make that call. This watcher makes it, using
+# time-NotReady as the evidence. See docs/15_node_recovery.md.
+
+image: "alpine/k8s:1.36.2" # needs kubectl + jq; renovate-annotated in templates/deployment.yaml
+
+gracePeriodSeconds: 60 # how long a node must be continuously NotReady before it is declared dead
+intervalSeconds: 10    # poll cadence, so the real worst case is gracePeriod + interval
+maxUnreadyNodes: 1     # act on 1 dead node, refuse if more are down at once: that is a cluster event, not a
+                       # node failure, there is nowhere to reschedule to, and a human should look
+
+resources:
+  requests: {cpu: 10m, memory: 32Mi}
+  limits: {memory: 64Mi}

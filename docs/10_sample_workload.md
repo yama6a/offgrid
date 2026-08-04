@@ -19,9 +19,9 @@ The messaging topology and isolation live in [11_messaging.md](11_messaging.md).
 - App: a Deployment + Service running `/manager`, with the Postgres `app`-role password injected as
   `PG_PASSWORD` from the CNPG-generated Secret, plus the `RABBITMQ_*` and `WORKLOAD_NAME` env for the messaging
   hub. Serves `GET /users` (the persisted users as JSON) and `GET /audit`.
-- Databases: two CloudNativePG `Cluster`s via the shared `pg-cluster` wrapper, on the node-local `local-path`
-  class. `sample-user-manager-db` is 2-instance HA and the one the binary dials; `sample-user-manager-analytics`
-  is single-instance and never dialled, there to show multiple DBs per workload.
+- Databases: two CloudNativePG `Cluster`s via the shared `pg-cluster` wrapper, on `longhorn-r2-ephemeral`.
+  `sample-user-manager-db` is 3-instance synchronous HA and the one the binary dials;
+  `sample-user-manager-analytics` is single-instance and never dialled, there to show multiple DBs per workload.
 - Redis: two instances via the shared `redis-instance` wrapper, one per persistence mode.
   `sample-user-manager-redis-cache` is ephemeral (1h-TTL audit log, regenerable);
   `sample-user-manager-redis-sessions` is durable and enrolled in the central S3 RDB backup. See
@@ -99,15 +99,17 @@ chart renders Gateway, listener, cert and route together, so there is nothing to
 ### Postgres via the `pg-cluster` wrapper
 
 The workload templates no CNPG CRs. `lib/helm/pg-cluster` renders them and pre-bakes every value a workload
-should not think about: node-local `local-path` storage, hostname anti-affinity, monitoring on, an `app`/`app`
-initdb, backups off until configured.
+should not think about: the `longhorn-r2-ephemeral` class, hard hostname anti-affinity, synchronous replication
+when HA, monitoring on, an `app`/`app` initdb, backups off until configured.
 
 Each instance sets only the REQUIRED knobs, so a Postgres is about 7 lines rather than 40:
 
 - `name`: the instance name, used verbatim.
 - `postgresVersion`: the MAJOR (e.g. `"18"`), which the chart resolves to a pinned image via
   `files/postgres-images.yaml`.
-- `highAvailability`: one bool. True means 2 instances + PDB + switchover, false means a single instance.
+- `highAvailability`: one bool. True means 3 instances + synchronous `any 1` + PDB + switchover, false means a
+  single instance.
+- `size`: the per-instance disk ceiling. Thin, so it reserves nothing.
 - `resources`, `allowedClients`, `deletionProtection`.
 
 A validation template fails the render with a clear message if a required knob is missing. Trade-off: the
@@ -120,13 +122,13 @@ decoupled from the release name.
 
 To run more than one Postgres you alias the wrapper per DB in `Chart.yaml`. Helm renders a dependency once, so N
 databases means N aliased entries; there is no values-list alternative. Each alias carries its own name, sizing
-and allowlist. The `file://` deps use `version: "*"`, because for a local-path dependency the version is a
+and allowlist. The `file://` deps use `version: "*"`, because for an in-repo dependency the version is a
 required-but-inert constraint rather than a selector, and an exact pin would only force a bump here whenever the
 local chart's version changed.
 
 ### Ordering: a workload, created after the platform
 
-This workload needs the CNPG `Cluster` CRD and the `local-path` class (platform wave 2), the shared Gateway
+This workload needs the CNPG `Cluster` CRD and the Longhorn classes (platform wave 2), the shared Gateway
 (`03_gateway`, wave 3), and `04_google_sso` (wave 4, whose per-domain `SecurityPolicy` already lists
 `sample-user-manager-sso.app.example.com` and attaches once the route appears).
 
@@ -134,11 +136,12 @@ As a workload it gets that ordering without a `sync-wave`: the root-of-roots cre
 after the platform tree. There is NO health gate, so if a CRD it needs is not registered yet, the first sync
 fails and unbounded retry converges it. See [05_gitops.md](05_gitops.md).
 
-### Storage: node-local, off Longhorn
+### Storage
 
-Both `Cluster`s run on the node-local `local-path` class: `sample-user-manager-db` at 2 instances on 2 distinct
-Pi nodes with Postgres streaming replication, and `sample-user-manager-analytics` as a single instance with no
-replica. Full reasoning in [08_storage.md](08_storage.md).
+Both `Cluster`s run on `longhorn-r2-ephemeral`: `sample-user-manager-db` at 3 instances, one per Pi, with
+synchronous streaming replication and a 10Gi ceiling each, and `sample-user-manager-analytics` as a single
+instance with 5Gi. Both survive losing a machine without hands, for different reasons. Full reasoning in
+[08_storage.md](08_storage.md).
 
 ### Network policy: default-deny both ways
 
@@ -211,7 +214,8 @@ kubectl -n gateway get certificate                        # READY=True once DNS 
 - `prune` is data-safe because every stateful unit sets `deletionProtection: true`, which stamps
   `Prune=false,Delete=false`. Removing the app ORPHANS the Postgres Clusters and Redis instances, still running
   on their volumes, rather than deleting them, and restoring the files re-adopts them. This is NOT the storage
-  class doing it: `local-path` is `reclaimPolicy: Delete`. See [08_storage.md](08_storage.md).
+  class doing it: `longhorn-r2-ephemeral` is `reclaimPolicy: Delete`. See [08_storage.md](08_storage.md).
 - Point-in-time recovery comes from the wrapper's `backupsEnabled` (default true), which only renders once
   `lib/helm/pg-cluster/files/backup.yaml` is populated by `14_cnpg_backup.sh`. Until then durability rests on
-  Postgres replication across the 2 instances. See [13_backups.md](13_backups.md).
+  Postgres replication across the 3 instances plus Longhorn's 2 volume replicas. See
+  [13_backups.md](13_backups.md).

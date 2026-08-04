@@ -6,7 +6,10 @@
 {{- fail "pg-cluster: postgresVersion is required (the Postgres major, a key in files/postgres-images.yaml; e.g. \"18\")" }}
 {{- end }}
 {{- if not (kindIs "bool" .Values.highAvailability) }}
-{{- fail "pg-cluster: highAvailability is required and must be explicitly true (2 instances + PDB + switchover) or false (single instance, no PDB, in-place restart); there is no default" }}
+{{- fail "pg-cluster: highAvailability is required and must be explicitly true (3 instances, synchronous `any 1`, PDB, switchover) or false (single instance, no PDB, in-place restart); there is no default, and 2 or more than 3 instances are not offered" }}
+{{- end }}
+{{- if not .Values.size }}
+{{- fail "pg-cluster: size is required (the per-instance disk ceiling, e.g. \"10Gi\"); Longhorn volumes are thin, so this reserves no disk, but it does consume that much of Longhorn's per-node scheduling budget and it is what the >90%-full alert is measured against" }}
 {{- end }}
 {{- if not .Values.resources }}
 {{- fail "pg-cluster: resources is required (per-instance requests/limits)" }}
@@ -15,7 +18,7 @@
 {{- fail "pg-cluster: allowedClients is required (who may reach Postgres on 5432); the DB policy is always enforced, so an empty list would wall off the database" }}
 {{- end }}
 {{- if not (kindIs "bool" .Values.deletionProtection) }}
-{{- fail "pg-cluster: deletionProtection is required and must be explicitly true (a GitOps prune orphans the DB unit instead of destroying it) or false (the DB is deletable); there is no default, because local-path reclaim is Delete and this is the only thing protecting the data" }}
+{{- fail "pg-cluster: deletionProtection is required and must be explicitly true (a GitOps prune orphans the DB unit instead of destroying it) or false (the DB is deletable); there is no default, because the storage class reclaims on Delete and this is the only thing protecting the data" }}
 {{- end }}
 {{- range .Values.allowedClients }}
 {{- if .namespace }}

@@ -180,7 +180,7 @@ krr-yaml: ## Rightsizing: same as `krr` but emits YAML.
 ##@ Benchmarks  (NOT read-only: create a throwaway namespace and load the live cluster for hours)
 
 .PHONY: storage-bench
-storage-bench: ## Measure write latency of local-path vs Longhorn r2 (local replica vs over the network); prints p50/p95/p99.
+storage-bench: ## Measure write latency of Longhorn r2 with a local replica vs both over the network; prints p50/p95/p99.
 	bash lib/shell/storage_bench.sh run
 
 .PHONY: storage-bench-fio
@@ -188,7 +188,7 @@ storage-bench-fio: ## Same, fio fsync only: the fast (~1h) read on the question,
 	bash lib/shell/storage_bench.sh run --workload fio
 
 .PHONY: storage-bench-sync
-storage-bench-sync: ## What SYNCHRONOUS replication costs CNPG, local-path vs longhorn r2 (~85min, 2x2 grid).
+storage-bench-sync: ## What SYNCHRONOUS replication costs CNPG on longhorn r2 (~45min): the price of highAvailability.
 	bash lib/shell/storage_bench.sh run --workload pgsync --repeats 2
 
 .PHONY: storage-bench-teardown

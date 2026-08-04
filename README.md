@@ -61,8 +61,8 @@ and in `versions.env`; those files are the source of truth.
 | **TLS**           | cert-manager                   | Let's Encrypt certificates via ClusterIssuers (HTTP-01, plus Cloudflare DNS-01 for wildcards).               |
 | **Auth**          | Google SSO                     | Central OIDC per domain (Envoy `SecurityPolicy`, per-host email allowlists).                                 |
 | **Secrets**       | Sealed Secrets                 | Encrypted secrets committed to git.                                                                          |
-| **Storage**       | Longhorn                       | Replicated block storage, for Redis and the monitoring stores.                                               |
-| **Storage**       | local-path-provisioner         | Node-local volumes, for Postgres and RabbitMQ, which replicate at the app layer.                             |
+| **Storage**       | Longhorn                       | Replicated block storage, for everything stateful, so a volume outlives the machine under it.                |
+| **Node health**   | dead-node-watcher              | Custom Deployment that taints a genuinely dead node, cutting volume handover from ~6 min to ~2.               |
 | **Database**      | CloudNativePG                  | Kubernetes-native PostgreSQL operator.                                                                       |
 | **Cache**         | OpsTree Redis operator         | Standalone Redis instances, one per workload alias.                                                          |
 | **Messaging**     | RabbitMQ                       | One shared broker; workloads declare their own topology.                                                     |
@@ -123,7 +123,7 @@ flowchart LR
         direction TB
         ROOT --> PLAT["platform tree, waves 0-8"]
         PLAT -->|" created ~5s later, no health gate "| WORK["workloads tree"]
-        PLAT --- PC["Envoy Gateway, cert-manager, Google SSO, Sealed Secrets<br/>Longhorn, local-path, CNPG, Redis, RabbitMQ<br/>metrics-server, nic-keeper, VictoriaMetrics/Logs, Grafana, ntfy"]
+        PLAT --- PC["Envoy Gateway, cert-manager, Google SSO, Sealed Secrets<br/>Longhorn, CNPG, Redis, RabbitMQ<br/>metrics-server, nic-keeper, dead-node-watcher, VictoriaMetrics/Logs, Grafana, ntfy"]
         WORK --- WC["sample-user-manager, sample-user-signup, sample-audit-logger"]
     end
 ```
@@ -228,7 +228,7 @@ Hardware caveats before you commit:
 | Upgrade Talos             | `make upgrade-talos`                                                             | Rolling A/B in-place to the pinned installer (03e) (bump `TALOS_VERSION` in `versions.env`)                         |
 | Upgrade Kubernetes        | `make upgrade-k8s`                                                               | Rolling, no reboot (03f). (Bump `KUBERNETES_VERSION` in `versions.env`)                                             |
 | Restore a datastore       | `make restore-cnpg`, `restore-redis`, `restore-longhorn`, `restore-vm`            | From the off-cluster S3 backups ([docs/13](docs/13_backups.md)).                                                     |
-| Recover a lost node       | `make recover-node NODE=pi-cp3`                                                  | Rejoins one wiped/replaced node and fixes etcd, the local-path PVCs and Longhorn's disk record ([docs/15](docs/15_node_recovery.md)). |
+| Recover a lost node       | `make recover-node NODE=pi-cp3`                                                  | Rejoins one wiped/replaced node and fixes its etcd member and Longhorn disk record. Workloads move on their own ([docs/15](docs/15_node_recovery.md)). |
 | Rightsize requests        | `make krr`                                                                       | Prints current requests next to what usage history suggests. Read-only; you hand-edit the chart values.             |
 | Rebuild a running cluster | `make rebuild-cluster`                                                           | Wipes + rebuilds end-to-end, restores the sealed-secret key. Destructive to the persistence layer (cnpg, longhorn). |
 | Reset all nodes           | `make reset-cluster`                                                             | Wipes back to maintenance mode. Destructive to the persistence layer (cnpg, longhorn).                              |
@@ -261,7 +261,7 @@ Each doc holds the why behind a step, with verification commands:
 | [05_gitops](docs/05_gitops.md)                     | Argo CD, the two-tree app-of-apps, sync-wave convention.                        |
 | [06_secrets](docs/06_secrets.md)                   | Sealed Secrets + the master-key custody you can't lose.                         |
 | [07_ingress](docs/07_ingress.md)                   | Envoy Gateway, cert-manager, Let's Encrypt, central Google SSO.                 |
-| [08_storage](docs/08_storage.md)                   | Longhorn, local-path-provisioner, CloudNativePG.                                |
+| [08_storage](docs/08_storage.md)                   | Longhorn, why nothing is node-local, CloudNativePG.                             |
 | [09_monitoring](docs/09_monitoring.md)             | VictoriaMetrics + VictoriaLogs, Grafana, alerting, metrics-server.              |
 | [10_sample_workload](docs/10_sample_workload.md)   | An end-to-end app + Postgres behind the Gateway.                                |
 | [11_messaging](docs/11_messaging.md)               | The shared RabbitMQ broker and the per-workload topology chart.                 |

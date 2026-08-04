@@ -9,7 +9,7 @@ Two pieces:
   CloudPirates `rabbitmq-cluster-operator` chart, which installs both the Cluster Operator (reconciles
   `RabbitmqCluster` into the broker StatefulSet) and the Messaging Topology Operator (reconciles
   `Queue`/`Exchange`/`Binding`/`User`/`Permission`/`Vhost`) plus their CRDs. It also renders the broker itself: the
-  single `RabbitmqCluster` (3 replicas on the node-local `local-path-ephemeral` class), the one shared `Vhost`
+  single `RabbitmqCluster` (3 replicas on the `longhorn-r2-ephemeral-local` class), the one shared `Vhost`
   (`apps`), and the broker's `CiliumNetworkPolicy`. Exactly ONE broker for the whole cluster, unlike Postgres
   which is per-workload, so it lives in platform.
 - The reusable chart: `lib/helm/rabbitmq-topology/` (`type: application`, like `pg-cluster` and
@@ -206,27 +206,35 @@ loop. Set `deadLetter: false` to opt a workload out.
 Because queue arguments are immutable (see Caveats), turning this on for a queue that already exists requires
 deleting that queue once so the operator redeclares it with the args.
 
-### Storage: node-local, disposable, not Longhorn
+### Storage: Longhorn, with a local replica
 
-Per-broker volumes on the node-local `local-path-ephemeral` class. Quorum queues already replicate every message
-across the 3 brokers and fsync locally, so HA and durability live in the app. Replicating the volume underneath
-would just be write amplification, the same reason CNPG runs Postgres on `local-path`. See
+Per-broker volumes on `longhorn-r2-ephemeral-local`, `10Gi` each.
+
+Quorum queues already replicate every message across the 3 brokers and fsync locally, so the volume's own
+replication is redundant for durability. It is there for a different reason: a node-local volume cannot follow its
+broker to a surviving machine, so the pod would sit wedged on a dead one until a human wiped it. On Longhorn the
+replacement broker reattaches its own data and rejoins with its Raft log intact. Full reasoning in
 [08_storage.md](08_storage.md).
 
-Each broker gets a plain node-local volume and it is disposable: lose a node and the replacement broker starts
-empty and self-reconciles from the 2 healthy peers. That is why the class is `reclaimPolicy: Delete`, with nothing
-to preserve and the host dir auto-cleaned, rather than the `Retain` CNPG relies on.
+`dataLocality: best-effort` keeps one replica on the broker's own node, so the fsync path stays on that SSD:
+worth 31% off confirm p99 here. Affordable because a queue its consumers keep drained holds almost nothing, so
+the copy Longhorn drags along on a reschedule is cheap. Postgres does not get this, for the opposite reason.
+
+`reclaimPolicy: Delete`, because a broker's volume is still disposable in the end: HA is the running quorum, so a
+broker rebuilt from scratch reconciles from its 2 healthy peers. No Longhorn backups either, for the same
+reason.
 
 Trade-offs, all accepted:
 
 - While a node is down there is no spare fault tolerance. A second node loss drops quorum queues below majority,
   so they go read-unavailable until a majority returns.
-- The volumes share Postgres's fixed 50 GiB `/var/mnt/localpath` slice. Quorum-log volumes are tiny.
-- A broker whose node was REPLACED does not restart on its own: the reflash empties the volume but leaves the
-  PVC Bound, and the broker dies on `Ra could not create its data directory`. Delete the PVC and the pod and
-  it re-syncs from the two healthy peers. Expect one container restart while the startup probe waits for it
-  to catch up. Never data loss. Runbook in [15_node_recovery.md](15_node_recovery.md).
-- `5Gi` per replica is nominal, since local-path enforces no quota.
+- A broker whose machine dies comes back on a survivor by itself, in about two minutes, with its data. Expect
+  one container restart while the startup probe waits for it to catch up. Never data loss. See
+  [15_node_recovery.md](15_node_recovery.md).
+- `10Gi` per replica is a CEILING, not a reservation: Longhorn is thin. The operator hardcodes
+  `disk_free_limit.absolute = 2GB`, so publishers block once any broker's volume hits 8Gi used, and that is the
+  real backlog budget this number buys. The disk alarm is cluster-wide: ONE broker over the line blocks
+  publishers on all of them.
 
 ### One app: operator plus broker
 
@@ -356,7 +364,7 @@ Checks, with `export KUBECONFIG=secrets/kubeconfig`:
   a lower wave than Permission, so prune (reverse-wave) removes Permission first. See
   rabbitmq/messaging-topology-operator#324.
 - `prune` deletes the RabbitmqCluster CR AND the data, by design. The broker PVCs are on the
-  `local-path-ephemeral` (`Delete`) class, so a prune tears them down and there is no volume to recover. That is
-  intentional: HA is the running quorum, not the volume, so a re-created broker rebuilds its state from the healthy
-  peers. CNPG's `local-path` class is also `Delete`; what protects Postgres data from a prune is the DB unit's
+  `longhorn-r2-ephemeral-local` (`Delete`) class, so a prune tears them down and there is no volume to recover.
+  That is intentional: HA is the running quorum, not the volume, so a re-created broker rebuilds its state from
+  the healthy peers. CNPG's class is also `Delete`; what protects Postgres data from a prune is the DB unit's
   `deletionProtection`, not the reclaim policy. See [08_storage.md](08_storage.md).

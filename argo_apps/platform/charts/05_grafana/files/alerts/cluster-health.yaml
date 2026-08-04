@@ -186,8 +186,8 @@ groups:
                 - type: query
                   evaluator: {type: gt, params: [0]}
       # Node capacity and health, all warning: infra headroom, not a workload being down.
-      # Real disks only. Talos exposes roughly 19 tmpfs/rootfs mounts, so filter to the xfs ones: /var,
-      # /var/mnt/localpath and /var/mnt/longhorn. `instance` is the node IP:9100, node-exporter has no `node`.
+      # Real disks only. Talos exposes roughly 19 tmpfs/rootfs mounts, so filter to the xfs ones: /var and
+      # /var/mnt/longhorn. `instance` is the node IP:9100, node-exporter has no `node`.
       - uid: node-disk-space
         title: Node disk almost full
         condition: C
@@ -197,7 +197,7 @@ groups:
           summary: 'Disk {{ $labels.mountpoint }} on {{ $labels.instance }} above 85% used'
           description: |
             - filesystem {{ $labels.mountpoint }} on {{ $labels.instance }} >85% full
-            - talosctl -n {{ $labels.instance }} df ; check /var/mnt/longhorn + localpath usage
+            - talosctl -n {{ $labels.instance }} df ; check /var/mnt/longhorn usage
             - prune images/logs or expand the underlying disk
         noDataState: OK
         execErrState: KeepLast

@@ -1,9 +1,23 @@
 {{- /*
-Backup RecurringJobs for opt-in volumes, rendered only once a backupTarget is configured. Both jobs share the
-`backup` group, which the longhorn-r2-retained-with-backups class selects, so a volume on it gets both tiers.
-`retain` is the ONLY retention: the S3 longhorn/ prefix has no lifecycle rule.
+Trim runs on every volume; the backup jobs only exist once a backupTarget is configured, and only act on the
+volumes their StorageClass's recurringJobSelector puts in the `backup` group.
+`retain` is the ONLY backup retention: the S3 longhorn/ prefix has no lifecycle rule.
 No snapshot job, local snapshots cost scarce Pi NVMe.
 */ -}}
+---
+apiVersion: longhorn.io/v1beta2
+kind: RecurringJob
+metadata:
+  name: filesystem-trim-weekly
+  namespace: {{ .Release.Namespace }}
+spec:
+  cron: "0 5 * * 0"   # Sunday 05:00 UTC, after the backup jobs so they don't collide
+  task: filesystem-trim
+  # `default` is Longhorn's own catch-all: every volume with no recurring job of its own is in it, which is
+  # every volume we create. `trim` is here so a class that has its own selector can still name this job.
+  # Returns blocks the filesystem has freed to the SSD, which is what keeps a thin volume thin.
+  groups: [default, trim]
+  concurrency: 1      # walking a filesystem is IO-heavy, one volume at a time on 3 Pis
 {{- if .Values.longhorn.defaultBackupStore.backupTarget }}
 ---
 apiVersion: longhorn.io/v1beta2

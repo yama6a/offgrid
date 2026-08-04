@@ -1,11 +1,14 @@
 #!/usr/bin/env bash
 #
-# Measures what Longhorn r2 costs CNPG and RabbitMQ in write latency, against the node-local
-# local-path they run on today. Creates a throwaway namespace, runs fio + pgbench + rabbitmq-perf-test
-# across three storage arms, prints p50/p95/p99, tears everything down.
+# Measures what a Longhorn replica being local or remote costs CNPG and RabbitMQ in write latency,
+# which is the choice between the two shipped -ephemeral classes. Creates a throwaway namespace, runs
+# fio + pgbench + rabbitmq-perf-test on both arms, prints p50/p95/p99, tears everything down.
 #
-# `--workload pgsync` answers a second, separate question on its own four arms: what SYNCHRONOUS
-# replication costs, on each storage. Not in `all`, because it is another ~100 min.
+# `--workload pgsync` answers a second, separate question on its own two arms: what SYNCHRONOUS
+# replication costs. Not in `all`, because it is another ~45 min.
+#
+# The node-local-storage arms this once carried are gone with the local-path class; their numbers are
+# recorded in docs/16_storage_bench.md and are not reproducible here any more.
 #
 # Subcommands: run (default) | teardown | report <dir> | corroborate <dir>
 # See docs/16_storage_bench.md.
@@ -29,10 +32,9 @@ PGBENCH_WARMUP=60
 PGBENCH_CLIENTS=8
 PERFTEST_SECONDS=150
 INTER_CELL_SLEEP=60       # NVMe on cp3 idles at 50C; let it settle between cells
-PVC_SIZE="8Gi"            # per CNPG arm; on local-path a no-op, on Longhorn it is 2x this across replicas
+PVC_SIZE="8Gi"            # per CNPG arm; 2x this across the two replicas
 MQ_PVC_SIZE="4Gi"
 CPU_DRIFT_ABORT=25        # percentage points of node CPU movement across a cell that voids it
-MIN_FREE_LOCALPATH_GI=10  # local-path enforces no quota and shares the slice with the live DB
 MIN_FREE_MEM_MI=700       # per node, before the bench adds ~1.5Gi cluster-wide
 MIN_FREE_LONGHORN_GI=50
 
@@ -50,29 +52,26 @@ source "${SCRIPT_DIR}/common.sh"
 BENCH_LIB="${REPO_ROOT}/lib/bench"
 PG_IMAGE="$(yq -r ".\"${PG_MAJOR}\"" "${REPO_ROOT}/lib/helm/pg-cluster/files/postgres-images.yaml")"
 
-# The three arms. Fields: id|storageClass|human label. IDs are lowercase because they become
-# Kubernetes object names, which are RFC1123.
-# b and c are the pair the whole exercise turns on: same node, same class settings, same replica
-# count, differing only in whether one replica sits under the pod or both are a network hop away.
+# The arms. Fields: id|storageClass|human label. IDs are lowercase because they become Kubernetes
+# object names, which are RFC1123.
+# The pair the whole exercise turns on: same node, same class settings, same replica count, differing
+# only in whether one replica sits under the pod or both are a network hop away. That is exactly the
+# choice between longhorn-r2-ephemeral and longhorn-r2-ephemeral-local.
 ARMS=(
-  "a-local|local-path|node-local dir, today's CNPG + RabbitMQ"
   "b-lh-remote|${BENCH_SC_REMOTE}|longhorn r2, BOTH replicas remote, every read and write over the wire"
   "c-lh-local|${BENCH_SC_LOCAL}|longhorn r2 best-effort, one replica local, only the 2nd write crosses"
 )
 
-# The `pgsync` workload's own arms, a 2x2 of storage against replication mode. Answers a different
-# question from ARMS above, which is why it does not share them: ARMS isolates replica LOCALITY for a
-# single-node DB, this isolates what SYNCHRONOUS replication costs on each storage. Read as two
-# differences: e-d and g-f give the price of sync, f-d and g-e give the price of Longhorn.
+# The `pgsync` workload's own arms. Answers a different question from ARMS above, which is why it does
+# not share them: ARMS isolates replica LOCALITY for a single-instance DB, this isolates what
+# SYNCHRONOUS replication costs, i.e. what highAvailability: true buys and charges.
 # Fields: id|storageClass|instances|sync|label
 #
-# Uses the SHIPPED longhorn class, not the two bench ones, because the decision this feeds is "should
-# the real databases move", so the real class settings (dataLocality disabled included) are the ones
-# that matter. 3 instances because `any 1` of two standbys is the config worth running: it survives
-# one node being drained without stalling writes, which is what makes a rolling Talos upgrade safe.
+# Uses the SHIPPED class, not the two bench ones, because this feeds a decision about the real
+# databases, so the real class settings (dataLocality disabled included) are the ones that matter.
+# 3 instances because `any 1` of two standbys is the config worth running: it survives one node being
+# drained without stalling writes, which is what makes a rolling Talos upgrade safe.
 SYNC_ARMS=(
-  "d-local-async|local-path|1|off|local-path, single instance, no replication (baseline)"
-  "e-local-sync|local-path|3|on|local-path, 3 instances, synchronous any 1 required"
   "f-lh-async|longhorn-r2-ephemeral|1|off|longhorn r2, single instance, no replication"
   "g-lh-sync|longhorn-r2-ephemeral|3|on|longhorn r2, 3 instances, synchronous any 1 required"
 )
@@ -120,9 +119,9 @@ usage: storage_bench.sh [run] [--workload fio|pgbench|amqp|pgsync|all] [--repeat
             run back up after it was interrupted. The cells then span two points in time, so check
             the pgbench -S control before trusting a comparison across them.
 
-  pgsync    what SYNCHRONOUS replication costs, local-path against longhorn r2. NOT part of `all`:
-            it is another ~85 min and it answers a storage-choice question, not the locality
-            question the other three share. See docs/16_storage_bench.md.
+  pgsync    what SYNCHRONOUS replication costs, i.e. the price of highAvailability: true. NOT part of
+            `all`: another ~45 min, and a different question from the replica-locality one the other
+            workloads share. See docs/16_storage_bench.md.
 EOF
   exit 1
 }
@@ -195,20 +194,16 @@ delta() {
   awk -v a="$1" -v b="$2" 'BEGIN{ printf "+%.2f (%.2fx)", b-a, (a>0 ? b/a : 0) }'
 }
 
-# The 2x2 the run exists to produce, with the subtraction done. Columns are storage, rows are
-# replication mode, so the right margin is the price of Longhorn and the bottom margin the price of
-# sync. p99 in ms, meaned over the repeats.
+# What the run exists to produce, with the subtraction done: the price of synchronous replication.
+# p99 in ms, meaned over the repeats.
 pgsync_grid() {
-  local dir="$1" run da ea fa ga
+  local dir="$1" run fa ga
   compgen -G "${dir}/pgsync/*" >/dev/null 2>&1 || return 0
   for run in c1 c8; do
-    da="$(mean_p99 "$dir" d-local-async "$run")"; ea="$(mean_p99 "$dir" e-local-sync "$run")"
-    fa="$(mean_p99 "$dir" f-lh-async  "$run")";  ga="$(mean_p99 "$dir" g-lh-sync   "$run")"
+    fa="$(mean_p99 "$dir" f-lh-async "$run")"; ga="$(mean_p99 "$dir" g-lh-sync "$run")"
     printf '\n#### pgsync %s, commit p99 ms (mean of %s repeats)\n\n' "$run" "$REPEATS"
-    printf '| | local-path | longhorn-r2 | price of longhorn |\n|---|---|---|---|\n'
-    printf '| async (1 instance) | %s | %s | %s |\n' "${da:-n/a}" "${fa:-n/a}" "$(delta "$da" "$fa")"
-    printf '| sync any 1 required (3 instances) | %s | %s | %s |\n' "${ea:-n/a}" "${ga:-n/a}" "$(delta "$ea" "$ga")"
-    printf '| price of sync | %s | %s | |\n' "$(delta "$da" "$ea")" "$(delta "$fa" "$ga")"
+    printf '| async (1 instance) | sync any 1 required (3 instances) | price of sync |\n|---|---|---|\n'
+    printf '| %s | %s | %s |\n' "${fa:-n/a}" "${ga:-n/a}" "$(delta "$fa" "$ga")"
   done
 }
 
@@ -544,14 +539,6 @@ YAML
     wait_for "${arm} replica layout to settle" 300 volume_settled "fio-${arm}" "$want_local" || return 1
   fi
   replica_nodes "fio-${arm}" > "${out}/replica-nodes.txt" 2>/dev/null
-
-  # local-path enforces no quota and shares the 50Gi slice with the live database.
-  if [ "$sc" = "local-path" ]; then
-    local free; free="$(kb exec "fio-${arm}" -- df -BG /data | awk 'NR==2{gsub(/G/,"",$4); print $4+0}')"
-    if [ "${free:-0}" -lt "$MIN_FREE_LOCALPATH_GI" ]; then
-      bad "${arm}: only ${free}Gi free on the local-path slice, refusing to risk the live DB"; return 1
-    fi
-  fi
 
   local job
   for job in "${FIO_JOBS[@]}"; do

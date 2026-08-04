@@ -1,7 +1,13 @@
-# Both are 2-replica: survives the one node loss we design for AND leaves a spare to rebuild onto. They differ
-# only in whether they are backed up off-cluster. There is no default class, so every PVC names one.
+# All three are 2-replica: survives the one node loss we design for AND leaves a spare to rebuild onto. They
+# differ in whether a replica is pinned to the consuming node, and whether they are backed up off-cluster.
+# There is no default class, so every PVC names one.
 # There is no Retain class: deletionProtection is what makes a prune non-destructive, so Retain would protect
 # nothing a deliberate deletion did not mean and would only leak orphaned Released PVs.
+# A volume's spec size is only a CEILING: Longhorn is thin, so real occupancy grows with what is written, and
+# templates/recurringjobs.yaml hands freed blocks back to the SSD weekly.
+# `parameters` is IMMUTABLE once a class exists, so adding a key here means deleting the class by hand first.
+# That is why the trim job reaches these volumes through Longhorn's `default` group rather than a
+# recurringJobSelector: any volume with no recurring job of its own lands there automatically.
 
 # The general-purpose class. Prune safety comes from deletionProtection, total-loss coverage from each app's
 # own backup.
@@ -18,10 +24,30 @@ parameters:
   numberOfReplicas: "2"
   staleReplicaTimeout: "30"
   fsType: "ext4"
-  dataLocality: "disabled"
+  dataLocality: "disabled" # every read and write crosses the 1GbE net, even to a replica on this very node
+
+# Same, but Longhorn keeps one of the two replicas on whichever node the pod runs on, so reads and most of the
+# write path stay on the local SSD. Only for volumes small enough that dragging a full copy to a new node on
+# every reschedule is cheap: it buys ~30% off write latency there, and costs a big transfer on a big volume.
+---
+apiVersion: storage.k8s.io/v1
+kind: StorageClass
+metadata:
+  name: longhorn-r2-ephemeral-local
+provisioner: driver.longhorn.io
+allowVolumeExpansion: true
+reclaimPolicy: Delete
+volumeBindingMode: Immediate
+parameters:
+  numberOfReplicas: "2"
+  staleReplicaTimeout: "30"
+  fsType: "ext4"
+  dataLocality: "best-effort" # best-effort, not strict: if no local room, schedule anyway rather than fail
 
 # For precious data with no app-level backup (sqlite, config). recurringJobSelector adds every volume to the
-# `backup` group, which the RecurringJobs in templates/recurringjobs.yaml act on once a target is set.
+# `backup` group, which the RecurringJobs in templates/recurringjobs.yaml act on once a target is set. Having
+# one at all also keeps these volumes OUT of the `default` group, so add `trim` here if this class ever gets a
+# consumer, which means deleting the class first: see the immutability note above.
 # No consumer yet.
 ---
 apiVersion: storage.k8s.io/v1

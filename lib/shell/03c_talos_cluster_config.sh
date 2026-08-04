@@ -21,7 +21,7 @@ mkdir -p "${OUTDIR}"
 TALOS_SCRATCH="$(mktemp -d)"
 echo "Scratch:  ${TALOS_SCRATCH}   (throwaway render files; OS-reaped)"
 
-CLUSTER="$CLUSTER_NAME"; DISK="$INSTALL_DISK"; EPHEMERAL="$EPHEMERAL_SIZE"; VIP="$CLUSTER_VIP"; LOCALPATH_SIZE="$LOCALPATH_VOLUME_SIZE"; KVER="$KUBERNETES_VERSION"
+CLUSTER="$CLUSTER_NAME"; DISK="$INSTALL_DISK"; EPHEMERAL="$EPHEMERAL_SIZE"; VIP="$CLUSTER_VIP"; KVER="$KUBERNETES_VERSION"
 NODE_INSTANCE_TYPE="rpi5"   # node.kubernetes.io/instance-type label (nic-keeper selector); fixed to the hardware
 HOSTNAMES=(); IPS=()
 for e in "${CLUSTER_NODES[@]}"; do HOSTNAMES+=("${e%%:*}"); IPS+=("${e##*:}"); done
@@ -105,19 +105,13 @@ ${REGISTRIES_BLOCK}
     node.kubernetes.io/instance-type: ${NODE_INSTANCE_TYPE}   # nic-keeper DaemonSet selector (03_operating_system.md)
   kubelet:
     # Talos runs the kubelet in a container and does NOT auto-propagate /var/mnt mounts into it, so without
-    # these binds Longhorn's pods and local-path's helper pods cannot see their disks.
-    # longhorn gets rshared, which means mounts made inside the bind are visible on the host too. Longhorn
-    # creates one sub-mount per replica and the host has to see them. localpath creates none, so plain rw is
-    # enough there. See 08_storage.md.
+    # this bind Longhorn's pods cannot see their disk. rshared means mounts made inside the bind are visible
+    # on the host too, which Longhorn needs: it creates one sub-mount per replica. See 08_storage.md.
     extraMounts:
       - destination: /var/mnt/longhorn
         type: bind
         source: /var/mnt/longhorn
         options: [bind, rshared, rw]
-      - destination: /var/mnt/localpath
-        type: bind
-        source: /var/mnt/localpath
-        options: [bind, rw]
   features:
     kubePrism:
       enabled: true
@@ -147,8 +141,7 @@ cluster:
 ${CERTSANS}
 EOF
 
-# Cap EPHEMERAL, carve a fixed-size 'localpath' volume, then let 'longhorn' take the remainder. localpath is
-# min==max so it cannot grow into Longhorn's space; longhorn has no maxSize so it claims what is left, once,
+# Cap EPHEMERAL, then let 'longhorn' take the whole remainder: no maxSize, so it claims what is left, once,
 # at provision time. See 08_storage.md.
 cat > "${TALOS_SCRATCH}/volumes.yaml" <<EOF
 ---
@@ -159,17 +152,6 @@ provisioning:
   diskSelector:
     match: disk.transport == "nvme"
   maxSize: ${EPHEMERAL}
----
-apiVersion: v1alpha1
-kind: UserVolumeConfig
-name: localpath
-provisioning:
-  diskSelector:
-    match: disk.transport == "nvme"
-  minSize: ${LOCALPATH_SIZE}
-  maxSize: ${LOCALPATH_SIZE}
-filesystem:
-  type: xfs
 ---
 apiVersion: v1alpha1
 kind: UserVolumeConfig

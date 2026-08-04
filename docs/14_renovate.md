@@ -89,8 +89,6 @@ Three things in that PR need care:
 
 - Cilium: the one app that can cut the cluster, and Argo with it, off its own network. See
   [04_networking.md](04_networking.md) and [05_gitops.md](05_gitops.md).
-- `local-path-provisioner`, labelled `needs-revendor`: its manifests are vendored verbatim, so a tag bump needs
-  a manual re-diff against the upstream release. If it shows up in the PR, split it out and re-vendor.
 - The Talos/kernel recipe in `versions.env`: merging those lines does NOT apply them. A real bump needs a manual
   image rebuild ([03_operating_system.md](03_operating_system.md)), so treat them as a "newer version exists"
   signal. `KUBERNETES_VERSION` is capped by the Talos release's k8s default, so move it WITH Talos.

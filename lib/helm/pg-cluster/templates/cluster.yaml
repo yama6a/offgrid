@@ -17,23 +17,22 @@ metadata:
   labels:
     {{- include "pg-cluster.labels" . | nindent 4 }}
 spec:
-  instances: {{ if .Values.highAvailability }}2{{ else }}1{{ end }}
+  instances: {{ if .Values.highAvailability }}3{{ else }}1{{ end }}
   imageName: {{ include "pg-cluster.image" . }}
   imagePullPolicy: IfNotPresent
   # non-root postgres UID/GID (CNPG default for the postgresql image).
   postgresUID: 26
   postgresGID: 26
   storage:
-    # Node-local /var/mnt/localpath partition (02_local_path_provisioner), isolated from Longhorn; Postgres
-    # replication is the only data-path redundancy. , so set the honest partition budget. See 08_storage.md.
-    size: 45Gi # size is a NO-OP under local-path, but the CR requires it. Kindof a dummy value.
-    storageClass: local-path
+    size: {{ .Values.size }}
+    storageClass: longhorn-r2-ephemeral # network-replicated, so an instance re-attaches on a surviving node
   {{- with .Values.resources }}
   resources:
     {{- toYaml . | nindent 4 }}
   {{- end }}
   affinity:
     topologyKey: kubernetes.io/hostname # Don't put recplica and primary on the same node (default was zone, which we don't have)
+    podAntiAffinityType: required # refuse to place two instances on one node rather than merely preferring not to
   priorityClassName: data-critical # Evicted after the platform control plane but before stateless apps, under node memory pressure
   primaryUpdateMethod: {{ if .Values.highAvailability }}switchover{{ else }}restart{{ end }} # single-node: short down-time
   primaryUpdateStrategy: unsupervised
@@ -43,6 +42,11 @@ spec:
   enableSuperuserAccess: false # apps connect only via the `app` role
 
   postgresql:
+    {{- if .Values.highAvailability }}
+    # a commit waits for 1 of the 2 standbys to flush it, so a promoted standby never loses an acked write.
+    # `required`: if no standby can ack, writes STALL instead of silently degrading to asynchronous.
+    synchronous: { method: any, number: 1, dataDurability: required }
+    {{- end }}
     {{- $params := deepCopy (.Values.postgresql.parameters | default dict) }}
     {{- if eq (include "pg-cluster.backupsEnabled" .) "true" }}
     {{- $b := .Files.Get "files/backup.yaml" | fromYaml }}

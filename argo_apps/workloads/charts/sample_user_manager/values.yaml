@@ -40,12 +40,13 @@ rabbitmq-topology:
     - { name: user-events, type: topic }         # users.created is consumed, users.deleted intentionally is not
     - { name: user-audit-logger, type: fanout }  # broadcast to signup + audit-logger
 
-# The manager's users store. highAvailability means primary + streaming replica across 2 nodes.
+# The manager's users store. highAvailability means a primary + 2 synchronous standbys, one per node.
 maindb:
   name: sample-user-manager-db
   # renovate: datasource=docker depName=ghcr.io/cloudnative-pg/postgresql
   postgresVersion: "18"     # a MAJOR, and a key in pg-cluster's image map; renovate proposes only major bumps
   highAvailability: true
+  size: 10Gi
   deletionProtection: true  # holds the app's real data, a stray prune must orphan it, never delete it
   alertCritical: true       # the app cannot function without it, so a crashloop pages critical
   resources:
@@ -64,6 +65,7 @@ analyticsdb:
   # renovate: datasource=docker depName=ghcr.io/cloudnative-pg/postgresql
   postgresVersion: "18"
   highAvailability: false
+  size: 5Gi
   deletionProtection: true    # always true in steady state; flip to false only to delete it
   resources:
     requests:

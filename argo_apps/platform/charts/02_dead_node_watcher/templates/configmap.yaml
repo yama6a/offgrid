@@ -1,0 +1,69 @@
+# The watcher loop, mounted into the pod. POSIX sh, one structured stdout line per decision.
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: dead-node-watcher
+  namespace: {{ .Release.Namespace }}
+  labels:
+    app.kubernetes.io/name: dead-node-watcher
+data:
+  watch.sh: |
+    #!/bin/sh
+    set -u
+
+    TAINT="node.kubernetes.io/out-of-service"
+    GRACE="${GRACE_SECONDS:-60}"
+    INTERVAL="${INTERVAL_SECONDS:-10}"
+    MAX_UNREADY="${MAX_UNREADY_NODES:-1}"
+
+    log() { ev="$1"; shift; printf '%s dead-node-watcher event=%s %s\n' \
+      "$(date -u +%Y-%m-%dT%H:%M:%SZ)" "$ev" "$*"; }
+
+    # One line per node needing action: "taint <node> <readyStatus> <secondsNotReady>" or "clear <node>".
+    # A NotReady node is left alone while it is inside the grace window, already tainted, or cordoned, the
+    # last because a cordon means a human or 03e is draining it on purpose, NOT that it died.
+    decide() {
+      kubectl get nodes -o json | jq -r --argjson grace "$GRACE" --argjson max "$MAX_UNREADY" --arg taint "$TAINT" '
+        [.items[] | {
+          name:     .metadata.name,
+          cordoned: (.spec.unschedulable // false),
+          tainted:  ((.spec.taints // []) | any(.key == $taint)),
+          ready:    (.status.conditions[] | select(.type == "Ready") | .status),
+          notReadyFor: (now - (.status.conditions[] | select(.type == "Ready") | .lastTransitionTime | fromdateiso8601))
+        }] as $nodes
+        | ([$nodes[] | select(.ready != "True")] | length) as $unready
+        | $nodes[]
+        | if .ready == "True" then
+            (if .tainted then "clear \(.name)" else empty end)
+          elif $unready > $max then empty
+          elif .tainted or .cordoned or (.notReadyFor < $grace) then empty
+          else "taint \(.name) \(.ready) \(.notReadyFor | floor)"
+          end'
+    }
+
+    log start "grace=${GRACE}s interval=${INTERVAL}s max_unready=${MAX_UNREADY}"
+
+    while true; do
+      if ! out="$(decide 2>&1)"; then
+        log api-error "could not read nodes, retrying: ${out}"      # an apiserver blip must not kill the loop
+        sleep "$INTERVAL"
+        continue
+      fi
+      printf '%s\n' "$out" | while read -r action node ready age; do
+        [ -n "${action:-}" ] || continue
+        case "$action" in
+          taint)
+            log dead "node=${node} ready=${ready} notready_for=${age}s (tainting ${TAINT}, volumes detach now)"
+            kubectl taint node "$node" "${TAINT}=nodedown:NoExecute" --overwrite \
+              || log taint-failed "node=${node}"
+            ;;
+          clear)
+            # Kubernetes never removes this one, and a node that keeps it takes no pods back.
+            log recovered "node=${node} (removing ${TAINT})"
+            kubectl taint node "$node" "${TAINT}:NoExecute-" \
+              || log untaint-failed "node=${node}"
+            ;;
+        esac
+      done
+      sleep "$INTERVAL"
+    done

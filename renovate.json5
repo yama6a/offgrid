@@ -96,8 +96,8 @@
     {
       // ONE combined, auto-merged PR for every NON-major update, gated on the required CI checks.
       // WARNING: a merged bump reaches the LIVE cluster unattended via ArgoCD self-heal, including Cilium,
-      // which can cut the cluster off its own network, and any local-path tag bump, which really needs a
-      // manual re-vendor. It also bumps TALOS_IMAGE_RELEASE, which a merge does NOT apply: that still needs
+      // which can cut the cluster off its own network. It also bumps TALOS_IMAGE_RELEASE, which a merge does
+      // NOT apply: that still needs
       // 03e (and 03a for a reflash). Accepted for a hands-off homelab; to de-risk, add minimumReleaseAge or
       // drop automerge from the deps you want to gate.
       description: "combine all non-major updates into one auto-merged PR",
@@ -119,15 +119,6 @@
       description: "kubernetes tags are v-prefixed",
       matchPackageNames: ["kubernetes/kubernetes"],
       extractVersion: "^v(?<version>.+)$",
-    },
-    {
-      // local-path-provisioner ships as VENDORED upstream manifests keyed to values.image.tag, so a bump
-      // must be re-diffed against the upstream release by hand. Labelled so you can split it out of the
-      // combined PR and re-vendor before merging. busybox is its helper image, same treatment.
-      description: "needs-revendor: local-path-provisioner",
-      matchManagers: ["helm-values"],
-      matchFileNames: ["argo_apps/platform/charts/02_local_path_provisioner/values.yaml"],
-      addLabels: ["needs-revendor"],
     },
     {
       // Pin action refs to commit digests, so a moving tag cannot swap the action's code under us. The

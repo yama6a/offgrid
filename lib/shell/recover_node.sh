@@ -1,7 +1,7 @@
 #!/usr/bin/env bash
 # Puts ONE replaced or wiped node back into a running cluster, and fixes the state that does not fix itself.
-# The executable half of docs/15_node_recovery.md: everything there except the single-instance CNPG restore,
-# which spans git commits and is `make restore-cnpg`.
+# The executable half of docs/15_node_recovery.md. The workloads need nothing: their volumes are Longhorn's,
+# not the node's, so they moved to a survivor on their own long before this runs.
 #
 # Re-run it as often as you like. Every step re-checks before acting, so a partial failure is recovered by
 # running it again, which is the normal way to get past a step that needed more time.
@@ -17,12 +17,10 @@ source "${SCRIPT_DIR}/common.sh"
 # ---- knobs ----
 MAINT_WAIT=600      # secs to wait for the node to answer in maintenance mode before giving up
 READY_WAIT=900      # secs to wait for the kubelet to register and report Ready after the config apply
-SETTLE_WAIT=300     # secs to wait for a recreated CNPG/RabbitMQ pod to come back Ready
+SETTLE_WAIT=300     # secs to wait for the node's DaemonSets to settle, and for the cluster to converge
 DISK_RETRIES=12     # attempts per Longhorn disk patch; its webhook refuses every one while the manager resyncs
 DISK_RETRY_SLEEP=10
 DISK_WAIT=180       # secs for the re-added disk to report a UUID and Ready; it is slower than the patch
-CRASH_RESTARTS=2    # restarts at which a pod is stuck rather than starting, so the settle wait can stop early
-RMQ_RETRIES=6       # attempts for forget_cluster_node / join_cluster; both need the brokers to agree first
 POLL=10
 LH_NS="longhorn-system"
 
@@ -55,9 +53,9 @@ done
 say "recovering ${NODE} (${IP});  survivors: ${PEERS[*]}"
 
 # --- 1. preflight: the survivors have to be able to carry the cluster and rebuild from ------------------
-say "1/7 preflight"
+say "1/6 preflight"
 
-SURVIVOR=""   # the healthy node every etcd and rabbitmq call below is aimed at
+SURVIVOR=""   # the healthy node every etcd and Longhorn call below is aimed at
 for i in "${!PEERS[@]}"; do
   if [ "$(kubectl get node "${PEERS[$i]}" -o jsonpath='{range .status.conditions[?(@.type=="Ready")]}{.status}{end}' 2>/dev/null)" = "True" ]; then
     SURVIVOR="${PEERS[$i]}"; SURVIVOR_IP="${PEER_IPS[$i]}"; break
@@ -90,8 +88,8 @@ fi
 ok "every Longhorn volume has a running replica off ${NODE}"
 
 echo
-echo "    About to, on ${NODE}: drop its stale etcd member, apply its machine config, delete the local-path"
-echo "    PVCs bound to it (empty since the wipe), and reset its Longhorn disk record."
+echo "    About to, on ${NODE}: drop its stale etcd member, apply its machine config, and reset its"
+echo "    Longhorn disk record."
 echo "    Its data is already gone; this deletes the API objects that still point at it."
 echo
 confirm "Proceed?" || { warn "nothing changed"; exit 0; }
@@ -104,7 +102,7 @@ talosctl -n "$IP" -e "$IP" version >/dev/null 2>&1 && ADOPTED="yes"
 
 # --- 2. etcd: drop the member whose peer URL is this node -----------------------------------------------
 # A wiped node comes back with a NEW etcd identity, and the old entry at the same peer URL blocks the join.
-say "2/7 etcd membership"
+say "2/6 etcd membership"
 MEMBER="$(talosctl -n "$SURVIVOR_IP" -e "$SURVIVOR_IP" etcd members 2>/dev/null | awk -v ip="$IP" '$0 ~ ip {print $2}' | head -1)"
 if [ -z "$MEMBER" ]; then
   ok "no etcd member at ${IP} (already removed, or the node never joined)"
@@ -121,7 +119,7 @@ else
 fi
 
 # --- 3. machine config ---------------------------------------------------------------------------------
-say "3/7 machine config"
+say "3/6 machine config"
 if [ "$ADOPTED" = "yes" ]; then
   ok "${IP} already answers securely, so it holds our config; not re-applying"
 else
@@ -148,7 +146,7 @@ else
 fi
 
 # --- 4. kubelet ----------------------------------------------------------------------------------------
-say "4/7 kubernetes node"
+say "4/6 kubernetes node"
 printf '    waiting for %s Ready (up to %ss) ' "$NODE" "$READY_WAIT"
 deadline=$(( $(date +%s) + READY_WAIT ))
 until [ "$(kubectl get node "$NODE" -o jsonpath='{range .status.conditions[?(@.type=="Ready")]}{.status}{end}' 2>/dev/null)" = "True" ]; do
@@ -166,9 +164,9 @@ if [ "$(kubectl get node "$NODE" -o jsonpath='{.spec.unschedulable}')" = "true" 
   kubectl uncordon "$NODE" >/dev/null 2>&1 && ok "uncordoned ${NODE}" || bad "could not uncordon ${NODE}"
 fi
 
-# A node that reports Ready is still bringing its DaemonSets up, and both steps below read state those pods
-# publish: the consumers that mount the local-path PVCs, and the longhorn-manager that writes diskStatus. Judge
-# any of it too early and a perfectly good volume looks broken. Waiting here is what makes a re-run safe.
+# A node that reports Ready is still bringing its DaemonSets up, and the disk step below reads what one of them
+# publishes: the longhorn-manager that writes diskStatus. Judge that too early and a perfectly good disk looks
+# broken. Waiting here is what makes a re-run safe.
 printf '    letting %s settle: longhorn-manager (up to %ss) ' "$NODE" "$SETTLE_WAIT"
 deadline=$(( $(date +%s) + SETTLE_WAIT ))
 while :; do
@@ -179,188 +177,11 @@ while :; do
   printf '.'; sleep "$POLL"
 done
 
-# pod_settled <ns> <pod>: true once the pod is Running with every container ready. Give it time before calling
-# a volume stale, because "not ready yet" and "wedged on an empty volume" look identical in the first minute.
-pod_settled() {
-  [ "$(kubectl -n "$1" get pod "$2" -o jsonpath='{.status.phase}' 2>/dev/null)" = "Running" ] || return 1
-  ! kubectl -n "$1" get pod "$2" -o jsonpath='{.status.containerStatuses[*].ready}' 2>/dev/null | grep -q false
-}
-
-# pod_stuck <ns> <pod>: the pod has answered the question the other way. Restarting on a loop is not the same as
-# starting slowly, and after a wipe every consumer on the node is in it, so waiting the full window three times
-# over just to be told what this already says costs a quarter of an hour.
-pod_stuck() {
-  local most
-  most="$(kubectl -n "$1" get pod "$2" \
-          -o jsonpath='{range .status.containerStatuses[*]}{.restartCount}{"\n"}{end}{range .status.initContainerStatuses[*]}{.restartCount}{"\n"}{end}' \
-          2>/dev/null | sort -rn | head -1)"
-  [ "${most:-0}" -ge "$CRASH_RESTARTS" ] || return 1
-  kubectl -n "$1" get pod "$2" \
-    -o jsonpath='{range .status.containerStatuses[*]}{.state.waiting.reason} {end}{range .status.initContainerStatuses[*]}{.state.waiting.reason} {end}' \
-    2>/dev/null | grep -q CrashLoopBackOff
-}
-
-# --- 5. local-path PVCs bound to this node -------------------------------------------------------------
-# The wipe took their contents; the PVC and PV objects survived, still Bound and still node-affine, pointing
-# at an empty directory. No operator will delete a PVC that might hold the last copy of something, so they
-# crashloop until we do. See docs/15_node_recovery.md.
-say "5/7 local-path PVCs bound to ${NODE}"
-PVCS="$(kubectl get pv -o json | NODE="$NODE" python3 -c '
-import json,os,sys
-node = os.environ["NODE"]
-for pv in json.load(sys.stdin)["items"]:
-    spec = pv["spec"]
-    if not (spec.get("storageClassName") or "").startswith("local-path"): continue
-    try:
-        terms = spec["nodeAffinity"]["required"]["nodeSelectorTerms"][0]["matchExpressions"][0]["values"]
-    except (KeyError, IndexError):
-        continue
-    if node not in terms: continue
-    ref = spec.get("claimRef") or {}
-    ns, name = ref.get("namespace"), ref.get("name")
-    if ns and name:
-        print(ns + "\t" + name)
-')"
-
-if [ -z "${PVCS// }" ]; then
-  ok "none bound to ${NODE}"
-else
-  while IFS=$'\t' read -r ns pvc; do
-    [ -z "$ns" ] && continue
-    kubectl -n "$ns" get pvc "$pvc" >/dev/null 2>&1 || { ok "${ns}/${pvc} already gone"; continue; }
-    LABELS="$(kubectl -n "$ns" get pvc "$pvc" -o json)"
-    KIND="$(printf '%s' "$LABELS" | python3 -c '
-import json,sys
-l = (json.load(sys.stdin)["metadata"].get("labels") or {})
-if l.get("cnpg.io/cluster"): print("cnpg\t" + l["cnpg.io/cluster"] + "\t" + l.get("cnpg.io/instanceName",""))
-elif l.get("app.kubernetes.io/name") == "rabbitmq": print("rabbitmq\t\t")
-else: print("other\t\t")')"
-    IFS=$'\t' read -r kind owner instance <<< "$KIND"
-
-    # A consumer that reaches Ready is proof the volume under it works, which is the one signal separating
-    # "empty since the wipe" from "already rebuilt by an earlier run of this script". Give it the full settle
-    # window before concluding otherwise: a broker replaying Ra logs is not ready for a minute or two either.
-    CONSUMER="$instance"
-    [ "$kind" = "rabbitmq" ] && CONSUMER="${pvc#persistence-}"
-    if [ -n "$CONSUMER" ] && kubectl -n "$ns" get pod "$CONSUMER" >/dev/null 2>&1; then
-      printf '    %s/%s: waiting to see if %s comes up (up to %ss) ' "$ns" "$pvc" "$CONSUMER" "$SETTLE_WAIT"
-      deadline=$(( $(date +%s) + SETTLE_WAIT ))
-      SETTLED="no"
-      while :; do
-        pod_settled "$ns" "$CONSUMER" && { SETTLED="yes"; echo "up"; break; }
-        pod_stuck "$ns" "$CONSUMER" && { echo "crashlooping"; break; }
-        [ "$(date +%s)" -ge "$deadline" ] && { echo "no"; break; }
-        printf '.'; sleep "$POLL"
-      done
-      if [ "$SETTLED" = "yes" ]; then
-        ok "${ns}/${pvc}: ${CONSUMER} is Ready, so its volume is fine; leaving it"
-        continue
-      fi
-    fi
-
-    case "$kind" in
-      cnpg)
-        WANT="$(kubectl -n "$ns" get cluster.postgresql.cnpg.io "$owner" -o jsonpath='{.spec.instances}' 2>/dev/null)"
-        if [ "${WANT:-1}" -le 1 ]; then
-          # Its only copy died with the node, so an empty PVC is not the problem and deleting it fixes nothing.
-          # The restore recreates the Cluster from scratch and takes the PVC with it.
-          warn "${ns}/${pvc} belongs to SINGLE-INSTANCE ${owner}; leaving it. Restore it from S3 afterwards:"
-          warn "    make restore-cnpg      # in-place, namespace ${ns}, database ${owner}"
-          continue
-        fi
-        say "  ${ns}/${pvc}: CNPG replica of ${owner}, re-cloning from the primary"
-        kubectl -n "$ns" delete pvc "$pvc" --wait=false >/dev/null 2>&1
-        [ -n "$instance" ] && kubectl -n "$ns" delete pod "$instance" --wait=false >/dev/null 2>&1
-        ok "  deleted ${ns}/${pvc}${instance:+ + pod ${instance}}"
-        ;;
-      rabbitmq)
-        # PVC persistence-<sts>-<n>; the pod is the PVC name minus that prefix. The Erlang node adds the
-        # RabbitmqCluster's headless-service suffix.
-        POD="${pvc#persistence-}"
-        RMQ="$(kubectl -n "$ns" get rabbitmqclusters.rabbitmq.com -o jsonpath='{.items[0].metadata.name}' 2>/dev/null)"
-        ERL="rabbit@${POD}.${RMQ}-nodes.${ns}"
-        PEER_POD=""
-        for p in $(kubectl -n "$ns" get pods -l app.kubernetes.io/name=rabbitmq -o jsonpath='{range .items[*]}{.metadata.name}{"\n"}{end}' 2>/dev/null); do
-          case "$p" in *operator*) continue ;; esac
-          [ "$p" = "$POD" ] && continue
-          [ "$(kubectl -n "$ns" get pod "$p" -o jsonpath='{.status.containerStatuses[0].ready}' 2>/dev/null)" = "true" ] && { PEER_POD="$p"; break; }
-        done
-        say "  ${ns}/${pvc}: RabbitMQ broker ${POD}"
-        if [ -z "$PEER_POD" ]; then
-          bad "  no Ready broker to forget ${ERL} from; fix the quorum first, then re-run"
-          continue
-        fi
-        PEER_ERL="rabbit@${PEER_POD}.${RMQ}-nodes.${ns}"
-        rmq_is_member() {   # is $ERL in the metadata store membership the peer knows about?
-          kubectl -n "$ns" exec "$PEER_POD" -c rabbitmq -- \
-            rabbitmqctl eval 'ra:members({rabbitmq_metadata, node()}).' 2>/dev/null | grep -q "$POD\."
-        }
-        # MANDATORY before the wipe, not a remedy afterwards: the survivors hold this broker as a metadata-store
-        # member, and a member that comes back blank is refused. So the wipe only happens if the forget worked.
-        kubectl -n "$ns" exec "$POD" -c rabbitmq -- rabbitmqctl stop_app >/dev/null 2>&1 \
-          && ok "  stopped the app on ${POD}" || warn "  ${POD} was not reachable to stop (gone with the node?)"
-        # Retried, because the peer refuses while it still believes the broker is running, and it takes a moment
-        # to notice otherwise. Membership is the verdict; forget_cluster_node's own exit code is not enough.
-        FORGOTTEN="no"
-        for i in $(seq 1 "$RMQ_RETRIES"); do
-          rmq_is_member || { FORGOTTEN="yes"; break; }
-          kubectl -n "$ns" exec "$PEER_POD" -c rabbitmq -- rabbitmqctl forget_cluster_node "$ERL" >/dev/null 2>&1
-          rmq_is_member || { FORGOTTEN="yes"; ok "  ${PEER_POD} forgot ${ERL} (attempt ${i})"; break; }
-          sleep "$POLL"
-        done
-        if [ "$FORGOTTEN" != "yes" ]; then
-          bad "  ${PEER_POD} still holds ${ERL} as a member; NOT wiping, it could not rejoin"
-          warn "  it usually means the peer still sees it running. Stop it, then re-run:"
-          warn "    kubectl -n ${ns} exec ${POD} -c rabbitmq -- rabbitmqctl stop_app"
-          continue
-        fi
-        ok "  ${ERL} is no longer a member, safe to wipe"
-        OLD_UID="$(kubectl -n "$ns" get pod "$POD" -o jsonpath='{.metadata.uid}' 2>/dev/null)"
-        kubectl -n "$ns" delete pvc "$pvc" --wait=false >/dev/null 2>&1
-        kubectl -n "$ns" delete pod "$POD" --wait=false >/dev/null 2>&1
-        ok "  deleted ${ns}/${pvc} + pod ${POD}"
-        # Waits for the REPLACEMENT, by uid and by the absence of a deletionTimestamp. The pod being deleted keeps
-        # reporting phase Running the whole time it terminates, so matching on phase alone lands on the dying one
-        # and every exec below then talks to a container that is going away.
-        printf '    waiting for a fresh %s (up to %ss) ' "$POD" "$SETTLE_WAIT"
-        deadline=$(( $(date +%s) + SETTLE_WAIT ))
-        while :; do
-          NEW_UID="$(kubectl -n "$ns" get pod "$POD" -o jsonpath='{.metadata.uid}' 2>/dev/null)"
-          if [ -n "$NEW_UID" ] && [ "$NEW_UID" != "$OLD_UID" ] \
-             && [ -z "$(kubectl -n "$ns" get pod "$POD" -o jsonpath='{.metadata.deletionTimestamp}' 2>/dev/null)" ] \
-             && [ "$(kubectl -n "$ns" get pod "$POD" -o jsonpath='{.status.phase}' 2>/dev/null)" = "Running" ]; then
-            echo "up"; break
-          fi
-          [ "$(date +%s)" -ge "$deadline" ] && { echo "TIMEOUT"; break; }
-          printf '.'; sleep "$POLL"
-        done
-        # Peer discovery auto-clusters onto the LOWEST-ordered broker, so for that one (server-0) a blank start
-        # seeds its own cluster of one and nothing ever pulls it in. An explicit join is deterministic for all of
-        # them. Retried because Running is not booted: rabbitmqctl refuses until the app is up.
-        JOINED="no"
-        for i in $(seq 1 "$RMQ_RETRIES"); do
-          if kubectl -n "$ns" exec "$POD" -c rabbitmq -- rabbitmqctl eval 'rabbit_nodes:list_running().' 2>/dev/null | grep -q "$PEER_POD\."; then
-            JOINED="yes"; ok "  ${POD} is clustered with ${PEER_POD}"; break
-          fi
-          kubectl -n "$ns" exec "$POD" -c rabbitmq -- rabbitmqctl join_cluster "$PEER_ERL" >/dev/null 2>&1 \
-            && { JOINED="yes"; ok "  joined ${POD} to ${PEER_ERL} explicitly (attempt ${i})"; break; }
-          sleep "$POLL"
-        done
-        [ "$JOINED" = "yes" ] || bad "  ${POD} would not cluster with ${PEER_ERL}; check: kubectl -n ${ns} logs ${POD} -c rabbitmq"
-        ;;
-      *)
-        warn "${ns}/${pvc} is on local-path but is neither CNPG nor RabbitMQ; leaving it. Its owner knows what"
-        warn "  an empty volume means better than this script does."
-        ;;
-    esac
-  done <<< "$PVCS"
-fi
-
-# --- 6. Longhorn: stale replicas, then the disk record -------------------------------------------------
+# --- 5. Longhorn: stale replicas, then the disk record -------------------------------------------------
 # Longhorn keeps the disk UUID in both the node CR and a longhorn-disk.cfg on the disk. The wipe made a new
 # filesystem, so the manager wrote a new cfg while the CR kept the old UUID, and it refuses the disk rather
 # than risk the wrong one. The node itself still reports Ready, so this hides unless you look at the disk.
-say "6/7 Longhorn disk record on ${NODE}"
+say "5/6 Longhorn disk record on ${NODE}"
 STALE="$(kubectl -n "$LH_NS" get replicas.longhorn.io -o jsonpath="{range .items[?(@.spec.nodeID==\"${NODE}\")]}{.metadata.name}{\"\n\"}{end}" 2>/dev/null)"
 if [ -n "${STALE// }" ]; then
   # Preflight already proved every volume has a running replica elsewhere, so these describe data on a
@@ -440,10 +261,10 @@ else
   warn "    make recover-node NODE=${NODE} YES=1"
 fi
 
-# --- 7. converge ---------------------------------------------------------------------------------------
+# --- 6. converge ---------------------------------------------------------------------------------------
 # Counts LIVE pods only. A pod whose node died is left behind in phase Failed and never becomes Running, so
 # counting those means waiting for something that cannot happen. They are reported once, at the end, as cruft.
-say "7/7 waiting for things to come back (up to ${SETTLE_WAIT}s)"
+say "6/6 waiting for things to come back (up to ${SETTLE_WAIT}s)"
 deadline=$(( $(date +%s) + SETTLE_WAIT ))
 while :; do
   PENDING="$(kubectl get pods -A --field-selector=status.phase!=Failed --no-headers 2>/dev/null | grep -Evc 'Running|Completed')"
@@ -462,8 +283,7 @@ ORPHANS="$(kubectl get pods -A --field-selector=status.phase=Failed -o jsonpath=
 
 cat <<NEXT
 
-Left for you, because neither is mechanical:
-  - any SINGLE-INSTANCE CNPG named above: make restore-cnpg
+Left for you, because it is not mechanical:
   - re-spread the stateless Deployments once everything is healthy: make rebalance-workloads
 NEXT
 [ "${ORPHANS:-0}" -gt 0 ] && cat <<NEXT

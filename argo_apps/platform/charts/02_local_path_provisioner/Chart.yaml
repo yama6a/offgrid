@@ -1,8 +1,0 @@
-apiVersion: v2
-name: local-path-provisioner
-description: Rancher local-path-provisioner, node-local dynamic PVs on the XFS 'localpath' volume 03c mounts. Backs the stateful apps kept off Longhorn.
-type: application
-version: 0.1.0 # local chart, never bump version
-# No public maintained upstream repo (Rancher's is auth-gated), so the manifests are vendored into templates/.
-# To bump: edit appVersion + values.image.tag, then re-diff against the upstream release manifest.
-appVersion: "v0.0.36"

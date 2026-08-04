@@ -3,10 +3,16 @@
 What Longhorn r2 and synchronous replication cost CNPG and RabbitMQ in write latency. On-demand, not a
 bring-up step.
 
+This is also the evidence behind two live decisions: everything runs on Longhorn, and RabbitMQ gets a local
+replica while Postgres does not ([08_storage.md](08_storage.md)). The `local-path` rows below record a class this
+cluster no longer has, so they are the historical half of the comparison and the script cannot reproduce them.
+The verdict they support: Longhorn's latency cost is real but small, self-healing on a machine loss is worth it,
+and both numbers land inside what the managed services deliver.
+
 ```bash
-make storage-bench          # 3 locality arms x 3 workloads, ~3.4h
-make storage-bench-fio      # fsync only, ~39 min, the shortest real answer
-make storage-bench-sync     # what synchronous replication costs, 4 arms, ~100 min
+make storage-bench          # 2 locality arms x 3 workloads, ~2.3h
+make storage-bench-fio      # fsync only, ~26 min, the shortest real answer
+make storage-bench-sync     # what synchronous replication costs, 2 arms, ~45 min
 make storage-bench-teardown
 bash lib/shell/storage_bench.sh run --smoke              # proves the script, numbers are garbage
 bash lib/shell/storage_bench.sh run --resume <dir>       # pick up an interrupted run
@@ -21,20 +27,21 @@ bash lib/shell/storage_bench.sh corroborate <dir>        # vs VictoriaMetrics, n
 
 | # | Node loss costs | Storage | Inst | Replication | avg ms | p50 | p99 | tps 1cl | tps 8cl | Basis |
 |---|---|---|---|---|---|---|---|---|---|---|
-| 1 | an S3 restore | local-path | 1 | none | 6.02 | 5.40 | 12.25 | 166 | 731 | measured |
-| 2 | a PVC delete, plus acked commits | local-path | 2 | async | ~6.0 | ~5.4 | ~12.3 | ~166 | ~731 | inferred from 1 |
-| 3 | a PVC delete | local-path | 3 | sync `any 1` | 8.19 | 7.57 | 14.57 | 122 | 555 | measured |
-| 4 | nothing | longhorn-r2 | 1 | none | 7.50 | 6.73 | 19.39 | 133 | 552 | measured |
+| 1 | an S3 restore | local-path (gone) | 1 | none | 6.02 | 5.40 | 12.25 | 166 | 731 | measured |
+| 2 | a PVC delete, plus acked commits | local-path (gone) | 2 | async | ~6.0 | ~5.4 | ~12.3 | ~166 | ~731 | inferred from 1 |
+| 3 | a PVC delete | local-path (gone) | 3 | sync `any 1` | 8.19 | 7.57 | 14.57 | 122 | 555 | measured |
+| 4 | nothing | longhorn-r2 | 1 | none | 7.50 | 6.73 | 19.39 | 133 | 552 | measured; **`highAvailability: false` today** |
 | 5 | acked commits | longhorn-r2 | 2 | async | ~7.5 | ~6.7 | ~19.4 | ~133 | ~552 | inferred from 4 |
-| 6 | nothing | longhorn-r2 | 3 | sync `any 1` | 10.52 | 9.66 | 22.36 | 95 | 374 | measured |
+| 6 | nothing | longhorn-r2 | 3 | sync `any 1` | 10.52 | 9.66 | 22.36 | 95 | 374 | measured; **`highAvailability: true` today** |
 | 7 | RDS single-AZ, `db.t4g.medium` | EBS | 1 | none | 2.41 | | | 416 | 1080 at 4cl | third-party |
 | 8 | RDS Multi-AZ | EBS | 1+1 | sync, cross-AZ | ~4.4-7.4 | | | | | 7 plus AWS's 2-5ms |
 | 9 | RDS Multi-AZ DB Cluster | local NVMe | 1+2 | semi-sync, 3 AZ | not published | | | | | AWS: "2x faster" than 8 |
 | 10 | Cloud SQL HA | regional PD | 1+1 | sync, cross-zone | not published | | | | | Google: direction only |
 | 11 | Hetzner CPX22, self-hosted | network block | 1 | none | 3.63 | | | 276 | 1303 at 4cl | third-party |
 
-- Row 3 against row 8 is the like-for-like, both synchronous HA with no commit loss: 8.19 ms against
-  ~4.4-7.4 ms. Same order, slow end of it. Row 6, which costs nothing on node loss, is still low-teens.
+- Row 6 is what we ship, and it is the only row that costs nothing on a machine loss. Against row 8, the
+  like-for-like managed equivalent (synchronous HA, no commit loss): 10.52 ms against ~4.4-7.4 ms. Same order.
+  Row 3 is the same replication on the storage we gave up, at 8.19 ms, so self-healing cost 2.3 ms.
 - Synchronous replication costs more than the storage does: +2.17 ms against +1.48 ms.
 - The gap against managed Postgres is throughput, not latency. 374 tps is 32M write transactions a day.
 - Rows 2 and 5 are inferred: async replication sits off the commit path, so a commit waits only for the
@@ -105,25 +112,24 @@ baseline, so it does not discriminate.
 
 ## Arms
 
-Locality arms, all pinned to ONE node so storage is the only variable:
+Locality arms, all pinned to ONE node so storage is the only variable. They price exactly the difference
+between the two shipped classes, so this pair is still reproducible:
 
-| Arm | StorageClass | Replica layout |
-|---|---|---|
-| `a-local` | `local-path` | node-local dir |
-| `b-lh-remote` | `bench-lh-remote` | both replicas on the OTHER two nodes |
-| `c-lh-local` | `bench-lh-local` | `dataLocality: best-effort`, one replica under the pod |
-
-`pgsync` arms, a 2x2 of storage against replication mode:
-
-| Arm | StorageClass | Instances | Replication |
+| Arm | StorageClass | Replica layout | Shipped as |
 |---|---|---|---|
-| `d-local-async` | `local-path` | 1 | none |
-| `e-local-sync` | `local-path` | 3 | `any 1`, `required` |
-| `f-lh-async` | `longhorn-r2-ephemeral` | 1 | none |
-| `g-lh-sync` | `longhorn-r2-ephemeral` | 3 | `any 1`, `required` |
+| `b-lh-remote` | `bench-lh-remote` | both replicas on the OTHER two nodes | `longhorn-r2-ephemeral` |
+| `c-lh-local` | `bench-lh-local` | `dataLocality: best-effort`, one replica under the pod | `longhorn-r2-ephemeral-local` |
 
-- `b` vs `c` prices `dataLocality`. `e-d` and `g-f` price sync; `f-d` and `g-e` price Longhorn. The
-  report does both subtractions.
+`pgsync` arms, replication mode on the shipped class:
+
+| Arm | StorageClass | Instances | Replication | Shipped as |
+|---|---|---|---|---|
+| `f-lh-async` | `longhorn-r2-ephemeral` | 1 | none | `highAvailability: false` |
+| `g-lh-sync` | `longhorn-r2-ephemeral` | 3 | `any 1`, `required` | `highAvailability: true` |
+
+- `b` vs `c` prices `dataLocality`. `g-f` prices synchronous replication. The report does the subtraction.
+- The `a-local`, `d-local-async` and `e-local-sync` arms that produced the local-path rows above are gone
+  with the class. Their numbers stand as recorded; nothing re-runs them.
 - pgsync uses the SHIPPED class, not the bench ones, because the decision is whether the real databases
   move, so the real settings (`dataLocality: disabled`) are the ones that matter.
 - 3 instances, not 2: `any 1` of two standbys survives one node being drained without stalling writes,
@@ -217,9 +223,6 @@ replace them.
 - Everything carries `bench.raspi-cluster/owner=storage_bench.sh` and every delete is scoped to it.
 - Bench pods carry **no `priorityClassName`**, so they sit at priority 0, below `data-critical`.
   Node-pressure eviction reaches the benchmark before any database. Never give a bench pod a priority class.
-- `local-path` enforces no quota and the `a` arm shares the 50 GiB slice with the live CNPG data. The
-  script `df`s first and refuses below 10 GiB free. Highest-consequence risk here: a full slice takes
-  production Postgres down.
 - Preflight hard-fails on a degraded cluster, an in-flight Longhorn rebuild (it saturates the exact path
   under test), an ArgoCD sync, or a running CNPG backup.
 - `trap`-based teardown on exit and interrupt.
@@ -267,10 +270,10 @@ Raft-majority fsync across 3 brokers, a DURABILITY ack, not a delivery.
 
 | # | Config | Measures | p50 ms | p99 ms | msg/s | Basis |
 |---|---|---|---|---|---|---|
-| 1 | local-path, 1 publisher | confirm | 4.8 | 9.4 | 188 | measured |
+| 1 | local-path (gone), 1 publisher | confirm | 4.8 | 9.4 | 188 | measured |
 | 2 | longhorn-r2, both replicas remote, 1 pub | confirm | 10.5 | 26.7 | 86 | measured |
-| 3 | longhorn-r2 `best-effort`, 1 pub | confirm | 9.1 | 18.4 | 102 | measured |
-| 4 | local-path, 100 publishers | confirm | 50.7 | 96.1 | 1870 | measured |
+| 3 | longhorn-r2 `best-effort`, 1 pub | confirm | 9.1 | 18.4 | 102 | measured; **what we ship** |
+| 4 | local-path (gone), 100 publishers | confirm | 50.7 | 96.1 | 1870 | measured |
 | 5 | longhorn-r2 remote, 100 pub | confirm | 54.2 | 122.5 | 1608 | measured |
 | 6 | longhorn-r2 `best-effort`, 100 pub | confirm | 53.5 | 107.8 | 1750 | measured |
 | 7 | SQS, server side | AWS processing time alone | 5-10 | | | AWS support, via an SDK issue |
@@ -284,8 +287,9 @@ Raft-majority fsync across 3 brokers, a DURABILITY ack, not a delivery.
 - **Under load the gap nearly closes**: 1.27x on p99 and 86% of throughput at 100 publishers. Raft
   batching amortizes the fsync, so the single-publisher figure is the worst case, not the typical one.
 - **`dataLocality: best-effort` recovers 31% here** (18.4 against 26.7), where it recovered 4% for
-  Postgres. Not explained by the both-replicas argument that covers Postgres. Unresolved; do not build
-  on it without a repeat.
+  Postgres. Not explained by the both-replicas argument that covers Postgres. Unresolved, and the reason
+  RabbitMQ gets the `-local` class: 31% for a near-empty volume is worth taking even without the mechanism
+  nailed down, whereas 4% for a database that must be dragged across 1GbE on every failover is not.
 - RabbitMQ beats both managed queues on latency even on Longhorn, which is unsurprising and not the
   point: they replicate across zones or regions behind an API. A Google engineer states plainly that
   sub-10 ms is out of reach for Pub/Sub by design. What they sell is unbounded scale and no operations,

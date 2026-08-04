@@ -134,7 +134,7 @@ Deliberately NOT policed, listed so it reads as a decision rather than an omissi
 - `vmagent` and the VictoriaLogs collector, which scrape everything.
 - `metrics-server` and `nic-keeper`, which are kube-system or host-network.
 - `longhorn`, which runs a node-to-node replication mesh.
-- `vm-operator` and `local-path-provisioner`, tiny apiserver-only surfaces.
+- `vm-operator`, a tiny apiserver-only surface.
 - `03_gateway` and `google-sso`, which have no or thin pods.
 - `kube-system` and Cilium itself. Policing those risks cutting the cluster off its own network.
 - The `storage-bench` namespace, which exists for hours at a time and holds no data. See

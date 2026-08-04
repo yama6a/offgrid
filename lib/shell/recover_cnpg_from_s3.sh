@@ -23,9 +23,8 @@ SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 source "${SCRIPT_DIR}/common.sh"
 
 # ---- knobs ----
-STORAGE_CLASS="local-path"        # side mode: same node-local class the pg-cluster wrapper uses
-STORAGE_SIZE="45Gi"               # side mode: matches the wrapper. Ignored under local-path, which enforces no
-                                  # quota, so Postgres just sees the whole partition's free space
+STORAGE_CLASS="longhorn-r2-ephemeral" # side mode: same class the pg-cluster wrapper uses
+STORAGE_SIZE="10Gi"               # side mode: a throwaway clone's ceiling, thin so it costs only what it writes
 PLUGIN="barman-cloud.cloudnative-pg.io"
 SYNC_WAIT=600                     # in-place: seconds to wait for Argo to sync the pushed commit
 READY_WAIT=1200                   # in-place: seconds to wait for the recovered cluster to reach full readiness

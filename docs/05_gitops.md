@@ -179,7 +179,7 @@ Disabled in three layers:
 1. Every `Application` (`root.yaml`, `roots/*.yaml`, `platform/apps/**`, `workloads/apps/**`) sets
    `spec.revisionHistoryLimit: 0`, so no Argo rollback history.
 2. Every first-party workload we template sets it on the workload `spec`: the 3 sample-app Deployments,
-   `05_ntfy`, `05_orphan_exporter`, `02_local_path_provisioner`, the `04_google_sso` callbacks, and
+   `05_ntfy`, `05_orphan_exporter`, `02_dead_node_watcher`, the `04_google_sso` callbacks, and
    `02_nic_keeper` (a DaemonSet, so `ControllerRevision` history).
 3. Upstream charts set it via their values knob where one exists: `01_argocd` (both `global.` AND `controller.`,
    because the controller StatefulSet ignores global's `0` since Helm's `default` treats `0` as empty),

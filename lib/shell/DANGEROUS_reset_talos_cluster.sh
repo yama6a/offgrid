@@ -1,7 +1,7 @@
 #!/usr/bin/env bash
 # DANGEROUS: wipes the whole cluster back to maintenance, INCLUDING all persistent data.
 #
-# Wipes STATE + EPHEMERAL and both data user volumes, `u-longhorn` and `u-localpath`. Keeps BOOT/EFI/META,
+# Wipes STATE + EPHEMERAL and the `u-longhorn` data user volume. Keeps BOOT/EFI/META,
 # so nodes reboot straight to maintenance with no reflash. Wiping the data volumes too means no orphaned
 # replica or DB data ever survives a reset. Recoverable state comes back from git via ArgoCD; the on-disk
 # data is gone for good.
@@ -16,7 +16,7 @@ source "${SCRIPT_DIR}/common.sh"   # dockerized talosctl() (mounts CLUSTER_DIR) 
 # Spell out which of the two it is, so the operator knows exactly what is about to go.
 S3_CLAUSE=""
 [ "${REBUILD_IN_PROGRESS:-0}" != 1 ] && S3_CLAUSE=" AND DESTROY the S3 backup bucket + all its backups + IAM"
-read -r -p ">> Destroy ENTIRE Talos cluster AND wipe ALL Longhorn/PVC data (u-longhorn, u-localpath)${S3_CLAUSE}? type YES: " confirm
+read -r -p ">> Destroy ENTIRE Talos cluster AND wipe ALL Longhorn/PVC data (u-longhorn)${S3_CLAUSE}? type YES: " confirm
 [ "${confirm}" = "YES" ] || { echo "skipped destruction (phew!)."; exit 0; }
 
 NODES=(); for e in "${CLUSTER_NODES[@]}"; do NODES+=("${e##*:}"); done
@@ -28,12 +28,12 @@ NODES=(); for e in "${CLUSTER_NODES[@]}"; do NODES+=("${e##*:}"); done
 # --system-labels-to-wipe takes partition labels resolved against each node's VolumeStatus, not a fixed set.
 # Wiping the two user volumes here is what guarantees no orphaned replica or DB data survives; 03c re-creates
 # those partitions on the next config apply.
-say "resetting ${#NODES[@]} nodes in parallel (STATE,EPHEMERAL,u-longhorn,u-localpath) -> maintenance"
+say "resetting ${#NODES[@]} nodes in parallel (STATE,EPHEMERAL,u-longhorn) -> maintenance"
 pids=()
 for ip in "${NODES[@]}"; do
   (
     talosctl reset -e "$ip" -n "$ip" \
-      --system-labels-to-wipe STATE,EPHEMERAL,u-longhorn,u-localpath \
+      --system-labels-to-wipe STATE,EPHEMERAL,u-longhorn \
       --reboot --graceful=false 2>&1 | sed "s/^/[$ip] /"
     exit "${PIPESTATUS[0]}"
   ) &

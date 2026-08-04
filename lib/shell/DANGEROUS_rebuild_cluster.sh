@@ -3,7 +3,7 @@
 #
 # Sequence:
 #   0. git add/commit/push             : ArgoCD deploys the REMOTE repo, not your laptop, so sync it first
-#   1. DANGEROUS_reset_talos_cluster.sh: wipe STATE+EPHEMERAL+u-longhorn+u-localpath, reboot to maintenance
+#   1. DANGEROUS_reset_talos_cluster.sh: wipe STATE+EPHEMERAL+u-longhorn, reboot to maintenance
 #   2. 03c_talos_cluster_config.sh     : wait for maintenance, apply config, bootstrap etcd
 #   3. 03d_nic_hardening.sh            : NIC hardening
 #   4. 04_cilium.sh                    : CNI + prometheus-operator CRDs + LB-IPAM/L2 + Hubble
@@ -58,10 +58,10 @@ cat <<EOF
 
 This will DESTROY and REBUILD the entire Talos cluster:
   nodes : ${IPS[*]}
-  wipe  : STATE + EPHEMERAL + u-longhorn + u-localpath  (ALL k8s state AND all Longhorn + local-path data, gone for good)
+  wipe  : STATE + EPHEMERAL + u-longhorn  (ALL k8s state AND every Longhorn volume, gone for good)
   flow  : commit+push -> reset -> 03c -> 03d -> 04 -> commit+push -> 05 -> restore sealed-secrets key -> WIPE S3 backups -> seed ntfy
           (ArgoCD then redeploys cilium/cert-manager/longhorn/gateway/SSO/monitoring from git)
-  note  : FULL fresh start, wipes local CNPG data AND the S3 backups. The DBs come back EMPTY. If you want
+  note  : FULL fresh start, wipes the CNPG volumes AND the S3 backups. The DBs come back EMPTY. If you want
           the old data, restore from S3 BEFORE rebuilding (make restore-cnpg); a rebuild discards it.
 
 Have a CURRENT sealed-secrets key backup (06_backup_sealed_secrets_key.sh), else SSO won't decrypt
@@ -179,7 +179,7 @@ Notes:
   - ntfy alerting: STEP 11 re-seeded it automatically (if NTFY_PHONE_PASSWORD_SECRET was set). The reset wiped
     ntfy's PVC, so a fresh token was minted + re-sealed. If it was skipped/failed, run 'make configure-ntfy-auth'
     + commit/push + restart grafana. On your phone, re-subscribe 'cluster-alerts' at https://ntfy.ops.example.com.
-  - FULL FRESH START: the wipe cleared local-path AND the S3 backups (STEP 9). The DBs come back EMPTY and
+  - FULL FRESH START: the wipe cleared every volume AND the S3 backups (STEP 9). The DBs come back EMPTY and
     begin a clean backup history. If you wanted the old data, you had to restore BEFORE rebuilding
     (make restore-cnpg) first, because a rebuild discards it. The bucket + IAM stay; only \`make reset-cluster\` destroys them.
     See docs/13_backups.md.
