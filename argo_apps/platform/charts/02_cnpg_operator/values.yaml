@@ -13,8 +13,11 @@ cloudnative-pg:
     grafanaDashboard:
       create: true
 
-  updateStrategy:
-    type: Recreate # single replica, so avoid RollingUpdate briefly running two operator pods on a tight node
+  # 2, not 1: the operator is what moves the primary label a switchover depends on, and the -rw Service selects
+  # on that label, so while it is down there is no writable endpoint even though Postgres is up. Measured: a
+  # drain that evicted the single operator pod added 33s to a switchover that was otherwise done in 10s. Both
+  # pods run --leader-elect, so the survivor takes over instead of conflicting.
+  replicaCount: 2
 
   priorityClassName: platform-critical
 
@@ -25,8 +28,8 @@ cloudnative-pg:
     limits:
       memory: 96Mi
 
-  # Soft + hostname: bare Pi nodes have no zone label, and soft means raising replicaCount never wedges a
-  # pod Pending on 3 nodes. No-op at the default single replica.
+  # Soft + hostname: bare Pi nodes have no zone label, and soft keeps the 2nd replica schedulable on 3 nodes
+  # rather than Pending. It only PREFERS a different node, so a drain can still land both on one.
   affinity:
     podAntiAffinity:
       preferredDuringSchedulingIgnoredDuringExecution:
