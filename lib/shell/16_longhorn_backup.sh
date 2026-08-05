@@ -4,8 +4,9 @@
 # NATIVE Longhorn, not a CronJob: the built-in backup target plus RecurringJobs plus the
 # longhorn-r2-retained-with-backups class, all inside the existing 02_longhorn app. Only volumes on that
 # class are backed up.
-# An EMPTY backupTarget means the backup class and RecurringJobs do not render. Retention is Longhorn's own
-# RecurringJob `retain`, not an S3 lifecycle: the longhorn/ prefix is delete-free.
+# An EMPTY backupTarget means the two BACKUP RecurringJobs do not render; all three StorageClasses and the
+# unconditional filesystem-trim job always do. Retention is Longhorn's own RecurringJob `retain`, not an S3
+# lifecycle: the longhorn/ prefix is delete-free.
 # Inlines the kubeseal pipeline because seal_secret cannot do a 2-key Secret.
 set -uo pipefail
 

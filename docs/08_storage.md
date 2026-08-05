@@ -31,7 +31,9 @@ looks, a 3-broker RabbitMQ runs at 2/3 with no spare, and a second machine loss 
 accepting writes. A single-instance Postgres needs a full S3 restore, two git commits and a password roll.
 
 On Longhorn the volume is not tied to the dead machine, so the pod reattaches on a survivor and comes back by
-itself, with [the dead-node watcher](15_node_recovery.md) cutting the wait to about a minute.
+itself. Measured by unplugging a machine's ethernet: both databases were serving again ~190s later, unattended,
+against 402s when [the dead-node watcher](15_node_recovery.md) was suppressed and forever under node-local
+storage. Timings and the split-brain result are in [15_node_recovery.md](15_node_recovery.md).
 
 The price is latency, and it is small: Postgres commit p50 6.02 to 7.50 ms, RabbitMQ confirm p99 9.4 to 18.4 ms
 with a local replica. Both land inside what RDS Multi-AZ, Cloud SQL HA, SQS and Pub/Sub deliver, so the numbers

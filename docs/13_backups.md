@@ -256,13 +256,22 @@ Redis relies entirely on the bucket's S3 lifecycle for expiry.
 Selected Longhorn volumes back up under the `longhorn/` prefix. This is for workloads that keep state on a Longhorn
 PVC with no backup mechanism of their own: sqlite files, config dirs, generic app data.
 
-Opt-in per volume via the StorageClass. `02_longhorn` ships two classes, `longhorn-r2-ephemeral` (reclaim Delete)
-and `longhorn-r2-retained-with-backups` (reclaim Retain). Only PVCs on the `-with-backups` class are backed up off
-cluster, and a workload opts in simply by naming that class.
+Opt-in per volume via the StorageClass. Of the three classes `02_longhorn` ships, only
+`longhorn-r2-retained-with-backups` (reclaim Retain) is backed up off cluster; `longhorn-r2-ephemeral` and
+`longhorn-r2-ephemeral-local` (both reclaim Delete) are not. A workload opts in simply by naming that class. It
+has no consumer yet.
 
-The monitoring volumes and Redis all sit on `longhorn-r2-ephemeral` and are deliberately NOT Longhorn-backed-up.
-Each backs up off-cluster via its own logical path instead, Redis RDB dumps and VM/VL native exports, which is
-app-consistent and far cheaper than block-level backup of large, churny stores.
+Everything else is deliberately NOT Longhorn-backed-up, because each has a better logical path:
+
+| On a non-backed-up class | Covered instead by |
+|---|---|
+| CNPG Postgres | its own WAL + base to `cnpg/`, which is point-in-time and app-consistent |
+| Redis (durable) | RDB dumps to `redis/` |
+| VictoriaMetrics, VictoriaLogs | native exports to `vm/` |
+| RabbitMQ | nothing, on purpose: the data is in-flight messages, and HA is the running quorum |
+| ntfy | nothing yet; it is the obvious first candidate for the backed-up class |
+
+A logical dump is app-consistent and far cheaper than block-level backup of a large, churny store.
 
 Native Longhorn backup, not a central CronJob, unlike Redis. Redis is a network service, so its backup is one
 central job that dumps each instance over the network. Longhorn PVCs are RWO block devices attached to a single
@@ -273,18 +282,23 @@ configured inside the existing `02_longhorn` app at wave 2. There is deliberatel
 backup is also incremental and deduplicated, which is cheap on a home uplink, crash-consistent, and
 content-agnostic with no per-app dump logic.
 
-The classes always exist, but the `RecurringJob`s render only `{{- if backupTarget }}`, so nothing runs until
-`16_longhorn_backup.sh` sets the target. The same empty-means-off contract as CNPG and Redis.
+The classes always exist. The two BACKUP `RecurringJob`s render only `{{- if backupTarget }}`, so no backup runs
+until `16_longhorn_backup.sh` sets the target: the same empty-means-off contract as CNPG and Redis. The
+`filesystem-trim` job is unconditional, since it needs no S3 and every volume wants it.
 
 Pieces, all under `argo_apps/platform/charts/02_longhorn/`:
 
 - `values.yaml` `defaultBackupStore`: `backupTarget` (`s3://<bucket>@<region>/longhorn/`) plus
   `backupTargetCredentialSecret`, filled by the script.
-- `templates/recurringjobs.yaml`: two `RecurringJob`s in the shared `backup` group, `backup-daily` (03:00 UTC,
-  retain 7) and `backup-weekly` (Sun 04:00 UTC, retain 8, about 2 months). No snapshot job, because local
-  snapshots cost scarce Pi NVMe.
-- `templates/storageclasses.yaml`: the two classes. The `-with-backups` one carries a `recurringJobSelector` for
-  the `backup` group, so every volume it provisions gets both tiers automatically.
+- `templates/recurringjobs.yaml`: `backup-daily` (03:00 UTC, retain 7) and `backup-weekly` (Sun 04:00 UTC,
+  retain 8, about 2 months), both in the `backup` group. No snapshot job, because local snapshots cost scarce Pi
+  NVMe. Plus `filesystem-trim-weekly`, which is not a backup at all: it hands blocks a filesystem has freed back
+  to the SSD, which is what keeps a thin volume thin. It reaches every volume through Longhorn's `default` group,
+  because a volume with no recurring job of its own lands there automatically, and because a StorageClass's
+  `parameters` are immutable so adding a selector to a live class means deleting the class first.
+- `templates/storageclasses.yaml`: the three classes. The `-with-backups` one carries a `recurringJobSelector` for
+  the `backup` group, so every volume it provisions gets both backup tiers automatically. Having a selector at all
+  is also what keeps those volumes OUT of `default`, so add `trim` there too if it ever gains a consumer.
 - `templates/backup-s3-sealedsecret.yaml`: the sealed `longhorn-backup-s3` with keys `AWS_ACCESS_KEY_ID` and
   `AWS_SECRET_ACCESS_KEY`, the names Longhorn's S3 target expects, in `longhorn-system`.
 
@@ -310,8 +324,8 @@ make configure-longhorn-backup  # 16: backup target into 02_longhorn values + se
 git add -A && git commit && git push   # ArgoCD applies backupTarget + creds + the classes + RecurringJobs
 # verify:
 kubectl -n longhorn-system get backuptargets.longhorn.io default -o jsonpath='{.status.available}{"\n"}'  # true
-kubectl -n longhorn-system get recurringjobs.longhorn.io      # backup-daily + backup-weekly
-kubectl get storageclass | grep longhorn-                     # ephemeral + retained-with-backups
+kubectl -n longhorn-system get recurringjobs.longhorn.io      # backup-daily + backup-weekly (+ filesystem-trim-weekly)
+kubectl get storageclass | grep longhorn-                     # ephemeral, ephemeral-local, retained-with-backups
 ```
 
 ### Restore
@@ -415,7 +429,8 @@ then `make restore-vm` for each kind to backfill. Same key dependency as every o
 
 Durability is two layers, and only the second has a recovery step:
 
-- In-cluster, nothing to run: streaming replication across the instances, plus orphan-not-delete. Manifests leaving
+- In-cluster, nothing to run: synchronous streaming replication across the instances, Longhorn's 2 volume
+  replicas under each of them, plus orphan-not-delete. Manifests leaving
   git do NOT delete the `Cluster`, thanks to `Prune=false,Delete=false` on the whole DB unit, so it keeps running
   unmanaged and restoring the files re-adopts it. `05_orphan_exporter` plus the `orphan` alert group make that
   state loud.
@@ -431,7 +446,8 @@ Pick by what is actually wrong:
 | `Cluster` is GONE and you want it back as itself | `make restore-cnpg`, mode in-place |
 | DB is fine; verify a backup, read old rows, test a PITR target | `make restore-cnpg`, mode side |
 | Whole cluster rebuilt | `make restore-secrets-key` first, so the sealed S3 creds decrypt, then mode in-place per DB |
-| One node replaced, an HA instance crashlooping | Nothing here. Delete its PVC and CNPG re-clones from the primary: [15_node_recovery.md](15_node_recovery.md) |
+| A machine died or was replaced | Nothing here, and nothing to delete. The volume reattaches on a survivor and Postgres replays WAL; an HA primary is replaced by a promoted standby: [15_node_recovery.md](15_node_recovery.md) |
+| Every replica of one volume is gone (`faulted`) | `make restore-cnpg` for a database; `make restore-longhorn` for a volume on the backed-up class |
 
 ### `make restore-cnpg`
 

@@ -51,7 +51,9 @@ bash lib/shell/storage_bench.sh corroborate <dir>        # vs VictoriaMetrics, n
 - No vendor publishes a latency figure or a latency SLA. AWS's own three-way Multi-AZ benchmark reports
   New Orders Per Minute in a chart; Google documents only that regional disk is slower than zonal.
 
-Recovery behaviour per row is measured separately, in [`15_node_recovery.md`](15_node_recovery.md).
+Recovery behaviour per row is measured separately, in [`15_node_recovery.md`](15_node_recovery.md), and that is
+what the latency buys: on a machine loss both databases were serving again ~190s later with nobody involved,
+where node-local storage needed a human and a 6-minute multi-attach wait first.
 
 ## Where the milliseconds go
 
@@ -98,7 +100,7 @@ Confidence rests on the gates that do work, and on agreement between runs:
   Longhorn single instance agrees to 4% (7.82 and 7.50).
 - Repeat spread 1.003x to 1.078x per pgsync cell, against a 1.5x threshold. The locality run was worse:
   4 of 15 cells over 1.5x, and 4 cells voided by the drift guard.
-- Both sync arms proved synchronous against Postgres before any cell ran.
+- The sync arm proved synchronous against Postgres before any cell ran; the async arm proved it was not.
 - `pg_test_fsync` vs fio fails on magnitude (2-3x) but passes on ranking. Expected: a mean over a tiny
   file against a p99 over 512MB, and fdatasync cost grows with dirty extent count. The gate needs
   rewriting as ranking-only.
@@ -148,8 +150,8 @@ between the two shipped classes, so this pair is still reproducible:
 ### Threats specific to the pgsync arms
 
 - **The client is no longer uncontended.** 3 instances on 3 nodes means every node hosts a database, so
-  `pgclient` shares one. Identical across both sync arms so it largely cancels, but it makes these arms
-  NOT comparable to the locality arms.
+  `pgclient` shares one. That is true of the sync arm only, so it does NOT cancel against the 1-instance async
+  arm, and it makes neither comparable to the locality arms.
 - **Primary placement is not controllable** with 3 instances. Recorded per cell in `primary-node.txt`
   and gated in the report.
 - **`any 1` is best-of-two.** The primary waits for the faster standby, so these are mildly optimistic
@@ -305,7 +307,7 @@ Two of three arms fail it at one publisher, on 2 outlying repeats out of 7:
 
 | arm | sorted p99 across 7 repeats | range gate |
 |---|---|---|
-| `a-local` | 7.5 8.0 9.4 9.4 9.5 9.8 9.9 | 1.33x, pass |
+| `a-local` (arm since removed) | 7.5 8.0 9.4 9.4 9.5 9.8 9.9 | 1.33x, pass |
 | `b-lh-remote` | 24.2 24.3 25.4 26.7 27.3 **32.7 37.7** | 1.56x, fail |
 | `c-lh-local` | 16.9 16.9 17.1 18.4 19.6 **29.9 39.9** | 2.36x, fail |
 

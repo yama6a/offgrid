@@ -87,8 +87,11 @@ wait_replication_healthy() {
 }
 
 # drain_node <node> -> cordon, then a bounded graceful drain; force-delete any stragglers so the node can
-# ALWAYS reboot (these pods can't relocate: node-local storage / per-node engine / hard anti-affinity,
-# so a graceful drain can only kill them; they come back on the same node after the reboot).
+# ALWAYS reboot (the per-node Longhorn engine, plus the CNPG and RabbitMQ instances hard anti-affinity pins one
+# per node, so a graceful drain can only kill them; they come back after the reboot).
+# Do NOT shorten GRACEFUL_DRAIN_TIMEOUT below the time a CNPG switchover needs (~33s measured): the primary's
+# eviction is REFUSED by its own PDB until CNPG has handed over, so force-deleting it early turns a ~20s
+# switchover into a ~60s failover. See docs/15_node_recovery.md.
 drain_node() {
   local node="$1"
   kubectl cordon "$node" >/dev/null
