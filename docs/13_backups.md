@@ -563,9 +563,16 @@ bucket survives.
    no-op.
 2. Plugin synced: platform Healthy, `kubectl get crd objectstores.barmancloud.cnpg.io`, and the `barman-cloud`
    Deployment Ready in `cnpg-system`.
-3. WAL archiving live, the check that matters most: `kubectl cnpg status <cluster> -n <ns>` reports "Continuous
-   Archiving: OK" plus a first recoverability point, and objects appear under `s3://<bucket>/cnpg/<ns>/<cluster>/wals/`.
-   The daily base backup runs on the standby pod.
+3. WAL archiving live, the check that matters most: the Cluster's `ContinuousArchiving` condition is `True` and
+   objects appear under `s3://<bucket>/cnpg/<ns>/<cluster>/wals/`. The daily base backup runs on a standby pod.
+   Read the recovery point off the OBJECTSTORE, not the Cluster: under the plugin
+   `Cluster.status.firstRecoverabilityPoint` stays permanently empty even with a completed base backup in S3,
+   which is also why `05_orphan_exporter` reads the ObjectStore and why `cnpg-backup-too-old` cannot fire.
+
+   ```bash
+   kubectl -n <ns> get objectstores.barmancloud.cnpg.io -o \
+     jsonpath='{range .items[*]}{.metadata.name}{"\t"}{.status.serverRecoveryWindow}{"\n"}{end}'
+   ```
 4. RPO: `SELECT pg_switch_wal();` on the primary produces a new object under `wals/` within seconds, and `SHOW
    archive_timeout;` reads `15min`.
 5. Restore drill: `make restore-cnpg`, mode `side`, target `latest`. It reaches Healthy from S3 and serves data;
