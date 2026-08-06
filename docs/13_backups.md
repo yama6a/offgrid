@@ -140,7 +140,9 @@ Create an IAM user, attach the policy below, and put its access key in `.env`. R
         "iam:DeleteUserPolicy",
         "iam:GetUserPolicy",
         "iam:ListUserPolicies",
-        "iam:ListAttachedUserPolicies"
+        "iam:ListAttachedUserPolicies",
+        "iam:ListGroupsForUser",
+        "iam:RemoveUserFromGroup"
       ],
       "Resource": "arn:aws:iam::<ACCOUNT_ID>:user/my-cluster-backups-writer"
     },
@@ -157,6 +159,12 @@ Create an IAM user, attach the policy below, and put its access key in `.env`. R
 `s3:*` is scoped to the single bucket rather than account-wide. The broad verb keeps Terraform's many bucket
 sub-resource reads on refresh from tripping over one missing `s3:GetBucket*` or `s3:PutBucket*`; tighten to explicit
 actions if you prefer. The IAM statement is scoped to the one writer user Terraform creates.
+
+The two group actions look wrong for a user that is in no group, and they are not optional: deleting an IAM user
+makes the AWS provider clear group memberships first, so it lists them whether there are any or not. Without
+`iam:ListGroupsForUser` a `destroy` gets 7 of the 8 resources and then fails on the user with
+`AccessDenied ... iam:ListGroupsForUser`, leaving it orphaned. Harmless, since the user stays in Terraform state
+and the next `apply` adopts it, but the teardown reports failure.
 
 The WRITER identity Terraform then provisions, and which 14 seals into the cluster, is far narrower: just
 `s3:ListBucket` plus `GetObject`, `PutObject` and `DeleteObject` on the bucket. See `terraform/main.tf`.

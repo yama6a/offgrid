@@ -172,8 +172,11 @@ observe --verdict AUDIT`) until validated, then gets enforced by turning audit o
   `proxy.disabled` and `kubePrism` landed in the machine config.
 - `type: LoadBalancer` stuck `<pending>`: no pool, or it is exhausted or overlapping. `kubectl get
   ciliumloadbalancerippool`, and confirm the range is outside the DHCP lease and clear of the VIP.
-- LB IP assigned but unreachable: L2 is not announcing. Confirm the policy's `nodeSelector` is not
-  `control-plane: DoesNotExist`, which selects zero nodes here, and that the `interfaces` regex matches `end0`.
-  `kubectl get ciliuml2announcementpolicy`.
+- LB IP assigned but unreachable: L2 is not announcing. Cilium picks the announcing node from the policy's
+  `nodeSelector` ALONE and applies the `interfaces` regex only afterwards, so a node that matches the selector
+  but matches no device takes the lease and programs nothing. `interfaces` is therefore the ethernet CLASS
+  (`^en`, matching `end0` on a Pi and `eno1`/`enp0s31f6` on x86) rather than one device name, which is what lets
+  `nodeSelector` stay broad without that risk. Check who holds it with `kubectl get lease -n kube-system | grep
+  l2announce`, and `kubectl get ciliuml2announcementpolicy`. See [17_worker_nodes.md](17_worker_nodes.md).
 - Gateway not programmed: that is Envoy Gateway now, not Cilium, whose `gatewayAPI` is disabled. The Gateway API
   CRDs and the `eg` GatewayClass come from the `01_envoy_gateway` app. See [07_ingress.md](07_ingress.md).

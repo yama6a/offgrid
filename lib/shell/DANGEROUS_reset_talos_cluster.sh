@@ -11,7 +11,7 @@
 set -euo pipefail
 
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
-source "${SCRIPT_DIR}/common.sh"   # dockerized talosctl() (mounts CLUSTER_DIR) + CLUSTER_NODES from .env
+source "${SCRIPT_DIR}/common.sh"   # dockerized talosctl() (mounts CLUSTER_DIR) + the inventory node arrays
 
 # Spell out which of the two it is, so the operator knows exactly what is about to go.
 S3_CLAUSE=""
@@ -19,21 +19,25 @@ S3_CLAUSE=""
 read -r -p ">> Destroy ENTIRE Talos cluster AND wipe ALL Longhorn/PVC data (u-longhorn)${S3_CLAUSE}? type YES: " confirm
 [ "${confirm}" = "YES" ] || { echo "skipped destruction (phew!)."; exit 0; }
 
-NODES=(); for e in "${CLUSTER_NODES[@]}"; do NODES+=("${e##*:}"); done
+# Every node, workers included: leaving one configured and pointed at a cluster that no longer exists is worse
+# than wiping it, because it comes back as a member of nothing and nobody notices until it is needed.
+RESET_IPS=("${ALL_IPS[@]}")
 
 # All at once: every node is being wiped and rebooted anyway, so there is no reason to serialize. Output is
 # prefixed with the node IP so the interleaved streams stay readable. That prefixing pipes through sed, and a
 # pipeline's exit code is sed's, not talosctl's, so PIPESTATUS[0] is how we still see whether talosctl failed.
 #
-# --system-labels-to-wipe takes partition labels resolved against each node's VolumeStatus, not a fixed set.
-# Wiping the two user volumes here is what guarantees no orphaned replica or DB data survives; 03c re-creates
-# those partitions on the next config apply.
-say "resetting ${#NODES[@]} nodes in parallel (STATE,EPHEMERAL,u-longhorn) -> maintenance"
+# Every label here must resolve to a live VolumeStatus, which means the machine config must still DECLARE that
+# volume: the reset looks each one up by ID and fails the whole call if one is missing. So a label for a volume
+# already dropped from the config belongs in `talosctl wipe disk <part> --drop-partition` instead, not here.
+# Since Talos 1.12 this both wipes AND drops the partition, so 03c re-provisions each from free space.
+WIPE_LABELS="STATE,EPHEMERAL,u-longhorn"
+say "resetting ${#RESET_IPS[@]} nodes in parallel (${WIPE_LABELS}) -> maintenance"
 pids=()
-for ip in "${NODES[@]}"; do
+for ip in "${RESET_IPS[@]}"; do
   (
     talosctl reset -e "$ip" -n "$ip" \
-      --system-labels-to-wipe STATE,EPHEMERAL,u-longhorn \
+      --system-labels-to-wipe "$WIPE_LABELS" \
       --reboot --graceful=false 2>&1 | sed "s/^/[$ip] /"
     exit "${PIPESTATUS[0]}"
   ) &
@@ -42,12 +46,12 @@ done
 
 # Wait on each, not the first failure, so every node gets reset and every failure is reported.
 fail=0
-for i in "${!NODES[@]}"; do
+for i in "${!RESET_IPS[@]}"; do
   if wait "${pids[$i]}"; then
-    say "[${NODES[$i]}] reset OK"
+    say "[${RESET_IPS[$i]}] reset OK"
   else
     rc=$?
-    echo ">> [${NODES[$i]}] reset FAILED (exit $rc)" >&2
+    echo ">> [${RESET_IPS[$i]}] reset FAILED (exit $rc)" >&2
     fail=1
   fi
 done

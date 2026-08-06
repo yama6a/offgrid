@@ -18,6 +18,10 @@ API-server records outlive the disk they describe, and neither operator will gue
 
 Both are mechanical, and `make recover-node NODE=<host>` does them.
 
+A WORKER only has the second one. It runs no etcd, so there is no member to drop, and the script skips that phase
+by reading the node's `role` from `inventory.yaml`. Everything else, including the machine-config re-apply, is the
+same call.
+
 ## The dead-node watcher
 
 Kubernetes is deliberately slow to hand one machine's disks to another. A node stops answering, and for about
@@ -154,7 +158,7 @@ that window stops writes. A 4th machine removes this.
 ## Replace a node
 
 ```bash
-make flash-talos-nvme                # only if the NVMe itself is being replaced; power on with no SD card
+make flash-talos-nvme                # only if the NVMe itself is being replaced; pick the node, power on with no SD card
 make recover-node NODE=pi-cp3        # steps 3 and 5 to 6 below, in order, idempotent
 make rebalance-workloads             # once everything is healthy
 ```
@@ -193,7 +197,7 @@ point: that is for creating a cluster, not joining one.
    make talosctl -- -n 192.168.10.201 etcd members    # expect 2
    ```
 
-4. Reflash and boot it. `make flash-talos-nvme`, then power on with no SD card. It comes up in maintenance
+4. Reflash and boot it. `make flash-talos-nvme` and pick that node, then power on with no SD card. It comes up in maintenance
    mode, which answers `--insecure` and rejects a secure call with an unknown-CA error:
 
    ```bash
@@ -204,11 +208,11 @@ point: that is for creating a cluster, not joining one.
    preserved. Give it a hostname and it applies to that node alone and skips the etcd bootstrap:
 
    ```bash
-   bash lib/shell/03c_talos_cluster_config.sh pi-cp3
+   make add-node NODE=pi-cp3
    ```
 
    Only the apply and its two waits narrow to the one node. certSANs and the `secrets/talosconfig` endpoints
-   still come from the whole `CLUSTER_NODES` list, or the rejoined node would trust an apiserver cert naming
+   still come from every control-plane node in `inventory.yaml`, or the rejoined node would trust an apiserver cert naming
    just itself and `talosctl` would forget the other two.
 
    Expect `Applied configuration without a reboot`, then the node ready. It joins etcd by itself; control
@@ -378,7 +382,7 @@ make talosctl -- -n 192.168.10.201 etcd remove-member <id>  # etcd
 kubectl delete node pi-cp3                                 # kubernetes
 ```
 
-Then remove it from `CLUSTER_NODES` in `.env`, so `03b` to `03e` stop targeting it.
+Then remove its entry from `inventory.yaml`, so `03a` to `03e` stop targeting it.
 
 What this costs, on a 3-node cluster:
 

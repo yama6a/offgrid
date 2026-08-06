@@ -12,8 +12,8 @@ cooldownSeconds: 60           # post-recovery quiet period, anti-flap
 eeeReassertEachCycle: false
 ssKillFilter: "dport = :6443" # post-recovery socket drop, so kubelet reconnects to the VIP cleanly
 
-# Every node here IS control-plane, so a node-role.kubernetes.io/control-plane:DoesNotExist selector would match
-# zero nodes. 03c stamps instance-type via Talos machine.nodeLabels.
+# Everything this agent does is specific to the Pi 5 macb NIC, so it must not land on any other hardware type.
+# 03c stamps instance-type from the node's `type` in inventory.yaml.
 nodeSelector:
   node.kubernetes.io/instance-type: rpi5
 

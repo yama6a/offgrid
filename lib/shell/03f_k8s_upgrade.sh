@@ -16,8 +16,8 @@ require docker
 docker info >/dev/null 2>&1 || die "docker not responding (start Rancher/Docker Desktop)"
 [ -f "${CLUSTER_DIR}/talosconfig" ] || die "missing ${CLUSTER_DIR}/talosconfig, run step 03 (03c) first"
 
-read -ra IPS <<< "$NODES"
-[ "${#IPS[@]}" -gt 0 ] || die "no nodes set, edit CLUSTER_NODES in .env"
+# Control-plane IPs only: upgrade-k8s rolls the control-plane components, and a worker has none of them.
+IPS=("${CP_IPS[@]}")
 
 say "pulling ghcr.io/siderolabs/talosctl:${TALOSCTL_VERSION} (first run only)"
 docker pull -q "ghcr.io/siderolabs/talosctl:${TALOSCTL_VERSION}" >/dev/null

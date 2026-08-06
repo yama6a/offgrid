@@ -37,20 +37,22 @@ require kubectl docker python3
 use_kubeconfig
 assert_api
 
-[ -n "$NODE" ] || { for e in "${CLUSTER_NODES[@]}"; do echo "  ${e%%:*}"; done; read -rp "Node to recover: " NODE; }
+[ -n "$NODE" ] || { printf '  %s\n' "${ALL_HOSTS[@]}"; read -rp "Node to recover: " NODE; }
 
-IP=""
-for e in "${CLUSTER_NODES[@]}"; do [ "${e%%:*}" = "$NODE" ] && IP="${e##*:}"; done
-[ -n "$IP" ] || die "unknown node '${NODE}': .env CLUSTER_NODES has $(for e in "${CLUSTER_NODES[@]}"; do printf '%s ' "${e%%:*}"; done)"
+IP="${NODE_IP[$NODE]:-}"
+[ -n "$IP" ] || die "unknown node '${NODE}': inventory.yaml has ${ALL_HOSTS[*]}"
+ROLE="${NODE_ROLE[$NODE]}"
 
+# Peers are always control-plane: every etcd and Longhorn call below needs a node that holds the cluster, and
+# a worker holds neither. Recovering a worker still talks to one of these.
 PEERS=(); PEER_IPS=()
-for e in "${CLUSTER_NODES[@]}"; do
-  [ "${e%%:*}" = "$NODE" ] && continue
-  PEERS+=("${e%%:*}"); PEER_IPS+=("${e##*:}")
+for h in "${CP_HOSTS[@]}"; do
+  [ "$h" = "$NODE" ] && continue
+  PEERS+=("$h"); PEER_IPS+=("${NODE_IP[$h]}")
 done
-[ "${#PEERS[@]}" -ge 1 ] || die "no surviving node to talk to; this script rejoins a node to a cluster that is still up"
+[ "${#PEERS[@]}" -ge 1 ] || die "no surviving control-plane node to talk to; this script rejoins a node to a cluster that is still up"
 
-say "recovering ${NODE} (${IP});  survivors: ${PEERS[*]}"
+say "recovering ${NODE} (${IP}, ${ROLE});  survivors: ${PEERS[*]}"
 
 # --- 1. preflight: the survivors have to be able to carry the cluster and rebuild from ------------------
 say "1/6 preflight"
@@ -92,8 +94,8 @@ fi
 ok "every Longhorn volume has a healthy replica off ${NODE}"
 
 echo
-echo "    About to, on ${NODE}: drop its stale etcd member, apply its machine config, and reset its"
-echo "    Longhorn disk record."
+echo "    About to, on ${NODE}: apply its machine config and reset its Longhorn disk record."
+[ "$ROLE" = controlplane ] && echo "    Also drop its stale etcd member, because it is a control-plane node."
 echo "    Its data is already gone; this deletes the API objects that still point at it."
 echo
 confirm "Proceed?" || { warn "nothing changed"; exit 0; }
@@ -107,15 +109,17 @@ talosctl -n "$IP" -e "$IP" version >/dev/null 2>&1 && ADOPTED="yes"
 # --- 2. etcd: drop the member whose peer URL is this node -----------------------------------------------
 # A wiped node comes back with a NEW etcd identity, and the old entry at the same peer URL blocks the join.
 say "2/6 etcd membership"
-MEMBER="$(talosctl -n "$SURVIVOR_IP" -e "$SURVIVOR_IP" etcd members 2>/dev/null | awk -v ip="$IP" '$0 ~ ip {print $2}' | head -1)"
-if [ -z "$MEMBER" ]; then
-  ok "no etcd member at ${IP} (already removed, or the node never joined)"
-elif [ "$ADOPTED" = "yes" ]; then
-  # The member belongs to a node that is UP and holding our config, so it is the real one, not a leftover.
-  # Removing it would evict a working control-plane node and leave its etcd restarting forever.
-  ok "${NODE} is already back and holds etcd member ${MEMBER}; leaving it alone"
+if [ "$ROLE" = worker ]; then
+  ok "${NODE} is a worker, so it runs no etcd and there is no member to drop"
 else
-  if talosctl -n "$SURVIVOR_IP" -e "$SURVIVOR_IP" etcd remove-member "$MEMBER" >/dev/null 2>&1; then
+  MEMBER="$(talosctl -n "$SURVIVOR_IP" -e "$SURVIVOR_IP" etcd members 2>/dev/null | awk -v ip="$IP" '$0 ~ ip {print $2}' | head -1)"
+  if [ -z "$MEMBER" ]; then
+    ok "no etcd member at ${IP} (already removed, or the node never joined)"
+  elif [ "$ADOPTED" = "yes" ]; then
+    # The member belongs to a node that is UP and holding our config, so it is the real one, not a leftover.
+    # Removing it would evict a working control-plane node and leave its etcd restarting forever.
+    ok "${NODE} is already back and holds etcd member ${MEMBER}; leaving it alone"
+  elif talosctl -n "$SURVIVOR_IP" -e "$SURVIVOR_IP" etcd remove-member "$MEMBER" >/dev/null 2>&1; then
     ok "removed stale etcd member ${MEMBER}"
   else
     bad "could not remove etcd member ${MEMBER}; check quorum on ${SURVIVOR}"

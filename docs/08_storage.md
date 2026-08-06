@@ -85,9 +85,13 @@ every node's disk unschedulable.
 | `storageMinimalAvailablePercentage: 15` | headroom on the Pi NVMes; do not schedule onto a disk under 15% free |
 | `preUpgradeChecker.jobEnabled: false` | that Helm pre-upgrade hook Job can stall an ArgoCD sync waiting on completion |
 
-Why 2 replicas and not 3: 2 on 3 nodes survives the single node loss we design for AND leaves a spare node to
-rebuild the lost replica onto. At 3 replicas with hard anti-affinity there is no spare, so a volume stays
-degraded until the dead node returns.
+Why 2 replicas and not one per node: 2 survives the single node loss we design for AND leaves at least one spare
+node to rebuild the lost replica onto. Raising it to the node count leaves no spare under hard anti-affinity, so
+a volume stays degraded until the dead node returns.
+
+Adding a node does not move existing replicas. `replica-auto-balance` is at its default `disabled`, so a new
+node stays empty of replicas until new volumes are created or something rebuilds. That is usually what you want;
+`replica-auto-balance: best-effort` spreads them over time if the concentration bothers you.
 
 ### The three StorageClasses
 

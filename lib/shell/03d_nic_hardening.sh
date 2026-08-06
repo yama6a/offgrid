@@ -10,11 +10,12 @@
 # Requires: docker with host networking. The probe node needs registry pull access.
 set -uo pipefail
 
-# Shared config (EXPECT_NIC, ...) lives in .env; TALOSCTL_VERSION is derived in lib/shell/common.sh.
+# EXPECT_NIC/IFACE and TALOSCTL_VERSION come from lib/shell/common.sh; the nodes to harden from inventory.yaml.
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 source "${SCRIPT_DIR}/common.sh"
 
 # ---- knobs ------------------------------------------------------------------
+HW_TYPE="rpi5"                             # the inventory `type` whose NIC this hardens; the macb wedge is Pi 5-only
 OUTDIR="${CLUSTER_DIR}"                    # talosconfig + kubeconfig live here (the lib's talosctl() mounts it); IFACE derived in lib/shell/common.sh
 # Throwaway scratch (discovery capture + patch files) -> an OS temp dir instead of the secrets dir: nothing
 # to clean up (OS-reaped), never lingers next to the creds. talosctl() mounts it at /scratch (TALOS_SCRATCH);
@@ -61,13 +62,12 @@ docker info >/dev/null 2>&1 || die "docker not responding (start Rancher/Docker 
 [ -f "${OUTDIR}/talosconfig" ] || die "missing ${OUTDIR}/talosconfig, run 03c first"
 [ -f "${OUTDIR}/kubeconfig" ]  || die "missing ${OUTDIR}/kubeconfig, run 03c first"
 
-say "discovering nodes"
-ENDPOINTS="$(talosctl config info 2>/dev/null | awk -F: '/^Endpoints/{print $2}' | tr ',' ' ')"
-read -ra NODES_ARR <<< "${ENDPOINTS:-${NODES:-}}"
-if [ "${#NODES_ARR[@]}" -eq 0 ]; then
-  read -r -p ">> node IP(s), space-separated: " line; read -ra NODES_ARR <<< "$line"
-fi
-[ "${#NODES_ARR[@]}" -gt 0 ] || die "no nodes (set endpoints in talosconfig / CLUSTER_NODES in .env)"
+# Nodes of the Pi 5 hardware type, not the talosconfig endpoints: everything here is macb-specific, and the
+# endpoints list is control-plane-only, so it would both miss a Pi worker and target a node with a different NIC.
+# Derived from the type rather than an inventory flag, because it is a property of the hardware, not a choice.
+NODES_ARR=()
+for _h in "${ALL_HOSTS[@]}"; do [ "${NODE_TYPE[$_h]}" = "$HW_TYPE" ] && NODES_ARR+=("${NODE_IP[$_h]}"); done
+[ "${#NODES_ARR[@]}" -gt 0 ] || die "no node in inventory.yaml has type ${HW_TYPE}, so there is no macb NIC to harden"
 echo "   nodes: ${NODES_ARR[*]}"
 NODE0_IP="${NODES_ARR[0]}"
 

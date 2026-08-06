@@ -5,6 +5,10 @@
 .env.bak
 .env.bak.*
 
+# Your node list: real hostnames and IPs, same reason as .env. Copy the committed template and edit:
+#   cp inventory.example.yaml inventory.yaml
+inventory.yaml
+
 # Live cluster credentials (talosconfig, kubeconfig, secrets.yaml, sealed-secrets master key), written by
 # 03c into `secrets/`, which is a symlink to an off-repo store (a synced drive). Never commit the symlink
 # or anything it points at: the creds live and are backed up outside the repo.

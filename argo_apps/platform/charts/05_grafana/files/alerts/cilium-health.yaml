@@ -15,7 +15,7 @@ groups:
         for: 5m
         labels: {severity: warning}
         annotations:
-          summary: 'Fewer than 3 Cilium agents are up: a node has lost its CNI dataplane'
+          summary: 'A Cilium agent is missing: a node has lost its CNI dataplane'
           description: |
             - a node's cilium-agent is down: its pods lose networking
             - check: kubectl -n kube-system get pods -l k8s-app=cilium -o wide
@@ -29,7 +29,9 @@ groups:
             model:
               refId: A
               instant: true
-              expr: 'count(up{job="cilium-agent"} == 1)'
+              # Agents MINUS nodes, so it tracks the node count instead of hardcoding it. A literal threshold
+              # silently stops firing the moment a node is added: 3 of 4 agents up is still "at least 3".
+              expr: 'count(up{job="cilium-agent"} == 1) - count(kube_node_info)'
           - refId: B
             relativeTimeRange: {from: 600, to: 0}
             datasourceUid: __expr__
@@ -44,7 +46,7 @@ groups:
               datasource: {type: __expr__, uid: __expr__}
               conditions:
                 - type: query
-                  evaluator: {type: lt, params: [3]}
+                  evaluator: {type: lt, params: [0]}   # one agent short of the node count
       # A full BPF map makes new endpoints, policies and connections start failing. Act before it wedges.
       - uid: cilium-bpf-map-pressure
         title: Cilium BPF map pressure high

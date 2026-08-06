@@ -54,8 +54,9 @@ rabbitmq-cluster-operator:
 # chart hardcodes this, so changing it means changing that chart too.
 name: rabbitmq
 
-# One per Pi node. Quorum queues use Raft and need a MAJORITY, so 3 tolerates losing 1. Two would pay the cost
-# of a cluster with no quorum benefit; one has no HA.
+# Quorum queues use Raft and need a MAJORITY, so 3 tolerates losing 1. Two would pay the cost of a cluster with
+# no quorum benefit; one has no HA. Not tied to the node count: hostname anti-affinity just needs 3 nodes to
+# choose from, and extra nodes beyond that are spare capacity, not more brokers.
 replicas: 3
 
 # `-management` bundles the 15672 UI, `-alpine` is the small variant. Track the server line the operator

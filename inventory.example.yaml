@@ -1,0 +1,65 @@
+# Every node in the cluster, control-plane and worker. TEMPLATE: copy it and edit.
+#   cp inventory.example.yaml inventory.yaml
+# The IPs and hostnames below are FAKE placeholders. Reserve each IP in your router.
+#
+# No versions here: they live in the committed versions.env, so one bump moves every node at once.
+# No architecture either: `imageFile` already names it, and the kubelet sets kubernetes.io/arch on the node.
+#
+# Six keys, and only `imageSchematic` is optional. Nothing else is a per-node knob, because nothing else is a
+# CHOICE: which of 03b's checks run, and whether 03d hardens the NIC, both follow from `type`.
+#   host             the Kubernetes node name; Talos gets it via a HostnameConfig document
+#   ip               reserve it in your router; 03c applies config to this address
+#   role             controlplane | worker. controlplane nodes carry the VIP, etcd and the apiserver certSANs
+#   type             the hardware. Stamped as node.kubernetes.io/instance-type, which nic-keeper selects on
+#   imageSource      github-release | image-factory. Where this node's TWO artifacts come from, see below
+#   imageFile        the raw-image filename 03a downloads and writes to the NVMe
+#   imageSchematic   REQUIRED for image-factory, and rejected otherwise: the extension set to build with
+#
+# A node needs two different artifacts, and imageSource decides where BOTH come from:
+#
+#   github-release   raw image   github.com/<TALOS_IMAGE_REPO minus its registry>/releases/download/
+#                                  <TALOS_IMAGE_RELEASE>/<imageFile>, verified against that release's
+#                                  sha256sums.txt
+#                    installer   <TALOS_IMAGE_REPO>:<TALOS_IMAGE_RELEASE>
+#                                One repo, two hosts: the raw image is a release ASSET on github.com, the
+#                                installer is a CONTAINER on ghcr.io.
+#
+#   image-factory    raw image   factory.talos.dev/image/<id>/<TALOS_VERSION>/<imageFile>
+#                    installer   factory.talos.dev/metal-installer/<id>:<TALOS_VERSION>
+#                                <id> is a content hash of imageSchematic, POSTed and resolved at run time, so
+#                                there is nothing to pin. No checksum is published, so HTTPS is the only trust.
+#
+# 03a writes the raw image to a drive. 03c bakes the installer into machine.install.image and 03e upgrades to it.
+
+nodes:
+  - host: talos-cp1
+    ip: 192.168.1.11
+    role: controlplane
+    # `rpi5` is the one type the scripts special-case: 03d applies the macb NIC wedge mitigation and 03b asserts
+    # end0 plus the overlay's kernel cmdline. Any other value skips both, and is otherwise yours to choose.
+    type: rpi5
+    imageSource: github-release
+    imageFile: metal-arm64-rpi5.raw.xz
+
+  - host: talos-cp2
+    ip: 192.168.1.12
+    role: controlplane
+    type: rpi5
+    imageSource: github-release
+    imageFile: metal-arm64-rpi5.raw.xz
+
+  - host: talos-cp3
+    ip: 192.168.1.13
+    role: controlplane
+    type: rpi5
+    imageSource: github-release
+    imageFile: metal-arm64-rpi5.raw.xz
+
+  # A worker. Delete this block if you run control-plane only.
+  - host: talos-w1
+    ip: 192.168.1.14
+    role: worker
+    type: elitedesk800g6 # custom naming, reflected in the k8s node label; unless it is `rpi5` the value is yours
+    imageSource: image-factory
+    imageFile: metal-amd64.raw.xz
+    imageSchematic: lib/talos/schematic-amd64.yaml

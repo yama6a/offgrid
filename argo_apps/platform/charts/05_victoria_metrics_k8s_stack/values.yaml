@@ -219,8 +219,8 @@ victoria-metrics-k8s-stack:
     extraArgs:
       - --collector.netdev.device-exclude=^(lxc.*|dummy0|ip6tnl0|sit0|teql0|tunl0)$
       - --collector.netclass.ignored-devices=^(lxc.*|dummy0|ip6tnl0|sit0|teql0|tunl0)$
-    # Every node here IS control-plane, so a node-role.kubernetes.io/control-plane:DoesNotExist selector would
-    # match zero nodes. Tolerate everything instead.
+    # Node metrics are wanted from EVERY node whatever its role or condition, so tolerate every taint rather
+    # than trying to enumerate them.
     tolerations:
       - operator: Exists
     resources:
@@ -265,8 +265,8 @@ victoria-metrics-k8s-stack:
       probes: {enabled: false}
 
   # Talos binds controller-manager, scheduler and etcd metrics to localhost by default. They are exposed via
-  # Talos machine config, OUTSIDE ArgoCD. `endpoints` are the static control-plane node IPs from .env; every
-  # node runs all three on this all-control-plane cluster.
+  # Talos machine config, OUTSIDE ArgoCD. `endpoints` are the static CONTROL-PLANE node IPs from inventory.yaml,
+  # and only those: a worker runs none of the three. Add an entry here when you add a control-plane node.
   kubeControllerManager:
     enabled: true
     endpoints: ["192.168.10.201", "192.168.10.202", "192.168.10.203"]

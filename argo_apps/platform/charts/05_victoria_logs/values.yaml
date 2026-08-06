@@ -32,8 +32,8 @@ victoria-logs-collector:
     # above matches pod_name, not a label, so turning this off does not affect it.
     includePodLabels: false
 
-  # Every node here IS control-plane, so a node-role.kubernetes.io/control-plane:DoesNotExist selector would
-  # match zero nodes. Tolerate everything instead.
+  # Logs are wanted from EVERY node whatever its role or condition, so tolerate every taint rather than trying
+  # to enumerate them.
   tolerations:
     - operator: Exists
 

@@ -31,7 +31,7 @@
 set -uo pipefail
 
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
-source "${SCRIPT_DIR}/common.sh"   # say/die/warn/ok + CLUSTER_DIR + CLUSTER_NODES from .env + REPO_ROOT
+source "${SCRIPT_DIR}/common.sh"   # say/die/warn/ok + CLUSTER_DIR + the inventory node arrays + REPO_ROOT
 cd "$REPO_ROOT" || exit 1           # run from the repo root (git ops); set -e is off, so guard cd
 
 # ---- knobs ------------------------------------------------------------------
@@ -52,7 +52,7 @@ CONVERGE_WAIT=900                              # max secs for the converge backs
 require docker git kubectl
 [ -f "$RESET" ]   || die "missing ${RESET}"
 [ -f "$RESTORE" ] || die "missing ${RESTORE}"
-IPS=(); for e in "${CLUSTER_NODES[@]}"; do IPS+=("${e##*:}"); done
+IPS=("${ALL_IPS[@]}")   # workers included: the reset wipes them and 03c reconfigures them in the same pass
 
 cat <<EOF
 

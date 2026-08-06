@@ -374,8 +374,9 @@ groups:
               conditions:
                 - type: query
                   evaluator: {type: gt, params: [0]}
-      # 3-node headroom: total requests exceeding capacity-minus-largest-node means a single node loss cannot be
-      # absorbed, because the survivors cannot fit the evacuated pods.
+      # N-1 headroom: total requests exceeding capacity-minus-LARGEST-node means a single node loss cannot be
+      # absorbed, because the survivors cannot fit the evacuated pods. Subtracting the largest is what makes it
+      # the worst case, and what keeps it right as nodes are added or as one node gets much bigger than the rest.
       - uid: cluster-memory-overcommit
         title: Cluster can't tolerate one node loss (memory)
         condition: C
@@ -384,7 +385,7 @@ groups:
         annotations:
           summary: 'Cluster memory requests exceed capacity minus one node: a node loss would not fit'
           description: |
-            - no N-1 headroom: losing one of the 3 Pis can't reschedule its pods
+            - no N-1 headroom: losing the largest node can't reschedule its pods
             - kubectl top nodes ; kubectl describe nodes | grep -A5 Allocated
             - trim memory requests or add capacity to restore single-node tolerance
         noDataState: OK

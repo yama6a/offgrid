@@ -43,8 +43,9 @@
   Cilium CNI, install Argo CD.
 - Everything after that is GitOps. Argo CD reconciles `argo_apps/` and delivers the platform (ingress, TLS, SSO,
   storage, databases, messaging, monitoring) plus the workloads on top.
-- Config is two files: committed `versions.env` (the renovate-managed version recipe) and gitignored `.env`
-  (copied from `.env.example`) for your config and secrets. Nothing is hardcoded in a script.
+- Config is three files: committed `versions.env` (the renovate-managed version recipe), plus gitignored
+  `inventory.yaml` (your nodes: role, hardware type, image) and `.env` (everything else, plus secrets), each
+  copied from a committed template. Nothing is hardcoded in a script.
 - Every app is a thin Helm wrapper chart pinning its upstream version. `docs/01` to `docs/14` hold the why.
 
 ## The stack
@@ -82,8 +83,9 @@ Four shared charts under `lib/helm/` are consumed as `file://` dependencies, all
 
 ## Hardware
 
-3x Raspberry Pi 5 (8 GB), all control-plane, NVMe-booted, in a 10" 2U half-rack. The 4th bay is reserved for a
-future 4GB worker. See [docs/01_hardware.md](docs/01_hardware.md).
+3x Raspberry Pi 5 (8 GB), all control-plane, NVMe-booted, in a 10" 2U half-rack. The 4th bay takes a worker, Pi
+or x86: the node list carries a hardware type per node and picks the image from it. See
+[docs/01_hardware.md](docs/01_hardware.md) and [docs/17_worker_nodes.md](docs/17_worker_nodes.md).
 
 | Component    | Choice                                       | Qty                  |
 |--------------|----------------------------------------------|----------------------|
@@ -134,6 +136,7 @@ flowchart LR
 .
 |-- Makefile            # thin dispatcher over lib/shell; run `make help`
 |-- versions.env        # committed version recipe (renovate-managed)
+|-- inventory.example.yaml  # template for the node list; copy to inventory.yaml
 |-- .env.example        # template for config + secrets; copy to .env
 |-- .env                # your config + secrets (gitignored)
 |-- docs/               # the numbered runbook + decision records (01 to 14)
@@ -176,10 +179,11 @@ make build-eeprom-card              # 02 - write the EEPROM boot config to a mic
 # flashing is done, then power off and remove the card.
 
 # 1. Configure - versions.env is committed; copy the config+secrets template
-cp .env.example .env                # then edit: node IPs, domains, secrets. Go over everything, to be sure.
+cp inventory.example.yaml inventory.yaml   # then edit: one entry per node (role, hardware type, image)
+cp .env.example .env                # then edit: VIP, domains, secrets. Go over everything, to be sure.
 
 # 2. Flash the NVMe drives: connect each NVMe to your laptop (e.g. via a USB adapter) and run, per drive:
-make flash-talos-nvme               # 03a - download the pinned Talos Pi 5 image release and write it (repeat per drive)
+make flash-talos-nvme               # 03a - pick a node from the inventory, write its Talos image (repeat per drive)
 
 # 3. Verify the nodes boot into Talos maintenance mode
 make verify-talos-boot              # 03b - confirm each node boots into maintenance mode
@@ -199,7 +203,8 @@ Per-phase reasoning and verification is in [the docs](#documentation).
 
 Edit `.env` (copied from `.env.example`) and expect to change at least:
 
-- Topology and network: `CLUSTER_NODES` (hostnames + IPs), `CLUSTER_VIP`, `LB_RANGE_START`/`LB_RANGE_STOP`.
+- Topology: `inventory.yaml` (one entry per node: role, hardware type, image). Network: `CLUSTER_VIP`,
+  `LB_RANGE_START`/`LB_RANGE_STOP` in `.env`.
   Reserve each node IP in your router, and keep the VIP and LB pool on the nodes' L2, outside your DHCP range.
     - To reserve them: connect the Pis, read their MAC addresses off your router, then pin the intended IPs to
       those MACs in its DHCP settings.
@@ -225,7 +230,9 @@ Hardware caveats before you commit:
 
 | Task                      | Command                                                                          | Notes                                                                                                               |
 |---------------------------|----------------------------------------------------------------------------------|---------------------------------------------------------------------------------------------------------------------|
-| Upgrade Talos             | `make upgrade-talos`                                                             | Rolling A/B in-place to the pinned installer (03e) (bump `TALOS_VERSION` in `versions.env`)                         |
+| Upgrade Talos             | `make upgrade-talos`                                                             | Rolling A/B in-place to the pinned installer (03e) (bump `TALOS_IMAGE_RELEASE` in `versions.env`)                   |
+| Change machine config     | `make reapply-talos-config [NODE=<host>]`                                        | Pushes a changed machine config to RUNNING nodes (03c `--reapply`): dry-run and confirm first, reboots only if the change needs it. Volume sizes are fixed at provision time and will not change. |
+| Add a node                | `make add-node NODE=<host>`                                                      | Joins one node from maintenance into the running cluster, control-plane or worker ([docs/17](docs/17_worker_nodes.md)).           |
 | Upgrade Kubernetes        | `make upgrade-k8s`                                                               | Rolling, no reboot (03f). (Bump `KUBERNETES_VERSION` in `versions.env`)                                             |
 | Restore a datastore       | `make restore-cnpg`, `restore-redis`, `restore-longhorn`, `restore-vm`            | From the off-cluster S3 backups ([docs/13](docs/13_backups.md)).                                                     |
 | Recover a lost node       | `make recover-node NODE=pi-cp3`                                                  | Rejoins one wiped/replaced node and fixes its etcd member and Longhorn disk record. Workloads move on their own ([docs/15](docs/15_node_recovery.md)). |
@@ -270,6 +277,7 @@ Each doc holds the why behind a step, with verification commands:
 | [14_renovate](docs/14_renovate.md)                 | Automated dependency updates and when Renovate is allowed to self-merge.        |
 | [15_node_recovery](docs/15_node_recovery.md)       | Losing or replacing a node: etcd, Talos, Longhorn, CNPG, RabbitMQ.              |
 | [16_storage_bench](docs/16_storage_bench.md)       | Measuring what Longhorn r2 costs CNPG and RabbitMQ in write latency.            |
+| [17_worker_nodes](docs/17_worker_nodes.md)         | The node inventory, and adding a worker that does not have to be a Pi.           |
 
 
 ## Credits
@@ -288,7 +296,7 @@ MIT. See [LICENSE](LICENSE).
 
 ## Todos
 
-- add a worker node (4th bay in the rack)
+- put a worker in the 4th bay (the inventory and scripts already take one, see docs/17_worker_nodes.md)
 - migrate old pi stuff to cluster
 - fork my personal cluster project for OSS version
 - rewrite git history to remove secrets and email addresses and domains from past commits
@@ -300,3 +308,4 @@ MIT. See [LICENSE](LICENSE).
 - 
 - read and shorten all md files.
 - which workloads should have HARD anti-affinity rules instead of soft ones?
+- should we keep the nic-keeper? Run in prod for a while and see if it ever triggers. If it never triggers, remove it.

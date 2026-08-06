@@ -1,0 +1,9 @@
+# The extension set for x86_64 nodes, POSTed to factory.talos.dev to get a schematic id. That id addresses both
+# the raw image 03a flashes and the installer 03e upgrades to, so both come from this one file.
+# Names only, no versions: the factory resolves each to the build matching TALOS_VERSION.
+customization:
+  systemExtensions:
+    officialExtensions:
+      - siderolabs/intel-ucode        # CPU errata + speculative-execution mitigations; Talos ships no microcode itself
+      - siderolabs/iscsi-tools        # Longhorn attaches its volumes over iSCSI
+      - siderolabs/util-linux-tools   # Longhorn calls fstrim

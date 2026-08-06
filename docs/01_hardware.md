@@ -21,8 +21,10 @@ half-rack mount, NVMe-booted.
 <img src="images/raspi5.png" alt="Raspberry Pi 5 Board" width="400"/>
 
 - 8GB for headroom: control-plane + etcd + actual workloads on each node.
-- 3 nodes = odd etcd quorum, tolerates 1 failure.
-- A 4th board exists but stays out for now. I'll add that later as a non-cp (worker) node.
+- 3 nodes = odd etcd quorum, tolerates 1 failure. Adding a WORKER does not change that: it holds no etcd.
+- The 4th bay takes a worker, and it does not have to be a Pi. The node list carries a hardware type per node
+  and picks the image from it, so an x86 box joins by the same two commands. See
+  [17_worker_nodes.md](17_worker_nodes.md).
 
 ## Rack mount: GeeekPi DP-0046 (10" 2U)
 

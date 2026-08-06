@@ -1,6 +1,7 @@
 #!/usr/bin/env bash
-# Rolling, in-place upgrade of the running Talos cluster to the installer image of the release pinned by
-# TALOS_IMAGE_RELEASE in versions.env (built by github.com/yama6a/talos-raspberry-pi5).
+# Rolling, in-place upgrade of the running Talos cluster. Each node goes to the installer its own hardware type
+# is built from, resolved by installer_ref_for: the Pi 5 release pinned by TALOS_IMAGE_RELEASE in versions.env
+# (built by github.com/yama6a/talos-raspberry-pi5), or a factory.talos.dev image for a type we don't build.
 # No reflash: Talos upgrades are atomic A/B with rollback, and talosctl refuses to proceed if a reboot would
 # break etcd quorum.
 # We CORDON + DRAIN each node ourselves before `talosctl upgrade`, so Talos's own in-upgrade drain finds an
@@ -10,7 +11,7 @@
 # Re-run-safe: a node already on the target image is a clean no-op, so a re-run resumes.
 set -euo pipefail
 
-# Node list (CLUSTER_NODES) in .env; INSTALLER_REF / NODES / TALOSCTL_VERSION derived in lib/shell/common.sh.
+# Node list in inventory.yaml; installer_ref_for / TALOSCTL_VERSION come from lib/shell/common.sh.
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 source "${SCRIPT_DIR}/common.sh"
 
@@ -109,27 +110,32 @@ drain_node() {
 DRAINING_NODE=""
 trap '[ -n "$DRAINING_NODE" ] && { kubectl uncordon "$DRAINING_NODE"; kubectl taint node "$DRAINING_NODE" node.kubernetes.io/out-of-service-; } >/dev/null 2>&1 || true' EXIT
 
-read -ra IPS <<< "$NODES"
-[ "${#IPS[@]}" -gt 0 ] || die "no nodes set, edit CLUSTER_NODES in .env"
+# Workers FIRST, then control-plane: a worker holds no etcd, so if an upgrade wedges there it costs no quorum
+# and you find out before touching a member. Each node gets the installer its own type is built from, so a
+# mixed-hardware cluster cannot be handed one arch's image.
+HOSTS=("${WORKER_HOSTS[@]}" "${CP_HOSTS[@]}")
 
 say "pulling ghcr.io/siderolabs/talosctl:${TALOSCTL_VERSION} (first run only)"
 docker pull -q "ghcr.io/siderolabs/talosctl:${TALOSCTL_VERSION}" >/dev/null
 
 # Preflight: the cluster must answer before we start rebooting nodes.
-talosctl -n "${IPS[0]}" version >/dev/null 2>&1 || die "cluster API not reachable via ${CLUSTER_DIR}/talosconfig (is the cluster up?)"
+talosctl -n "${CP_IPS[0]}" version >/dev/null 2>&1 || die "cluster API not reachable via ${CLUSTER_DIR}/talosconfig (is the cluster up?)"
 
 echo "== Talos rolling upgrade (talosctl ${TALOSCTL_VERSION}, dockerized) =="
-echo "Image:  ${INSTALLER_REF}"
-echo "Nodes:  ${IPS[*]}"
+for h in "${HOSTS[@]}"; do
+  printf 'Node:   %-12s %-16s %s -> %s\n' "$h" "${NODE_IP[$h]}" "${NODE_TYPE[$h]}" "$(installer_ref_for "$h")"
+done
 echo
 warn "this reboots EVERY node in turn (atomic A/B, a few min each). etcd quorum is held throughout."
 printf '>> proceed with the rolling upgrade? type yes: '
 read -r confirm </dev/tty 2>/dev/null || confirm=""
 [ "$confirm" = "yes" ] || die "aborted"
 
-for ip in "${IPS[@]}"; do
+for host in "${HOSTS[@]}"; do
+  ip="${NODE_IP[$host]}"
+  installer="$(installer_ref_for "$host")"
   node="$(node_for_ip "$ip")"
-  [ -n "$node" ] || die "no k8s node has InternalIP ${ip} (is the cluster up / .env CLUSTER_NODES right?)"
+  [ -n "$node" ] || die "no k8s node has InternalIP ${ip} (is the cluster up / is inventory.yaml right?)"
 
   # Gate on replication health BEFORE cordoning (an abort here leaves no stray cordon): never take a node
   # down while any replicated store is degraded / a standby is catching up / a broker is rejoining.
@@ -141,18 +147,20 @@ for ip in "${IPS[@]}"; do
   DRAINING_NODE="$node"
   drain_node "$node"
 
-  say "upgrading ${ip} -> ${INSTALLER_REF}"
+  say "upgrading ${ip} -> ${installer}"
   # --wait tracks the node until it reboots into the new system and rejoins; a node already on the target
   # image completes immediately. talosctl won't proceed if the reboot would cost etcd quorum.
-  if talosctl -n "$ip" upgrade --image "$INSTALLER_REF" --wait --timeout "${HEALTH_TIMEOUT}s"; then
+  if talosctl -n "$ip" upgrade --image "$installer" --wait --timeout "${HEALTH_TIMEOUT}s"; then
     ok "${ip} upgraded"
   else
     die "${ip} upgrade failed (see above). Cluster left as-is; fix and re-run (idempotent, skips done nodes)."
   fi
   # Gate on FULL cluster health (etcd quorum fully restored) before touching the next node. A false
   # negative just stops us early; re-running resumes (the upgraded node is then a no-op).
+  # Asked of a CONTROL-PLANE node, never of the node just upgraded: Talos answers this check only there
+  # ("cluster health check is only available on control plane nodes"), so aiming it at a worker always fails.
   say "waiting for cluster health before the next node"
-  talosctl -n "$ip" health --wait-timeout "${HEALTH_TIMEOUT}s" >/dev/null 2>&1 \
+  talosctl -n "${CP_IPS[0]}" health --wait-timeout "${HEALTH_TIMEOUT}s" >/dev/null 2>&1 \
     || die "cluster not healthy after upgrading ${ip}; stopping. Investigate, then re-run to resume."
 
   kubectl uncordon "$node" >/dev/null 2>&1 || true   # Talos uncordons on rejoin; make it explicit/idempotent

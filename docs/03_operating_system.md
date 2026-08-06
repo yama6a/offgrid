@@ -1,8 +1,14 @@
 # Talos: OS choice, custom NVMe image & cluster bring-up
 
-OS for the 3-node Pi 5 cluster: Talos Linux. Immutable, API-managed, Kubernetes-only.
+OS for the cluster: Talos Linux. Immutable, API-managed, Kubernetes-only.
 Talos has no official Pi 5 image, so the node image is built separately, in
 [yama6a/talos-raspberry-pi5](https://github.com/yama6a/talos-raspberry-pi5).
+
+The node list lives in `inventory.yaml`, one entry per node carrying its role, hardware type and image source.
+This doc covers the three Pi 5 control-plane nodes; what differs for a worker, or for a node type with no custom
+build, is [17_worker_nodes.md](17_worker_nodes.md). Two consequences to know here: `03c` iterates the whole
+inventory and applies a control-plane or worker config per node, and `03e` resolves the installer image per node
+rather than using one for the cluster, so a mixed-hardware cluster cannot be handed one architecture's image.
 
 ## Why Talos
 
@@ -151,7 +157,7 @@ runs it; `make rebalance-workloads` runs it alone. A measured run went 39/40/15 
 
 - A nudge, not guaranteed balance. The scheduler scores each pod alone, so a run can still clump. The real fix,
   if it ever matters, is `topologySpreadConstraints` on the workload charts.
-- Refuses to run unless every node is Ready, schedulable, and the count matches `CLUSTER_NODES`. Restarting while
+- Refuses to run unless every node is Ready, schedulable, and the count matches `inventory.yaml`. Restarting while
   one is cordoned just packs the survivors.
 - Serial, one Deployment at a time: `maxSurge` doubles a Deployment's pods and three Pi 5s are RAM-tight.
 - Skips a Deployment when its namespace is in `SKIP_NAMESPACES` (`longhorn-system` CSI sidecars,
@@ -175,12 +181,12 @@ assigned yet).
 
 ## Boot & verify (per node)
 
-Script: `03b_talos_boot_verify.sh`, reads the node IPs (`CLUSTER_NODES` in `.env`) and runs the checklist below against
+Script: `03b_talos_boot_verify.sh`, checks EVERY node in `inventory.yaml` and runs the checklist below against
 each (maintenance mode, `--insecure`), inspecting each output and printing PASS/FAIL + a summary. It uses the talosctl
 container (sidesteps the MacOS gotcha below); `ping`/`nc` run natively.
 
 ```bash
-./03b_talos_boot_verify.sh        # checks the nodes listed in .env
+./03b_talos_boot_verify.sh        # checks every node in inventory.yaml
 ```
 
 What it checks per node:
@@ -252,16 +258,14 @@ so I picked `192.168.100.1` for the VIP (inside the subnet, outside the DHCP ran
    `versions.env`/`.env` values, so a version bump in `versions.env` actually lands (unlike the old preserved `controlplane.yaml`,
    which froze the version it was first generated with). Kubernetes is pinned explicitly with
    `--kubernetes-version "$KUBERNETES_VERSION"` rather than taking the Talos release default, so the k8s
-   version is a reviewed knob, not an implicit side effect of a Talos bump. `worker.yaml` is skipped (every
-   node here is control-plane); the API endpoint is the VIP. (The base would default to Flannel; the patch
+   version is a reviewed knob, not an implicit side effect of a Talos bump. A second `gen config
+   --output-types worker` runs from the SAME `secrets.yaml` when the inventory has any worker, so the PKI
+   matches; the API endpoint is the VIP either way. (The base would default to Flannel; the patch
    below turns the CNI off so Cilium can take over.) Migration note: the first run after this split, if only a
    pre-split `controlplane.yaml` exists, extracts `secrets.yaml` *from it* (`gen secrets
    --from-controlplane-config`) so the running cluster's existing PKI is preserved rather than replaced.
-3. Applies a control-plane patch to every node: the VIP bound to the wired NIC, `allowSchedulingOnControlPlanes:
-   true`, `certSANs` (VIP + node IPs), the node label `machine.nodeLabels: node.kubernetes.io/instance-type=rpi5`
-   (so the `nic-keeper` DaemonSet targets rpi5 hardware only,
-   see [Runtime: the recovery DaemonSet](#runtime-the-recovery-daemonset-nic-keeper-gitops);
-   `NODE_INSTANCE_TYPE` knob in `03c`), and the Cilium prep: `cluster.network.cni.name: none`,
+3. Applies a control-plane patch to every control-plane node: the VIP bound to the wired NIC,
+   `allowSchedulingOnControlPlanes: true`, `certSANs` (VIP + the control-plane IPs), and the Cilium prep: `cluster.network.cni.name: none`,
    `cluster.proxy.disabled: true` (Cilium does kube-proxy replacement), and `machine.features.kubePrism.enabled: true`
    (Cilium's API endpoint at `localhost:7445`; default-on in recent Talos, set explicitly here to document the dependency).
    Finally it raises etcd's timeouts (`cluster.etcd.extraArgs: {heartbeat-interval: "500", election-timeout: "5000"}`),
@@ -275,7 +279,11 @@ so I picked `192.168.100.1` for the VIP (inside the subnet, outside the DHCP ran
    rest of the NVMe (`/var/mnt/longhorn`, no `maxSize`, so it claims what is left once at provision time). That
    path also gets a `kubelet.extraMounts` bind so the containerized kubelet can see it. Sits empty until
    [Longhorn](08_storage.md) syncs (step 04+).
-5. `apply-config` to each node (only the hostname differs), then deletes the rendered scratch (`cp.yaml`,
+5. `apply-config` to each node, with a per-NODE patch on top of the per-ROLE one: `machine.install.image` from
+   `installer_ref_for` (so each hardware type gets the installer it is built from) and the node label
+   `node.kubernetes.io/instance-type=<type>` from its inventory `type`, which is what the `nic-keeper` DaemonSet
+   selects on, see [Runtime: the recovery DaemonSet](#runtime-the-recovery-daemonset-nic-keeper-gitops). Then
+   deletes the rendered scratch (`cp.yaml`,
    `controlplane.yaml`, and their inputs `cp-patch.yaml` + `volumes.yaml`), so the nodes now hold their own
    live config, so the only config left on disk is the durable `secrets.yaml` (plus the
    `talosconfig`/`kubeconfig` creds). On an apply failure the script aborts before the cleanup, leaving the
@@ -304,12 +312,27 @@ so I picked `192.168.100.1` for the VIP (inside the subnet, outside the DHCP ran
 ### Run
 
 ```bash
-./03c_talos_cluster_config.sh
+make init-talos                        # every node must be in MAINTENANCE mode
+make add-node NODE=<host>              # or: one node, into a cluster that is already running
+make reapply-talos-config [NODE=...]   # or: push a config change to nodes already running
 ```
 
-All values come from `.env`; review the printed summary, then type `YES`. After `apply-config` the nodes
-reboot, the script waits for each to come back up (polling the secure API) and only then asks you to confirm the
-bootstrap. No manual stopwatch.
+Values come from `.env`, `versions.env` and `inventory.yaml`; review the printed summary before continuing.
+After `apply-config` the nodes reboot and the script waits for each to come back (polling the secure API), so
+there is no manual stopwatch.
+
+The three entry points differ ONLY in how the same render is applied:
+
+| | nodes must be | applies | bootstraps etcd |
+|---|---|---|---|
+| `make init-talos` | ALL in maintenance | `--insecure` | yes, once |
+| `make add-node NODE=` | that one in maintenance | `--insecure` | no, it joins on its own |
+| `make reapply-talos-config` | already RUNNING | authenticated, `--mode auto` | no |
+
+That is why `init-talos` cannot be used to change a running cluster: it waits for maintenance mode and dies
+after 300s per node. `--reapply` is the path for a live change, and it dry-runs and asks first. What it CANNOT
+change is volume geometry: Talos provisions a volume once and, with `grow` unset as it is here, "the existing
+volume size is never changed", so an `EPHEMERAL_SIZE` edit reaches new nodes only.
 
 > Bootstrap runs on one node only. Never re-run it on another node, or you split etcd into two clusters.
 
@@ -441,7 +464,7 @@ Decisions:
 | Active ping, not carrier       | the wedge is link-up-no-traffic; carrier reads healthy, only a probe catches it.                                                                                                                                                                                                                                                                                                                                    |
 | `NET_ADMIN` + `NET_RAW`        | NET_ADMIN covers `ethtool` EEE / `ip link` / `ss -K`; NET_RAW is required for `ping`'s ICMP socket. Still least-privilege, beats `privileged: true`.                                                                                                                                                                                                                                                                |
 | Auto-sync (prune + selfHeal)   | safe leaf: it cannot cut the cluster off its own network, so drift just auto-corrects. Cilium (wave 0) runs the SAME prune+selfHeal even though it CAN cut the cluster off its own network: a convenience trade-off, knowingly accepted.                                                                                                                                                                                                                                |
-| `instance-type: rpi5` selector | the macb wedge is Pi 5-only. Stamped by Talos `machine.nodeLabels` in [`03c`](#what-03c_talos_cluster_configsh-does) (`NODE_INSTANCE_TYPE` knob in `03c`); that key works because it's on the kubelet NodeRestriction allowlist (an arbitrary `kubernetes.io/*` label is rejected by admission). Not `os: linux` (too broad) nor `control-plane:DoesNotExist` (every node here is control-plane -> matches zero nodes). |
+| `instance-type: rpi5` selector | the macb wedge is Pi 5-only. Stamped by Talos `machine.nodeLabels` in [`03c`](#what-03c_talos_cluster_configsh-does), from that node's `type` in `inventory.yaml`; that key works because it's on the kubelet NodeRestriction allowlist (an arbitrary `kubernetes.io/*` label is rejected by admission). Not `os: linux` (too broad) nor `control-plane:DoesNotExist` (every node here is control-plane -> matches zero nodes). |
 
 Caveats / preconditions:
 

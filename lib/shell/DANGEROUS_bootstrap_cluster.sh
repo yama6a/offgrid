@@ -42,7 +42,7 @@
 set -uo pipefail
 
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
-source "${SCRIPT_DIR}/common.sh"   # say/die/warn/ok + CLUSTER_DIR + CLUSTER_NODES + secret .env keys + REPO_ROOT
+source "${SCRIPT_DIR}/common.sh"   # say/die/warn/ok + CLUSTER_DIR + the inventory node arrays + secret .env keys + REPO_ROOT
 cd "$REPO_ROOT" || exit 1           # run from the repo root (git ops, relative hints); set -e is off, so guard cd
 
 # ---- knobs ------------------------------------------------------------------
@@ -61,8 +61,7 @@ COMMIT_MSG_SEAL="bootstrap: re-seal SSO + argocd webhook secrets + CNPG/Redis S3
 require docker git kubectl helm yq kubeseal
 docker info >/dev/null 2>&1 || die "docker not responding (start Rancher/Docker Desktop)"
 [ -f "${STEP_DIR}/03c_talos_cluster_config.sh" ] || die "missing 03c, run from the repo root"
-IPS=(); for e in "${CLUSTER_NODES[@]}"; do IPS+=("${e##*:}"); done
-[ "${#IPS[@]}" -gt 0 ] || die "no nodes set, edit CLUSTER_NODES in .env"
+IPS=("${ALL_IPS[@]}")   # workers included: 03c configures them in the same pass, so they must be up front too
 
 cat <<EOF
 

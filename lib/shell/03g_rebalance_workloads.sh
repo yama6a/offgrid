@@ -27,8 +27,8 @@ for n in json.load(sys.stdin)["items"]:
 [ -z "$NOT_OK" ] || die "not rebalancing, these nodes cannot take pods: ${NOT_OK//$'\n'/, }. Wait for them to
 come back (or uncordon), then re-run: make rebalance-workloads"
 NODE_COUNT=$(printf '%s' "$NODES_JSON" | python3 -c 'import json,sys; print(len(json.load(sys.stdin)["items"]))')
-[ "$NODE_COUNT" -eq "${#CLUSTER_NODES[@]}" ] \
-  || die "cluster has ${NODE_COUNT} nodes, .env CLUSTER_NODES expects ${#CLUSTER_NODES[@]}; rebalancing now would skew the spread"
+[ "$NODE_COUNT" -eq "${#ALL_HOSTS[@]}" ] \
+  || die "cluster has ${NODE_COUNT} nodes, inventory.yaml expects ${#ALL_HOSTS[@]}; rebalancing now would skew the spread"
 ok "all ${NODE_COUNT} nodes Ready and schedulable"
 
 pods_per_node() {

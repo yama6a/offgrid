@@ -28,16 +28,25 @@ build-eeprom-card: ## 02: build a reusable SD card that flashes the Pi 5 EEPROM 
 	bash lib/shell/02_raspi_eeprom.sh
 
 .PHONY: flash-talos-nvme
-flash-talos-nvme: ## 03a: download the pinned Talos Pi 5 image release and write it to an NVMe SSD over USB.
-	bash lib/shell/03a_talos_image_flasher.sh
+flash-talos-nvme: ## 03a: download a node's Talos image and write it to an NVMe SSD over USB. NODE=<hostname> picks which image; omit it to choose from a list.
+	bash lib/shell/03a_talos_image_flasher.sh $(NODE)
 
 .PHONY: verify-talos-boot
-verify-talos-boot: ## 03b: verify freshly-flashed nodes boot into maintenance mode.
+verify-talos-boot: ## 03b: verify freshly-flashed nodes boot into maintenance mode (the inventory's bootVerify nodes).
 	bash lib/shell/03b_talos_boot_verify.sh
 
-.PHONY: configure-talos
-configure-talos: ## 03c: generate + apply machine config, bootstrap etcd, write kube/talosconfig.
+.PHONY: init-talos
+init-talos: ## 03c: FIRST bring-up. Needs EVERY node in maintenance (fresh flash, or after reset-cluster): applies config, bootstraps etcd, writes kube/talosconfig.
 	bash lib/shell/03c_talos_cluster_config.sh
+
+.PHONY: add-node
+add-node: ## 03c: configure and join ONE node from maintenance into the RUNNING cluster (control-plane or worker), no etcd bootstrap. NODE=<hostname>.
+	@test -n "$(NODE)" || { echo "usage: make add-node NODE=talos-w1   (hostnames come from inventory.yaml)"; exit 1; }
+	bash lib/shell/03c_talos_cluster_config.sh $(NODE)
+
+.PHONY: reapply-talos-config
+reapply-talos-config: ## 03c: push a changed machine config to nodes that are already RUNNING (dry-run + confirm first). NODE=<hostname> for one, omit for all.
+	bash lib/shell/03c_talos_cluster_config.sh --reapply $(NODE)
 
 .PHONY: harden-nics
 harden-nics: ## 03d: apply NIC hardening (disable EEE / watchdog) to every node.
@@ -149,6 +158,10 @@ fix-chart-locks: ## Regenerate any stale Chart.lock (out of sync with Chart.yaml
 	bash lib/shell/fix_chart_locks.sh
 
 ##@ Health & inspection  (read-only; use the dockerized talosctl + the 03c kubeconfig)
+.PHONY: check-multiarch
+check-multiarch: ## Check every running image has a manifest for every architecture in the cluster. ARCH="amd64" to check before adding such a node.
+	bash lib/shell/check_multiarch.sh
+
 .PHONY: check-health
 check-health: ## Talos: wait for and report overall cluster health.
 	@bash -c 'source lib/shell/common.sh && talosctl health'

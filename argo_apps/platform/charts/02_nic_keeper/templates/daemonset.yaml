@@ -27,8 +27,8 @@ spec:
       dnsPolicy: ClusterFirstWithHostNet
       automountServiceAccountToken: false
       priorityClassName: system-node-critical
-      # Every node here IS control-plane. Tolerate everything else too, so the keeper still recovers a node
-      # that is under pressure.
+      # The nodeSelector below already narrows this to one hardware type, so tolerate every taint: the keeper
+      # has to reach a node that is under pressure or tainted out-of-service, which is when its NIC has wedged.
       tolerations:
         - key: node-role.kubernetes.io/control-plane
           operator: Exists

@@ -27,8 +27,8 @@ spec:
   persistence:
     storageClassName: {{ .Values.storage.className | quote }}
     storage: {{ .Values.storage.size | quote }}
-  # One broker per node, matching replicas == node count, so a node loss drops exactly one quorum member.
-  # Bare Pi nodes have no zone label, so spread by hostname.
+  # One broker per node, so a node loss drops exactly one quorum member however many nodes there are.
+  # Bare nodes have no zone label, so spread by hostname.
   affinity:
     podAntiAffinity:
       requiredDuringSchedulingIgnoredDuringExecution:

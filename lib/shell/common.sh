@@ -1,7 +1,8 @@
 #!/usr/bin/env bash
 #
-# Shared helpers for every bootstrap script here. Source it near the top: it self-locates the repo root,
-# loads versions.env then the gitignored .env, and derives what a flat file cannot hold (arrays, paths).
+# Shared helpers for every bootstrap script here. Source it near the top: it self-locates the repo root, loads
+# versions.env then the gitignored .env, parses the gitignored inventory.yaml into the node arrays every script
+# iterates, and derives what a flat file cannot hold (paths, the Talos version).
 # It sets no shell options; each script keeps its own `set` line.
 
 [[ -n "${_COMMON_SH:-}" ]] && return
@@ -55,6 +56,7 @@ EXPECT_DISK="nvme0n1"      # the NVMe (install target)
 API_PORT=50000            # Talos API port
 GHCR_SERVER="ghcr.io"     # registry the GHCR pull token is scoped to
 TALOS_IMAGE_REPO="ghcr.io/yama6a/talos-raspberry-pi5"        # the Pi 5 Talos image; TALOS_IMAGE_RELEASE pins the tag
+FACTORY_HOST="factory.talos.dev"                             # stock images for node types we don't build (x86)
 SS_CONTROLLER_NS="sealed-secrets"                            # kubeseal --controller-namespace (== 02_sealed_secrets)
 SS_CONTROLLER_NAME="sealed-secrets"                          # kubeseal --controller-name
 SS_POD_SELECTOR="app.kubernetes.io/name=sealed-secrets"     # the controller pods (readiness probe)
@@ -62,16 +64,14 @@ SS_KEY_LABEL="sealedsecrets.bitnami.com/sealed-secrets-key"  # label on its key 
 MONITORING_NS="monitoring"                                   # the monitoring-stack namespace (09/krr)
 WORKLOAD_CHARTS="${REPO_ROOT}/argo_apps/workloads/charts"    # the workloads tree the recover_* scripts edit
 
-# Cannot live in a flat .env: arrays, interpolation, a shasum-keyed path.
-read -ra CLUSTER_NODES <<< "${CLUSTER_NODES}"   # .env CLUSTER_NODES is a space-separated "host:ip" string -> array
-NODES="${CLUSTER_NODES[*]##*:}"                 # IPs only (space-separated); used by boot-verify + reset
+# Cannot live in a flat .env: interpolation and a derived version. The node list is in inventory.yaml, parsed
+# further down where die() exists.
 IFACE="${EXPECT_NIC}"                           # wired NIC the VIP binds to (dhcp + vip)
-INSTALL_DISK="/dev/"
+INSTALL_DISK="/dev/${EXPECT_DISK}"              # nvme0n1 -> /dev/nvme0n1
 # The image release tag is `<talos version>-<build revision>`; everything Talos-side wants just the version.
 TALOS_VERSION="${TALOS_IMAGE_RELEASE%-*}"
 TALOSCTL_VERSION="${TALOS_VERSION}"             # talosctl container (talosctl() below; boot-verify)
-INSTALLER_REF="${TALOS_IMAGE_REPO}:${TALOS_IMAGE_RELEASE}"   # exact installer image 03e upgrades nodes to
-IMAGE_CACHE="${REPO_ROOT}/.cache/images"        # 03a downloads the release's raw image here (gitignored)
+IMAGE_CACHE="${REPO_ROOT}/.cache/images"        # 03a downloads each node type's raw image here (gitignored)
 
 say()  { printf '\n\033[1;36m>> %s\033[0m\n' "$*"; }
 die()  { printf '\033[1;31mERROR: %s\033[0m\n' "$*" >&2; exit 1; }
@@ -99,6 +99,78 @@ require() {
       *)        die "$t not found on PATH" ;;
     esac
   done
+}
+
+# ---- the node inventory ------------------------------------------------------
+# Every node, control-plane and worker. Sits below require()/die() rather than with the other derived values,
+# because it needs both. A malformed inventory therefore fails at the top of EVERY script, not halfway into
+# whichever one first reads a field.
+INVENTORY="${REPO_ROOT}/inventory.yaml"
+[ -f "$INVENTORY" ] || die "missing ${INVENTORY}
+       copy the template and edit it:  cp inventory.example.yaml inventory.yaml"
+# A leftover CLUSTER_NODES is no longer read as an array, so \${#CLUSTER_NODES[@]} would quietly be 1 and the
+# node-count gates would compare against the wrong number. Fail instead of being subtly wrong.
+[ -z "${CLUSTER_NODES:-}" ] || die "CLUSTER_NODES is still set in .env; the node list moved to inventory.yaml. Delete that line."
+require yq
+
+declare -A NODE_IP NODE_ROLE NODE_TYPE NODE_IMAGE_SOURCE NODE_IMAGE_FILE NODE_IMAGE_SCHEMATIC
+ALL_HOSTS=(); ALL_IPS=()          # every node, in inventory order
+CP_HOSTS=();  CP_IPS=()           # role controlplane: these carry the VIP, etcd and the apiserver certSANs
+WORKER_HOSTS=(); WORKER_IPS=()    # role worker
+# No hardware-specific subsets here on purpose: 03b and 03d each filter on NODE_TYPE themselves, next to the
+# checks and the config that are specific to that hardware. This file stays inventory data, not policy.
+
+# ONE yq call for the whole file, so sourcing costs a single subprocess however many nodes there are.
+# Joined on '|' and NOT @tsv: tab is an IFS whitespace character, so `read` collapses a run of them and the
+# optional imageSchematic would silently shift every later field one to the left.
+while IFS='|' read -r _h _ip _role _type _src _file _sch; do
+  [ -n "$_h" ] || continue
+  for _f in ip:"$_ip" role:"$_role" type:"$_type" imageSource:"$_src" imageFile:"$_file"; do
+    [ -n "${_f#*:}" ] || die "inventory: node '${_h}' is missing ${_f%%:*}"
+  done
+  case "$_role" in controlplane|worker) ;; *) die "inventory: node '${_h}' has role '${_role}', want controlplane or worker" ;; esac
+  # Both directions, so imageSource and imageSchematic cannot quietly disagree: a missing schematic would send
+  # the factory a 404, and a stray one on a release node would be read by nothing.
+  case "$_src" in
+    github-release) [ -z "$_sch" ] || die "inventory: node '${_h}' is imageSource github-release, so drop its imageSchematic; nothing reads it" ;;
+    image-factory)  [ -n "$_sch" ] || die "inventory: node '${_h}' is imageSource image-factory, so it needs an imageSchematic" ;;
+    *) die "inventory: node '${_h}' has imageSource '${_src}', want github-release or image-factory" ;;
+  esac
+  [ -z "${NODE_IP[$_h]:-}" ] || die "inventory: '${_h}' appears twice"
+  NODE_IP[$_h]="$_ip"; NODE_ROLE[$_h]="$_role"; NODE_TYPE[$_h]="$_type"
+  NODE_IMAGE_SOURCE[$_h]="$_src"; NODE_IMAGE_FILE[$_h]="$_file"; NODE_IMAGE_SCHEMATIC[$_h]="$_sch"
+  ALL_HOSTS+=("$_h"); ALL_IPS+=("$_ip")
+  if [ "$_role" = controlplane ]; then CP_HOSTS+=("$_h"); CP_IPS+=("$_ip")
+  else                                 WORKER_HOSTS+=("$_h"); WORKER_IPS+=("$_ip"); fi
+done < <(yq -r '.nodes[] | [.host, .ip, .role, .type, .imageSource, .imageFile, (.imageSchematic // "")] | join("|")' "$INVENTORY")
+
+[ "${#CP_HOSTS[@]}" -gt 0 ] || die "inventory: no node has role controlplane, so there is no cluster to build"
+[ "$(printf '%s\n' "${ALL_IPS[@]}" | sort -u | grep -c .)" -eq "${#ALL_IPS[@]}" ] \
+  || die "inventory: two nodes share an IP"
+
+# installer_ref_for <host>: the installer image `talosctl upgrade` writes to that node. The ONE place the two
+# image sources are resolved, so the flasher and the upgrade cannot disagree about where a node's bits come from.
+installer_ref_for() {
+  local h="$1"
+  case "${NODE_IMAGE_SOURCE[$h]:-}" in
+    github-release) printf '%s:%s\n' "$TALOS_IMAGE_REPO" "$TALOS_IMAGE_RELEASE" ;;
+    image-factory)  printf '%s/metal-installer/%s:%s\n' "$FACTORY_HOST" "$(factory_schematic_id "${NODE_IMAGE_SCHEMATIC[$h]}")" "$TALOS_VERSION" ;;
+    *) die "unknown node '${h}': inventory.yaml has ${ALL_HOSTS[*]}" ;;
+  esac
+}
+
+# factory_schematic_id <repo-relative path>: POST the extension set, get the id that addresses both the raw
+# image and the installer built from it. Idempotent server-side, so there is no id to pin and none to go stale.
+_SCHEMATIC_ID=""
+factory_schematic_id() {
+  [ -n "$_SCHEMATIC_ID" ] && { printf '%s\n' "$_SCHEMATIC_ID"; return 0; }
+  local f="${REPO_ROOT}/${1}"
+  [ -f "$f" ] || die "missing schematic ${f} (inventory points at it)"
+  require curl
+  _SCHEMATIC_ID="$(curl -fsS -X POST --data-binary "@${f}" "https://${FACTORY_HOST}/schematics" \
+                   | yq -r '.id // ""')" || die "could not reach https://${FACTORY_HOST}/schematics"
+  [ -n "$_SCHEMATIC_ID" ] || die "${FACTORY_HOST} returned no schematic id for ${f}"
+  printf '%s\n' "$_SCHEMATIC_ID"
 }
 
 # Line-surgical edits, NOT `yq -i`: yq rewrites the whole document (collapses comment alignment, drops blank

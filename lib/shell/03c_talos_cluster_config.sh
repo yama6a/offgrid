@@ -1,12 +1,22 @@
 #!/usr/bin/env bash
-# Brings up the Talos control-plane cluster from NVMes already flashed (03a) and booted into maintenance at
-# their router-reserved IPs. Generated configs land in secrets/, which the talosctl container mounts as
-# /work so every call sees the same files.
+# Renders the Talos machine config from inventory.yaml + versions.env + .env, and applies it. Generated configs
+# land in secrets/, which the talosctl container mounts as /work so every call sees the same files.
+#
+# Two modes, differing ONLY in how the render is applied:
+#   (default)   nodes must be in MAINTENANCE. Applies insecurely, bootstraps etcd, writes the kubeconfig.
+#               This is first bring-up, or a rebuild after DANGEROUS_reset_talos_cluster.sh.
+#   --reapply   nodes must already be RUNNING. Applies over the Talos API with --mode auto, and never
+#               bootstraps. This is how a config change reaches a live cluster without wiping it.
+#
+# A worker gets a strict subset of the control-plane config: no VIP, no certSANs, no etcd tuning, and no
+# bootstrap. Which one a node gets comes from its `role` in inventory.yaml, so adding a worker is not a
+# separate operation, it is just another node in the list.
 #
 # Requires: docker with host networking enabled.
 set -euo pipefail
 
-# Config (CLUSTER_*, CLUSTER_NODES) in .env; EXPECT_*/INSTALL_DISK/IFACE/TALOSCTL_VERSION in lib/shell/common.sh.
+# CLUSTER_* in .env; EXPECT_*/INSTALL_DISK/IFACE/TALOSCTL_VERSION/installer_ref_for in lib/shell/common.sh;
+# the node list, each node's role and its hardware type in inventory.yaml.
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 source "${SCRIPT_DIR}/common.sh"
 
@@ -22,29 +32,41 @@ TALOS_SCRATCH="$(mktemp -d)"
 echo "Scratch:  ${TALOS_SCRATCH}   (throwaway render files; OS-reaped)"
 
 CLUSTER="$CLUSTER_NAME"; DISK="$INSTALL_DISK"; EPHEMERAL="$EPHEMERAL_SIZE"; VIP="$CLUSTER_VIP"; KVER="$KUBERNETES_VERSION"
-NODE_INSTANCE_TYPE="rpi5"   # node.kubernetes.io/instance-type label (nic-keeper selector); fixed to the hardware
-HOSTNAMES=(); IPS=()
-for e in "${CLUSTER_NODES[@]}"; do HOSTNAMES+=("${e%%:*}"); IPS+=("${e##*:}"); done
 
-# One optional arg: a hostname to apply to ALONE, for putting a single replaced node back into a cluster that
-# already exists (recover_node.sh). It narrows only the apply and the two waits; certSANs and the talosconfig
-# endpoints still come from the full list, or the rejoined node would trust an apiserver cert naming just
-# itself and talosctl would forget the other two. It also skips the etcd bootstrap, which creates a cluster
-# rather than joining one.
-TARGETS=("${!IPS[@]}")
+# Control-plane nodes first, so etcd exists before a worker tries to join it.
+TARGETS=("${CP_HOSTS[@]}" "${WORKER_HOSTS[@]}")
+
+# --reapply targets RUNNING nodes instead of maintenance ones; see the header.
+# The optional hostname applies to that node ALONE, for putting a replaced node back into a cluster that
+# already exists (recover_node.sh), for adding one new node, or for reapplying to just one. It narrows only the
+# apply and the waits; certSANs and the talosconfig endpoints still come from the full control-plane list, or
+# the rejoined node would trust an apiserver cert naming just itself and talosctl would forget the others. It
+# also skips the etcd bootstrap, which creates a cluster rather than joining one.
+REAPPLY=false
 JOIN_ONE=""
-if [ $# -gt 0 ]; then
-  JOIN_ONE="$1"
-  TARGETS=()
-  for i in "${!HOSTNAMES[@]}"; do [ "${HOSTNAMES[$i]}" = "$JOIN_ONE" ] && TARGETS=("$i"); done
-  [ "${#TARGETS[@]}" -eq 1 ] || die "unknown node '${JOIN_ONE}': .env CLUSTER_NODES has ${HOSTNAMES[*]}"
+while [ $# -gt 0 ]; do
+  case "$1" in
+    --reapply) REAPPLY=true; shift ;;
+    -*)        die "unknown flag: $1 (see the usage header)" ;;
+    *)         JOIN_ONE="$1"; shift ;;
+  esac
+done
+if [ -n "$JOIN_ONE" ]; then
+  [ -n "${NODE_ROLE[$JOIN_ONE]:-}" ] || die "unknown node '${JOIN_ONE}': inventory.yaml has ${ALL_HOSTS[*]}"
+  TARGETS=("$JOIN_ONE")
 fi
 
 echo "== Talos cluster setup (talosctl ${TALOSCTL_VERSION}, dockerized) =="
 echo "Cluster:  ${CLUSTER}     VIP: ${VIP}     NIC: ${IFACE}     k8s: ${KVER}"
 echo "Disk:     ${DISK}        EPHEMERAL cap: ${EPHEMERAL}"
-for i in "${!IPS[@]}"; do echo "  ${HOSTNAMES[$i]}  ->  ${IPS[$i]}"; done
-[ -n "$JOIN_ONE" ] && echo "Applying to ${JOIN_ONE} ONLY, and NOT bootstrapping etcd (single-node rejoin)"
+for h in "${TARGETS[@]}"; do
+  printf '  %-12s %-16s %-13s %s\n' "$h" "${NODE_IP[$h]}" "${NODE_ROLE[$h]}" "${NODE_TYPE[$h]}"
+done
+if [ "$REAPPLY" = true ]; then
+  echo "Mode:     REAPPLY to running nodes (--mode auto), NOT bootstrapping etcd"
+elif [ -n "$JOIN_ONE" ]; then
+  echo "Mode:     joining ${JOIN_ONE} ONLY, from maintenance, NOT bootstrapping etcd"
+fi
 echo "Output:   ${OUTDIR}"
 
 # Bakes a machine.registries auth into the CP patch, so the kubelet authenticates EVERY pull from GHCR on
@@ -96,13 +118,31 @@ talosctl gen config "${CLUSTER}" "https://${VIP}:6443" \
 # throwaway one to scratch so the secrets dir keeps only durable creds.
 mv "${OUTDIR}/controlplane.yaml" "${TALOS_SCRATCH}/controlplane.yaml"
 
-# 2. Cluster-wide control-plane patch: VIP on the wired NIC, schedulable CP, certSANs
-CERTSANS="$(printf '      - %s\n' "${VIP}" "${IPS[@]}")"
+# The worker base, from the SAME secrets.yaml so the PKI matches. Not passed --install-image: the ref differs
+# per hardware type, so it is patched per node at apply time instead.
+if [ "${#WORKER_HOSTS[@]}" -gt 0 ]; then
+  talosctl gen config "${CLUSTER}" "https://${VIP}:6443" \
+    --with-secrets secrets.yaml \
+    --install-disk "${DISK}" \
+    --kubernetes-version "${KVER}" \
+    --output-types worker \
+    --force
+  mv "${OUTDIR}/worker.yaml" "${TALOS_SCRATCH}/worker.yaml"
+fi
+
+# Point talosctl at the real CONTROL-PLANE ips (NOT the VIP) immediately, because `gen config` above just
+# rewrote talosconfig and a freshly generated one has NO endpoints. Doing it here rather than after the apply
+# means aborting anywhere below still leaves a usable talosconfig behind. A worker cannot proxy the Talos API,
+# so it is never an endpoint; `-n <worker-ip>` still reaches it through one of these.
+talosctl config endpoint "${CP_IPS[@]}"
+talosctl config node "${CP_IPS[0]}"
+
+# 2. Cluster-wide control-plane patch: VIP on the wired NIC, schedulable CP, certSANs.
+#    certSANs name the VIP and the CONTROL-PLANE ips only: a worker serves no apiserver.
+CERTSANS="$(printf '      - %s\n' "${VIP}" "${CP_IPS[@]}")"
 cat > "${TALOS_SCRATCH}/cp-patch.yaml" <<EOF
 machine:
 ${REGISTRIES_BLOCK}
-  nodeLabels:
-    node.kubernetes.io/instance-type: ${NODE_INSTANCE_TYPE}   # nic-keeper DaemonSet selector (03_operating_system.md)
   kubelet:
     # Talos runs the kubelet in a container and does NOT auto-propagate /var/mnt mounts into it, so without
     # this bind Longhorn's pods cannot see their disk. rshared means mounts made inside the bind are visible
@@ -141,6 +181,28 @@ cluster:
 ${CERTSANS}
 EOF
 
+# 3. Worker patch: the same kubelet mounts and KubePrism, and nothing else. A worker carries no VIP (so no
+#    interfaces block either, which is what keeps a NIC name we cannot predict out of the config), no certSANs,
+#    no etcd and no CNI/proxy keys: those are control-plane bootstrap settings that a worker never reads.
+if [ "${#WORKER_HOSTS[@]}" -gt 0 ]; then
+  cat > "${TALOS_SCRATCH}/worker-patch.yaml" <<EOF
+machine:
+${REGISTRIES_BLOCK}
+  kubelet:
+    # Same bind as the control plane: Longhorn runs on every node that carries a disk, and the kubelet cannot
+    # see /var/mnt without it. See 08_storage.md.
+    extraMounts:
+      - destination: /var/mnt/longhorn
+        type: bind
+        source: /var/mnt/longhorn
+        options: [bind, rshared, rw]
+  features:
+    kubePrism:
+      enabled: true
+      port: 7445
+EOF
+fi
+
 # Cap EPHEMERAL, then let 'longhorn' take the whole remainder: no maxSize, so it claims what is left, once,
 # at provision time. See 08_storage.md.
 cat > "${TALOS_SCRATCH}/volumes.yaml" <<EOF
@@ -164,9 +226,13 @@ filesystem:
   type: xfs
 EOF
 
-# 4. Combined CP config = base + volume docs (rebuilt each run; same for all nodes)
+# 4. Combined config per role = base + the SAME volume docs (rebuilt each run). Every node carries a disk, so
+#    the volume layout does not vary by role.
 cp "${TALOS_SCRATCH}/controlplane.yaml" "${TALOS_SCRATCH}/cp.yaml"
 cat "${TALOS_SCRATCH}/volumes.yaml" >> "${TALOS_SCRATCH}/cp.yaml"
+if [ "${#WORKER_HOSTS[@]}" -gt 0 ]; then
+  cat "${TALOS_SCRATCH}/volumes.yaml" >> "${TALOS_SCRATCH}/worker.yaml"
+fi
 
 # 4b. Wait for every node to be in MAINTENANCE before applying. After a reset
 #     (DANGEROUS_reset_talos_cluster.sh / DANGEROUS_rebuild_cluster.sh) the nodes wipe + reboot
@@ -176,48 +242,118 @@ cat "${TALOS_SCRATCH}/volumes.yaml" >> "${TALOS_SCRATCH}/cp.yaml"
 #     it blocks until the node is genuinely back in maintenance. nc gates the call so we don't hang on a
 #     node mid-reboot. On a first install (straight off 03a) the nodes are already in maintenance, so
 #     this returns immediately.
-say "waiting for nodes in maintenance (up to 5 min each)..."
-for i in "${TARGETS[@]}"; do
-  ip="${IPS[$i]}"; host="${HOSTNAMES[$i]}"
-  printf '   %-8s %-15s ' "$host" "$ip"
-  deadline=$(( $(date +%s) + 300 ))
-  until nc -z -G2 "$ip" "$API_PORT" >/dev/null 2>&1 && talosctl -e "$ip" -n "$ip" version --insecure >/dev/null 2>&1; do
-    [ "$(date +%s)" -lt "$deadline" ] || { echo "TIMEOUT"; die "${ip} not in maintenance after 300s, check its console/power"; }
-    printf '.'; sleep 5
+#     In --reapply the test is the exact opposite: the node must answer SECURELY, which proves it already holds
+#     our PKI and is not sitting in maintenance waiting to be initialised.
+if [ "$REAPPLY" = true ]; then
+  say "checking the target nodes are running and hold our PKI"
+  for host in "${TARGETS[@]}"; do
+    ip="${NODE_IP[$host]}"
+    printf '   %-12s %-16s ' "$host" "$ip"
+    talosctl -e "$ip" -n "$ip" version >/dev/null 2>&1 \
+      || die "${ip} does not answer the secure API, so it is not a running node of this cluster. Drop --reapply to initialise it from maintenance."
+    echo "running"
   done
-  echo "ready"
-done
+else
+  say "waiting for nodes in maintenance (up to 5 min each)..."
+  for host in "${TARGETS[@]}"; do
+    ip="${NODE_IP[$host]}"
+    printf '   %-12s %-16s ' "$host" "$ip"
+    deadline=$(( $(date +%s) + 300 ))
+    until nc -z -G2 "$ip" "$API_PORT" >/dev/null 2>&1 && talosctl -e "$ip" -n "$ip" version --insecure >/dev/null 2>&1; do
+      [ "$(date +%s)" -lt "$deadline" ] || { echo "TIMEOUT"; die "${ip} not in maintenance after 300s. If it is already RUNNING, you want --reapply."; }
+      printf '.'; sleep 5
+    done
+    echo "ready"
+  done
+fi
+
+# 4c. Report each node's hardware while it is still in maintenance, which is the only window where it is
+#     visible before the config commits to a disk. Reports rather than asserts, because the point is to work
+#     with hardware this repo has never seen: the NIC name in particular is firmware-dependent and nothing here
+#     depends on it (a worker has no interfaces block, and the VIP node's NIC is checked by 03b). The install
+#     disk is the exception: getting that wrong writes the wrong device.
+#     Skipped in --reapply: it reads over the insecure API, which a running node refuses, and the disk it would
+#     check has already been committed to anyway.
+if [ "$REAPPLY" = false ]; then
+  for host in "${TARGETS[@]}"; do
+    ip="${NODE_IP[$host]}"
+    say "${host} (${ip}, ${NODE_TYPE[$host]}) hardware"
+    talosctl -e "$ip" -n "$ip" get cpus  --insecure 2>/dev/null | tail -n +2 | sed 's/^/   cpu   /' || true
+    talosctl -e "$ip" -n "$ip" get links --insecure 2>/dev/null | tail -n +2 | sed 's/^/   link  /' || true
+    disks="$(talosctl -e "$ip" -n "$ip" get disks --insecure 2>/dev/null || true)"
+    printf '%s\n' "$disks" | tail -n +2 | sed 's/^/   disk  /'
+    grep -qE "[[:space:]/]${EXPECT_DISK}([[:space:]]|\$)" <<< "$disks" \
+      || die "${host} has no ${EXPECT_DISK}; --install-disk ${DISK} would write a device that is not there"
+    n="$(grep -oE '[[:space:]]nvme[0-9]+n[0-9]+[[:space:]]' <<< "$disks" | wc -l | tr -d ' ')"
+    [ "${n:-0}" -le 1 ] || warn "${host} shows ${n} NVMe disks; the volume diskSelector matches on transport, so it could pick either"
+  done
+fi
 
 # 5. Apply to each node. cp.yaml/cp-patch.yaml live in the scratch dir, mounted at /scratch in the
 #    container (the rest of the paths are relative to /work). Hostname goes through the HostnameConfig
 #    document (needs Talos >= 1.12), not machine.network.hostname: gen config already ships a HostnameConfig
 #    (auto: stable), and setting both errors with "static hostname is already set in v1alpha1 config".
-for i in "${TARGETS[@]}"; do
-  ip="${IPS[$i]}"; host="${HOSTNAMES[$i]}"
-  say "applying config to ${host} (${ip})"
-  talosctl apply-config --insecure -n "${ip}" -f /scratch/cp.yaml \
-    -p @/scratch/cp-patch.yaml \
-    -p '{"apiVersion":"v1alpha1","kind":"HostnameConfig","hostname":"'"${host}"'","auto":"off"}'
+#    install.image and the instance-type label are per NODE, not per role, so they ride in their own patch:
+#    the installer ref follows the hardware type, and nic-keeper selects on the label.
+#    --reapply swaps --insecure for the authenticated API and --mode auto, which reboots only if the change
+#    needs it. It runs --dry-run first and makes you confirm, because unlike a bring-up this is being done to a
+#    cluster that is currently serving.
+apply_to() {   # apply_to <host> [extra talosctl flags...]
+  local host="$1"; shift
+  local ip="${NODE_IP[$host]}" base rpatch npatch
+  case "${NODE_ROLE[$host]}" in
+    controlplane) base="/scratch/cp.yaml";     rpatch="/scratch/cp-patch.yaml" ;;
+    worker)       base="/scratch/worker.yaml"; rpatch="/scratch/worker-patch.yaml" ;;
+  esac
+  npatch="$(printf '{"machine":{"install":{"image":"%s"},"nodeLabels":{"node.kubernetes.io/instance-type":"%s"}}}' \
+            "$(installer_ref_for "$host")" "${NODE_TYPE[$host]}")"
+  # -e is not optional on the secure path: `gen config --force` above rewrites talosconfig, and a freshly
+  # generated one carries NO endpoints (step 6 sets them, which is after this). Without it the apply dies with
+  # "failed to determine endpoints". --insecure never needed it, since that dials -n directly.
+  talosctl apply-config -e "${ip}" -n "${ip}" -f "$base" \
+    -p @"$rpatch" \
+    -p "$npatch" \
+    -p '{"apiVersion":"v1alpha1","kind":"HostnameConfig","hostname":"'"${host}"'","auto":"off"}' \
+    "$@"
+}
+
+if [ "$REAPPLY" = true ]; then
+  say "dry run: what each node WOULD do with this config"
+  for host in "${TARGETS[@]}"; do
+    echo "   --- ${host} (${NODE_IP[$host]}) ---"
+    apply_to "$host" --mode auto --dry-run 2>&1 | sed 's/^/   /'
+  done
+  # Talos provisions a volume once and, with `grow` unset as it is here, "the existing volume size is never
+  # changed". So an EPHEMERAL_SIZE edit applies to a NEW node and silently does nothing to these.
+  warn "volume sizes are fixed at provision time; changing them here reaches new nodes only, not these"
+  printf '>> apply to %d running node(s)? some changes reboot. type yes: ' "${#TARGETS[@]}"
+  read -r confirm </dev/tty 2>/dev/null || confirm=""
+  [ "$confirm" = "yes" ] || die "aborted, nothing applied"
+fi
+
+for host in "${TARGETS[@]}"; do
+  say "applying ${NODE_ROLE[$host]} config to ${host} (${NODE_IP[$host]})"
+  if [ "$REAPPLY" = true ]; then apply_to "$host" --mode auto
+  else                           apply_to "$host" --insecure
+  fi
 done
 
 # The rendered scratch (cp.yaml + controlplane.yaml + cp-patch.yaml + volumes.yaml) has now been applied to
 # every node; the nodes hold their own live config from here on. It lives in ${TALOS_SCRATCH} (an OS temp
 # dir), so there's nothing to clean up: the OS reaps it, and it never sat next to the durable creds.
 
-# 6. Point talosctl at the real node IPs (NOT the VIP)
-talosctl config endpoint "${IPS[@]}"
-talosctl config node "${IPS[0]}"
-
 # 7. Wait for every node to reboot into its configured state before bootstrapping.
 #    apply-config (maintenance mode) reboots each node; it comes back serving the API
 #    *securely* with our PKI, so a secure `version` (no --insecure) succeeding is the
 #    ready signal, a maintenance-mode node only answers --insecure. Beats guessing a
 #    fixed wait. nc gates the call so we don't hang on a node that's mid-reboot.
-say "waiting for nodes to reboot into their configured state (up to 5 min each)..."
-sleep 10   # let the reboots actually begin (avoids a false 'ready' before reboot)
-for i in "${TARGETS[@]}"; do
-  ip="${IPS[$i]}"; host="${HOSTNAMES[$i]}"
-  printf '   %-8s %-15s ' "$host" "$ip"
+#    In --reapply the same test covers both outcomes: --mode auto reboots only when the change needs it, and a
+#    node that never went away passes on the first poll.
+say "waiting for nodes to settle into their configured state (up to 5 min each)..."
+sleep 10   # let any reboot actually begin (avoids a false 'ready' before it goes down)
+for host in "${TARGETS[@]}"; do
+  ip="${NODE_IP[$host]}"
+  printf '   %-12s %-16s ' "$host" "$ip"
   deadline=$(( $(date +%s) + 300 ))
   until nc -z -G2 "$ip" "$API_PORT" >/dev/null 2>&1 && talosctl -e "$ip" -n "$ip" version >/dev/null 2>&1; do
     [ "$(date +%s)" -lt "$deadline" ] || { echo "TIMEOUT"; die "${ip} never came back, check its console/power"; }
@@ -228,14 +364,24 @@ done
 
 sleep 10
 
+if [ "$REAPPLY" = true ]; then
+  say "reapplied to ${#TARGETS[@]} node(s). Nothing was bootstrapped: the cluster was already running."
+  say "Verify: make check-health   and   make talosctl -- -n <ip> get mc v1alpha1 -o yaml"
+  exit 0
+fi
+
 if [ -n "$JOIN_ONE" ]; then
-  say "${JOIN_ONE} has its config and is rebooting into it; it joins etcd on its own."
+  if [ "${NODE_ROLE[$JOIN_ONE]}" = worker ]; then
+    say "${JOIN_ONE} has its config and is rebooting into it; its kubelet registers on its own."
+  else
+    say "${JOIN_ONE} has its config and is rebooting into it; it joins etcd on its own."
+  fi
   say "Not bootstrapping and not re-fetching the kubeconfig: this cluster already exists."
   exit 0
 fi
 
-# 8. Bootstrap etcd ONCE, on the first node only
-talosctl bootstrap -n "${IPS[0]}"
+# 8. Bootstrap etcd ONCE, on the first control-plane node only
+talosctl bootstrap -n "${CP_IPS[0]}"
 
 sleep 10
 
