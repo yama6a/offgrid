@@ -129,6 +129,31 @@ values files cannot.
 A failing image needs a multi-arch rebuild, or a `nodeAffinity` on `kubernetes.io/arch` in its chart so the
 scheduler stops offering it nodes it cannot run on.
 
+## Reset order: workers first, and finished
+
+A worker holds no Talos CA key. Its `apid` gets a server certificate signed by `trustd`, which runs only on
+control-plane nodes, on port 50001. So a worker's Talos API is alive only while at least one control-plane node
+is.
+
+So the reset order decides whether a worker survives, and getting it wrong is not recoverable over the network:
+
+- reset everything in parallel, the (faster) control-plane nodes go down first
+- the worker is still mid-sequence, its `apid` dies with `trustd` and cannot come back
+- `talosctl` retries a node that will never answer, up to its 30-minute default
+- the worker's reset never completes, so nothing on its disk is wiped
+- every reboot from there parks at `task startAllServices (1/1): service "apid" to be "up"`, forever
+
+At that point there is no API in, and Talos has no shell. The only way out is a physical reflash.
+
+`DANGEROUS_reset_talos_cluster.sh` resets `WORKER_IPS` first, waits for each to answer the MAINTENANCE api
+again, and only then resets `CP_IPS`. It waits for maintenance rather than just for the reset call to return,
+because the guarantee needed is that the worker no longer depends on the control plane at all. If any
+worker fails either check the script aborts with the control plane still up, so the node is still reachable
+and you can retry.
+
+Same reasoning orders `03e_talos_upgrade.sh` workers-first, though there the cost of getting it wrong is only
+a lost quorum rather than a reflash.
+
 ## Two things that break with a non-Pi node
 
 **Cilium L2 announcements.** `CiliumL2AnnouncementPolicy` picks the announcing node from `nodeSelector` alone,
