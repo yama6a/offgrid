@@ -132,17 +132,13 @@ if [ "$ADOPTED" = "yes" ]; then
   ok "${IP} already answers securely, so it holds our config; not re-applying"
 else
   printf '    waiting for %s in maintenance mode (up to %ss) ' "$IP" "$MAINT_WAIT"
-  deadline=$(( $(date +%s) + MAINT_WAIT ))
-  until talosctl -n "$IP" -e "$IP" version --insecure >/dev/null 2>&1; do
-    if [ "$(date +%s)" -ge "$deadline" ]; then
-      echo " TIMEOUT"
-      bad "${IP} is neither configured nor in maintenance"
-      warn "is it powered on and on the network?  arp -n ${IP}  &&  nc -vz ${IP} ${API_PORT}"
-      warn "if it has not been wiped yet, do that first: make flash-talos-nvme, or talosctl reset"
-      summary; exit 1
-    fi
-    printf '.'; sleep 5
-  done
+  if ! wait_talos_api "$IP" "$MAINT_WAIT" insecure; then
+    echo " TIMEOUT"
+    bad "${IP} is neither configured nor in maintenance"
+    warn "is it powered on and on the network?  arp -n ${IP}  &&  nc -vz ${IP} ${API_PORT}"
+    warn "if it has not been wiped yet, do that first: make flash-talos-nvme, or talosctl reset"
+    summary; exit 1
+  fi
   echo "ready"
   # 03c with a hostname applies to that node alone and skips the bootstrap, while still building certSANs and
   # the talosconfig endpoints from the full list.

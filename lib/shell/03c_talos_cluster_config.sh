@@ -258,11 +258,8 @@ else
   for host in "${TARGETS[@]}"; do
     ip="${NODE_IP[$host]}"
     printf '   %-12s %-16s ' "$host" "$ip"
-    deadline=$(( $(date +%s) + 300 ))
-    until nc -z -G2 "$ip" "$API_PORT" >/dev/null 2>&1 && talosctl -e "$ip" -n "$ip" version --insecure >/dev/null 2>&1; do
-      [ "$(date +%s)" -lt "$deadline" ] || { echo "TIMEOUT"; die "${ip} not in maintenance after 300s. If it is already RUNNING, you want --reapply."; }
-      printf '.'; sleep 5
-    done
+    wait_talos_api "$ip" 300 insecure \
+      || { echo "TIMEOUT"; die "${ip} not in maintenance after 300s. If it is already RUNNING, you want --reapply."; }
     echo "ready"
   done
 fi
@@ -354,11 +351,8 @@ sleep 10   # let any reboot actually begin (avoids a false 'ready' before it goe
 for host in "${TARGETS[@]}"; do
   ip="${NODE_IP[$host]}"
   printf '   %-12s %-16s ' "$host" "$ip"
-  deadline=$(( $(date +%s) + 300 ))
-  until nc -z -G2 "$ip" "$API_PORT" >/dev/null 2>&1 && talosctl -e "$ip" -n "$ip" version >/dev/null 2>&1; do
-    [ "$(date +%s)" -lt "$deadline" ] || { echo "TIMEOUT"; die "${ip} never came back, check its console/power"; }
-    printf '.'; sleep 5
-  done
+  wait_talos_api "$ip" 300 secure \
+    || { echo "TIMEOUT"; die "${ip} never came back, check its console/power"; }
   echo "ready"
 done
 

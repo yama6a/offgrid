@@ -27,7 +27,7 @@ SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 source "${SCRIPT_DIR}/common.sh"
 
 # ---- knobs ----
-RB_VALUES="${REPO_ROOT}/argo_apps/platform/charts/07_redis_backup/values.yaml"  # single source for bucket/prefix
+RB_VALUES="${PLATFORM_CHARTS}/07_redis_backup/values.yaml"  # single source for bucket/prefix
 SEED_NS="redis-backup"                                            # the seed runs where the sealed creds live
 SECRET_NAME="redis-backup-s3"                                     # the sealed writer creds in SEED_NS
 # renovate: datasource=docker
@@ -53,9 +53,7 @@ assert_api
 # S3 listing runs on the HOST with the .env DEPLOYER creds (read is within its s3:* on the bucket). The in-cluster
 # download uses the sealed WRITER creds already in ns redis-backup, so no host writer creds are needed.
 [ -n "$AWS_DEPLOY_ACCESS_KEY_ID" ] || die "AWS_DEPLOY_ACCESS_KEY_ID empty in .env, needed to list S3 backups"
-export AWS_ACCESS_KEY_ID="$AWS_DEPLOY_ACCESS_KEY_ID"
-export AWS_SECRET_ACCESS_KEY="$AWS_DEPLOY_SECRET_ACCESS_KEY_SECRET"
-export AWS_DEFAULT_REGION="$AWS_REGION"
+export_deploy_aws_creds
 
 BUCKET="$(yq -r '.bucket' "$RB_VALUES")"
 PREFIX="$(yq -r '.prefix' "$RB_VALUES")"

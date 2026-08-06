@@ -65,8 +65,8 @@ diskutil info "${SD_DISK}" >/dev/null 2>&1 || die "'${SD_DISK}' is not a disk"
 
 # 10. Confirm, this erases the entire card
 diskutil info "${SD_DISK}" | grep -E 'Device / Media Name|Disk Size|Removable|Protocol' || true
-read -r -p ">> ERASE ${SD_DISK} and write the EEPROM card? type YES: " confirm
-[ "${confirm}" = "YES" ] || { echo "aborted."; exit 1; }
+confirm_word_always YES "ERASE ${SD_DISK} and write the EEPROM card?" \
+  || { echo "aborted."; exit 1; }
 
 # 11. Format FAT32 (MBR scheme) and copy the payload to the card
 diskutil eraseDisk FAT32 "${SD_LABEL}" MBRFormat "${SD_DISK}"

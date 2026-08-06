@@ -63,6 +63,8 @@ SS_POD_SELECTOR="app.kubernetes.io/name=sealed-secrets"     # the controller pod
 SS_KEY_LABEL="sealedsecrets.bitnami.com/sealed-secrets-key"  # label on its key Secrets (06 backup/restore)
 MONITORING_NS="monitoring"                                   # the monitoring-stack namespace (09/krr)
 WORKLOAD_CHARTS="${REPO_ROOT}/argo_apps/workloads/charts"    # the workloads tree the recover_* scripts edit
+PLATFORM_CHARTS="${REPO_ROOT}/argo_apps/platform/charts"     # the platform tree the step scripts write values into
+TF_DIR="${REPO_ROOT}/terraform"                              # the Terraform root (13 applies it; 14-17 read its outputs)
 
 # Cannot live in a flat .env: interpolation and a derived version. The node list is in inventory.yaml, parsed
 # further down where die() exists.
@@ -230,11 +232,23 @@ ys_set_list() {
   rm -f "$tmp"
 }
 
-# Auto-yes when the caller set ASSUME_YES=true.
+# Accepts both spellings because callers pass `true` and `1` about evenly. A gate that recognised only one
+# would prompt in an unattended run, and an orchestrator with no stdin reads that as an abort.
+assume_yes() { case "${ASSUME_YES:-}" in true|1|yes|YES) return 0 ;; *) return 1 ;; esac; }
+
 confirm() {
-  [ "${ASSUME_YES:-false}" = "true" ] && return 0
+  assume_yes && return 0
   local a; read -rp "$1 [y/N]: " a; [[ "$a" =~ ^[Yy]$ ]]
 }
+
+# Destructive-action gate: make the operator type a word, because y is too easy to hit by reflex. Both return
+# non-zero on a mismatch so the caller picks its own abort message and exit code.
+#   confirm_word        <WORD> <prompt>  honours ASSUME_YES, for steps an orchestrator drives unattended
+#   confirm_word_always <WORD> <prompt>  ignores it, for the gates that wipe the cluster. An ASSUME_YES left
+#                                        over from an earlier command must never be able to skip those.
+_ask_word() { local a; read -r -p ">> ${2:+$2 }type $1 to proceed: " a; [ "$a" = "$1" ]; }
+confirm_word()        { assume_yes && return 0; _ask_word "$@"; }
+confirm_word_always() { _ask_word "$@"; }
 
 # Prints "<values-file>\t<alias>" and returns 0, or nothing and 1.
 # versionKey is the kind discriminator: postgresVersion for pg-cluster, redisVersion for redis-instance, each
@@ -293,6 +307,34 @@ use_kubeconfig() {
 }
 assert_api() { kubectl get nodes >/dev/null 2>&1 || die "kubectl can't reach the API via ${KUBECONFIG}"; }
 
+# Every sealing step's preflight. Asserts a controller pod is READY, not merely that the get succeeded:
+# `kubectl get pods -l <selector>` exits 0 when NOTHING matches, so a plain get catches an unreachable API but
+# waves through a missing controller, which then fails deep inside kubeseal instead.
+assert_sealed_secrets_ready() {
+  kubectl get pods -n "$SS_CONTROLLER_NS" -l "$SS_POD_SELECTOR" \
+      -o jsonpath='{.items[*].status.conditions[?(@.type=="Ready")].status}' 2>/dev/null | grep -q True \
+    || die "no Ready sealed-secrets controller in ns/${SS_CONTROLLER_NS}. Is the platform app 02_sealed_secrets synced?
+       kubectl -n ${SS_CONTROLLER_NS} get pods"
+}
+
+# Puts the .env DEPLOY creds where the aws CLI looks. The recover_* scripts read the backup bucket with the
+# deploy user, not the backup writer, so this is separate from read_backup_creds.
+export_deploy_aws_creds() {
+  export AWS_ACCESS_KEY_ID="$AWS_DEPLOY_ACCESS_KEY_ID"
+  export AWS_SECRET_ACCESS_KEY="$AWS_DEPLOY_SECRET_ACCESS_KEY_SECRET"
+  export AWS_DEFAULT_REGION="$AWS_REGION"
+}
+
+# The S3 backup writer creds, created by 13 and living in Terraform state, never in .env. Sets AKID + SAK.
+read_backup_creds() {
+  say "reading backup-writer creds from terraform output"
+  AKID="$(terraform -chdir="$TF_DIR" output -raw backup_access_key_id 2>/dev/null)" || true
+  SAK="$(terraform -chdir="$TF_DIR" output -raw backup_secret_access_key 2>/dev/null)" || true
+  [ -n "$AKID" ] && [ -n "$SAK" ] \
+    || die "no Terraform outputs: run 13_s3_backup_bucket.sh first (and it must have applied)"
+  ok "got writer access key id + secret from terraform"
+}
+
 # Dockerized because the macOS talosctl build is unreliable here.
 # TALOS_SCRATCH (optional): a host temp dir mounted at /scratch for throwaway render files that must be
 # container-visible but must NOT persist in the durable secrets dir. Unset means not mounted.
@@ -304,30 +346,88 @@ talosctl() {
     "ghcr.io/siderolabs/talosctl:${TALOSCTL_VERSION}" "$@"
 }
 
-# seal_secret <name> <ns> <key> <value> <outfile>: build a Secret client-side, seal it strict-scope, then
-# sanity-check the result. Emits ok/bad per check; returns non-zero only if kubeseal itself failed.
-seal_secret() {
-  local name="$1" ns="$2" key="$3" value="$4" out="$5"
+# wait_talos_api <ip> <timeout-secs> <secure|insecure> [poll-secs]: block until the node's Talos API answers,
+# printing a dot per attempt. Returns non-zero on timeout instead of dying, so each caller writes its own
+# diagnosis: "not in maintenance" and "never came back" are the same wait but very different advice.
+# insecure = maintenance mode, no talosconfig needed. nc gates the call because talosctl against a down node
+# blocks for its own timeout, which stalls the dots and makes the wait look hung.
+wait_talos_api() {
+  local ip="$1" secs="$2" mode="$3" poll="${4:-5}" deadline
+  local args=(-e "$ip" -n "$ip" version)
+  case "$mode" in
+    insecure) args+=(--insecure) ;;
+    secure)   ;;
+    *) die "wait_talos_api: mode is '${mode}', want secure or insecure" ;;
+  esac
+  deadline=$(( $(date +%s) + secs ))
+  until nc -z -G2 "$ip" "$API_PORT" >/dev/null 2>&1 && talosctl "${args[@]}" >/dev/null 2>&1; do
+    [ "$(date +%s)" -lt "$deadline" ] || return 1
+    printf '.'; sleep "$poll"
+  done
+}
+
+# kubeseal_to <outfile> [kubeseal args...]: seal stdin and write <outfile> ONLY on success. Args default to a
+# strict-scope SealedSecret manifest; pass `--raw --scope cluster-wide` for a bare ciphertext value. Every
+# sealing script goes through this.
+#
+# Feed it with `<<<` or `< <(...)`, never `producer | kubeseal_to`: the right side of a pipe is a subshell, so
+# the die below would kill only that subshell and the caller would sail on past a failed seal.
+#
+# Retried, because the controller is often still settling when a bootstrap reaches the sealing steps. And it
+# DIES rather than returning non-zero: a failed seal leaves <outfile> holding the PREVIOUS cluster's
+# ciphertext, so a caller that carried on would commit a secret the new key cannot decrypt, and that surfaces
+# only much later as an app sitting there with no Secret.
+SEAL_BACKOFF="4 8 16 32 64"   # seconds between tries; 5 retries, so 6 tries and ~2 min before giving up
+kubeseal_to() {
+  local out="$1"; shift
+  local inf err attempt=1 delay
+  [ "$#" -gt 0 ] || set -- --format yaml --scope strict
+  inf="$(mktemp)"; cat > "$inf"   # buffered to a file, not a var: --raw input must keep its bytes exactly
   mkdir -p "$(dirname "$out")"
-  if kubectl create secret generic "$name" -n "$ns" \
-        --dry-run=client -o yaml \
-        --from-literal="${key}=${value}" \
-     | kubeseal --controller-namespace "$SS_CONTROLLER_NS" --controller-name "$SS_CONTROLLER_NAME" \
-         --format yaml --scope strict > "${out}.tmp" 2>/dev/null; then
-    mv "${out}.tmp" "$out"
-    ok "SealedSecret written (overwritten if it existed)"
-  else
+  for delay in $SEAL_BACKOFF ""; do
+    if err="$(kubeseal --controller-namespace "$SS_CONTROLLER_NS" --controller-name "$SS_CONTROLLER_NAME" \
+                "$@" < "$inf" 2>&1 > "${out}.tmp")" && [ -s "${out}.tmp" ]; then
+      mv "${out}.tmp" "$out"; rm -f "$inf"
+      [ "$attempt" -gt 1 ] && ok "kubeseal succeeded on attempt ${attempt}" >&2
+      return 0
+    fi
     rm -f "${out}.tmp"
-    bad "kubeseal failed, SealedSecret NOT written (controller sealed-secrets/${SS_CONTROLLER_NS} up?)"
-    return 1
-  fi
-  if [ -s "$out" ]; then
-    grep -q 'kind: SealedSecret' "$out" && ok "output is a SealedSecret" || bad "not a SealedSecret manifest"
-    grep -q "$key" "$out"               && ok "encryptedData has ${key}" || bad "encryptedData missing ${key}"
-    grep -qF "$value" "$out" && bad "PLAINTEXT secret in output, DO NOT COMMIT" || ok "no plaintext secret in output"
-  else
-    bad "sealed output is empty/missing"
-  fi
+    [ -n "$delay" ] || break
+    # stderr, not stdout: seal_raw calls this inside a $(...) and progress on stdout would land in the ciphertext
+    warn "kubeseal attempt ${attempt} failed (${err##*$'\n'}); retrying in ${delay}s" >&2
+    sleep "$delay"
+    attempt=$((attempt + 1))
+  done
+  rm -f "$inf"
+  die "kubeseal failed ${attempt} times, last error: ${err##*$'\n'}
+       Is the controller up?  kubectl -n ${SS_CONTROLLER_NS} get pods
+       ${out} was NOT written, so it still holds the previous seal if it existed. Do NOT commit that: on a
+       rebuilt cluster the old ciphertext is undecryptable and its app comes up with no Secret at all."
+}
+
+# seal_secret <name> <ns> <outfile> <key=value>...: build a Secret client-side from any number of keys, seal it
+# strict-scope, then sanity-check the result. The ONE manifest sealer; only 14's cluster-wide raw ciphertext
+# goes elsewhere. Emits ok/bad per check, and dies via kubeseal_to if the seal cannot be made.
+seal_secret() {
+  local name="$1" ns="$2" out="$3"; shift 3
+  local pair key value manifest; local args=()
+  [ "$#" -gt 0 ] || die "seal_secret ${name}: no key=value pairs given"
+  for pair in "$@"; do
+    case "$pair" in *=*) ;; *) die "seal_secret ${name}: '${pair}' is not key=value" ;; esac
+    # An empty value would make the plaintext-leak grep below match everything and cry wolf, so reject it here.
+    [ -n "${pair#*=}" ] || die "seal_secret ${name}: key '${pair%%=*}' has an empty value"
+    args+=(--from-literal="$pair")
+  done
+  manifest="$(kubectl create secret generic "$name" -n "$ns" --dry-run=client -o yaml "${args[@]}")" \
+    || die "kubectl could not build the ${name} Secret"
+  kubeseal_to "$out" <<< "$manifest"
+  ok "sealed ${name} -> ${out} (ns ${ns}), overwritten if it existed"
+  grep -q 'kind: SealedSecret' "$out" && ok "output is a SealedSecret" || bad "not a SealedSecret manifest"
+  for pair in "$@"; do
+    key="${pair%%=*}"; value="${pair#*=}"
+    grep -q "$key"    "$out" && ok "encryptedData has ${key}" || bad "encryptedData missing ${key}"
+    grep -qF "$value" "$out" && bad "PLAINTEXT ${key} in output, DO NOT COMMIT" || ok "no plaintext ${key} in output"
+  done
 }
 
 # The caller sets STEP=0 and STEP_TOTAL=<n> once; every step goes through step()/run_step(), so adding or

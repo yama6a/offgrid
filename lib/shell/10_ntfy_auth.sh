@@ -11,7 +11,7 @@ source "${SCRIPT_DIR}/common.sh"
 
 # ---- knobs ------------------------------------------------------------------
 NTFY_NS="$MONITORING_NS"                                                          # ntfy runs beside grafana (05_ntfy)
-GRAFANA_CHART="${REPO_ROOT}/argo_apps/platform/charts/05_grafana"                 # the token is read by grafana
+GRAFANA_CHART="${PLATFORM_CHARTS}/05_grafana"                 # the token is read by grafana
 SEALED_OUT="${GRAFANA_CHART}/templates/grafana-ntfy-sealedsecret.yaml"            # sealed write token (committed)
 SECRET_NAME="grafana-ntfy"                                                        # Secret Grafana reads GF_NTFY_TOKEN from
 SECRET_KEY="token"                                                                # data key; fixed contract with 05_grafana envValueFrom
@@ -41,8 +41,7 @@ if [ -z "$NTFY_PHONE_PASSWORD_SECRET" ]; then
   say "no NTFY_PHONE_PASSWORD_SECRET -> DISABLE ntfy alerting (no phone user, drop the sealed token)"
   if [ -f "$SEALED_OUT" ]; then
     warn "this will DELETE the tracked SealedSecret ${SEALED_OUT}"
-    read -r -p ">> remove it and disable Grafana->ntfy publishing? type YES: " confirm
-    if [ "$confirm" = "YES" ]; then
+    if confirm_word_always YES "remove it and disable Grafana->ntfy publishing?"; then
       rm -f "$SEALED_OUT" && ok "SealedSecret deleted" || bad "could not delete ${SEALED_OUT}"
     else
       die "aborted, left ${SEALED_OUT} in place (set a password and re-run to (re)enable)"
@@ -84,9 +83,8 @@ TOKEN="$(nexec token add "$GRAFANA_USER" 2>/dev/null | grep -oE 'tk_[A-Za-z0-9]+
 ok "token minted"
 
 say "sealing the token into ${SECRET_NAME} (ns ${NTFY_NS})"
-kubectl get pods -n "$SS_CONTROLLER_NS" -l "$SS_POD_SELECTOR" >/dev/null 2>&1 \
-  || die "sealed-secrets controller not reachable in ns/${SS_CONTROLLER_NS}, is step 02 synced?"
-seal_secret "$SECRET_NAME" "$NTFY_NS" "$SECRET_KEY" "$TOKEN" "$SEALED_OUT"
+assert_sealed_secrets_ready
+seal_secret "$SECRET_NAME" "$NTFY_NS" "$SEALED_OUT" "${SECRET_KEY}=${TOKEN}"
 
 summary
 if [ "$FAIL" -eq 0 ]; then

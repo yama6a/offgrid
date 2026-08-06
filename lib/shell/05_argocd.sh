@@ -9,7 +9,7 @@ SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 source "${SCRIPT_DIR}/common.sh"
 
 # ---- knobs ------------------------------------------------------------------
-CHART_DIR="${REPO_ROOT}/argo_apps/platform/charts/01_argocd"    # the wrapper chart (Argo consumes it too)
+CHART_DIR="${PLATFORM_CHARTS}/01_argocd"    # the wrapper chart (Argo consumes it too)
 ROOT_APP="${REPO_ROOT}/argo_apps/root.yaml"        # the root-of-roots (recurses argo_apps/roots/)
 RELEASE="argocd"
 NS="argocd"

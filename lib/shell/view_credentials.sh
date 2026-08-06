@@ -10,7 +10,7 @@ SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 source "${SCRIPT_DIR}/common.sh"
 
 # ---- knobs ------------------------------------------------------------------
-INGRESS_VALUES="${REPO_ROOT}/argo_apps/platform/charts/06_platform_ingress/values.yaml"  # URL source of truth
+INGRESS_VALUES="${PLATFORM_CHARTS}/06_platform_ingress/values.yaml"  # URL source of truth
 RABBITMQ_NS="rabbitmq"                                                                    # broker + default-user Secret ns
 RABBITMQ_SECRET="rabbitmq-default-user"                                                   # operator-generated admin creds
 RABBITMQ_SUBDOMAIN="rabbitmq"                                                             # its host in the platform ingress

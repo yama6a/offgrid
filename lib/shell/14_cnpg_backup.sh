@@ -11,14 +11,15 @@ SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 source "${SCRIPT_DIR}/common.sh"
 
 # ---- knobs ------------------------------------------------------------------
-TF_DIR="${REPO_ROOT}/terraform"
 OVERLAY="${REPO_ROOT}/lib/helm/pg-cluster/files/backup.yaml"    # the SHARED backup overlay (single source)
 
-# One cluster-wide raw ciphertext per value (controller flags mirror common.sh's seal_secret). Cluster-wide =>
-# the same blob unseals into ANY name in ANY namespace, so we seal ONCE into the shared overlay.
+# One cluster-wide raw ciphertext per value. Cluster-wide => the same blob unseals into ANY name in ANY
+# namespace, so we seal ONCE into the shared overlay. Via common.sh's kubeseal_to for its retry, hence the
+# temp file: that helper writes to a path, and here we want the ciphertext on stdout.
 seal_raw() { # <plaintext> -> ciphertext on stdout
-  printf %s "$1" | kubeseal --controller-namespace "$SS_CONTROLLER_NS" --controller-name "$SS_CONTROLLER_NAME" \
-    --raw --scope cluster-wide 2>/dev/null
+  local f; f="$(mktemp)"
+  kubeseal_to "$f" --raw --scope cluster-wide < <(printf %s "$1")
+  cat "$f"; rm -f "$f"
 }
 
 say "prerequisites"
@@ -33,12 +34,8 @@ fi
 [ -n "$S3_BACKUP_BUCKET" ] || die "S3_BACKUP_BUCKET is empty in .env"
 ok "tools present, values file found"
 
-# 13 must have run (bucket + IAM writer created). The creds live in Terraform state, NOT .env.
-say "reading backup-writer creds from terraform output"
-AKID="$(terraform -chdir="$TF_DIR" output -raw backup_access_key_id 2>/dev/null)" || true
-SAK="$(terraform -chdir="$TF_DIR" output -raw backup_secret_access_key 2>/dev/null)" || true
-[ -n "$AKID" ] && [ -n "$SAK" ] || die "no Terraform outputs: run 13_s3_backup_bucket.sh first (and it must have applied)"
-ok "got writer access key id + secret from terraform"
+# The creds live in Terraform state, NOT .env: 13 must have run.
+read_backup_creds
 
 say "injecting bucket/region/RPO into ${OVERLAY}"
 # Barman's ObjectStore retentionPolicy must be a non-empty duration (the CRD rejects null/empty); align it to the
@@ -57,8 +54,7 @@ ys_set "$OVERLAY" "\"${CNPG_BACKUP_RPO}\""  archiveTimeout
 say "sealing S3 creds (cluster-wide) into ${OVERLAY}"
 use_kubeconfig
 assert_api
-kubectl get pods -n "$SS_CONTROLLER_NS" -l "$SS_POD_SELECTOR" >/dev/null 2>&1 \
-  || die "sealed-secrets controller not reachable in ns/${SS_CONTROLLER_NS}, is step 02 synced?"
+assert_sealed_secrets_ready
 
 SEALED_AKID="$(seal_raw "$AKID")"
 SEALED_SAK="$(seal_raw "$SAK")"

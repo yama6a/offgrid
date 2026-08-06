@@ -17,7 +17,7 @@ SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 source "${SCRIPT_DIR}/common.sh"
 
 # ---- knobs ----
-VB_VALUES="${REPO_ROOT}/argo_apps/platform/charts/08_vm_backup/values.yaml"  # single source for bucket/prefix/store URLs
+VB_VALUES="${PLATFORM_CHARTS}/08_vm_backup/values.yaml"  # single source for bucket/prefix/store URLs
 RESTORE_NS="monitoring"                                          # the restore pod runs where the sealed creds + stores live
 SECRET_NAME="vm-backup-s3"                                       # the sealed writer creds in RESTORE_NS
 # renovate: datasource=docker
@@ -40,9 +40,7 @@ assert_api
 # S3 listing runs on the HOST with the .env DEPLOYER creds (read is within its s3:* on the bucket). The in-cluster
 # download uses the sealed WRITER creds already in ns monitoring, so no host writer creds are needed.
 [ -n "$AWS_DEPLOY_ACCESS_KEY_ID" ] || die "AWS_DEPLOY_ACCESS_KEY_ID empty in .env, needed to list S3 backups"
-export AWS_ACCESS_KEY_ID="$AWS_DEPLOY_ACCESS_KEY_ID"
-export AWS_SECRET_ACCESS_KEY="$AWS_DEPLOY_SECRET_ACCESS_KEY_SECRET"
-export AWS_DEFAULT_REGION="$AWS_REGION"
+export_deploy_aws_creds
 
 BUCKET="$(yq -r '.bucket' "$VB_VALUES")"
 PREFIX="$(yq -r '.prefix' "$VB_VALUES")"

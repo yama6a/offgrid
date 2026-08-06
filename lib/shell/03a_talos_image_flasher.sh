@@ -111,8 +111,8 @@ diskutil info "${DISK}" >/dev/null 2>&1 || die "'${DISK}' is not a disk"
 
 # 3. Confirm, this erases the entire drive
 diskutil info "${DISK}" | grep -E 'Device / Media Name|Disk Size|Protocol|Removable' || true
-read -r -p ">> ERASE ${DISK} and write the ${NODE_TYPE[$NODE]} Talos image (${IMAGE_FILE})? type YES: " confirm
-[ "${confirm}" = "YES" ] || { echo "aborted."; exit 1; }
+confirm_word_always YES "ERASE ${DISK} and write the ${NODE_TYPE[$NODE]} Talos image (${IMAGE_FILE})?" \
+  || { echo "aborted."; exit 1; }
 
 # 4. Unmount, then write to the raw device (/dev/rdiskN is much faster on macOS)
 RDISK="/dev/r${DISK##*/}"

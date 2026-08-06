@@ -149,10 +149,9 @@ if [ -n "${AWS_DEPLOY_ACCESS_KEY_ID:-}" ] && command -v aws >/dev/null 2>&1; the
   PREFIX="${DEST:-s3://${S3_BACKUP_BUCKET}/cnpg/${NS}/}"
   PREFIX="${PREFIX%/}/${SOURCE}/base/"
   say "Base backups in the catalog (${PREFIX})"
-  if AWS_ACCESS_KEY_ID="$AWS_DEPLOY_ACCESS_KEY_ID" AWS_SECRET_ACCESS_KEY="$AWS_DEPLOY_SECRET_ACCESS_KEY_SECRET" \
-     AWS_REGION="${AWS_REGION}" aws s3 ls "$PREFIX" 2>/dev/null | grep -q .; then
-    AWS_ACCESS_KEY_ID="$AWS_DEPLOY_ACCESS_KEY_ID" AWS_SECRET_ACCESS_KEY="$AWS_DEPLOY_SECRET_ACCESS_KEY_SECRET" \
-      AWS_REGION="${AWS_REGION}" aws s3 ls "$PREFIX" | sed 's/^/    /'
+  export_deploy_aws_creds
+  if aws s3 ls "$PREFIX" 2>/dev/null | grep -q .; then
+    aws s3 ls "$PREFIX" | sed 's/^/    /'
     ok "at least one base backup is in S3"
     RECOVERABLE="yes"
   else

@@ -16,15 +16,7 @@ SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 source "${SCRIPT_DIR}/common.sh"
 
 # ---- knobs ------------------------------------------------------------------
-TF_DIR="${REPO_ROOT}/terraform"     # the Terraform root (versions/variables/main/outputs.tf)
 ACTION="${1:-apply}"                # apply (default) | wipe | destroy
-
-confirm_or_die() { # <WORD> <warning message>
-  [ "${ASSUME_YES:-0}" = 1 ] && return 0
-  warn "$2"
-  read -r -p ">> type $1 to proceed: " c
-  [ "$c" = "$1" ] || die "aborted"
-}
 
 empty_bucket() { # delete every object; tolerant of an already-gone bucket (versioning is Disabled)
   if aws s3api head-bucket --bucket "$S3_BACKUP_BUCKET" >/dev/null 2>&1; then
@@ -47,10 +39,8 @@ fi
 [ -n "$AWS_REGION" ]       || die "AWS_REGION is empty in .env"
 [ -n "$S3_BACKUP_BUCKET" ] || die "S3_BACKUP_BUCKET is empty in .env"
 
-# Provider + CLI auth via the standard AWS_* env (never a committed tfvars).
-export AWS_ACCESS_KEY_ID="$AWS_DEPLOY_ACCESS_KEY_ID"
-export AWS_SECRET_ACCESS_KEY="$AWS_DEPLOY_SECRET_ACCESS_KEY_SECRET"
-export AWS_DEFAULT_REGION="$AWS_REGION"
+# Terraform provider + CLI auth via the standard AWS_* env (never a committed tfvars).
+export_deploy_aws_creds
 
 case "$ACTION" in
   apply)
@@ -63,14 +53,16 @@ case "$ACTION" in
     ;;
   wipe)
     require aws
-    confirm_or_die WIPE "This DELETES ALL backups in s3://${S3_BACKUP_BUCKET} (the bucket + IAM stay; Terraform untouched)."
+    warn "This DELETES ALL backups in s3://${S3_BACKUP_BUCKET} (the bucket + IAM stay; Terraform untouched)."
+    confirm_word WIPE || die "aborted"
     empty_bucket
     ;;
   destroy)
     require aws terraform
     export TF_VAR_region="$AWS_REGION" TF_VAR_bucket="$S3_BACKUP_BUCKET" \
            TF_VAR_transition_days="$S3_BACKUP_TRANSITION_DAYS" TF_VAR_retention_days="$S3_BACKUP_RETENTION_DAYS"
-    confirm_or_die DESTROY "This EMPTIES s3://${S3_BACKUP_BUCKET} AND terraform-destroys the bucket + IAM writer (all backups gone)."
+    warn "This EMPTIES s3://${S3_BACKUP_BUCKET} AND terraform-destroys the bucket + IAM writer (all backups gone)."
+    confirm_word DESTROY || die "aborted"
     empty_bucket   # force_destroy=false, so we must empty before destroy can remove the bucket
     say "terraform destroy"
     if terraform -chdir="$TF_DIR" init -input=false >/dev/null && terraform -chdir="$TF_DIR" destroy -auto-approve -input=false; then ok "destroyed"; else bad "terraform destroy failed"; fi

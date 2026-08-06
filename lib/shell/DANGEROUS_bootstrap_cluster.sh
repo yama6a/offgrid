@@ -75,8 +75,7 @@ This will BOOTSTRAP a FIRST-TIME Talos cluster on freshly-flashed nodes:
 Requires nodes in MAINTENANCE mode (03a done; 03b boot-verify is run for you below). To re-initialize
 a RUNNING cluster instead, abort and use DANGEROUS_rebuild_cluster.sh (it wipes first).
 EOF
-read -r -p ">> type BOOTSTRAP to proceed: " ans
-[ "$ans" = "BOOTSTRAP" ] || { echo "aborted (phew!)."; exit 0; }
+confirm_word_always BOOTSTRAP || { echo "aborted (phew!)."; exit 0; }
 
 say "pulling ghcr.io/siderolabs/talosctl:${TALOSCTL_VERSION} (first run only)"
 docker pull -q "ghcr.io/siderolabs/talosctl:${TALOSCTL_VERSION}" >/dev/null 2>&1 || true
@@ -87,12 +86,8 @@ docker pull -q "ghcr.io/siderolabs/talosctl:${TALOSCTL_VERSION}" >/dev/null 2>&1
 step "checking every node is in MAINTENANCE mode (fresh-init preflight)"
 for ip in "${IPS[@]}"; do
   printf '   %-15s ' "$ip"
-  deadline=$(( $(date +%s) + MAINT_TIMEOUT ))
-  until nc -z -G2 "$ip" "$API_PORT" >/dev/null 2>&1 && talosctl -e "$ip" -n "$ip" version --insecure >/dev/null 2>&1; do
-    [ "$(date +%s)" -lt "$deadline" ] || { echo "NOT IN MAINTENANCE"; \
-      die "${ip} is not answering the maintenance API within ${MAINT_TIMEOUT}s. Bootstrap needs freshly-flashed nodes in maintenance mode (03a/03b). If this is a RUNNING cluster, use DANGEROUS_rebuild_cluster.sh to wipe first."; }
-    printf '.'; sleep 3
-  done
+  wait_talos_api "$ip" "$MAINT_TIMEOUT" insecure 3 || { echo "NOT IN MAINTENANCE"; \
+    die "${ip} is not answering the maintenance API within ${MAINT_TIMEOUT}s. Bootstrap needs freshly-flashed nodes in maintenance mode (03a/03b). If this is a RUNNING cluster, use DANGEROUS_rebuild_cluster.sh to wipe first."; }
   echo "maintenance"
 done
 ok "all nodes in maintenance"

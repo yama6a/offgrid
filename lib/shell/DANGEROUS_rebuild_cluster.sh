@@ -67,8 +67,7 @@ This will DESTROY and REBUILD the entire Talos cluster:
 Have a CURRENT sealed-secrets key backup (06_backup_sealed_secrets_key.sh), else SSO won't decrypt
 until you re-seal (07_google_sso). ntfy alerting is seeded post-boot via 10_ntfy_auth regardless.
 EOF
-read -r -p ">> type REBUILD to proceed: " ans
-[ "$ans" = "REBUILD" ] || { echo "aborted (phew!)."; exit 0; }
+confirm_word_always REBUILD || { echo "aborted (phew!)."; exit 0; }
 
 step "git add + commit + push"
 git add -A

@@ -16,7 +16,7 @@ SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 source "${SCRIPT_DIR}/common.sh"
 
 # ---- knobs ----
-LH_VALUES="${REPO_ROOT}/argo_apps/platform/charts/02_longhorn/values.yaml"  # single source for the backup target
+LH_VALUES="${PLATFORM_CHARTS}/02_longhorn/values.yaml"  # single source for the backup target
 LH_NS="longhorn-system"
 RESTORE_SC="longhorn-r2-retained-with-backups"   # restored PV/PVC use the backup class (so the restored volume keeps getting backed up)
 

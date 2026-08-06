@@ -16,8 +16,8 @@ source "${SCRIPT_DIR}/common.sh"   # dockerized talosctl() (mounts CLUSTER_DIR) 
 # Spell out which of the two it is, so the operator knows exactly what is about to go.
 S3_CLAUSE=""
 [ "${REBUILD_IN_PROGRESS:-0}" != 1 ] && S3_CLAUSE=" AND DESTROY the S3 backup bucket + all its backups + IAM"
-read -r -p ">> Destroy ENTIRE Talos cluster AND wipe ALL Longhorn/PVC data (u-longhorn)${S3_CLAUSE}? type YES: " confirm
-[ "${confirm}" = "YES" ] || { echo "skipped destruction (phew!)."; exit 0; }
+confirm_word_always YES "Destroy ENTIRE Talos cluster AND wipe ALL Longhorn/PVC data (u-longhorn)${S3_CLAUSE}?" \
+  || { echo "skipped destruction (phew!)."; exit 0; }
 
 # Every node, workers included: leaving one configured and pointed at a cluster that no longer exists is worse
 # than wiping it, because it comes back as a member of nothing and nobody notices until it is needed.

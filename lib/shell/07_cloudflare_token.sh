@@ -12,8 +12,8 @@ SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 source "${SCRIPT_DIR}/common.sh"
 
 # ---- knobs ------------------------------------------------------------------
-GW_VALUES="${REPO_ROOT}/argo_apps/platform/charts/03_gateway/values.yaml"   # source for the Secret name + key
-CM_CHART="${REPO_ROOT}/argo_apps/platform/charts/02_cert_manager"
+GW_VALUES="${PLATFORM_CHARTS}/03_gateway/values.yaml"   # source for the Secret name + key
+CM_CHART="${PLATFORM_CHARTS}/02_cert_manager"
 SEALED_OUT="${CM_CHART}/templates/cloudflare-api-token-sealedsecret.yaml"    # sealed CF token (committed)
 SEAL_NS="cert-manager"   # ClusterIssuer dns01 apiTokenSecretRef resolves in cert-manager's ns (cluster-resource ns)
 
@@ -34,8 +34,7 @@ require kubeseal kubectl yq
 use_kubeconfig
 [ -f "$GW_VALUES" ] || die "missing ${GW_VALUES} (the 03_gateway chart should ship it)"
 assert_api
-kubectl get pods -n "$SS_CONTROLLER_NS" -l "$SS_POD_SELECTOR" >/dev/null 2>&1 \
-  || die "sealed-secrets controller not reachable in ns/${SS_CONTROLLER_NS}, is step 06 synced? (kubectl -n ${SS_CONTROLLER_NS} get pods)"
+assert_sealed_secrets_ready
 ok "kubeseal/kubectl/yq present, API + sealed-secrets controller reachable"
 
 say "reading the token Secret name + key from ${GW_VALUES}"
@@ -46,7 +45,7 @@ SEAL_KEY="$(yq -r '.acme.cloudflare.apiTokenSecretKey' "$GW_VALUES" 2>/dev/null)
 ok "seal ${SEAL_NAME}/${SEAL_NS}, key ${SEAL_KEY}"
 
 say "sealing Cloudflare API token -> ${SEALED_OUT}"
-seal_secret "$SEAL_NAME" "$SEAL_NS" "$SEAL_KEY" "$CLOUDFLARE_API_TOKEN_SECRET" "$SEALED_OUT"
+seal_secret "$SEAL_NAME" "$SEAL_NS" "$SEALED_OUT" "${SEAL_KEY}=${CLOUDFLARE_API_TOKEN_SECRET}"
 
 summary
 if [ "$FAIL" -eq 0 ]; then

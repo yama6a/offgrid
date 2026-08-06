@@ -10,7 +10,7 @@ SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 source "${SCRIPT_DIR}/common.sh"
 
 # ---- knobs ------------------------------------------------------------------
-SSO_CHART="${REPO_ROOT}/argo_apps/platform/charts/04_google_sso"                 # the central google-sso chart
+SSO_CHART="${PLATFORM_CHARTS}/04_google_sso"                 # the central google-sso chart
 SSO_VALUES="${SSO_CHART}/values.yaml"                                            # oidc config + domains live here; clientID written here
 SEALED_OUT="${SSO_CHART}/templates/google-oauth-sealedsecret.yaml"              # sealed client secret (committed)
 CLIENT_SECRET_KEY="client-secret"   # the data key Envoy Gateway's OIDC clientSecret reads; not ours to choose
@@ -20,8 +20,7 @@ require kubeseal kubectl yq
 use_kubeconfig
 [ -f "$SSO_VALUES" ] || die "missing ${SSO_VALUES} (the 04_google_sso chart should ship it)"
 assert_api
-kubectl get pods -n "$SS_CONTROLLER_NS" -l "$SS_POD_SELECTOR" >/dev/null 2>&1 \
-  || die "sealed-secrets controller not reachable in ns/${SS_CONTROLLER_NS}, is step 06 synced? (kubectl -n ${SS_CONTROLLER_NS} get pods)"
+assert_sealed_secrets_ready
 ok "kubeseal/kubectl/yq present, API + sealed-secrets controller reachable"
 
 say "reading OIDC config + domains from ${SSO_VALUES}"
@@ -64,7 +63,7 @@ ys_set "$SSO_VALUES" "\"${CLIENT_ID}\"" oidc clientID
 # manifest locally; kubeseal encrypts it against THIS cluster's controller key. Strict scope binds it to
 # exactly ${SEAL_NAME}/${SEAL_NAMESPACE}. Referenced by every domain's SecurityPolicy.
 say "sealing client secret -> ${SEALED_OUT}"
-seal_secret "$SEAL_NAME" "$SEAL_NAMESPACE" "$CLIENT_SECRET_KEY" "$CLIENT_SECRET" "$SEALED_OUT"
+seal_secret "$SEAL_NAME" "$SEAL_NAMESPACE" "$SEALED_OUT" "${CLIENT_SECRET_KEY}=${CLIENT_SECRET}"
 
 summary
 if [ "$FAIL" -eq 0 ]; then

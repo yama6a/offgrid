@@ -13,7 +13,7 @@ SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 source "${SCRIPT_DIR}/common.sh"
 
 # ---- knobs ------------------------------------------------------------------
-GW_CHART="${REPO_ROOT}/argo_apps/platform/charts/03_gateway"   # the gateway wrapper chart (Argo consumes it too)
+GW_CHART="${PLATFORM_CHARTS}/03_gateway"   # the gateway wrapper chart (Argo consumes it too)
 GW_VALUES="${GW_CHART}/values.yaml"
 LIB_VALUES="${REPO_ROOT}/lib/helm/ingress/values.yaml"         # shared ingress-lib default (all consumers inherit)
 

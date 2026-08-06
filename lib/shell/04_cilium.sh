@@ -11,8 +11,8 @@ SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 source "${SCRIPT_DIR}/common.sh"
 
 # ---- knobs ------------------------------------------------------------------
-CHART_DIR="${REPO_ROOT}/argo_apps/platform/charts/00_cilium"   # the wrapper chart (Argo consumes it too)
-CRDS_CHART_DIR="${REPO_ROOT}/argo_apps/platform/charts/00_prometheus_operator_crds"  # monitoring CRDs (cilium's ServiceMonitor needs them)
+CHART_DIR="${PLATFORM_CHARTS}/00_cilium"   # the wrapper chart (Argo consumes it too)
+CRDS_CHART_DIR="${PLATFORM_CHARTS}/00_prometheus_operator_crds"  # monitoring CRDs (cilium's ServiceMonitor needs them)
 RELEASE="cilium"
 NS="kube-system"
 API_WAIT=300                                       # secs to wait for the API to answer (the VIP lags the 03d reboot)

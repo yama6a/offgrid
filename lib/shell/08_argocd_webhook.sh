@@ -13,12 +13,12 @@ SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 source "${SCRIPT_DIR}/common.sh"
 
 # ---- knobs ------------------------------------------------------------------
-ARGOCD_CHART="${REPO_ROOT}/argo_apps/platform/charts/01_argocd"                  # the argocd wrapper chart
+ARGOCD_CHART="${PLATFORM_CHARTS}/01_argocd"                  # the argocd wrapper chart
 ARGOCD_VALUES="${ARGOCD_CHART}/values.yaml"                                      # poll cadence patched here
 # sealed webhook secret (committed): a wave-3 app of its own, NOT the wave-1 argocd chart above. A SealedSecret
 # in that chart aborts the cold-boot argocd install before the sealed-secrets CRD exists (wave 2). See its Chart.yaml.
-SEALED_OUT="${REPO_ROOT}/argo_apps/platform/charts/03_argocd_webhook_secret/templates/argocd-secret-sealedsecret.yaml"
-INGRESS_VALUES="${REPO_ROOT}/argo_apps/platform/charts/06_platform_ingress/values.yaml"  # source of the argocd host
+SEALED_OUT="${PLATFORM_CHARTS}/03_argocd_webhook_secret/templates/argocd-secret-sealedsecret.yaml"
+INGRESS_VALUES="${PLATFORM_CHARTS}/06_platform_ingress/values.yaml"  # source of the argocd host
 SEAL_NAME="argocd-secret"           # ArgoCD reads webhook.github.secret ONLY from the Secret named argocd-secret
 SEAL_NAMESPACE="argocd"
 WEBHOOK_KEY="webhook.github.secret"  # the argocd-secret data key ArgoCD's GitHub webhook handler reads
@@ -30,8 +30,7 @@ use_kubeconfig
 [ -f "$ARGOCD_VALUES" ]  || die "missing ${ARGOCD_VALUES} (the 01_argocd chart should ship it)"
 [ -f "$INGRESS_VALUES" ] || die "missing ${INGRESS_VALUES} (the 06_platform_ingress chart should ship it)"
 assert_api
-kubectl get pods -n "$SS_CONTROLLER_NS" -l "$SS_POD_SELECTOR" >/dev/null 2>&1 \
-  || die "sealed-secrets controller not reachable in ns/${SS_CONTROLLER_NS}, is it synced? (kubectl -n ${SS_CONTROLLER_NS} get pods)"
+assert_sealed_secrets_ready
 ok "kubeseal/kubectl/yq/openssl present, API + sealed-secrets controller reachable"
 
 say "poll cadence from .env POLL_SYNC_ENABLED=${POLL_SYNC_ENABLED}"
@@ -54,13 +53,13 @@ else
 fi
 [ -n "$WEBHOOK_SECRET" ] || die "webhook secret is empty"
 
-# Reuse the shared seal_secret helper (single key, strict scope, sanity checks), then decorate the generated
+# Reuse the shared seal_secret helper (strict scope, sanity checks), then decorate the generated
 # template so the controller MERGES into argocd-secret instead of replacing it:
 #   - sealedsecrets.bitnami.com/patch: "true"  -> merge webhook.github.secret in, KEEP server.secretkey
 #   - app.kubernetes.io/part-of: argocd         -> the label ArgoCD's secret informer selects on
 # The patch annotation must ALSO be on the LIVE argocd-secret for the first merge (step 4 / 05_argocd.sh).
 say "sealing ${WEBHOOK_KEY} -> ${SEALED_OUT}"
-seal_secret "$SEAL_NAME" "$SEAL_NAMESPACE" "$WEBHOOK_KEY" "$WEBHOOK_SECRET" "$SEALED_OUT"
+seal_secret "$SEAL_NAME" "$SEAL_NAMESPACE" "$SEALED_OUT" "${WEBHOOK_KEY}=${WEBHOOK_SECRET}"
 if [ -s "$SEALED_OUT" ]; then   # yq -i is fine here, unlike on hand-written values: kubeseal rewrites this file whole every run
   if yq -i '.spec.template.metadata.annotations."sealedsecrets.bitnami.com/patch" = "true"
           | .spec.template.metadata.labels."app.kubernetes.io/part-of" = "argocd"' "$SEALED_OUT"; then
