@@ -309,3 +309,4 @@ MIT. See [LICENSE](LICENSE).
 - read and shorten all md files.
 - which workloads should have HARD anti-affinity rules instead of soft ones?
 - should we keep the nic-keeper? Run in prod for a while and see if it ever triggers. If it never triggers, remove it.
+- talos and OS logs should get streamed to VL. 
