@@ -32,6 +32,68 @@ victoria-logs-collector:
     # above matches pod_name, not a label, so turning this off does not affect it.
     includePodLabels: false
 
+  # The pod is not on the host network, so its own hostname is the POD name. This is the only way a
+  # file-collected line can say which node it came from.
+  env:
+    - name: NODE_NAME
+      valueFrom:
+        fieldRef:
+          fieldPath: spec.nodeName
+
+  # The NODE's own logs, not the containers'. Talos persists every system service to /var/log/<service>.log,
+  # kernel/dmesg included, and the chart already hostPath-mounts /var/log read-only. Needs Talos >=1.12: older
+  # releases keep service logs in an in-memory ring buffer and write no files at all.
+  fileCollector:
+      # Top-level glob only, so it takes the Talos files and not /var/log/{pods,containers}, which the container
+      # collector above already reads. Rotation renames to <service>.log.1, which the glob skips and the
+      # collector follows to the end before switching, so a rotation neither duplicates nor drops lines.
+    - glob: /var/log/*.log
+      # The Linux audit subsystem, one record per syscall it watches: ~340MB a DAY per node against 4.4MB for
+      # every container log combined, and it would fill the 30Gi store well inside the 60d retention. Nothing
+      # here reads it and `talosctl logs auditd` still does. Taking it in anyway needs a bigger PVC AND a way to
+      # trim the records, not just deleting this line.
+      excludeGlob: /var/log/auditd.log
+      # controller-runtime and dns-resolve-cache colour their level, so without this the escape sequences land
+      # in `_msg` as literal text and every search has to work around them.
+      decolorizeFields: _msg
+      # The node goes in `node`, NOT in `hostname`: the collector always injects its own `hostname` field, and a
+      # second one from here makes VictoriaLogs reject the whole line ("stream tags must be sorted in
+      # alphabetical order ... skipping the log entry"), which is silent loss, visible only in the vlsingle log.
+      # So `hostname` stays as-is and holds the collector POD's name, which is of no use here.
+      extraFields: '{"source":"talos","node":"%{NODE_NAME}"}' # `source:talos` separates node from container logs
+      # The chart's default. Spelled out because the entries below set their own, and the chart pads the
+      # earlier positions with an EMPTY value to keep the flags aligned, which switches `_msg` mapping off for
+      # this glob: every etcd and kubelet line would arrive as "missing _msg field".
+      msgField: message,msg,log
+      # Replaces the default (hostname + file). Leaving the pod name in the stream would mint a new stream on
+      # every collector restart.
+      streamFields: node,file
+
+      # Hubble's DROPPED-flow export, turned on in 00_cilium. One JSON flow per line: which pod, port and
+      # identity got denied, which the `drop` METRIC cannot tell you. Query `source:hubble`.
+    - glob: /var/run/cilium/hubble/drops.log
+      extraFields: '{"source":"hubble","node":"%{NODE_NAME}"}'
+      msgField: flow.drop_reason_desc # the flow JSON has no message key, so _msg would read "missing _msg field"
+      streamFields: node,file
+
+      # The kube-apiserver audit log: who changed what. Talos has it on by DEFAULT, at ~1GB a day per node,
+      # which is why 03c narrows the policy first; this only collects what survives it. The exact filename,
+      # NOT a *.log glob: rotation renames to kube-apiserver-<timestamp>.log, and a glob would re-ingest every
+      # rotated file whole.
+    - glob: /var/log/audit/kube/kube-apiserver.log
+      extraFields: '{"source":"kube-audit","node":"%{NODE_NAME}"}'
+      msgField: requestURI # audit events have no message key either; the URI is the readable summary
+      streamFields: node,file
+
+  # For the hubble drop log above. /var/log is mounted by the chart already, /var/run/cilium is not.
+  extraVolumes:
+    - name: hubble-flowlogs
+      hostPath: {path: /var/run/cilium/hubble, type: DirectoryOrCreate}
+  extraVolumeMounts:
+    - name: hubble-flowlogs
+      mountPath: /var/run/cilium/hubble
+      readOnly: true
+
   # Logs are wanted from EVERY node whatever its role or condition, so tolerate every taint rather than trying
   # to enumerate them.
   tolerations:

@@ -11,8 +11,8 @@ Ingress and SSO for each UI live in [07_ingress.md](07_ingress.md); storage clas
 ## VictoriaMetrics and VictoriaLogs
 
 vmagent (a Deployment, `selectAllByDefault`) scrapes everything into a `VMSingle`. A `victoria-logs-collector`
-DaemonSet on all 3 nodes remote-writes to a `VLSingle`. The VM operator reconciles the VM* and VL* CRs and
-converts prometheus-operator objects.
+DaemonSet on every node remote-writes to a `VLSingle`: container logs plus the node's own Talos logs. The VM
+operator reconciles the VM* and VL* CRs and converts prometheus-operator objects.
 
 | | VMSingle (metrics) | VLSingle (logs) |
 |---|---|---|
@@ -24,6 +24,111 @@ converts prometheus-operator objects.
 
 Both are operator CRs, so one operator covers everything. The logs store is a `VLSingle`, not the standalone logs
 chart. Metrics start fresh, with no `vmctl` backfill.
+
+### What lands in VictoriaLogs
+
+One DaemonSet reads four things off each node's filesystem, all into the same store:
+
+| Source | Where | Query it by |
+|---|---|---|
+| container logs | `/var/log/pods` | `kubernetes.pod_namespace`, `kubernetes.pod_name`, `kubernetes.container_name` |
+| Talos node logs | `/var/log/*.log` | `source:talos`, `node`, `file` (e.g. `/var/log/kubelet.log`) |
+| dropped network flows | `/var/run/cilium/hubble/drops.log` | `source:hubble`, `node` |
+| kube-apiserver audit | `/var/log/audit/kube/kube-apiserver.log` | `source:kube-audit`, `node`, `verb`, `user.username` |
+
+Talos writes each system service to `/var/log/<service>.log` and rotates at 5MiB, keeping one `.log.1`, and
+`dmesg` is just the service named `kernel`. So `kernel`, `kubelet`, `etcd`, `containerd`, `cri`, `machined`,
+`controller-runtime`, `dns-resolve-cache`, `apid`, `trustd`, `udevd`, `early-startup` and `ext-iscsid` are all
+plain files that the collector's `fileCollector` glob tails, no extra component. This is a Talos >=1.12 feature:
+before that, service logs lived only in an in-memory ring buffer, and the usual answer was a Vector DaemonSet fed
+by `machine.logging.destinations` over a socket. We do not do that, and no machine config is involved.
+
+`auditd.log` is the ONE file excluded, and it is not close: measured at ~340MB a day per node, against 4.4MB for
+every container log in the cluster combined. Reason and how to reconsider are in `05_victoria_logs/values.yaml`.
+Everything else is quiet, ~1.5MB a day per node in steady state, with the boot burst on top.
+
+Reading the result:
+
+- **`node`, not `hostname`.** File-collected lines also carry a `hostname` field, which is the collector POD's
+  name, not the node's. Ignore it. `node` is stamped from the downward API. Why it cannot just be `hostname` is
+  in `05_victoria_logs/values.yaml`.
+- **A JSON line keeps its own fields.** etcd and kubelet arrive with their real `_time` (kubelet's float
+  epoch-millis included) and etcd with a `level`, so etcd DOES count toward the `high-error-log-rate` alert.
+  `kernel`, `machined` and the others are text: `_msg` whole, `_time` is the collection time, and their in-line
+  timestamp is just text, not a queryable field.
+- **First rollout backfills.** With no checkpoint the collector reads each file from the START, so whatever is
+  on disk arrives at once, a few MB per node, text lines all stamped with that moment.
+
+Two things it does not cover, both by design:
+
+- **Boot before the collector.** Nothing ships until `/var/log` mounts and the pod starts, so the early-boot
+  kernel lines only reach VL after the fact, once. They do survive on disk across a reboot, which the old ring
+  buffer did not, so the previous boot is still readable with `talosctl logs kernel` or `talosctl dmesg`.
+- **A node that cannot mount its disk** logs nowhere. Reaching it needs `machine.logging.destinations` pushing
+  over the network, which is the reason to add Vector if it ever becomes worth it.
+
+### Dropped flows: which CiliumNetworkPolicy denied it
+
+Every app carries a hand-written default-deny CNP, so the usual failure is a connection that just hangs. The
+`drop` Hubble METRIC counts those, but a count does not say which pod, port or identity was denied.
+
+`hubble.export.dynamic` in `00_cilium` writes one JSON line per `DROPPED` flow to `/var/run/cilium/hubble/drops.log`
+on the node, and the collector tails it. `source:hubble | flow.source.namespace:x` is the query that turns a
+mystery timeout into the missing rule. `_msg` is the drop reason, the rest of the flow stays as fields.
+
+Two things to keep in mind:
+
+- **`dynamic`, not `static`**, so editing the filters reloads inside the running agents. A `static` exporter is
+  bound to the agent's lifetime and needs a DaemonSet roll.
+- **A policy mistake is a drop storm.** The file rotates at 10MB keeping one backup, so the node cannot fill,
+  but the collector will happily ship what it reads before rotation. If a rollout floods the store, fix the
+  policy; do not widen the filter.
+
+### The kube-apiserver audit log
+
+Talos turns audit logging on by DEFAULT and at `level: Metadata` for everything, which measured ~1GB a day per
+node here, and none of it was being read. `03c` narrows the policy instead of collecting it raw:
+
+- reads (`get`, `list`, `watch`) are dropped: the bulk of the volume,
+- `leases` are dropped: leader election plus kubelet heartbeats were 65% of the events on their own,
+- `events` and `nodes/status`, `pods/status` are dropped: controller churn that metrics already cover,
+- everything else stays at `Metadata`, which is ~1.5% of the default and is the part worth having: who created,
+  changed or deleted what, plus every `tokenreviews`/`subjectaccessreviews` result.
+
+Never raise a rule to `Request` or `RequestResponse`: those log Secret and ConfigMap CONTENTS into a store that
+is not encrypted and is exported to S3.
+
+If `source:kube-audit` stays empty after all that, suspect SELinux before the collector: Talos labels this
+directory `kube_log_t` and the container-log paths `containers_log_t`, so this is the one file source the
+collector reads that it has no precedent for. A denial shows up in `talosctl dmesg` as an AVC line.
+
+`_msg` is the request URI; `verb`, `user.username`, `objectRef.*` and `responseStatus.code` are all queryable
+fields. `_time` is collection time, not the request time, because the file collector has no time-field knob and
+audit events name theirs `stageTimestamp`. Note that Talos keeps up to 10 rotated 100MB audit files on the
+node's EPHEMERAL volume whatever the policy says.
+
+The policy only takes effect once the machine config is pushed, and pushing it restarts the apiserver static
+pod on every node it touches:
+
+```bash
+make reapply-talos-config NODE=pi-cp1   # one node, dry-run + confirm
+kubectl get --raw /healthz              # it came back? then do the rest
+make reapply-talos-config
+```
+
+Do it one node first, because an audit policy the apiserver REJECTS stops it from starting, and the no-NODE form
+walks every control-plane node in one loop. Better still, validate the policy before pushing anything:
+
+```bash
+# policy.yaml = just the auditPolicy body from 03c. The key is only there because the apiserver checks it
+# BEFORE the policy and any earlier error hides the one you are looking for.
+openssl genrsa -out /tmp/sa.key 2048
+docker run --rm -v /tmp:/x registry.k8s.io/kube-apiserver:v1.36.3 kube-apiserver \
+  --audit-policy-file=/x/policy.yaml --etcd-servers=http://127.0.0.1:2379 \
+  --service-account-issuer=x --service-account-key-file=/x/sa.key --service-account-signing-key-file=/x/sa.key
+# "error creating storage factory: context deadline exceeded"  -> policy parsed, it just cannot reach etcd. Good.
+# "loading audit policy file: rules[0].level: Unsupported ..."  -> policy is broken. Do NOT apply.
+```
 
 ### Why VictoriaMetrics over Prometheus
 
@@ -37,9 +142,10 @@ its VM equivalent with no rewrites. That is why the `monitoring.coreos.com` CRDs
 `00_prometheus_operator_crds` app is the converter's source and is not removable.
 
 Scrape sources across the platform (node-exporter, kube-state-metrics, cilium and hubble, argocd, cert-manager,
-longhorn, sealed-secrets, cnpg, metrics-server) all reach vmagent this way. The converter stamps ArgoCD-ignore
-annotations on its output (`operator.prometheus_converter_add_argocd_ignore_annotations: true`) so ArgoCD never
-fights or prunes operator-created objects.
+longhorn, sealed-secrets, cnpg, metrics-server, ntfy, blackbox-exporter) all reach vmagent this way. The
+converter stamps ArgoCD-ignore annotations on its output
+(`operator.prometheus_converter_add_argocd_ignore_annotations: true`) so ArgoCD never fights or prunes
+operator-created objects.
 
 ### Grafana owns alerting, and the cluster carries NO rule CRs
 
@@ -69,6 +175,34 @@ kube-controller-manager (:10257), kube-scheduler (:10259), both https with a sel
 config, applied OUTSIDE ArgoCD because they are machine-level rather than a chart. They are scraped by static
 `endpoints` at the control-plane node IPs. kube-proxy is off, since Cilium replaces it. The high-cardinality
 apiserver and etcd histograms are dropped via `metricRelabelConfigs`.
+
+### Synthetic probes, so an unvisited host still reports
+
+`05_blackbox_exporter` (wave 5) fetches every ingress host once a minute over its PUBLIC name, and vmagent
+scrapes the result via two `VMProbe` CRs. This exists because the `ingress-http` alerts read Envoy's own
+counters: they need real traffic, so a host with a dead backend and no visitors stays green until someone tries
+it. One probe covers DNS, the router's hairpin back to the LoadBalancer, the served certificate and the route.
+
+Targets are split by what an anonymous GET should get back, and the module asserts exactly that:
+
+| Module | Expects | Covers |
+|---|---|---|
+| `http_sso_302` | 302 with `Location:` matching `accounts.google.com` | the 8 SSO'd hosts. The edge and that the SecurityPolicy is still attached |
+| `http_open_200` | 200 | `ntfy` and the open sample workload, which have no SSO, so the app itself answers |
+
+Consequences worth knowing:
+
+- **An SSO'd host is only checked as far as the edge.** Google answers before the request reaches the backend,
+  so the probe cannot see the app behind it. That is not fixable without a login; those backends have their
+  own alerts.
+- **The `Location` check is the point**, not the 302. A route that lost its SecurityPolicy would still 302
+  somewhere. Pinning the destination is what turns "SSO fell off and this is now public" into a firing alert
+  rather than a pass.
+- **Pick a path that returns 200** for an open host. Both current ones serve 404 at `/`, which a probe cannot
+  tell apart from a broken route, hence `/v1/health` and `/users`.
+- **Adding a host to `06_platform_ingress` does NOT add a probe.** The target lists in the blackbox chart's
+  `values.yaml` are hand-maintained, deliberately: the expected status code is a per-host decision, not
+  something derivable from the ingress definition.
 
 ### Deleting a store is a two-commit dance
 
@@ -112,10 +246,15 @@ overflow. Exact drops and reasons live as comments where the config does.
 - **Postgres settings.** `lib/helm/pg-cluster` keeps only `cnpg_pg_settings_setting{name="max_connections"}`,
   which the connection-saturation alert reads, and drops the rest of the per-setting config dump. Alerting on
   another Postgres setting means widening that keep-list.
-- **Logs are not a storage problem**: ~5800 lines and 4.4MB a day against a 30Gi PVC, 75% of it the three
-  sample workloads. `rabbitmq-messaging-topology-operator` was ~55% before `logLevel: error`; that drops WARN
-  too, but failures still surface via CR status conditions, k8s events and the `rabbitmq-health` alerts. The
-  collector drops its own logs pre-read, via `excludeFilter` in `05_victoria_logs`.
+- **Logs are not a storage problem**: ~5800 lines and 4.4MB a day of CONTAINER logs against a 30Gi PVC, 75% of
+  it the three sample workloads. `rabbitmq-messaging-topology-operator` was ~55% before `logLevel: error`; that
+  drops WARN too, but failures still surface via CR status conditions, k8s events and the `rabbitmq-health`
+  alerts. The collector drops its own logs pre-read, via `excludeFilter` in `05_victoria_logs`. Talos node logs
+  add ~1.5MB a day per node on top of that, once `auditd.log` is excluded; to cut another loud service, add its
+  path to `excludeGlob` beside the `fileCollector` glob, which drops it by FILE, there is no per-line filter.
+- **The two file sources that can surprise you are the audit log and Hubble drops.** Both are filtered at the
+  SOURCE rather than in the collector: the audit policy in `03c`, the `includeFilters` in `00_cilium`. Widening
+  either is what would actually fill the store, so size it before you do.
 - **Envoy access logs show `_msg` as "missing _msg field"** and are fine. Envoy Gateway's default JSON access
   log has no key the collector maps to `_msg`; the structured fields are all queryable (`response_code:500`).
   Fixing it needs a `telemetry.accessLog` block on the EnvoyProxy CR, cosmetic only.
@@ -216,7 +355,9 @@ priority 5 and 4. Severity is a function of what broke times how important the c
 | Anomaly or about-to-break: degraded, saturating, restarting, near-limit, capacity | warning | warning |
 
 So `critical` fires only when an outage-class alert triggers on a component that opted in with the label.
-Everything else is `warning`. `Node NotReady` is the one static `critical`, being infra rather than a workload.
+Everything else is `warning`. Two static `critical`s sit outside the model, both node-level rather than
+workload: `Node NotReady`, and `node-undervoltage`, which is the one hardware fault that corrupts data instead
+of just slowing things down.
 
 Opting a component in means putting `alert-criticality: critical` on it, and it must reach the object the firing
 alert keys off:
@@ -270,6 +411,9 @@ One rule per problem, all cluster-wide. Each group is its own file under `05_gra
 | `redis-health` | `redis-down` dynamic, rest warning | `-memory-high` and `-memory-critical` (percent of maxmemory; noeviction, so writes fail near 100%), `-rejected-connections` and `-connections-high`, `-rdb-save-failing` and `-aof-write-failing`, `-fragmentation-high` |
 | `backups` | warning, 2 critical | redis, longhorn, CNPG and VM/VL backup failure plus staleness, and the two unrecoverable-catalog rules. See [13_backups.md](13_backups.md) |
 | `orphan` | warning | orphaned and untracked CNPG, Redis and VM/VL CRs, plus the exporter deadman. See [13_backups.md](13_backups.md) |
+| `node-hardware` | warning, `node-undervoltage` static critical | `node-undervoltage` (the Pi's own 5V alarm), `node-soc-temp-high` (>80C, where the SoC starts throttling), `node-nvme-temp-high` (>70C) |
+| `probes` | warning | `ingress-probe-failing`, `ingress-cert-expiring` (<14d, on the cert actually SERVED). See "Synthetic probes" |
+| `alerting-path` | warning | `alert-delivery-failing`: Grafana's webhook to ntfy is erroring, so alerts fire and nobody is told |
 
 Notes worth knowing:
 
@@ -332,6 +476,23 @@ sealed token, disabling ntfy alerting.
 This is the only imperative script for this step; the VM stack and metrics-server are pure GitOps. Grafana's
 `grafana.ops.example.com` edge is served by the platform-ingress app at wave 6, not the `05_grafana` chart. See
 [07_ingress.md](07_ingress.md).
+
+#### Watching the alert path itself
+
+The whole chain is Grafana to ntfy to phone, and if it breaks, the thing that would tell you is the thing that
+broke. Three partial checks, all in-cluster, because there is deliberately nothing off-cluster to escalate to:
+
+- ntfy runs a SEPARATE metrics listener on `:9091` (`metrics-listen-http`), scraped by a PodMonitor. Separate so
+  `/metrics` is never served on the internet-facing `:8080`. A dead ntfy is then just a down scrape target, so
+  `target-down` covers it and no ntfy-specific rule is needed.
+- `alert-delivery-failing` counts Grafana's failed webhook POSTs, which catches a wrong topic, an expired token
+  or a rejected publish while ntfy itself is up and healthy.
+- the blackbox probe of `https://ntfy.ops.example.com/v1/health` covers the public edge the PHONE uses, which
+  the in-cluster Service path never touches.
+
+None of these can page you, since they all depend on the path they are testing. They fire in the Grafana UI and
+resolve on their own, so what you actually get is an after-the-fact record. Closing that gap needs a receiver
+outside the cluster.
 
 ### Verify
 

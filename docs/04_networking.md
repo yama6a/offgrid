@@ -87,6 +87,11 @@ it surfaces:
 - UI. The `hubble-ui` Service is exposed as `hubble.<domain>` by the platform-ingress app (wave 6) and gated by
   Google SSO: a plain cross-namespace edge into `kube-system`, in the same `hosts` list and `04_google_sso`
   allowlist as the other platform UIs. See [07_ingress.md](07_ingress.md).
+- Dropped-flow logs. `hubble.export.dynamic` writes one JSON line per `DROPPED` flow to a file on the node, which
+  the log collector ships to VictoriaLogs (`source:hubble`). The `drop` metric above only counts drops; the log
+  names the pod, port and identity, which is what you need to find the missing rule in a default-deny CNP. The
+  live equivalent is `hubble observe --verdict DROPPED`, but that only shows what is happening right now. See
+  [09_monitoring.md](09_monitoring.md).
 
 ## Network policy
 

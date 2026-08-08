@@ -78,6 +78,25 @@ cilium:
         enabled: true
       dashboards:
         enabled: true
+    export:
+      # Writes one JSON line per DROPPED flow to a file on the node, which the log collector tails into
+      # VictoriaLogs (see 05_victoria_logs). The `drop` metric above only counts drops; this says WHICH pod,
+      # port and identity, which is what turns a mystery timeout into a named CiliumNetworkPolicy gap.
+      # `dynamic` (not `static`) so editing the filters below reloads in the running agents, no DaemonSet roll.
+      dynamic:
+        enabled: true
+        config:
+          createConfigMap: true
+          content:
+            - name: drops
+              filePath: /var/run/cilium/hubble/drops.log
+              includeFilters:
+                - verdict: [DROPPED]
+              excludeFilters: []
+              # Caps what a policy mistake can cost: a drop storm rotates in place instead of filling the
+              # node's /var/run and taking the node with it. The collector ships what it reads before rotation.
+              fileMaxSizeMb: 10
+              fileMaxBackups: 1
   cgroup:
     # Talos already mounts the unified cgroup v2 tree at /sys/fs/cgroup on the host, cilium doesn't need to mount its own
     # (which would double-mount and fail). Instead, we point the agent at the host's tree.

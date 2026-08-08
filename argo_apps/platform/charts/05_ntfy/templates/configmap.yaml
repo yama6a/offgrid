@@ -16,6 +16,7 @@ data:
   server.yml: |
     base-url: {{ .Values.baseUrl | quote }}
     listen-http: ":8080"                 # non-root; same port end-to-end (Service / netpol / edge)
+    metrics-listen-http: ":9091"         # a SEPARATE listener, so /metrics is not served on the internet-facing :8080
     behind-proxy: true                   # Envoy edge fronts it -> trust X-Forwarded-For (real visitor IP / rate-limit)
     auth-file: "/var/lib/ntfy/user.db"   # SQLite users/tokens/ACL, on the Longhorn PVC
     auth-default-access: "deny-all"      # private: every topic denied unless an ACL grants it (seeded by 10_ntfy_auth.sh)

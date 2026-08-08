@@ -177,6 +177,27 @@ cluster:
   proxy:
     disabled: true        # Cilium kube-proxy replacement; L2 needs it
   apiServer:
+    # Talos audit-logs at Metadata for EVERYTHING by default, which is ~1GB a day per node, mostly leader-election
+    # leases and controller reads. Narrowed to writes of real objects, which is ~1.5% of that and is the part
+    # worth keeping: who created, changed or deleted what. The collector ships it, see 09_monitoring.md.
+    auditPolicy:
+      apiVersion: audit.k8s.io/v1
+      kind: Policy
+      omitStages: [RequestReceived] # one event per request instead of two
+      rules:
+        - level: None
+          verbs: [get, list, watch] # reads: the bulk of the volume, and nothing here reads them
+        - level: None
+          resources:
+            - group: coordination.k8s.io
+              resources: [leases] # leader election + kubelet heartbeats: 65% of the default log on its own
+        - level: None
+          resources:
+            - group: ""
+              resources: [events, nodes/status, pods/status] # controller status churn, already in metrics
+            - group: events.k8s.io
+              resources: [events]
+        - level: Metadata # never Request or RequestResponse: those log Secret and ConfigMap contents
     certSANs:
 ${CERTSANS}
 EOF

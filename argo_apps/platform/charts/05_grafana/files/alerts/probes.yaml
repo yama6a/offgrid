@@ -1,0 +1,84 @@
+# Synthetic HTTPS probes from 05_blackbox_exporter. Unlike the ingress-http group, which reads Envoy's own
+# counters and therefore needs real traffic, these fire on a host nobody has visited.
+apiVersion: 1
+groups:
+  - orgId: 1
+    name: probes
+    folder: raspi-cluster
+    interval: 1m
+    rules:
+      - uid: ingress-probe-failing
+        title: Ingress host probe failing
+        condition: C
+        for: 5m
+        labels: {severity: warning}
+        annotations:
+          summary: 'Probe of {{ $labels.instance }} is failing'
+          description: |
+            - the URL did not answer as expected: DNS, the LoadBalancer, the cert, the route or the backend
+            - on an SSO host, a 200 instead of the 302 means the SecurityPolicy came off and it is now PUBLIC
+            - probe_http_status_code in vmui shows what it actually answered
+            - kubectl get httproute,gateway -A ; kubectl -n gateway get certificate
+        noDataState: OK
+        execErrState: KeepLast
+        data:
+          - refId: A
+            relativeTimeRange: {from: 600, to: 0}
+            datasourceUid: VictoriaMetrics
+            model:
+              refId: A
+              instant: true
+              expr: 'max by (instance) (probe_success == bool 0)'
+          - refId: B
+            relativeTimeRange: {from: 600, to: 0}
+            datasourceUid: __expr__
+            model: {refId: B, type: reduce, expression: A, reducer: last, datasource: {type: __expr__, uid: __expr__}}
+          - refId: C
+            relativeTimeRange: {from: 600, to: 0}
+            datasourceUid: __expr__
+            model:
+              refId: C
+              type: threshold
+              expression: B
+              datasource: {type: __expr__, uid: __expr__}
+              conditions:
+                - type: query
+                  evaluator: {type: gt, params: [0]}
+      # Checked at the edge, on the cert actually being SERVED. cert-manager renews at 2/3 of a 90d lifetime,
+      # so 14 days left means renewal has been failing for a fortnight.
+      - uid: ingress-cert-expiring
+        title: Ingress certificate expiring
+        condition: C
+        for: 1h
+        labels: {severity: warning}
+        annotations:
+          summary: 'TLS cert for {{ $labels.instance }} expires in under 14 days'
+          description: |
+            - cert-manager should have renewed by now; it has not
+            - kubectl -n gateway get certificate,certificaterequest,order,challenge
+            - DNS-01 needs the Cloudflare token to still be valid: make configure-cloudflare-token
+        noDataState: OK
+        execErrState: KeepLast
+        data:
+          - refId: A
+            relativeTimeRange: {from: 600, to: 0}
+            datasourceUid: VictoriaMetrics
+            model:
+              refId: A
+              instant: true
+              expr: 'min by (instance) ((probe_ssl_earliest_cert_expiry - time()) / 86400)'
+          - refId: B
+            relativeTimeRange: {from: 600, to: 0}
+            datasourceUid: __expr__
+            model: {refId: B, type: reduce, expression: A, reducer: last, datasource: {type: __expr__, uid: __expr__}}
+          - refId: C
+            relativeTimeRange: {from: 600, to: 0}
+            datasourceUid: __expr__
+            model:
+              refId: C
+              type: threshold
+              expression: B
+              datasource: {type: __expr__, uid: __expr__}
+              conditions:
+                - type: query
+                  evaluator: {type: lt, params: [14]}

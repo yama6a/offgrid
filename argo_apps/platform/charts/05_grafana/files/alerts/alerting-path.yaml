@@ -1,0 +1,50 @@
+# Whether an alert can still reach the phone. Grafana counts every webhook POST to ntfy, so a rejected or
+# refused publish is visible here even while ntfy itself is up and scraping fine.
+# ntfy being DOWN needs no rule of its own: it is a scrape target, so `target-down` in cluster-health covers it.
+# Read both with the obvious caveat: a broken notification path cannot notify you that it is broken. These fire
+# in the Grafana UI and resolve once delivery works, which is the most an in-cluster check can do.
+apiVersion: 1
+groups:
+  - orgId: 1
+    name: alerting-path
+    folder: raspi-cluster
+    interval: 1m
+    rules:
+      - uid: alert-delivery-failing
+        title: Alert delivery to ntfy failing
+        condition: C
+        for: 5m
+        labels: {severity: warning}
+        annotations:
+          summary: 'Grafana cannot deliver alerts via {{ $labels.integration }}'
+          description: |
+            - the webhook to ntfy is erroring, so alerts fire but nobody is told
+            - kubectl -n monitoring logs deploy/grafana | grep -i notif
+            - check the ntfy topic + token still match: make configure-ntfy-auth, then reseal
+            - verify from a pod: curl -H "Authorization: Bearer <token>" https://ntfy.ops.example.com/<topic>
+        noDataState: OK
+        execErrState: KeepLast
+        data:
+          - refId: A
+            relativeTimeRange: {from: 900, to: 0}
+            datasourceUid: VictoriaMetrics
+            model:
+              refId: A
+              instant: true
+              # The series only materialises on the FIRST failure, which is why noDataState is OK.
+              expr: 'sum by (integration) (increase(grafana_alerting_notification_requests_failed_total[10m]))'
+          - refId: B
+            relativeTimeRange: {from: 900, to: 0}
+            datasourceUid: __expr__
+            model: {refId: B, type: reduce, expression: A, reducer: last, datasource: {type: __expr__, uid: __expr__}}
+          - refId: C
+            relativeTimeRange: {from: 900, to: 0}
+            datasourceUid: __expr__
+            model:
+              refId: C
+              type: threshold
+              expression: B
+              datasource: {type: __expr__, uid: __expr__}
+              conditions:
+                - type: query
+                  evaluator: {type: gt, params: [0]}

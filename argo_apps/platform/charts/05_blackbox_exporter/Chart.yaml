@@ -1,0 +1,10 @@
+apiVersion: v2
+name: blackbox-exporter
+description: Synthetic HTTPS probes of every ingress host, run from inside the cluster through the public name, plus the VMProbe targets vmagent scrapes them with.
+type: application
+version: 0.1.0 # local chart, never bump version
+
+dependencies:
+  - name: prometheus-blackbox-exporter
+    version: "11.16.0"
+    repository: https://prometheus-community.github.io/helm-charts

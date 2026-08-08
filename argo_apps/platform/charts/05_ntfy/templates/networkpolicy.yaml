@@ -30,6 +30,14 @@ spec:
       toPorts:
         - ports:
             - { port: "8080", protocol: TCP }
+    # vmagent scrapes the metrics listener. Separate port, so the edge above can never reach /metrics.
+    - fromEndpoints:
+        - matchLabels:
+            k8s:io.kubernetes.pod.namespace: monitoring
+            app.kubernetes.io/name: vmagent
+      toPorts:
+        - ports:
+            - { port: "9091", protocol: TCP }
   egress:
     # DNS (CoreDNS).
     - toEndpoints:

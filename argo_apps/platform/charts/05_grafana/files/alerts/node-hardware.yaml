@@ -1,0 +1,124 @@
+# Pi 5 hardware health from node-exporter's hwmon collector. `instance` is the node IP:9100, node-exporter has
+# no `node` label. All three are silent by default: nothing else in the stack looks at temperature or voltage.
+apiVersion: 1
+groups:
+  - orgId: 1
+    name: node-hardware
+    folder: raspi-cluster
+    interval: 1m
+    rules:
+      # The Pi's own firmware raises this when the 5V rail sags, usually a weak PSU or a thin USB-C cable, and
+      # it is the one hardware fault here that corrupts data rather than just slowing things down.
+      - uid: node-undervoltage
+        title: Node undervoltage
+        condition: C
+        for: 5m
+        labels: {severity: critical}
+        annotations:
+          summary: 'Node {{ $labels.instance }} reports undervoltage'
+          description: |
+            - the Pi's 5V rail dropped below spec: the CPU throttles hard and writes can corrupt
+            - swap the PSU for the official 27W one and use a short, thick USB-C cable
+            - unplug bus-powered peripherals; an NVMe HAT plus a spinning disk exceeds the budget
+            - talosctl -n {{ $labels.instance }} dmesg | grep -i voltage
+        noDataState: OK
+        execErrState: KeepLast
+        data:
+          - refId: A
+            relativeTimeRange: {from: 600, to: 0}
+            datasourceUid: VictoriaMetrics
+            model:
+              refId: A
+              instant: true
+              expr: 'max by (instance) (node_hwmon_in_lcrit_alarm_volts)'
+          - refId: B
+            relativeTimeRange: {from: 600, to: 0}
+            datasourceUid: __expr__
+            model: {refId: B, type: reduce, expression: A, reducer: last, datasource: {type: __expr__, uid: __expr__}}
+          - refId: C
+            relativeTimeRange: {from: 600, to: 0}
+            datasourceUid: __expr__
+            model:
+              refId: C
+              type: threshold
+              expression: B
+              datasource: {type: __expr__, uid: __expr__}
+              conditions:
+                - type: query
+                  evaluator: {type: gt, params: [0]}
+      # The SoC starts throttling at 80C and hard-caps at 85C. Sustained throttling stalls etcd fsync, which
+      # shows up as leader elections rather than as anything obviously thermal.
+      - uid: node-soc-temp-high
+        title: Node SoC temperature high
+        condition: C
+        for: 10m
+        labels: {severity: warning}
+        annotations:
+          summary: 'Node {{ $labels.instance }} SoC above 80C'
+          description: |
+            - the Pi 5 throttles from 80C: expect slow etcd and spurious leader elections next
+            - check the fan is spinning and the heatsink is seated; clear dust from the case
+            - a node in a stack runs hotter than the one on top, compare the three
+        noDataState: OK
+        execErrState: KeepLast
+        data:
+          - refId: A
+            relativeTimeRange: {from: 600, to: 0}
+            datasourceUid: VictoriaMetrics
+            model:
+              refId: A
+              instant: true
+              expr: 'max by (instance) (node_hwmon_temp_celsius{chip="thermal_thermal_zone0"})'
+          - refId: B
+            relativeTimeRange: {from: 600, to: 0}
+            datasourceUid: __expr__
+            model: {refId: B, type: reduce, expression: A, reducer: last, datasource: {type: __expr__, uid: __expr__}}
+          - refId: C
+            relativeTimeRange: {from: 600, to: 0}
+            datasourceUid: __expr__
+            model:
+              refId: C
+              type: threshold
+              expression: B
+              datasource: {type: __expr__, uid: __expr__}
+              conditions:
+                - type: query
+                  evaluator: {type: gt, params: [80]}
+      # 70C is early warning: the drive publishes its own critical point in node_hwmon_temp_crit_celsius, which
+      # reads ~85C, and a hot NVMe throttles writes, which lands on etcd and every Longhorn replica at once.
+      - uid: node-nvme-temp-high
+        title: Node NVMe temperature high
+        condition: C
+        for: 15m
+        labels: {severity: warning}
+        annotations:
+          summary: 'NVMe on {{ $labels.instance }} above 70C'
+          description: |
+            - the drive throttles writes well before its ~85C critical point: etcd and Longhorn both suffer
+            - add a heatsink to the NVMe or improve airflow over the HAT
+            - compare with the SoC temperature: if both are high it is case airflow, not the drive
+        noDataState: OK
+        execErrState: KeepLast
+        data:
+          - refId: A
+            relativeTimeRange: {from: 600, to: 0}
+            datasourceUid: VictoriaMetrics
+            model:
+              refId: A
+              instant: true
+              expr: 'max by (instance) (node_hwmon_temp_celsius{chip=~"nvme_.*"})'
+          - refId: B
+            relativeTimeRange: {from: 600, to: 0}
+            datasourceUid: __expr__
+            model: {refId: B, type: reduce, expression: A, reducer: last, datasource: {type: __expr__, uid: __expr__}}
+          - refId: C
+            relativeTimeRange: {from: 600, to: 0}
+            datasourceUid: __expr__
+            model:
+              refId: C
+              type: threshold
+              expression: B
+              datasource: {type: __expr__, uid: __expr__}
+              conditions:
+                - type: query
+                  evaluator: {type: gt, params: [70]}

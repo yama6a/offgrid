@@ -72,6 +72,7 @@ and in `versions.env`; those files are the source of truth.
 | **Observability** | VictoriaMetrics + VictoriaLogs | PromQL-compatible metrics and logs backend (over Prometheus/Mimir + Loki, for 8 GB nodes).                   |
 | **Observability** | Grafana                        | Dashboards + alerting, provisioned as code. No persistence layer.                                            |
 | **Alerting**      | ntfy                           | Self-hosted mobile push. No email.                                                                           |
+| **Observability** | blackbox-exporter              | Probes every ingress host over its public name, so a broken edge is caught without traffic.                  |
 | **Workloads**     | sample-user-manager + 2 more   | Demo app + Postgres + Redis + messaging + open/SSO ingress: the template for real workloads.                 |
 
 Four shared charts under `lib/helm/` are consumed as `file://` dependencies, all `type: application`:
@@ -305,8 +306,8 @@ MIT. See [LICENSE](LICENSE).
 - look at all latest error logs in the last 24h. noise or actionable? if noise, or suggest how to deal with them.-
 - check all logs/hubble for network policies in audit more that are dropping traffic that should be allowed
 - check log accumulation and metrics cardinality, drop noise so storage doesn't grow meaninglessly
-- 
+
 - read and shorten all md files.
+- better dashboards
 - which workloads should have HARD anti-affinity rules instead of soft ones?
-- should we keep the nic-keeper? Run in prod for a while and see if it ever triggers. If it never triggers, remove it.
-- talos and OS logs should get streamed to VL. 
+- should we keep the nic-keeper? Run in prod for a while and see if it ever triggers. If it never triggers, remove it. 
