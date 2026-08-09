@@ -1,0 +1,298 @@
+{
+  "uid": "persistent-volumes",
+  "title": "Persistent Volumes",
+  "description": "Every PVC in the cluster at once: current capacity/used/free, plus used space and used inodes over time in absolute and percent terms.",
+  "tags": ["storage", "longhorn"],
+  "timezone": "browser",
+  "schemaVersion": 41,
+  "version": 1,
+  "editable": true,
+  "graphTooltip": 1,
+  "refresh": "1m",
+  "time": {
+    "from": "now-24h",
+    "to": "now"
+  },
+  "templating": {
+    "list": []
+  },
+  "panels": [
+    {
+      "type": "table",
+      "title": "Volumes",
+      "id": 1,
+      "gridPos": {"h": 10, "w": 24, "x": 0, "y": 0},
+      "datasource": {"type": "prometheus", "uid": "VictoriaMetrics"},
+      "description": "Current state of every PVC the kubelet reports stats for. A PVC bound to no running pod emits nothing and is absent here.",
+      "targets": [
+        {
+          "refId": "A",
+          "datasource": {"type": "prometheus", "uid": "VictoriaMetrics"},
+          "expr": "max by (namespace, persistentvolumeclaim) (kubelet_volume_stats_capacity_bytes)",
+          "instant": true,
+          "range": false,
+          "format": "table"
+        },
+        {
+          "refId": "B",
+          "datasource": {"type": "prometheus", "uid": "VictoriaMetrics"},
+          "expr": "max by (namespace, persistentvolumeclaim) (kubelet_volume_stats_used_bytes)",
+          "instant": true,
+          "range": false,
+          "format": "table"
+        },
+        {
+          "refId": "C",
+          "datasource": {"type": "prometheus", "uid": "VictoriaMetrics"},
+          "expr": "max by (namespace, persistentvolumeclaim) (kubelet_volume_stats_available_bytes)",
+          "instant": true,
+          "range": false,
+          "format": "table"
+        },
+        {
+          "refId": "D",
+          "datasource": {"type": "prometheus", "uid": "VictoriaMetrics"},
+          "expr": "100 * max by (namespace, persistentvolumeclaim) (kubelet_volume_stats_used_bytes) / max by (namespace, persistentvolumeclaim) (kubelet_volume_stats_capacity_bytes)",
+          "instant": true,
+          "range": false,
+          "format": "table"
+        },
+        {
+          "refId": "E",
+          "datasource": {"type": "prometheus", "uid": "VictoriaMetrics"},
+          "expr": "100 * max by (namespace, persistentvolumeclaim) (kubelet_volume_stats_inodes_used) / max by (namespace, persistentvolumeclaim) (kubelet_volume_stats_inodes)",
+          "instant": true,
+          "range": false,
+          "format": "table"
+        }
+      ],
+      "transformations": [
+        {
+          "id": "joinByField",
+          "options": {"byField": "persistentvolumeclaim", "mode": "outer"}
+        },
+        {
+          "id": "organize",
+          "options": {
+            "excludeByName": {
+              "Time 1": true, "Time 2": true, "Time 3": true, "Time 4": true, "Time 5": true,
+              "namespace 2": true, "namespace 3": true, "namespace 4": true, "namespace 5": true
+            },
+            "renameByName": {
+              "namespace 1": "Namespace",
+              "persistentvolumeclaim": "PVC",
+              "Value #A": "Capacity",
+              "Value #B": "Used",
+              "Value #C": "Free",
+              "Value #D": "Used %",
+              "Value #E": "Inodes %"
+            },
+            "indexByName": {
+              "namespace 1": 0,
+              "persistentvolumeclaim": 1,
+              "Value #A": 2,
+              "Value #B": 3,
+              "Value #C": 4,
+              "Value #D": 5,
+              "Value #E": 6
+            }
+          }
+        },
+        {
+          "id": "sortBy",
+          "options": {"sort": [{"field": "Used %", "desc": true}]}
+        }
+      ],
+      "fieldConfig": {
+        "defaults": {
+          "unit": "bytes",
+          "custom": {"align": "auto", "cellOptions": {"type": "auto"}},
+          "thresholds": {"mode": "absolute", "steps": [{"color": "text", "value": null}]}
+        },
+        "overrides": [
+          {
+            "matcher": {"id": "byName", "options": "Used %"},
+            "properties": [
+              {"id": "unit", "value": "percent"},
+              {"id": "decimals", "value": 1},
+              {"id": "custom.cellOptions", "value": {"type": "color-background", "mode": "gradient"}},
+              {"id": "thresholds", "value": {"mode": "absolute", "steps": [
+                {"color": "green", "value": null},
+                {"color": "yellow", "value": 75},
+                {"color": "red", "value": 90}
+              ]}}
+            ]
+          },
+          {
+            "matcher": {"id": "byName", "options": "Inodes %"},
+            "properties": [
+              {"id": "unit", "value": "percent"},
+              {"id": "decimals", "value": 1},
+              {"id": "custom.cellOptions", "value": {"type": "color-background", "mode": "gradient"}},
+              {"id": "thresholds", "value": {"mode": "absolute", "steps": [
+                {"color": "green", "value": null},
+                {"color": "yellow", "value": 75},
+                {"color": "red", "value": 90}
+              ]}}
+            ]
+          },
+          {
+            "matcher": {"id": "byName", "options": "Namespace"},
+            "properties": [{"id": "unit", "value": "string"}]
+          },
+          {
+            "matcher": {"id": "byName", "options": "PVC"},
+            "properties": [{"id": "unit", "value": "string"}]
+          }
+        ]
+      },
+      "options": {
+        "showHeader": true,
+        "footer": {"show": true, "reducer": ["sum"], "fields": ["Capacity", "Used", "Free"]}
+      }
+    },
+    {
+      "type": "timeseries",
+      "title": "Space used",
+      "id": 2,
+      "gridPos": {"h": 10, "w": 12, "x": 0, "y": 10},
+      "datasource": {"type": "prometheus", "uid": "VictoriaMetrics"},
+      "targets": [
+        {
+          "refId": "A",
+          "datasource": {"type": "prometheus", "uid": "VictoriaMetrics"},
+          "expr": "max by (namespace, persistentvolumeclaim) (kubelet_volume_stats_used_bytes)",
+          "legendFormat": "{{namespace}}/{{persistentvolumeclaim}}",
+          "range": true
+        }
+      ],
+      "fieldConfig": {
+        "defaults": {
+          "unit": "bytes",
+          "min": 0,
+          "custom": {
+            "drawStyle": "line",
+            "lineWidth": 1,
+            "fillOpacity": 0,
+            "showPoints": "never",
+            "spanNulls": false,
+            "axisSoftMin": 0
+          }
+        },
+        "overrides": []
+      },
+      "options": {
+        "tooltip": {"mode": "multi", "sort": "desc"},
+        "legend": {"showLegend": true, "displayMode": "table", "placement": "bottom", "calcs": ["lastNotNull", "max"], "sortBy": "Last *", "sortDesc": true}
+      }
+    },
+    {
+      "type": "timeseries",
+      "title": "Space used %",
+      "id": 3,
+      "gridPos": {"h": 10, "w": 12, "x": 12, "y": 10},
+      "datasource": {"type": "prometheus", "uid": "VictoriaMetrics"},
+      "targets": [
+        {
+          "refId": "A",
+          "datasource": {"type": "prometheus", "uid": "VictoriaMetrics"},
+          "expr": "100 * max by (namespace, persistentvolumeclaim) (kubelet_volume_stats_used_bytes) / max by (namespace, persistentvolumeclaim) (kubelet_volume_stats_capacity_bytes)",
+          "legendFormat": "{{namespace}}/{{persistentvolumeclaim}}",
+          "range": true
+        }
+      ],
+      "fieldConfig": {
+        "defaults": {
+          "unit": "percent",
+          "decimals": 1,
+          "min": 0,
+          "custom": {
+            "drawStyle": "line",
+            "lineWidth": 1,
+            "fillOpacity": 0,
+            "showPoints": "never",
+            "spanNulls": false,
+            "axisSoftMin": 0
+          }
+        },
+        "overrides": []
+      },
+      "options": {
+        "tooltip": {"mode": "multi", "sort": "desc"},
+        "legend": {"showLegend": true, "displayMode": "table", "placement": "bottom", "calcs": ["lastNotNull", "max"], "sortBy": "Last *", "sortDesc": true}
+      }
+    },
+    {
+      "type": "timeseries",
+      "title": "Inodes used",
+      "id": 4,
+      "gridPos": {"h": 10, "w": 12, "x": 0, "y": 20},
+      "datasource": {"type": "prometheus", "uid": "VictoriaMetrics"},
+      "targets": [
+        {
+          "refId": "A",
+          "datasource": {"type": "prometheus", "uid": "VictoriaMetrics"},
+          "expr": "max by (namespace, persistentvolumeclaim) (kubelet_volume_stats_inodes_used)",
+          "legendFormat": "{{namespace}}/{{persistentvolumeclaim}}",
+          "range": true
+        }
+      ],
+      "fieldConfig": {
+        "defaults": {
+          "unit": "short",
+          "decimals": 0,
+          "min": 0,
+          "custom": {
+            "drawStyle": "line",
+            "lineWidth": 1,
+            "fillOpacity": 0,
+            "showPoints": "never",
+            "spanNulls": false,
+            "axisSoftMin": 0
+          }
+        },
+        "overrides": []
+      },
+      "options": {
+        "tooltip": {"mode": "multi", "sort": "desc"},
+        "legend": {"showLegend": true, "displayMode": "table", "placement": "bottom", "calcs": ["lastNotNull", "max"], "sortBy": "Last *", "sortDesc": true}
+      }
+    },
+    {
+      "type": "timeseries",
+      "title": "Inodes used %",
+      "id": 5,
+      "gridPos": {"h": 10, "w": 12, "x": 12, "y": 20},
+      "datasource": {"type": "prometheus", "uid": "VictoriaMetrics"},
+      "targets": [
+        {
+          "refId": "A",
+          "datasource": {"type": "prometheus", "uid": "VictoriaMetrics"},
+          "expr": "100 * max by (namespace, persistentvolumeclaim) (kubelet_volume_stats_inodes_used) / max by (namespace, persistentvolumeclaim) (kubelet_volume_stats_inodes)",
+          "legendFormat": "{{namespace}}/{{persistentvolumeclaim}}",
+          "range": true
+        }
+      ],
+      "fieldConfig": {
+        "defaults": {
+          "unit": "percent",
+          "decimals": 1,
+          "min": 0,
+          "custom": {
+            "drawStyle": "line",
+            "lineWidth": 1,
+            "fillOpacity": 0,
+            "showPoints": "never",
+            "spanNulls": false,
+            "axisSoftMin": 0
+          }
+        },
+        "overrides": []
+      },
+      "options": {
+        "tooltip": {"mode": "multi", "sort": "desc"},
+        "legend": {"showLegend": true, "displayMode": "table", "placement": "bottom", "calcs": ["lastNotNull", "max"], "sortBy": "Last *", "sortDesc": true}
+      }
+    }
+  ]
+}

@@ -228,10 +228,18 @@ and disaster recovery are in [13_backups.md](13_backups.md).
   `05_grafana/files/dashboards/`, rendered by `templates/dashboards-configmaps.yaml` the same way the alert
   files are. Write a dashboard there rather than patching an upstream one: the patch has to be reapplied on
   every chart bump. `hubble` is the case that made the rule. See [04_networking.md](04_networking.md).
-- Ours so far: `hubble` (Cilium flows, [04_networking.md](04_networking.md)) and `ingress-http` (Envoy edge and
-  per-HTTPRoute HTTP, [07_ingress.md](07_ingress.md)). Both are hand-written against metrics checked to exist
-  first. An upstream dashboard assumes upstream's config: Cilium's four assume `httpV2` and context options we
-  do not all run, which is exactly how you end up with a dashboard of empty panels.
+- Ours so far: `hubble` (Cilium flows, [04_networking.md](04_networking.md)), `ingress-http` (Envoy edge and
+  per-HTTPRoute HTTP, [07_ingress.md](07_ingress.md)) and `persistent-volumes`. All hand-written against metrics
+  checked to exist first. An upstream dashboard assumes upstream's config: Cilium's four assume `httpV2` and
+  context options we do not all run, which is exactly how you end up with a dashboard of empty panels.
+- `persistent-volumes` REPLACES the stack's `persistentvolumesusage`, disabled in
+  `05_victoria_metrics_k8s_stack/values.yaml` under `defaultDashboards.dashboards`. The upstream one picks ONE
+  PVC at a time from two dropdowns and spends half its space on gauges; with 13 volumes the useful view is all of
+  them on one axis. Ours: a table of every PVC plus used-bytes, used-%, used-inodes and inode-% timeseries, each
+  `max by (namespace, persistentvolumeclaim)` so a volume moving node does not break its series. The sync-job
+  prunes the old ConfigMap on its own (`syncJob.prune` defaults true), so nothing to clean up by hand.
+- A kubelet-sourced volume panel only sees PVCs a running pod has MOUNTED. A bound-but-unused PVC emits no
+  `kubelet_volume_stats_*` at all and is simply absent, so the table can be shorter than `kubectl get pv`.
 - A ratio panel needs `or vector(0)` on the numerator, or it goes BLANK on the healthy case instead of reading
   zero, because a rate over a counter with no matching series returns nothing rather than 0. Per-series ratios
   need `or 0 * <denominator>` instead, which refills the missing series with the labels needed for the division

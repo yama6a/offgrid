@@ -181,8 +181,9 @@ victoria-metrics-k8s-stack:
     # Keys are dashboard SOURCE names (the ...-dashboard-<key> ConfigMap suffix the sync-job emits). Dropped
     # below: irrelevant here (Windows, AIX, macOS, multi-cluster) or redundant with the Views/System set we
     # keep. Kept: Kubernetes Views/System, kubelet, Networking Cluster + Namespace(Pods), node-exporter
-    # Full/Nodes, persistent-volumes, and the VictoriaMetrics dashboards.
+    # Full/Nodes, and the VictoriaMetrics dashboards.
     dashboards:
+      persistentvolumesusage: {enabled: false} # replaced by 05_grafana's own persistent-volumes.json
       etcd: {enabled: false}
       apiserver: {enabled: false}
       controller-manager: {enabled: false}
