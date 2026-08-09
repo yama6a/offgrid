@@ -110,7 +110,11 @@ cilium:
               filePath: /var/run/cilium/hubble/drops.log
               includeFilters:
                 - verdict: [DROPPED]
-              excludeFilters: []
+              # Pods run IPv6 autoconfig on startup and send a router solicitation, which an IPv4-only datapath
+              # drops. Harmless and unfixable from here, but each one still ships a ~1KB JSON line, and it is the
+              # only thing in this file most days, which buries the policy gaps the file exists to catch.
+              excludeFilters:
+                - drop_reason_desc: [UNSUPPORTED_L3_PROTOCOL]
               # Caps what a policy mistake can cost: a drop storm rotates in place instead of filling the
               # node's /var/run and taking the node with it. The collector ships what it reads before rotation.
               fileMaxSizeMb: 10
