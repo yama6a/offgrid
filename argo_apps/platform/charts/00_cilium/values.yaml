@@ -76,16 +76,19 @@ cilium:
       # A lean set of handlers, but each one needs its context options spelled out: a bare `dns` emits NO
       # source/destination/*_namespace labels at all, so a counter cannot be split by who sent the traffic,
       # and every per-namespace or per-workload panel has nothing to group on.
-      # `workload-name|reserved-identity` falls back to world/host/remote-node when a peer is not a workload.
+      # Fallback chain, first hit wins: a Deployment/StatefulSet/DaemonSet pod gives its workload name; a pod owned
+      # by an operator CRD instead (longhorn's InstanceManager, which carries most of the cluster's traffic) has NO
+      # workload, so without `pod-name` it lands in the metric with an EMPTY source and every top-N panel draws one
+      # nameless bar; `reserved-identity` then catches the peers that are not pods at all: world, host, remote-node.
       # `dns:query` adds the queried NAME as a label. Bounded here, because hubble only counts DNS that went
       # through its proxy, which is only the pods under a toFQDNs policy. Drop it if that ever stops being true.
       enabled:
-        - "dns:query;labelsContext=source_namespace,destination_namespace;sourceContext=workload-name|reserved-identity;destinationContext=workload-name|reserved-identity"
-        - "drop:labelsContext=source_namespace,destination_namespace;sourceContext=workload-name|reserved-identity;destinationContext=workload-name|reserved-identity"
-        - "tcp:labelsContext=source_namespace,destination_namespace;sourceContext=workload-name|reserved-identity;destinationContext=workload-name|reserved-identity"
-        - "flow:labelsContext=source_namespace,destination_namespace;sourceContext=workload-name|reserved-identity;destinationContext=workload-name|reserved-identity"
-        - "icmp:labelsContext=source_namespace,destination_namespace;sourceContext=workload-name|reserved-identity;destinationContext=workload-name|reserved-identity"
-        - "port-distribution:labelsContext=source_namespace,destination_namespace;sourceContext=workload-name|reserved-identity;destinationContext=workload-name|reserved-identity"
+        - "dns:query;labelsContext=source_namespace,destination_namespace;sourceContext=workload-name|pod-name|reserved-identity;destinationContext=workload-name|pod-name|reserved-identity"
+        - "drop:labelsContext=source_namespace,destination_namespace;sourceContext=workload-name|pod-name|reserved-identity;destinationContext=workload-name|pod-name|reserved-identity"
+        - "tcp:labelsContext=source_namespace,destination_namespace;sourceContext=workload-name|pod-name|reserved-identity;destinationContext=workload-name|pod-name|reserved-identity"
+        - "flow:labelsContext=source_namespace,destination_namespace;sourceContext=workload-name|pod-name|reserved-identity;destinationContext=workload-name|pod-name|reserved-identity"
+        - "icmp:labelsContext=source_namespace,destination_namespace;sourceContext=workload-name|pod-name|reserved-identity;destinationContext=workload-name|pod-name|reserved-identity"
+        - "port-distribution:labelsContext=source_namespace,destination_namespace;sourceContext=workload-name|pod-name|reserved-identity;destinationContext=workload-name|pod-name|reserved-identity"
       serviceMonitor:
         enabled: true
       dashboards:
