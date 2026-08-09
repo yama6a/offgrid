@@ -77,13 +77,27 @@ kubectl get svc nginx              # EXTERNAL-IP from your pool, reachable over 
 `hubble.enabled`, `relay` and `ui` are all true, so `hubble-relay` and `hubble-ui` run in `kube-system`. Two ways
 it surfaces:
 
-- Metrics and dashboards. `hubble.metrics` exports a lean flow set (`dns, drop, tcp, flow, icmp,
-  port-distribution`, kept small to bound the number of series on the Pis) with a `serviceMonitor`, so it reaches
-  vmagent like every other platform scrape. `hubble.metrics.dashboards.enabled: true` makes the chart emit its
-  official Hubble dashboards as `grafana_dashboard`-labelled ConfigMaps into `kube-system`, and Grafana's sidecar
-  (`searchNamespace: ALL`) imports them with no extra wiring. The same `cilium_*` metrics drive the
-  `cilium-health` Grafana alert group: agent-down, BPF-map pressure, unreachable nodes. See
+- Metrics. `hubble.metrics` exports a lean flow set (`dns, drop, tcp, flow, icmp, port-distribution`, kept small
+  to bound the number of series on the Pis) with a `serviceMonitor`, so it reaches vmagent like every other
+  platform scrape. Every handler spells out its context options
+  (`labelsContext=source_namespace,destination_namespace` plus `sourceContext`/`destinationContext` of
+  `workload-name|reserved-identity`). A bare handler name emits the counter with NO peer or namespace labels at
+  all, so nothing can be split by who sent the traffic. The same `cilium_*` metrics drive the `cilium-health`
+  Grafana alert group: agent-down, BPF-map pressure, unreachable nodes. See
   [09_monitoring.md](09_monitoring.md).
+- Dashboard. ONE first-party `hubble` dashboard, in `05_grafana/files/dashboards/hubble.json`, and
+  `hubble.metrics.dashboards.enabled: false` so the chart's own four stay out of Grafana. Theirs group every
+  panel by cilium-agent pod without printing it, so each panel draws one indistinguishable line per node; ours
+  aggregates across agents and makes the node a variable. Rows: overview, drops and would-be (`AUDIT`) drops,
+  a per-namespace talkers view, TCP/ICMP/ports, DNS.
+- What the DNS panels can see. `hubble_dns_*` only counts DNS that went through Cilium's DNS proxy, and a pod
+  is only routed through it by a policy with `toFQDNs` or L7 `dns` rules. Today that is just the two backup
+  CronJobs, so the DNS row is near-empty and NOT broken. Everything else's DNS shows up as plain UDP flows.
+- No L7 HTTP metrics. `httpV2` is off, so there is no `hubble_http_*` and no L7 row. Turning it on is not just
+  the handler: Hubble only sees HTTP for traffic an L7 `http` rule in a CiliumNetworkPolicy pulls through the
+  Envoy L7 proxy, so it costs a per-workload policy change plus a proxy hop, and for the ingress path it would
+  recount what the edge already counts. HTTP observability lives in the `ingress-http` dashboard off Envoy's own
+  metrics instead. See [07_ingress.md](07_ingress.md).
 - UI. The `hubble-ui` Service is exposed as `hubble.<domain>` by the platform-ingress app (wave 6) and gated by
   Google SSO: a plain cross-namespace edge into `kube-system`, in the same `hosts` list and `04_google_sso`
   allowlist as the other platform UIs. See [07_ingress.md](07_ingress.md).

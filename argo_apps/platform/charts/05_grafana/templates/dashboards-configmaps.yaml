@@ -1,0 +1,18 @@
+{{- /*
+One ConfigMap per file in files/dashboards/, labelled for the dashboards sidecar. Same .Files.Get-verbatim
+mechanism as the alerts: the JSON is never templated, so the Grafana `{{ label }}` legends inside stay literal.
+For dashboards we WRITE. An upstream chart's own dashboards keep shipping from that chart.
+*/ -}}
+{{- range $path, $_ := .Files.Glob "files/dashboards/*.json" }}
+---
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: grafana-dashboard-{{ base $path | trimSuffix ".json" }}
+  namespace: {{ $.Release.Namespace }}
+  labels:
+    grafana_dashboard: "1"
+data:
+  {{ base $path }}: |
+{{ $.Files.Get $path | indent 4 }}
+{{- end }}

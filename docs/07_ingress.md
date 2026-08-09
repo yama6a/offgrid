@@ -86,6 +86,32 @@ Envoy's upstream-cluster stats are labelled `envoy_cluster_name="httproute/<gw-n
 per HTTPRoute rule, so the `ingress-http` Grafana alerts (5xx and 4xx rate, p95 latency, no-healthy-upstream,
 connect failures) are per route with no extra config. See [09_monitoring.md](09_monitoring.md).
 
+### The `ingress-http` dashboard
+
+`05_grafana/files/dashboards/ingress-http.json`, uid `ingress-http`. Same metrics as the alerts, five rows:
+per-route rate/errors/latency, backend health, edge listeners, and the Google SSO handshake.
+
+This is where cluster HTTP observability lives, NOT in Hubble. Hubble's L7 HTTP metrics need `httpV2` plus an
+L7 `http` rule in a CiliumNetworkPolicy to pull matched traffic through the Envoy L7 proxy, which for the
+ingress path means a second proxy hop to recount what the edge already counts. `httpV2` stays off, and Cilium's
+bundled "L7 HTTP metrics by workload" dashboard stays out of Grafana with it. See
+[04_networking.md](04_networking.md).
+
+Three things about these metrics that read as bugs and are not:
+
+- A route's request counters only exist after its FIRST request. An idle route is absent, not zero, which is why
+  the route dropdown reads `envoy_cluster_membership_healthy` (always present, one series per configured route)
+  instead of a request counter.
+- The listener row counts everything that arrived at `:80`/`:443`, including the HTTPS redirect and every SSO
+  bounce that never reaches a backend, so it is always higher than the per-route rows. The route dropdown does
+  not filter it.
+- `oauth_unauthorized_rq` climbing is normal: that is a logged-out browser with no session cookie being sent to
+  Google. `oauth_failure` is the one that matters.
+
+The SSO panels match on the metric NAME (`envoy_securitypolicy_.+_oauth_.*`), because Envoy builds one metric
+family per SecurityPolicy and puts the policy's namespace and name in the metric name rather than a label.
+Renaming or adding a policy would silently empty a hardcoded query.
+
 ### Verify
 
 ```bash

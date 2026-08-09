@@ -223,9 +223,25 @@ and disaster recovery are in [13_backups.md](13_backups.md).
   nodes.
 - Each UI (vmui, vlogs) is exposed by the platform-ingress app at wave 6 behind Google SSO, not by its own chart.
   The Hubble UI rides the same app. See [07_ingress.md](07_ingress.md).
-- Cilium and Hubble ship Grafana dashboards: `hubble.metrics.dashboards.enabled` in `00_cilium` emits
-  `grafana_dashboard` ConfigMaps that Grafana's sidecar picks up cluster-wide. See
-  [04_networking.md](04_networking.md).
+- Dashboards come from two places. An upstream chart's own (`grafana_dashboard`-labelled ConfigMaps in ITS
+  namespace, picked up because the sidecar runs `searchNamespace: ALL`), and ours, one JSON per file in
+  `05_grafana/files/dashboards/`, rendered by `templates/dashboards-configmaps.yaml` the same way the alert
+  files are. Write a dashboard there rather than patching an upstream one: the patch has to be reapplied on
+  every chart bump. `hubble` is the case that made the rule. See [04_networking.md](04_networking.md).
+- Ours so far: `hubble` (Cilium flows, [04_networking.md](04_networking.md)) and `ingress-http` (Envoy edge and
+  per-HTTPRoute HTTP, [07_ingress.md](07_ingress.md)). Both are hand-written against metrics checked to exist
+  first. An upstream dashboard assumes upstream's config: Cilium's four assume `httpV2` and context options we
+  do not all run, which is exactly how you end up with a dashboard of empty panels.
+- A ratio panel needs `or vector(0)` on the numerator, or it goes BLANK on the healthy case instead of reading
+  zero, because a rate over a counter with no matching series returns nothing rather than 0. Per-series ratios
+  need `or 0 * <denominator>` instead, which refills the missing series with the labels needed for the division
+  to still match up. Both are in `ingress-http`'s 5xx panels.
+- vmagent's `externalLabels.cluster` collides with any exporter that emits its OWN `cluster` label. The scrape
+  keeps the target's value and renames the exported one to `exported_cluster`, silently. CNPG is the case that
+  bit us: its dashboard resolves `$cluster` from that label and then picks instances with `pod=~"$cluster-N"`, so
+  every panel read "No data" while the metrics were there the whole time. `pg-cluster`'s PodMonitor relabels
+  `exported_cluster` back over `cluster` and drops the duplicate. Check for `exported_*` first whenever a
+  third-party dashboard is empty but its metrics exist.
 
 ### Keeping the stores lean
 

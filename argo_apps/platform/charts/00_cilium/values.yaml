@@ -72,12 +72,27 @@ cilium:
         # hubble-*-certs every time. It self-heals but is unnecessary. Using `cronJob` renders a stable manifest instead.
         # We cannot use cert-manager, which is wave 2.
         method: cronJob
-    metrics: # A lean set, keeps cardinality low
-      enabled: [dns, drop, tcp, flow, icmp, port-distribution]
+    metrics:
+      # A lean set of handlers, but each one needs its context options spelled out: a bare `dns` emits NO
+      # source/destination/*_namespace labels at all, so a counter cannot be split by who sent the traffic,
+      # and every per-namespace or per-workload panel has nothing to group on.
+      # `workload-name|reserved-identity` falls back to world/host/remote-node when a peer is not a workload.
+      # `dns:query` adds the queried NAME as a label. Bounded here, because hubble only counts DNS that went
+      # through its proxy, which is only the pods under a toFQDNs policy. Drop it if that ever stops being true.
+      enabled:
+        - "dns:query;labelsContext=source_namespace,destination_namespace;sourceContext=workload-name|reserved-identity;destinationContext=workload-name|reserved-identity"
+        - "drop:labelsContext=source_namespace,destination_namespace;sourceContext=workload-name|reserved-identity;destinationContext=workload-name|reserved-identity"
+        - "tcp:labelsContext=source_namespace,destination_namespace;sourceContext=workload-name|reserved-identity;destinationContext=workload-name|reserved-identity"
+        - "flow:labelsContext=source_namespace,destination_namespace;sourceContext=workload-name|reserved-identity;destinationContext=workload-name|reserved-identity"
+        - "icmp:labelsContext=source_namespace,destination_namespace;sourceContext=workload-name|reserved-identity;destinationContext=workload-name|reserved-identity"
+        - "port-distribution:labelsContext=source_namespace,destination_namespace;sourceContext=workload-name|reserved-identity;destinationContext=workload-name|reserved-identity"
       serviceMonitor:
         enabled: true
       dashboards:
-        enabled: true
+        # Off: the chart's four dashboards group every panel by cilium-agent pod but never PRINT it, so each
+        # one draws three identical-looking lines. Replaced by our own single `hubble` dashboard in
+        # 05_grafana/files/dashboards, which aggregates across agents and filters by node instead.
+        enabled: false
     export:
       # Writes one JSON line per DROPPED flow to a file on the node, which the log collector tails into
       # VictoriaLogs (see 05_victoria_logs). The `drop` metric above only counts drops; this says WHICH pod,

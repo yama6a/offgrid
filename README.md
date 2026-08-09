@@ -298,6 +298,7 @@ MIT. See [LICENSE](LICENSE).
 ## Todos
 
 - put a worker in the 4th bay (the inventory and scripts already take one, see docs/17_worker_nodes.md)
+- should we keep the nic-keeper? Run in prod for a while and see if it ever triggers. If it never triggers, remove it.
 - migrate old pi stuff to cluster
 - fork my personal cluster project for OSS version
 - rewrite git history to remove secrets and email addresses and domains from past commits
@@ -308,6 +309,4 @@ MIT. See [LICENSE](LICENSE).
 - check log accumulation and metrics cardinality, drop noise so storage doesn't grow meaninglessly
 
 - read and shorten all md files.
-- better dashboards
-- which workloads should have HARD anti-affinity rules instead of soft ones?
-- should we keep the nic-keeper? Run in prod for a while and see if it ever triggers. If it never triggers, remove it. 
+- better dashboards 

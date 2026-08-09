@@ -27,3 +27,11 @@ spec:
         - sourceLabels: [__name__, __tmp_keep_pgsetting]
           regex: "cnpg_pg_settings_setting;"
           action: drop
+        # vmagent stamps every target with cluster=<cluster name>, which shadows the cluster label CNPG's own
+        # exporter emits (the CNPG cluster name) into exported_cluster. The upstream CNPG dashboard picks its
+        # instances with pod=~"$cluster-N" off that label, so without this every panel reads "No data".
+        - sourceLabels: [exported_cluster]
+          regex: (.+)
+          targetLabel: cluster
+        - action: labeldrop
+          regex: exported_cluster
