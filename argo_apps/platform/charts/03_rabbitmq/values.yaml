@@ -70,7 +70,6 @@ resources:
     cpu: 200m
     memory: 384Mi
   limits:
-    cpu: "1"
     memory: 384Mi # must stay Mi, the broker's memory override parses it. Publishers block at 0.85x, see additionalConfig
 
 # The -local class keeps one replica on the broker's own node, so the fsync path stays on that SSD; a queue

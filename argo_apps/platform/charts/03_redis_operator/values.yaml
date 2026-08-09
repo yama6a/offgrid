@@ -22,13 +22,13 @@ redis-operator:
       type: RuntimeDefault
 
   # Fully specified, not just memory: Helm deep-merges this map, so an omitted key silently inherits the
-  # chart's 500m default.
+  # chart's 500m default. Dropping a key needs an explicit null, which renders as no key at all.
   resources:
     requests:
       cpu: 25m
       memory: 128Mi
     limits:
-      cpu: 250m
+      cpu: null # no cpu limit anywhere in the cluster: CFS throttling stalls a burst even when the node is idle
       memory: 256Mi
 
   # Soft + hostname: bare Pi nodes have no zone label, and soft means raising replicas never wedges a pod

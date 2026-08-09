@@ -24,10 +24,11 @@ spec:
       # only label these pods export that collides with a target label.
       honorLabels: true
       metricRelabelings:
-        # Keep only max_connections from cnpg_pg_settings_setting: for the CNPG connection-saturation alert
+        # Keep the cnpg_pg_settings_setting series something reads: max_connections drives the
+        # connection-saturation alert, the rest fill the CNPG dashboard's Configuration row, one tile each.
         # RE2 has no negative lookahead, so stamp the kept series then drop every other pg_settings series.
         - sourceLabels: [__name__, name]
-          regex: "cnpg_pg_settings_setting;max_connections"
+          regex: "cnpg_pg_settings_setting;(max_connections|shared_buffers|effective_cache_size|work_mem|maintenance_work_mem|random_page_cost|seq_page_cost|block_size)"
           targetLabel: __tmp_keep_pgsetting
           replacement: "keep"
         - sourceLabels: [__name__, __tmp_keep_pgsetting]

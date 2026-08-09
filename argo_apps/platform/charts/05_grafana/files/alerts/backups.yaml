@@ -275,18 +275,20 @@ groups:
               conditions:
                 - type: query
                   evaluator: {type: gt, params: [0]}
-      # The timestamp metric MAY stay 0 under the barman plugin, so `> 0` guards it: never populated means
-      # this never fires and the WAL alert carries the load instead.
+      # Sourced from orphan-exporter, which reads the ObjectStore status. CNPG's own
+      # cnpg_collector_last_available_backup_timestamp is FLAT 0 under the barman plugin even with a completed
+      # base backup in S3, so an alert on it can never fire. Same reason as cnpg-no-recovery-point below.
       - uid: cnpg-backup-too-old
         title: CNPG base backup is stale
         condition: C
         for: 30m
         labels: {severity: warning}
         annotations:
-          summary: 'CNPG {{ $labels.namespace }}/{{ $labels.pod }}: last base backup is >36h old'
+          summary: 'CNPG {{ $labels.res_namespace }}/{{ $labels.res_cluster }}: last base backup is >36h old'
           description: |
-            - last CNPG base backup for {{ $labels.namespace }}/{{ $labels.pod }} is >36h old
-            - check: kubectl -n {{ $labels.namespace }} get backup
+            - last CNPG base backup for {{ $labels.res_namespace }}/{{ $labels.res_cluster }} is >36h old
+            - check: kubectl -n {{ $labels.res_namespace }} get objectstore {{ $labels.res_cluster }}-backups -o yaml
+            - the times live under status.serverRecoveryWindow; there are no Backup CRs to list under the plugin
             - inspect the barman-cloud sidecar on the standby
         noDataState: OK
         execErrState: KeepLast
@@ -297,7 +299,7 @@ groups:
             model:
               refId: A
               instant: true
-              expr: 'time() - max by (namespace, pod) (cnpg_collector_last_available_backup_timestamp > 0)'
+              expr: 'time() - max by (res_namespace, res_cluster) (cnpg_backup_last_success_seconds > 0)'
           - refId: B
             relativeTimeRange: {from: 600, to: 0}
             datasourceUid: __expr__

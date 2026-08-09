@@ -574,8 +574,14 @@ bucket survives.
 3. WAL archiving live, the check that matters most: the Cluster's `ContinuousArchiving` condition is `True` and
    objects appear under `s3://<bucket>/cnpg/<ns>/<cluster>/wals/`. The daily base backup runs on a standby pod.
    Read the recovery point off the OBJECTSTORE, not the Cluster: under the plugin
-   `Cluster.status.firstRecoverabilityPoint` stays permanently empty even with a completed base backup in S3,
-   which is also why `05_orphan_exporter` reads the ObjectStore and why `cnpg-backup-too-old` cannot fire.
+   `Cluster.status.firstRecoverabilityPoint` stays permanently empty even with a completed base backup in S3.
+   Everything downstream follows from that. `05_orphan_exporter` reads the ObjectStore and publishes
+   `cnpg_backup_recoverable`, `cnpg_backup_last_success_seconds` and `cnpg_backup_first_recoverability_seconds`;
+   `cnpg-backup-too-old` alerts on the second of those, because CNPG's own
+   `cnpg_collector_last_available_backup_timestamp` is flat 0 here and an alert on it can never fire; and the
+   `cnpg` dashboard's Backups panels are rewritten onto the same two (see
+   [09_monitoring.md](09_monitoring.md)). There are also no `backups.postgresql.cnpg.io` objects to list under
+   the plugin, so a runbook step that says `kubectl get backup` will always come back empty.
 
    ```bash
    kubectl -n <ns> get objectstores.barmancloud.cnpg.io -o \

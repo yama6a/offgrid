@@ -232,6 +232,25 @@ and disaster recovery are in [13_backups.md](13_backups.md).
   per-HTTPRoute HTTP, [07_ingress.md](07_ingress.md)) and `persistent-volumes`. All hand-written against metrics
   checked to exist first. An upstream dashboard assumes upstream's config: Cilium's four assume `httpV2` and
   context options we do not all run, which is exactly how you end up with a dashboard of empty panels.
+- `cnpg` is the ONE fork, not a rewrite: 66 panels of CNPG internals is too much to re-author for the sake of a
+  handful of queries. `02_cnpg_operator` sets `monitoring.grafanaDashboard.create: false` and we ship a copy
+  keeping the upstream uid `cloudnative-pg`, so the URL does not move. Exactly three families of query differ,
+  and a re-fork after a chart bump has to redo them:
+  - CPU (4 targets) read raw `container_cpu_usage_seconds_total` instead of the
+    `node_namespace_pod_container:...:sum_irate` RECORDING RULE, which nothing here evaluates. VictoriaMetrics
+    rewrote its own k8s dashboards the same way; a scan of every `grafana_dashboard` ConfigMap found no other
+    consumer of any recording rule, so there is nothing to gain by running vmalert just for this.
+  - Operator readiness (3 targets) match `pod=~".*cloudnative-pg.*"`. Upstream anchors on `cloudnative-pg.+`,
+    which assumes the release is named after the chart; ours is `cnpg-operator`, so its pods are
+    `cnpg-operator-cloudnative-pg-*` and the upstream regex matches nothing.
+  - Backups (4 targets) read orphan-exporter's `cnpg_backup_last_success_seconds` and
+    `cnpg_backup_first_recoverability_seconds` instead of `cnpg_collector_last_available_backup_timestamp` and
+    `cnpg_collector_first_recoverability_point`, which the Barman Cloud plugin leaves at 0 forever. See
+    [13_backups.md](13_backups.md).
+- What stays empty in `cnpg`, all of it because the feature is not in use: the `-wal` half of the volume panels
+  (no `walStorage`, PGDATA is one volume), Tablespaces (none), and Zone (kube-state-metrics emits no
+  `kube_node_labels` because its `metricLabelsAllowlist` has no `nodes=` entry, and bare Pis have no zone
+  anyway).
 - `persistent-volumes` REPLACES the stack's `persistentvolumesusage`, disabled in
   `05_victoria_metrics_k8s_stack/values.yaml` under `defaultDashboards.dashboards`. The upstream one picks ONE
   PVC at a time from two dropdowns and spends half its space on gauges; with 13 volumes the useful view is all of

@@ -91,6 +91,14 @@ cilium:
         - "port-distribution:labelsContext=source_namespace,destination_namespace;sourceContext=workload-name|pod-name|reserved-identity;destinationContext=workload-name|pod-name|reserved-identity"
       serviceMonitor:
         enabled: true
+        # Thrown away at scrape so it never reaches the metrics store: pods run IPv6 autoconfig on startup and
+        # send a router solicitation that an IPv4-only datapath cannot forward. It is the only drop reason most
+        # days, so it outranks real policy gaps in every top-N panel. Same event is already excluded from the
+        # drop log below. To see them anyway: `hubble observe --verdict DROPPED --protocol icmpv6`.
+        metricRelabelings:
+          - sourceLabels: [__name__, reason]
+            regex: hubble_drop_total;UNSUPPORTED_L3_PROTOCOL
+            action: drop
       dashboards:
         # Off: the chart's four dashboards group every panel by cilium-agent pod but never PRINT it, so each
         # one draws three identical-looking lines. Replaced by our own single `hubble` dashboard in

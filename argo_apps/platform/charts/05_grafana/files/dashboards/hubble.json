@@ -650,7 +650,7 @@
             "type": "prometheus",
             "uid": "VictoriaMetrics"
           },
-          "expr": "topk(10, sum by (source_namespace, source, reason) (rate(hubble_drop_total{node=~\"$node\", reason!=\"UNSUPPORTED_L3_PROTOCOL\"}[$__rate_interval])))",
+          "expr": "topk(10, sum by (source_namespace, source, reason) (rate(hubble_drop_total{node=~\"$node\"}[$__rate_interval])))",
           "legendFormat": "{{source_namespace}}/{{source}}: {{reason}}"
         }
       ]
@@ -705,7 +705,7 @@
             "type": "prometheus",
             "uid": "VictoriaMetrics"
           },
-          "expr": "topk(10, sum by (destination_namespace, destination, reason) (rate(hubble_drop_total{node=~\"$node\", reason!=\"UNSUPPORTED_L3_PROTOCOL\"}[$__rate_interval])))",
+          "expr": "topk(10, sum by (destination_namespace, destination, reason) (rate(hubble_drop_total{node=~\"$node\"}[$__rate_interval])))",
           "legendFormat": "{{destination_namespace}}/{{destination}}: {{reason}}"
         }
       ]
@@ -883,7 +883,7 @@
             "type": "prometheus",
             "uid": "VictoriaMetrics"
           },
-          "expr": "sum by (source, destination, reason) (rate(hubble_drop_total{source_namespace=~\"$namespace\", reason!=\"UNSUPPORTED_L3_PROTOCOL\"}[$__rate_interval]))",
+          "expr": "sum by (source, destination, reason) (rate(hubble_drop_total{source_namespace=~\"$namespace\"}[$__rate_interval]))",
           "legendFormat": "out: {{source}} -> {{destination}} ({{reason}})"
         },
         {
@@ -892,7 +892,7 @@
             "type": "prometheus",
             "uid": "VictoriaMetrics"
           },
-          "expr": "sum by (source, destination, reason) (rate(hubble_drop_total{destination_namespace=~\"$namespace\", reason!=\"UNSUPPORTED_L3_PROTOCOL\"}[$__rate_interval]))",
+          "expr": "sum by (source, destination, reason) (rate(hubble_drop_total{destination_namespace=~\"$namespace\"}[$__rate_interval]))",
           "legendFormat": "in: {{source}} -> {{destination}} ({{reason}})"
         }
       ]
@@ -967,7 +967,7 @@
     },
     {
       "type": "timeseries",
-      "title": "Unanswered SYNs (pod to pod)",
+      "title": "TCP resets, top 10 pairs",
       "id": 21,
       "datasource": {
         "type": "prometheus",
@@ -1015,11 +1015,11 @@
             "type": "prometheus",
             "uid": "VictoriaMetrics"
           },
-          "expr": "sum by (family) (rate(hubble_tcp_flags_total{node=~\"$node\", flag=\"SYN\", source!~\"reserved:.*\", destination!~\"reserved:.*\"}[$__rate_interval])) - sum by (family) (rate(hubble_tcp_flags_total{node=~\"$node\", flag=\"SYN-ACK\", source!~\"reserved:.*\", destination!~\"reserved:.*\"}[$__rate_interval]))",
+          "expr": "topk(10, sum by (source_namespace, source, destination_namespace, destination) (rate(hubble_tcp_flags_total{node=~\"$node\", flag=\"RST\"}[$__rate_interval])))",
           "legendFormat": "{{family}}"
         }
       ],
-      "description": "SYN minus SYN-ACK, pod-to-pod only. Peers with a reserved identity (world, host, remote-node) are excluded because hubble observes the two directions at different points in the datapath and their replies are never counted, which is an accounting artifact, not a failed connection. What is left is refused connections and SYN retransmits."
+      "description": "A reset marks a refused or aborted connection, which is the signal the old SYN minus SYN-ACK panel was reaching for. That subtraction could not work: hubble observes the two directions at different points, so the measured SYN-ACK/SYN ratio is 0.5 for a healthy pair. Aggregate flag counts are still on the TCP flags panel next to this one."
     },
     {
       "type": "timeseries",

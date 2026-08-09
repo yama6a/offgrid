@@ -84,6 +84,8 @@ data:
             "# TYPE cnpg_backup_recoverable gauge",
             "# HELP cnpg_backup_last_success_seconds unix ts of the last successful base backup (0 = never)",
             "# TYPE cnpg_backup_last_success_seconds gauge",
+            "# HELP cnpg_backup_first_recoverability_seconds unix ts of the oldest restorable point (0 = none)",
+            "# TYPE cnpg_backup_first_recoverability_seconds gauge",
         ]
         for store in items("/apis/barmancloud.cnpg.io/v1/objectstores"):
             ns = store["metadata"]["namespace"]
@@ -96,6 +98,7 @@ data:
                     lb = labels([("res_namespace", ns), ("res_cluster", name)])
                     out.append("cnpg_backup_recoverable{%s} 0" % lb)
                     out.append("cnpg_backup_last_success_seconds{%s} 0" % lb)
+                    out.append("cnpg_backup_first_recoverability_seconds{%s} 0" % lb)
                 continue
             for name, w in window.items():
                 lb = labels([("res_namespace", ns), ("res_cluster", name)])
@@ -103,6 +106,7 @@ data:
                 out.append("cnpg_backup_recoverable{%s} %d" % (lb, 1 if frp else 0))
                 out.append("cnpg_backup_last_success_seconds{%s} %d"
                            % (lb, rfc3339((w or {}).get("lastSuccessfulBackupTime"))))
+                out.append("cnpg_backup_first_recoverability_seconds{%s} %d" % (lb, rfc3339(frp)))
         return out
 
     # Redis has no in-cluster object describing backup state, so the 07_redis_backup CronJob publishes what it
