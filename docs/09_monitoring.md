@@ -244,12 +244,18 @@ and disaster recovery are in [13_backups.md](13_backups.md).
   zero, because a rate over a counter with no matching series returns nothing rather than 0. Per-series ratios
   need `or 0 * <denominator>` instead, which refills the missing series with the labels needed for the division
   to still match up. Both are in `ingress-http`'s 5xx panels.
-- vmagent's `externalLabels.cluster` collides with any exporter that emits its OWN `cluster` label. The scrape
-  keeps the target's value and renames the exported one to `exported_cluster`, silently. CNPG is the case that
-  bit us: its dashboard resolves `$cluster` from that label and then picks instances with `pod=~"$cluster-N"`, so
-  every panel read "No data" while the metrics were there the whole time. `pg-cluster`'s PodMonitor relabels
-  `exported_cluster` back over `cluster` and drops the duplicate. Check for `exported_*` first whenever a
-  third-party dashboard is empty but its metrics exist.
+- vmagent's `externalLabels.cluster` collides with any exporter that emits its OWN `cluster` label. vmagent wins
+  and renames the exported one to `exported_cluster`, silently. CNPG is the case that bit us: its dashboard
+  resolves `$cluster` from that label and then picks instances with `pod=~"$cluster-N"`, so every panel read "No
+  data" while the metrics were there the whole time. Check for `exported_*` first whenever a third-party
+  dashboard is empty but its metrics exist.
+- The fix for that collision is `honorLabels: true` on the scrape endpoint, which is what `pg-cluster`'s
+  PodMonitor sets. A `metricRelabelings` rule CANNOT do it: vmagent merges its external labels AFTER
+  `metric_relabel_configs` run, so at that point there is no `exported_cluster` to rename yet and the rule is a
+  no-op. Confirmed by reading the target's own label set from vmagent's `/api/v1/targets`, which does not carry
+  `cluster` at all. The price is per-scrape and worth knowing: those series get the CNPG cluster name in
+  `cluster` and NOT `raspi-cluster`, and any other label the exporter emits would also override the target's.
+  For the CNPG pods `cluster` is the only collision.
 
 ### Keeping the stores lean
 

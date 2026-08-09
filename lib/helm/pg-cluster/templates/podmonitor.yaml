@@ -17,6 +17,12 @@ spec:
       cnpg.io/podRole: instance
   podMetricsEndpoints:
     - port: metrics
+      # Lets the exporter's own `cluster` label (the CNPG cluster name) beat vmagent's global cluster=<k8s
+      # cluster> external label, which otherwise renames it to exported_cluster and leaves the CNPG dashboard,
+      # which resolves its instances from `cluster`, showing "No data". A metricRelabelings rule can NOT do this:
+      # vmagent merges its external labels AFTER those run, so there is nothing to rename yet. `cluster` is the
+      # only label these pods export that collides with a target label.
+      honorLabels: true
       metricRelabelings:
         # Keep only max_connections from cnpg_pg_settings_setting: for the CNPG connection-saturation alert
         # RE2 has no negative lookahead, so stamp the kept series then drop every other pg_settings series.
