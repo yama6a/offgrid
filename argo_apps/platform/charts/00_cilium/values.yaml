@@ -105,7 +105,7 @@ cilium:
         # 05_grafana/files/dashboards, which aggregates across agents and filters by node instead.
         enabled: false
     export:
-      # Writes one JSON line per DROPPED flow to a file on the node, which the log collector tails into
+      # Writes one JSON line per policy-denied flow to a file on the node, which the log collector tails into
       # VictoriaLogs (see 05_victoria_logs). The `drop` metric above only counts drops; this says WHICH pod,
       # port and identity, which is what turns a mystery timeout into a named CiliumNetworkPolicy gap.
       # `dynamic` (not `static`) so editing the filters below reloads in the running agents, no DaemonSet roll.
@@ -116,8 +116,10 @@ cilium:
           content:
             - name: drops
               filePath: /var/run/cilium/hubble/drops.log
+              # AUDIT as well as DROPPED: while policyAuditMode is on, a policy gap is forwarded and reported as
+              # AUDIT, never DROPPED, so a DROPPED-only filter writes nothing about the gaps this file exists for.
               includeFilters:
-                - verdict: [DROPPED]
+                - verdict: [DROPPED, AUDIT]
               # Pods run IPv6 autoconfig on startup and send a router solicitation, which an IPv4-only datapath
               # drops. Harmless and unfixable from here, but each one still ships a ~1KB JSON line, and it is the
               # only thing in this file most days, which buries the policy gaps the file exists to catch.

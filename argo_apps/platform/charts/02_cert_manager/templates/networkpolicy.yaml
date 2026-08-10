@@ -16,7 +16,8 @@ spec:
         - ports:
             - { port: "9402", protocol: TCP }
     # The apiserver calls the admission webhook; the Service maps :443 to the pod's :10250.
-    - fromEntities: [kube-apiserver]
+    # remote-node: an apiserver on another node sources from that node's cilium_host IP, not the apiserver identity.
+    - fromEntities: [kube-apiserver, host, remote-node]
       toPorts:
         - ports:
             - { port: "10250", protocol: TCP }

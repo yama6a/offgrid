@@ -15,8 +15,9 @@ spec:
       toPorts:
         - ports:
             - { port: "8081", protocol: TCP }
-    # kubeseal fetches the public cert via the API server's service proxy (source: apiserver / node host).
-    - fromEntities: [kube-apiserver, host]
+    # kubeseal fetches the public cert via the API server's service proxy.
+    # remote-node: an apiserver on another node sources from that node's cilium_host IP, not the apiserver identity.
+    - fromEntities: [kube-apiserver, host, remote-node]
       toPorts:
         - ports:
             - { port: "8080", protocol: TCP }

@@ -33,12 +33,12 @@
           "query": "label_values(envoy_cluster_membership_healthy{envoy_cluster_name=~\"httproute/.+\"}, envoy_cluster_name)",
           "refId": "PrometheusVariableQueryEditor-VariableQuery"
         },
-        "description": "One entry per HTTPRoute rule, named httproute/<namespace>/<name>/rule/<n>. Read from cluster membership, not from a request counter, so routes that have served nothing still appear.",
+        "description": "One entry per HTTPRoute rule, named httproute/<namespace>/<name>/rule/<n>. Read from cluster membership, not from a request counter, so routes that have served nothing still appear. All matches httproute/.+ only, which keeps Envoy's own clusters (xds, admin stats, the Google token endpoints) out of the per-route panels.",
         "refresh": 2,
         "sort": 1,
         "multi": true,
         "includeAll": true,
-        "allValue": ".*",
+        "allValue": "httproute/.+",
         "current": {
           "selected": true,
           "text": [

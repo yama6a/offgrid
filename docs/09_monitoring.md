@@ -33,7 +33,7 @@ One DaemonSet reads four things off each node's filesystem, all into the same st
 |---|---|---|
 | container logs | `/var/log/pods` | `kubernetes.pod_namespace`, `kubernetes.pod_name`, `kubernetes.container_name` |
 | Talos node logs | `/var/log/*.log` | `source:talos`, `node`, `file` (e.g. `/var/log/kubelet.log`) |
-| dropped network flows | `/var/run/cilium/hubble/drops.log` | `source:hubble`, `node` |
+| denied network flows | `/var/run/cilium/hubble/drops.log` | `source:hubble`, `node`, `verdict` |
 | kube-apiserver audit | `/var/log/audit/kube/kube-apiserver.log` | `source:kube-audit`, `node`, `verb`, `user.username` |
 
 Talos writes each system service to `/var/log/<service>.log` and rotates at 5MiB, keeping one `.log.1`, and
@@ -67,14 +67,18 @@ Two things it does not cover, both by design:
 - **A node that cannot mount its disk** logs nowhere. Reaching it needs `machine.logging.destinations` pushing
   over the network, which is the reason to add Vector if it ever becomes worth it.
 
-### Dropped flows: which CiliumNetworkPolicy denied it
+### Denied flows: which CiliumNetworkPolicy denied it
 
 Every app carries a hand-written default-deny CNP, so the usual failure is a connection that just hangs. The
 `drop` Hubble METRIC counts those, but a count does not say which pod, port or identity was denied.
 
-`hubble.export.dynamic` in `00_cilium` writes one JSON line per `DROPPED` flow to `/var/run/cilium/hubble/drops.log`
-on the node, and the collector tails it. `source:hubble | flow.source.namespace:x` is the query that turns a
-mystery timeout into the missing rule. `_msg` is the drop reason, the rest of the flow stays as fields.
+`hubble.export.dynamic` in `00_cilium` writes one JSON line per `DROPPED` or `AUDIT` flow to
+`/var/run/cilium/hubble/drops.log` on the node, and the collector tails it. `source:hubble |
+flow.source.namespace:x` is the query that turns a mystery timeout into the missing rule. `_msg` is the drop
+reason, the rest of the flow stays as fields.
+
+`AUDIT` is in the filter because while `policyAuditMode` is on, a policy gap is forwarded and reported as
+`AUDIT`, never `DROPPED`. Filtering on `DROPPED` alone writes nothing about the gaps this file exists for.
 
 Two things to keep in mind:
 
@@ -247,6 +251,10 @@ and disaster recovery are in [13_backups.md](13_backups.md).
     `cnpg_backup_first_recoverability_seconds` instead of `cnpg_collector_last_available_backup_timestamp` and
     `cnpg_collector_first_recoverability_point`, which the Barman Cloud plugin leaves at 0 forever. See
     [13_backups.md](13_backups.md).
+  - The `Volume Space Usage: Tablespaces` panel is DELETED, the one panel removed rather than rewritten. It
+    charts `<instance>-tbs*` PVCs, and `pg-cluster` declares no tablespaces, so it could only ever read "No
+    data". The same `-tbs` and `-wal` targets survive inside the multi-target Volume panels, where an empty
+    target just adds no series and costs nothing.
 - What stays empty in `cnpg`, all of it because the feature is not in use: the `-wal` half of the volume panels
   (no `walStorage`, PGDATA is one volume), Tablespaces (none), and Zone (kube-state-metrics emits no
   `kube_node_labels` because its `metricLabelsAllowlist` has no `nodes=` entry, and bare Pis have no zone

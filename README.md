@@ -308,5 +308,4 @@ MIT. See [LICENSE](LICENSE).
 - check all logs/hubble for network policies in audit more that are dropping traffic that should be allowed
 - check log accumulation and metrics cardinality, drop noise so storage doesn't grow meaninglessly
 
-- read and shorten all md files.
-- better dashboards 
+- read and shorten all md files. 

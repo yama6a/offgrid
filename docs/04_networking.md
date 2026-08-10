@@ -135,8 +135,14 @@ External egress (argocd to GitHub, cert-manager to ACME, grafana to a plugin dow
 selectors (CoreDNS `k8s-app: kube-dns`, vmagent, the Envoy edge, the stores) are repeated verbatim across the
 manifests, so if a platform component is relabelled you grep and update each one.
 
-Two Cilium subtleties to know:
+Three Cilium subtleties to know:
 
+- An admission webhook needs `remote-node` on its ingress rule, not just `kube-apiserver`. When the apiserver on
+  node A dials a pod on node B, the packet's source is node A's `cilium_host` router IP (a `10.244.x.y` address),
+  which carries the `remote-node` identity. Only the node's PRIMARY IP maps to `kube-apiserver`. So a
+  `fromEntities: [kube-apiserver]` rule misses roughly two admissions in three on a 3-node control plane, and the
+  webhook only works when the admitting apiserver happens to be co-located with the pod. Same for anything
+  reached through the apiserver's service proxy, which is how `kubeseal` fetches the sealed-secrets public cert.
 - A `fromEndpoints`/`toEndpoints` selector that OMITS the namespace label matches the policy's OWN namespace
   only. To reach a managed pod in another namespace (cnpg-operator to its instances, redis-operator to its
   redises) use `matchExpressions: [{key: k8s:io.kubernetes.pod.namespace, operator: Exists}]`, NOT the empty `{}`
@@ -159,8 +165,16 @@ Deliberately NOT policed, listed so it reads as a decision rather than an omissi
 - The `storage-bench` namespace, which exists for hours at a time and holds no data. See
   [16_storage_bench.md](16_storage_bench.md).
 
-Rollout is audit-first: with Cilium's global `policyAuditMode` on, every policy stages as log-only (`hubble
-observe --verdict AUDIT`) until validated, then gets enforced by turning audit off.
+Rollout is audit-first: with Cilium's global `policyAuditMode` on, every policy stages as log-only until
+validated, then gets enforced by turning audit off. Three places to look, cheapest first:
+
+- `sum by (source, destination) (increase(hubble_flows_processed_total{verdict="AUDIT"}[24h]))` in Grafana, or
+  the "would-be drops" row of the `hubble` dashboard. Cluster-wide and survives restarts, but has no port label.
+- `source:hubble AND verdict:AUDIT` in VictoriaLogs, which has the port and identity. Retained, so use it for
+  anything that already happened. See [09_monitoring.md](09_monitoring.md).
+- `hubble observe --verdict AUDIT -f` inside a `cilium-agent` pod, per node. Live only, and the ring buffer holds
+  a few minutes, so it is for reproducing on demand: `kubectl apply --dry-run=server` re-triggers admission
+  webhooks without changing anything.
 
 ## Caveats
 

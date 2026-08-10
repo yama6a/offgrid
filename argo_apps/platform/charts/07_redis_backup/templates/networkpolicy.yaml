@@ -30,9 +30,11 @@ spec:
           rules:
             dns:
               - matchPattern: "*"
-    # redis-cli --rdb to any instance's Service, any namespace.
+    # redis-cli --rdb to any instance, in any namespace. The ns-Exists expression is what makes it cluster-wide:
+    # a bare `{}` selector would match this namespace only, which holds no Redis at all.
     - toEndpoints:
-        - {}
+        - matchExpressions:
+            - { key: k8s:io.kubernetes.pod.namespace, operator: Exists }
       toPorts:
         - ports:
             - { port: "6379", protocol: TCP }

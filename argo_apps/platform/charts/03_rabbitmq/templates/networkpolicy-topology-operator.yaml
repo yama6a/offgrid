@@ -14,7 +14,8 @@ spec:
       app.kubernetes.io/part-of: rabbitmq
   ingress:
     # The apiserver calls the validating admission webhook.
-    - fromEntities: [kube-apiserver]
+    # remote-node: an apiserver on another node sources from that node's cilium_host IP, not the apiserver identity.
+    - fromEntities: [kube-apiserver, host, remote-node]
       toPorts:
         - ports:
             - { port: "9443", protocol: TCP }
