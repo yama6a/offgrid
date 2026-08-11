@@ -290,7 +290,10 @@ groups:
             model:
               refId: A
               instant: true
-              expr: 'max by (namespace, pod, slot_name) (cnpg_pg_replication_slots_active{slot_type="physical"} == bool 0)'
+              # Primary only: CNPG copies the primary's slots onto every standby so a failover keeps them, and on
+              # a standby those copies read inactive forever. Without the `unless` every standby alerts on every
+              # OTHER standby's slot.
+              expr: 'max by (namespace, pod, slot_name) ((cnpg_pg_replication_slots_active{slot_type="physical"} == bool 0) unless on (namespace, pod) (cnpg_pg_replication_in_recovery == 1))'
           - refId: B
             relativeTimeRange: {from: 600, to: 0}
             datasourceUid: __expr__

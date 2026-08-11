@@ -304,7 +304,7 @@ MIT. See [LICENSE](LICENSE).
 - rewrite git history to remove secrets and email addresses and domains from past commits
 - 
 - look at all latest ntfy alerts, and check if they are actionable or just noise. if noise, change limits, or suggest how to deal with them.
-- look at all latest error logs in the last 24h. noise or actionable? if noise, or suggest how to deal with them.-
+- look at all latest error logs in the last 24h. noise or actionable? if noise, or suggest how to deal with them.
 - check all logs/hubble for network policies in audit more that are dropping traffic that should be allowed
 - check log accumulation and metrics cardinality, drop noise so storage doesn't grow meaninglessly
 
