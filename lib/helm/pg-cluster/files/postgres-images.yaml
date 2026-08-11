@@ -1,6 +1,6 @@
 # versions below are auto-renovated.
 # Minor and patch bumps incur none-to-minimal downtime and are rolled out to all instances automatically.
-"15": "ghcr.io/cloudnative-pg/postgresql:15-minimal-trixie@sha256:9936343303bbfe5e95c12ae227b822d890209799e5bb566d6f01a6a536cba93e"
-"16": "ghcr.io/cloudnative-pg/postgresql:16-minimal-trixie@sha256:488655ce857c752c5e77101ecd806d434625ef4813003856871882c8fa74c923"
-"17": "ghcr.io/cloudnative-pg/postgresql:17-minimal-trixie@sha256:290cb4a074295581f34bdc2bbbe7d86aaf2c72f44bf039bc687f0aef40f48ee9"
+"15": "ghcr.io/cloudnative-pg/postgresql:15-minimal-trixie@sha256:b0427461f6ae0c050312b022ba6984409c46c58a2091f69d0db81fed1083fb8b"
+"16": "ghcr.io/cloudnative-pg/postgresql:16-minimal-trixie@sha256:9d1ace6dcb1e0cec5791f6ffa760ca78a45bdc42fecfe4700b9c498cfdfe5e4e"
+"17": "ghcr.io/cloudnative-pg/postgresql:17-minimal-trixie@sha256:6a210205c238442b04dd60d3538fe2633a84e7bc11fa68314828f58b1869c616"
 "18": "ghcr.io/cloudnative-pg/postgresql:18-minimal-trixie@sha256:229ab83c0639d294042ca747745fb214db690ade64d5d59131a135825b994391"
