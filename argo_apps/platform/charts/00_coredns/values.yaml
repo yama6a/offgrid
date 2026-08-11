@@ -1,0 +1,5 @@
+# Identifies the Talos-owned Deployment to patch. Not per-deployment config: Talos fixes all four, so changing
+# any of them here just makes the patch miss its target and silently do nothing.
+deployment: {name: coredns, namespace: kube-system}
+selector: {key: k8s-app, value: kube-dns}
+topologyKey: kubernetes.io/hostname

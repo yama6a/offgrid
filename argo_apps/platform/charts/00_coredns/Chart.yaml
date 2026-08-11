@@ -1,0 +1,5 @@
+apiVersion: v2
+name: coredns
+description: Scheduling constraints patched onto the Talos-owned coredns Deployment. Renders no coredns of its own.
+type: application
+version: 0.1.0 # local chart, never bump version

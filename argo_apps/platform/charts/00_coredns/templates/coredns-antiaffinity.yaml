@@ -1,0 +1,25 @@
+# A PARTIAL Deployment: only the fields below are sent, and the app server-side-applies them onto the coredns
+# that Talos owns. See docs/04_networking.md ("CoreDNS placement").
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: {{ .Values.deployment.name }}
+  namespace: {{ .Values.deployment.namespace }}
+  annotations:
+    # Every app here carries resources-finalizer, so without Delete=false, deleting or renaming this app
+    # cascade-deletes coredns and takes cluster DNS with it. Prune=false is the same guard for dropping the file.
+    argocd.argoproj.io/sync-options: Prune=false,Delete=false
+spec:
+  template:
+    spec:
+      affinity:
+        podAntiAffinity:
+          # Talos sets the `preferred` sibling of this key and never this one, so its own apply leaves this
+          # alone. Re-check after a Talos MINOR upgrade in case its manifest starts setting it too.
+          requiredDuringSchedulingIgnoredDuringExecution:
+            - labelSelector:
+                matchExpressions:
+                  - key: {{ .Values.selector.key }}
+                    operator: In
+                    values: [{{ .Values.selector.value }}]
+              topologyKey: {{ .Values.topologyKey }}
