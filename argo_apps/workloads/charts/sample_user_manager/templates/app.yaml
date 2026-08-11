@@ -82,12 +82,18 @@ spec:
                   name: {{ . }}-app
                   key: password
             {{- end }}
-            # Bare REDIS_ADDR is redises[0], the instance the manager dials. No password env: the instance is
-            # locked to this workload by its CiliumNetworkPolicy, not requirepass.
+            # The manager dials BOTH instances, so both get a bare alias it reads: REDIS_ADDR is redises[0]
+            # (the audit cache) and REDIS_SESSIONS_ADDR is redises[1] (the durable session store). No password
+            # env: each instance is locked to this workload by its CiliumNetworkPolicy, not requirepass.
             {{- $primaryRedis := index .Values.app.redises 0 }}
             - name: REDIS_ADDR
               value: "{{ $primaryRedis }}.{{ $ns }}.svc.cluster.local:6379"
-            # The non-[0] entries are cosmetic. Egress to each is rendered by that instance's own chart.
+            {{- if gt (len .Values.app.redises) 1 }}
+            - name: REDIS_SESSIONS_ADDR
+              value: "{{ index .Values.app.redises 1 }}.{{ $ns }}.svc.cluster.local:6379"
+            {{- end }}
+            # Every entry also gets a per-instance REDIS_<NAME>_ADDR, cosmetic beyond the two above. Egress to
+            # each is rendered by that instance's own chart.
             {{- range .Values.app.redises }}
             {{- $snake := regexReplaceAll "[^A-Za-z0-9]" . "_" | upper }}
             - name: REDIS_{{ $snake }}_ADDR

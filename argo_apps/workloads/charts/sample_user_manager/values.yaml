@@ -1,6 +1,6 @@
 app:
   name: sample-user-manager
-  image: "ghcr.io/yama6a/pi5-k8s-sample-app:6"   # three-binary image (/manager, /signup, /auditor)
+  image: "ghcr.io/yama6a/pi5-k8s-sample-app:7"   # three-binary image (/manager, /signup, /auditor)
   command: ["/manager"]
   port: 8080
   replicas: 1
@@ -8,7 +8,8 @@ app:
   # entry; dbs[0] is ALSO aliased to the bare PG_* the binary actually reads, so put the real one first.
   # The rest are provisioned and reachable but never dialed. No egress here, each DB's allowedClients does it.
   dbs: [sample-user-manager-db, sample-user-manager-analytics]
-  # Same shape as dbs: redises[0] is aliased to the bare REDIS_ADDR the manager dials, the rest get a
+  # Same list shape as dbs, but the manager dials BOTH: redises[0] is aliased to the bare REDIS_ADDR (audit
+  # cache) and redises[1] to REDIS_SESSIONS_ADDR (session store). Any further entry gets a cosmetic
   # REDIS_<NAME>_ADDR only. Names must match the redis-instance `name` values below.
   redises: [sample-user-manager-redis-cache, sample-user-manager-redis-sessions]
   resources:
@@ -92,7 +93,7 @@ redis-cache:
   allowedClients:
     - matchLabels: { app: sample-user-manager }
 
-# Shows multiple instances per workload and the durable mode; the manager never dials this one.
+# Shows multiple instances per workload and the durable mode: one session hash per user, plus sessions:active.
 redis-sessions:
   name: sample-user-manager-redis-sessions
   # renovate: datasource=docker depName=quay.io/opstree/redis

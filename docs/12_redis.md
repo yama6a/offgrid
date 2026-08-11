@@ -9,7 +9,7 @@ unshared.
 |-------|-------|------|
 | the operator | `argo_apps/platform/{apps,charts}/03_redis_operator` (wave 3) | wraps the OpsTree `ot-helm/redis-operator` chart: the controller plus its `Redis`/`RedisReplication`/`RedisCluster`/`RedisSentinel` CRDs |
 | the reusable chart | `lib/helm/redis-instance/` (`type: application`) | renders ONE standalone `Redis` CR, its `ServiceMonitor`, and a default-deny `CiliumNetworkPolicy`. Consumed via an aliased `file://` dependency, one alias per instance, like `pg-cluster` |
-| sample usage | `argo_apps/workloads/charts/sample_user_manager` | two instances showing both modes: `redis-cache` (the audit-log demo, ephemeral) and `redis-sessions` (durable, provisioned but never dialled) |
+| sample usage | `argo_apps/workloads/charts/sample_user_manager` | two instances showing both modes, both dialled by the manager: `redis-cache` (the audit-log demo, ephemeral) and `redis-sessions` (the session store, durable) |
 
 The Longhorn class every instance uses (`longhorn-r2-ephemeral`, 2-replica, reclaim Delete) is shipped by
 `02_longhorn`, not here. See [08_storage.md](08_storage.md).
@@ -337,13 +337,14 @@ arm64 via the quay v2 manifest-list API before bumping. The redis and operator i
 
 - `redis-cache`, dialled, `persistence: false`. The audit-log cache is treated as ephemeral for the demo, since
   its data is 1h-TTL and regenerable.
-- `redis-sessions`, `persistence: true`, durable. Provisioned, monitored and reachable, but never dialled. The
-  Redis equivalent of the extra-Postgres demo.
+- `redis-sessions`, dialled, `persistence: true`, durable. One session hash per user plus a `sessions:active`
+  set, so the data outlives a restart and is enrolled in the S3 backup.
 
-App wiring mirrors Postgres: one flat `app.redises` list with no primary/extra split. `redises[0]` is aliased to
-the bare `REDIS_ADDR` the manager dials; every entry also gets a cosmetic `REDIS_<NAME>_ADDR`. Egress is not
-listed in the app netpol, because each instance's chart renders a client-egress CNP from its own `allowedClients`,
-the single source of truth for the app-to-Redis edge.
+App wiring: one flat `app.redises` list with no primary/extra split. `redises[0]` is aliased to the bare
+`REDIS_ADDR` and `redises[1]` to `REDIS_SESSIONS_ADDR`, the two the manager dials; every entry also gets a
+`REDIS_<NAME>_ADDR`, cosmetic beyond those two. Egress is not listed in the app netpol, because each instance's
+chart renders a client-egress CNP from its own `allowedClients`, the single source of truth for the app-to-Redis
+edge.
 
 The manager binary ([`pi5-k8s-sample-app`](https://github.com/yama6a/pi5-k8s-sample-app), `internal/audit`) emits an
 `AuditLog` on every user create or delete, broadcast on the `user-audit-logger` fanout. It also stores each event
@@ -351,6 +352,11 @@ in `redis-cache` with `RPUSH audit:<uuid>` plus `EXPIRE 1h`, refreshed per write
 after their last activity. `GET /audit` `SCAN`s the `audit:*` keyspace, `LRANGE`s each list, and returns a JSON
 map of user-UUID to events. At most about 10 users, since the user table is capped. No password: the app connects
 to `REDIS_ADDR` with no credentials, gated by the network policy.
+
+`internal/session` writes the second instance on the same two events: `HSET session:<uuid>` with `state=active`
+plus `SADD sessions:active` on create, and on eviction `state=ended` plus `SREM` and a 24h `EXPIRE` so the
+keyspace stays bounded under `noeviction`. An open session carries no TTL, which is why it sits on the durable
+instance. No HTTP endpoint for it; read it with `redis-cli`.
 
 Cross-repo image bump: the audit feature lives in the `pi5-k8s-sample-app` repo and ships as a new GHCR image tag.
 After that image is published, bump `app.image` in `sample_user_manager/values.yaml`, since the manifests pin an
@@ -370,6 +376,10 @@ kubectl -n sample-user-manager get redis                                  # redi
 kubectl -n sample-user-manager get pvc -o wide                            # both on longhorn-r2-ephemeral
 kubectl -n longhorn-system get volumes.longhorn.io                        # each Redis volume: 2 replicas
 kubectl get vmservicescrape -A | grep -i redis                            # metrics wired into VictoriaMetrics
+
+# both instances are written to
+kubectl -n sample-user-manager exec sample-user-manager-redis-cache-0    -- redis-cli --scan --pattern 'audit:*'
+kubectl -n sample-user-manager exec sample-user-manager-redis-sessions-0 -- redis-cli SMEMBERS sessions:active
 ```
 
 Smoke test: drive a user create and delete via the `sample-user-signup` command flow the manager consumes, then
