@@ -62,7 +62,7 @@ and in `versions.env`; those files are the source of truth.
 | **GitOps**        | Argo CD                        | Delivery engine; self-manages after bootstrap. Two-tree app-of-apps (platform and workloads).                |
 | **Ingress**       | Envoy Gateway                  | Gateway API data plane; one Envoy on a single pinned LoadBalancer IP.                                        |
 | **TLS**           | cert-manager                   | Let's Encrypt certificates via ClusterIssuers (HTTP-01, plus Cloudflare DNS-01 for wildcards).               |
-| **Auth**          | Google SSO                     | Central OIDC per domain (Envoy `SecurityPolicy`, per-host email allowlists).                                 |
+| **Auth**          | Google SSO                     | Central OIDC (one Envoy `SecurityPolicy`, one email allowlist, per-host gating).                                 |
 | **Secrets**       | Sealed Secrets                 | Encrypted secrets committed to git.                                                                          |
 | **Storage**       | Longhorn                       | Replicated block storage, for everything stateful, so a volume outlives the machine under it.                |
 | **Node health**   | dead-node-watcher              | Custom Deployment that taints a genuinely dead node, cutting volume handover from ~6 min to ~2.               |

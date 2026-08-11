@@ -429,7 +429,7 @@ machine-config: the three triggers below have no `EthernetConfig` field and need
 That agent is `nic-keeper`, one DaemonSet pod per rpi5 node (namespace `kube-system`,
 hostNetwork), delivered by ArgoCD ([05_gitops.md](05_gitops.md)) at sync-wave 2. No imperative
 step. Chart: `argo_apps/platform/charts/02_nic_keeper/`; Application:
-`argo_apps/platform/apps/02_nic_keeper.yaml`.
+`argo_apps/platform/apps/templates/02_nic_keeper.yaml`.
 
 The three runtime `macb` failure modes machine-config can't reach (the other two are `03d`'s, see
 the [table above](#nic-hardening-the-macb-wedge)):

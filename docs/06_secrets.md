@@ -28,7 +28,7 @@ vendored `charts/*.tgz` is gitignored and reproduced from the lock, same as the 
 
 The [`nic-keeper`](03_operating_system.md) DaemonSet and this controller are independent leaves, neither
 depending on the other, so they share wave `2`: the "after the CNI and ArgoCD are in place" slot. Both carry the
-`02_` prefix, and `ls argo_apps/platform/apps/` still reads in deploy order.
+`02_` prefix, and `ls argo_apps/platform/apps/templates/` still reads in deploy order.
 
 Standard automated-leaf settings (`prune` + `selfHeal`) plus `ServerSideApply=true`. Two specifics:
 

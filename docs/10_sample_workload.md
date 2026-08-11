@@ -30,15 +30,15 @@ The messaging topology and isolation live in [11_messaging.md](11_messaging.md).
   [07_ingress.md](07_ingress.md)), each host's Gateway folded onto the one shared Envoy via `mergeGateways`.
   This chart configures NO SSO; gating is central in `04_google_sso`:
     - `sample-user-manager.app.example.com` is OPEN, not listed in `04_google_sso`. The unprotected control.
-    - `sample-user-manager-sso.app.example.com` is GATED, listed in `04_google_sso` `domains[].hosts` with its
-      own allowlist. That chart's per-domain `SecurityPolicy` targetRefs this route. Auth bounces via the shared
+    - `sample-user-manager-sso.app.example.com` is GATED, its subdomain listed in `04_google_sso` `hosts`.
+      That chart's one `SecurityPolicy` targetRefs this route. Auth bounces via the shared
       `google-sso.example.com` callback host.
 
 Both hosts front the same app Service.
 
 Delivered purely by ArgoCD:
 
-- `argo_apps/workloads/apps/sample_user_manager.yaml`: the Application. A workload, so no `NN_` number and no
+- `argo_apps/workloads/apps/templates/sample_user_manager.yaml`: the Application. A workload, so no `NN_` number and no
   `sync-wave`. See "Ordering".
 - `argo_apps/workloads/charts/sample_user_manager/`: wraps `file://` dependencies on the shared `pg-cluster`,
   `redis-instance`, `rabbitmq-topology` and `ingress` charts, and adds one first-party template for the app. The
@@ -208,9 +208,9 @@ kubectl -n gateway get certificate                        # READY=True once DNS 
 - One-place edit per host: a single `hosts[]` entry renders that host's Gateway, listener and route, plus a SAN
   entry on the ingress's shared cert. Resource names derive from the full host with dots turned to dashes, so
   there is nothing else to keep in sync.
-- The `-sso` host is gated centrally, not here. It must be listed in `04_google_sso` `domains[].hosts` with its
-  allowlist, and the shared client secret sealed via `lib/shell/07_google_sso.sh`. Unlisted means the host is
-  OPEN; unsealed means login fails.
+- The `-sso` host is gated centrally, not here. Its subdomain must be listed in `04_google_sso` `hosts`, and
+  the shared client secret sealed via `lib/shell/07_google_sso.sh`. Unlisted means the host is OPEN; unsealed
+  means login fails.
 - `prune` is data-safe because every stateful unit sets `deletionProtection: true`, which stamps
   `Prune=false,Delete=false`. Removing the app ORPHANS the Postgres Clusters and Redis instances, still running
   on their volumes, rather than deleting them, and restoring the files re-adopts them. This is NOT the storage

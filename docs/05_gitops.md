@@ -20,16 +20,19 @@ rather than fighting it. No version and no value lives in the script.
 argo_apps/
   root.yaml              # the ROOT-OF-ROOTS (applied once by 05_argocd.sh); recurses roots/
   roots/
-    0_platform.yaml      #   Application "platform"  (sync-wave 0), recurses platform/apps
-    1_workloads.yaml     #   Application "workloads" (sync-wave 1), recurses workloads/apps
+    0_platform.yaml      #   Application "platform"  (sync-wave 0), renders platform/apps
+    1_workloads.yaml     #   Application "workloads" (sync-wave 1), renders workloads/apps
   platform/
-    apps/                #   one Application per platform app (numbered = wave)
-      00_cilium.yaml     #     adopts Cilium      (auto-sync, selfHeal+prune), wave 0
-      01_argocd.yaml     #     ArgoCD self-manage (automated),                 wave 1
+    apps/                #   a chart: repoURL in values.yaml, one Application per app in templates/
+      values.yaml        #     the ONE repoURL for this tree, written by 07_values.sh
+      templates/
+        00_cilium.yaml   #     adopts Cilium      (auto-sync, selfHeal+prune), wave 0
+        01_argocd.yaml   #     ArgoCD self-manage (automated),                 wave 1
     charts/              #   the wrapper charts those Applications point at
   workloads/
-    apps/                #   one Application per workload (un-numbered, wave-less)
-      sample_user_manager.yaml
+    apps/                #   same shape: values.yaml + templates/ (un-numbered, wave-less)
+      templates/
+        sample_user_manager.yaml
     charts/
       sample_user_manager/   #  the sample app + its Postgres + Redis + messaging + ingress
 ```
@@ -40,10 +43,10 @@ order CREATION only, 5s apart via `ARGOCD_SYNC_WAVE_DELAY` set in `01_argocd` va
 
 - Each child Application points at a wrapper chart under its own tree's `charts/`.
 - Adding a platform app means a wrapper chart under `argo_apps/platform/charts/NN_name/` plus an Application
-  manifest under `argo_apps/platform/apps/NN_name.yaml`, then commit and push. The `NN` prefix is the app's
+  manifest under `argo_apps/platform/apps/templates/NN_name.yaml`, then commit and push. The `NN` prefix is the app's
   `sync-wave` number; keep the filename, chart dir and annotation in agreement.
 - Adding a workload means a wrapper chart under `argo_apps/workloads/charts/name/` plus an Application under
-  `argo_apps/workloads/apps/name.yaml`, with no number and no `sync-wave`. Workloads all reconcile in parallel. If
+  `argo_apps/workloads/apps/templates/name.yaml`, with no number and no `sync-wave`. Workloads all reconcile in parallel. If
   a workload depends on another workload, it belongs in platform instead.
 
 ### No Application health gate, deliberately
@@ -110,7 +113,7 @@ the child Application objects, 5s apart.
 
 That head-start still helps, since CRD and operator apps get applied before their consumers, but it is advisory:
 an app that races ahead of a CRD it needs fails and retries until the CRD lands. The `NN` prefix on each
-`platform/apps/NN_*.yaml` equals its wave number, so one glance at the dir listing tells you the order.
+`platform/apps/templates/NN_*.yaml` equals its wave number, so one glance at the dir listing tells you the order.
 
 The gap is `ARGOCD_SYNC_WAVE_DELAY`, set to 5 seconds via the `controller.sync.wave.delay.seconds` param in
 `01_argocd/values.yaml`. A head-start buffer, not a readiness gate: it is a fixed timer, and retry is what
@@ -317,8 +320,8 @@ the hostname, a cross-namespace `HTTPRoute` to `argocd-server`, a `ReferenceGran
 platform ingress's shared cert. All rendered by the shared `ingress` chart. ArgoCD itself is untouched: it keeps
 `server.insecure: true` and serves plain HTTP on `argocd-server:80`, and the Gateway terminates TLS.
 
-Gating is central: the argocd host is listed in `04_google_sso` `domains[].hosts` with its allowlist, so the
-domain's one `SecurityPolicy` targetRefs its route and gates it. It shares the `google-sso.<domain>` callback and
+Gating is central: the argocd subdomain is listed in `04_google_sso` `hosts`, so the one `SecurityPolicy`
+targetRefs its route and gates it. It shares the `google-sso.<domain>` callback and
 `cookieDomain` with the other platform UIs, so no new Google redirect URI and no new policy. To expose a new
 platform UI: add its edge to the platform ingress `hosts:` list AND list its host in `04_google_sso`.
 

@@ -7,7 +7,7 @@ The GitOps L7 ingress layer, delivered entirely by ArgoCD. Five pieces stack in 
 | 1 | `01_envoy_gateway` | the Gateway API data plane |
 | 2 | `02_cert_manager` | issues the X.509 certs |
 | 3 | `03_gateway` | the shared `:80` Gateway + the Let's Encrypt ClusterIssuers |
-| 4 | `04_google_sso` | one SecurityPolicy per domain, with per-host allowlists |
+| 4 | `04_google_sso` | the one SecurityPolicy: which hosts are gated, and by whom |
 | 6 | `06_platform_ingress` | the platform UIs' edges |
 
 Together they terminate TLS and route and authenticate every ingress host on one pinned LoadBalancer IP. Cilium
@@ -18,7 +18,7 @@ ingress) is rendered once by the shared `ingress` chart in `lib/helm/ingress/`. 
 folds every host's Gateway onto one Envoy and one LoadBalancer Service, so the cluster keeps a single ingress
 point on the pinned IP while each ingress is just a values list of hosts.
 
-SSO is NOT part of the edge. It is applied centrally per domain by `04_google_sso`, so charts declare plain edges
+SSO is NOT part of the edge. It is applied centrally by `04_google_sso`, so charts declare plain edges
 and know nothing about SSO.
 
 ## Envoy Gateway
@@ -30,7 +30,7 @@ Cilium keeps CNI, WireGuard, L2 announcements and LB-IPAM.
 
 Pure GitOps, no imperative script:
 
-- `argo_apps/platform/apps/01_envoy_gateway.yaml`: the Application, wave 1.
+- `argo_apps/platform/apps/templates/01_envoy_gateway.yaml`: the Application, wave 1.
 - `argo_apps/platform/charts/01_envoy_gateway/`: the controller (upstream `gateway-helm`), the `eg`
   `GatewayClass`, and an `EnvoyProxy` that pins the LB IP.
 - A one-line flip in `00_cilium/values.yaml` (`gatewayAPI.enabled: false`) plus removal of the vendored Gateway
@@ -128,7 +128,7 @@ decision settled first. cert-manager is independently useful, so it lands on its
 
 Pure GitOps, a plain wave-2 leaf:
 
-- `argo_apps/platform/apps/02_cert_manager.yaml`: the Application, wave 2.
+- `argo_apps/platform/apps/templates/02_cert_manager.yaml`: the Application, wave 2.
 - `argo_apps/platform/charts/02_cert_manager/`: the wrapper chart, pinning cert-manager from
   `charts.jetstack.io`, all config under the `cert-manager:` key.
 
@@ -164,7 +164,7 @@ The ACME ingress platform: the `shared-gateway` `:80` HTTP listener, which is th
 the Let's Encrypt ClusterIssuers that solve HTTP-01 through it. This chart owns no apps and no `:443` listeners;
 every HTTPS host lives on its own per-app Gateway, all merged onto the one Envoy.
 
-- `argo_apps/platform/apps/03_gateway.yaml`: the Application, wave 3.
+- `argo_apps/platform/apps/templates/03_gateway.yaml`: the Application, wave 3.
 - `argo_apps/platform/charts/03_gateway/`: the `:80` Gateway plus the ClusterIssuers.
 - A one-line `enableGatewayAPI: true` in `02_cert_manager/values.yaml`.
 - `lib/shell/07_values.sh`: writes `.env`'s `LE_EMAIL` into `acme.email` and propagates
@@ -273,7 +273,7 @@ ingresses. SSO keeps them under a single `example.com` entry, below.
 
 ## Google SSO
 
-One policy per domain, with per-host allowlists. Google login plus a per-host email allowlist, applied CENTRALLY
+One policy for the domain, gating a listed set of hosts. Google login plus a per-host email allowlist, applied CENTRALLY
 in `argo_apps/platform/charts/04_google_sso` (wave 4). Per domain it renders one Envoy Gateway `SecurityPolicy`
 that `targetRefs` the domain's shared callback route AND every gated app route, plus the shared
 `google-sso.<domain>` callback host, a tiny whoami, and the sealed OAuth client secret.
@@ -305,27 +305,28 @@ Google needs exactly ONE redirect URI per domain (`google-sso.<domain>/oauth2/ca
 ### Workloads configure nothing SSO
 
 A chart declares only its ingress: domain, hosts and backends. Plain edges. Which hosts are protected, and by
-whom, is the central `domains[].hosts` map in `04_google_sso/values.yaml`:
+whom, is the central `hosts` list in `04_google_sso/values.yaml`:
 
 ```yaml
-domains:
-  - domain: example.com                          # ONE entry gates both tiers; cookieDomain/callback are its parent
-    issuer: letsencrypt-prod
-    hosts:
-      - host: argocd.ops.example.com                    # a platform UI
-        allowlist: [admin@example.com]
-      - host: sample-user-manager-sso.app.example.com   # a workload host, gated centrally
-        allowlist: [user@example.com]
+domain: example.com        # written by 07_values.sh from .env BASE_DOMAIN
+issuer: letsencrypt-prod
+allowlist:                 # written by 07_values.sh from .env SSO_ALLOWLIST
+  - you@example.com
+hosts:
+  - subdomain: argocd.ops                    # a platform UI
+  - subdomain: sample-user-manager-sso.app   # a workload host, gated centrally
 ```
 
-The policy `targetRefs` each host's route by name, using the full host with dots turned to dashes, so it attaches
-to routes created by ANY chart. To protect a host, add it here with its allowlist; its route exists wherever its
-ingress lives. A host not listed stays open. `sample-user-manager.app.example.com` is the open control, not
-listed; `sample-user-manager-sso.app.example.com` is listed and therefore gated.
+Each `subdomain` composes against `domain` into the FQDN its ingress renders. The policy `targetRefs` that host's
+route by name, using the full host with dots turned to dashes, so it attaches to routes created by ANY chart. To
+protect a host, add its subdomain here; its route exists wherever its ingress lives. A host not listed stays
+open. `sample-user-manager.app.example.com` is the open control, not listed; `sample-user-manager-sso.app` is
+listed and therefore gated.
 
-The single `example.com` entry gates hosts across both the `ops.` and `app.` tiers, because `cookieDomain:
-example.com` and the `google-sso.example.com` callback are a parent of each. No per-tier policy or redirect-URI
-split is needed.
+ONE domain, deliberately. It gates hosts across both the `ops.` and `app.` tiers, because `cookieDomain` and the
+`google-sso.<domain>` callback are a parent of each, so no per-tier policy or redirect-URI split is needed. Every
+subdomain MUST sit under `domain`: the policy sets one cookieDomain, and a cookie only ever reaches that domain
+and its subdomains, so a host outside it never receives the id token and loops through Google forever.
 
 ### Bypassing SSO for a path (the ArgoCD webhook)
 
@@ -358,14 +359,13 @@ trusts `argocd.<domain>`. The `google-sso.<domain>` callback edge is separate an
 | You add | Google Console | Cluster |
 |---|---|---|
 | a subdomain to an existing ingress | nothing, if the domain is already gated | add `{ subdomain, targetService, targetPort }` to that ingress's `hosts:` |
-| protection for a host | nothing | add `{ host, allowlist }` to `04_google_sso` `domains[].hosts` |
-| change who may log in | nothing | edit that host's `allowlist` in `04_google_sso` |
-| a brand-new SSO domain | one redirect URI, plus the apex under "Authorized domains" | add a `domains[]` entry with its `hosts`, run `07_google_sso.sh` |
+| protection for a host | nothing | add a `subdomain` to `04_google_sso` `hosts` |
+| change who may log in | nothing | set `SSO_ALLOWLIST` in `.env`, run `make configure-values` |
+| a different base domain | one redirect URI, plus the apex under "Authorized domains" | set `BASE_DOMAIN` in `.env`, run `make configure-values`, then `07_google_sso.sh` |
 
-Adding an SSO domain `example.org`:
+Moving to a base domain `example.org`:
 
-1. Add a `domains:` entry to `04_google_sso/values.yaml` with `domain`, `issuer`, and its gated `hosts` plus
-   allowlists.
+1. Set `BASE_DOMAIN="example.org"` in `.env` and run `make configure-values`. Every host in every chart follows.
 2. Point `google-sso.example.org` and each gated host at the router, with the `:80` forward for HTTP-01.
 3. In Google, add `example.org` under Authorized domains and
    `https://google-sso.example.org/oauth2/callback` as a redirect URI.
@@ -376,8 +376,8 @@ Adding an SSO domain `example.org`:
 ### Allowlists central, only the client secret sealed
 
 Envoy Gateway's `authorization` takes allowed emails as inline literals and cannot read them from a Secret, so
-they live in `04_google_sso/values.yaml` under `domains[].hosts[].allowlist`. Low-sensitivity email in a private
-repo. Edit and push to change access; no script prompts for them. Only the OAuth client secret is sealed, see
+they live in `04_google_sso/values.yaml` under `allowlist`, written there from `.env` `SSO_ALLOWLIST` by
+`07_values.sh`. Change access with `make configure-values` then push; no script prompts for them. Only the OAuth client secret is sealed, see
 [06_secrets.md](06_secrets.md).
 
 ### Fail-closed until sealed
@@ -390,7 +390,7 @@ placeholder `clientID` denies everyone. A half-configured policy never leaks acc
 1. Put `GOOGLE_SSO_CLIENT_ID` and `GOOGLE_SSO_CLIENT_SECRET` in the gitignored `.env`, then run
    `lib/shell/07_google_sso.sh`, which needs the cluster for `kubeseal`. It reads the domains from
    `04_google_sso/values.yaml`, prints the redirect URIs, writes `clientID`, and seals the secret. Edit the
-   `domains[].hosts` allowlists by hand.
+   `hosts` list and the `allowlist` by hand.
 2. Register each printed redirect URI on the one OAuth client, and add each apex under "Authorized domains".
    Publish the consent screen: in "Testing" only listed test users log in, regardless of the allowlist.
 3. Commit and push. ArgoCD applies `04_google_sso` at wave 4. The app routes it targetRefs may not exist until
@@ -400,7 +400,7 @@ Checks:
 
 - `kubectl -n gateway get securitypolicy` shows one `sso-<domainslug>` per domain with `Accepted=True`. Not
   Accepted means the client-secret Secret is missing, so run the script and push.
-- Browse a gated host: Google login, bounce through `google-sso.<domain>`, and an account on THAT host's allowlist
+- Browse a gated host: Google login, bounce through `google-sso.<domain>`, and an account on the allowlist
   reaches the app while one off it is denied. The open control host loads with no login.
 - Login failing with `CSRF token validation failed` means the app route is not covered by the same policy as the
-  callback. Confirm it is in `domains[].hosts` so the policy targetRefs it, and that the route name matches.
+  callback. Confirm its subdomain is in `hosts` so the policy targetRefs it, and that the route name matches.
