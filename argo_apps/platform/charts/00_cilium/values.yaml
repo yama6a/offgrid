@@ -146,5 +146,5 @@ loadBalancer:
   enabled: true
   # Written here by 04_cilium.sh from .env, don't hand-edit: change it in the .env and re-run the script.
   ipPool:
-    start: "192.168.100.10"
-    stop: "192.168.100.250"
+    start: ""
+    stop: ""

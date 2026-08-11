@@ -1,0 +1,33 @@
+# One CronJob that exports VMSingle + VLSingle over HTTP and streams each gzip'd to S3.
+apiVersion: argoproj.io/v1alpha1
+kind: Application
+metadata:
+  name: vm-backup
+  namespace: argocd
+  finalizers:
+    - resources-finalizer.argocd.argoproj.io
+  annotations:
+    argocd.argoproj.io/sync-wave: "8"
+spec:
+  project: default
+  revisionHistoryLimit: 0
+  source:
+    repoURL: {{ .Values.repoURL }}
+    targetRevision: HEAD
+    path: argo_apps/platform/charts/08_vm_backup
+  destination:
+    server: https://kubernetes.default.svc
+    namespace: monitoring
+  syncPolicy:
+    automated:
+      prune: true
+      selfHeal: true
+    retry:
+      limit: -1
+      refresh: true
+      backoff:
+        duration: 5s
+        factor: 2
+        maxDuration: 1m
+    syncOptions:
+      - ServerSideApply=true

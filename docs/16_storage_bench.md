@@ -4,8 +4,9 @@ What Longhorn r2 and synchronous replication cost CNPG and RabbitMQ in write lat
 bring-up step.
 
 This is also the evidence behind two live decisions: everything runs on Longhorn, and RabbitMQ gets a local
-replica while Postgres does not ([08_storage.md](08_storage.md)). The `local-path` rows below record a class this
-cluster no longer has, so they are the historical half of the comparison and the script cannot reproduce them.
+replica while Postgres does not ([08_storage.md](08_storage.md)). The `local-path` rows below are the baseline
+the Longhorn numbers are measured against. That class is not installed here, so the script cannot reproduce
+those rows.
 The verdict they support: Longhorn's latency cost is real but small, self-healing on a machine loss is worth it,
 and both numbers land inside what the managed services deliver.
 
@@ -41,7 +42,7 @@ bash lib/shell/storage_bench.sh corroborate <dir>        # vs VictoriaMetrics, n
 
 - Row 6 is what we ship, and it is the only row that costs nothing on a machine loss. Against row 8, the
   like-for-like managed equivalent (synchronous HA, no commit loss): 10.52 ms against ~4.4-7.4 ms. Same order.
-  Row 3 is the same replication on the storage we gave up, at 8.19 ms, so self-healing cost 2.3 ms.
+  Row 3 is the same replication on node-local storage, at 8.19 ms, so self-healing costs 2.3 ms.
 - Synchronous replication costs more than the storage does: +2.17 ms against +1.48 ms.
 - The gap against managed Postgres is throughput, not latency. 374 tps is 32M write transactions a day.
 - Rows 2 and 5 are inferred: async replication sits off the commit path, so a commit waits only for the

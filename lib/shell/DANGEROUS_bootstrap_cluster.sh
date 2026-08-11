@@ -11,7 +11,7 @@
 #   4. 03c_talos_cluster_config.sh  : generate fresh config, apply, bootstrap etcd, write kube/talosconfig
 #   5. 03d_nic_hardening.sh         : NIC hardening
 #   6. 04_cilium.sh                 : CNI + prometheus-operator CRDs + LB-IPAM/L2 + Hubble
-#   7. 07_gateway.sh                : write LE_EMAIL + Cloudflare zones into the chart values
+#   7. 07_values.sh                 : write repo URL, domains, SSO allowlist, ingress IP, ACME + scrape endpoints into the chart values
 #   8. git add/commit/push          : 05 refuses a dirty argo_apps/ tree; ArgoCD deploys the REMOTE
 #   9. 05_argocd.sh                 : bootstrap ArgoCD, which then delivers the platform from git
 #  10. wait sealed-secrets ctrl     : every later seal step needs it up
@@ -69,7 +69,7 @@ This will BOOTSTRAP a FIRST-TIME Talos cluster on freshly-flashed nodes:
   nodes   : ${IPS[*]}
   archive : secrets.yaml + kubeconfig + talosconfig + sealed-secrets-master.key (+ 03c scratch)
             -> secrets/backup_<timestamp>/   (03c then mints a NEW Talos CA; the old creds stop working)
-  flow    : preflight -> 03b verify -> archive -> 03c -> 03d -> 04 -> 07_gateway -> commit/push -> 05 (ArgoCD)
+  flow    : preflight -> 03b verify -> archive -> 03c -> 03d -> 04 -> 07_values -> commit/push -> 05 (ArgoCD)
             -> re-seal SSO -> commit/push -> converge -> seed ntfy -> back up the new key -> verify ingress
 
 Requires nodes in MAINTENANCE mode (03a done; 03b boot-verify is run for you below). To re-initialize
@@ -122,9 +122,9 @@ run_step "NIC hardening (EEE/watchdog)"            "$STEP_DIR" 03d_nic_hardening
 
 run_step "CNI + monitoring CRDs + LB/L2 + Hubble" "$STEP_DIR" 04_cilium.sh
 
-run_step "propagate LE_EMAIL + Cloudflare zones into the gateway/ingress chart values" "$STEP_DIR" 07_gateway.sh
+run_step "propagate .env + inventory into every chart value ArgoCD renders" "$STEP_DIR" 07_values.sh
 
-step "git add + commit + push (config so far: LB range + gateway values)"
+step "git add + commit + push (config so far: LB range + every stamped chart value)"
 git add -A
 if git diff --cached --quiet; then
   ok "nothing new to commit"
@@ -159,9 +159,9 @@ else
   warn "GOOGLE_SSO_CLIENT_ID/SECRET empty in .env -> skipping SSO re-seal (google-oauth stays orphaned until you set them + run 07)"
 fi
 
-# Split from 07_gateway (STEP 7): sealing needs the LIVE controller (up now), but 07_gateway runs before
+# Split from 07_values (STEP 7): sealing needs the LIVE controller (up now), but 07_values runs before
 # ArgoCD. Seals CLOUDFLARE_API_TOKEN_SECRET into cert-manager so the dns01 ClusterIssuer solver authenticates.
-# Skipped if the .env token is empty (DNS-01 off; 07_gateway already forced the zones to []).
+# Skipped if the .env token is empty (DNS-01 off; 07_values already forced the zones to []).
 if [ -n "$CLOUDFLARE_API_TOKEN_SECRET" ]; then
   run_step "re-seal the Cloudflare DNS-01 API token" "$STEP_DIR" 07_cloudflare_token.sh best-effort \
     "07_cloudflare_token didn't complete; re-run it by hand ('make configure-cloudflare-token') + commit/push"

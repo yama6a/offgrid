@@ -18,6 +18,13 @@ inventory.yaml
 # scratch. A few hundred MB per release; never commit it.
 /.cache/
 
+# Editor and OS droppings. Listed here rather than left to a personal global gitignore, so a fork on someone
+# else's machine does not commit them.
+.idea/
+.vscode/
+.DS_Store
+__pycache__/
+
 # Vendored Helm dependency blobs. `helm dependency build` pulls each chart's deps into its own charts/ dir;
 # reproducible from Chart.yaml (+ Chart.lock where committed), so never committed. One rule for every chart.
 **/charts/*.tgz

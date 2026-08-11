@@ -51,11 +51,11 @@ order CREATION only, 5s apart via `ARGOCD_SYNC_WAVE_DELAY` set in `01_argocd` va
 ArgoCD ships no built-in health assessment for `argoproj.io/Application`, so a parent app-of-apps sees its child
 Applications as health-less and a wave never waits on child health.
 
-We used to restore it via `resource.customizations.health.argoproj.io_Application` to make the wave-0 to wave-1
-gate wait. That gate proved fragile: a child that transiently reports Degraded or Progressing LATCHES a stale
+Do not restore it with `resource.customizations.health.argoproj.io_Application` to make the wave-0 to wave-1
+gate wait. That gate is fragile: a child that transiently reports Degraded or Progressing LATCHES a stale
 health status, because a quiescent Synced app only recomputes health on the `timeout.reconciliation` poll and
-there is no separate health-refresh. It froze the whole tree about 9 min per wave and stretched a cold boot to
-about 51 min. So the gate is gone.
+there is no separate health-refresh. Measured, it froze the whole tree about 9 min per wave and stretched a
+cold boot to about 51 min.
 
 Ordering is now eventual. `workloads` is created while the platform may still be coming up, and a workload whose
 platform CRD is not registered yet fails its sync and converges via UNBOUNDED `syncPolicy.retry` (`limit: -1`,

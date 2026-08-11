@@ -4,7 +4,7 @@ gatewayClass:
 envoyProxy:
   name: eg-proxy-config
   namespace: envoy-gateway-system
-  loadBalancerIP: "192.168.100.10" # MUST sit inside the Cilium LB-IPAM pool (00_cilium loadBalancer.ipPool)
+  loadBalancerIP: "" # MUST sit inside the Cilium LB-IPAM pool (00_cilium loadBalancer.ipPool)
   # This is the cluster's SINGLE merged ingress proxy, so keep a generous memory limit: a too-tight one
   # OOM-kills all ingress at once.
   resources:

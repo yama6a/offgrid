@@ -22,7 +22,7 @@ longhorn:
   # 16_longhorn_backup.sh fills these from .env/terraform; empty = backups off. Longhorn owns retention via the
   # RecurringJob retain counts, the S3 longhorn/ prefix has no lifecycle rule.
   defaultBackupStore:
-    backupTarget: "s3://my-cluster-backups@eu-central-1/longhorn/"
+    backupTarget: ""
     backupTargetCredentialSecret: "longhorn-backup-s3" # sealed into longhorn-system by templates/backup-s3-sealedsecret.yaml
     pollInterval: 300 # seconds; also how fast a rebuilt cluster notices the backups already in the bucket
   persistence:

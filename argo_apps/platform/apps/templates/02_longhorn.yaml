@@ -1,0 +1,39 @@
+# Longhorn: distributed block storage and the default StorageClass, on the XFS 'longhorn' volume 03c mounts.
+apiVersion: argoproj.io/v1alpha1
+kind: Application
+metadata:
+  name: longhorn
+  namespace: argocd
+  finalizers:
+    - resources-finalizer.argocd.argoproj.io
+  annotations:
+    argocd.argoproj.io/sync-wave: "2"
+spec:
+  project: default
+  revisionHistoryLimit: 0
+  source:
+    repoURL: {{ .Values.repoURL }}
+    targetRevision: HEAD
+    path: argo_apps/platform/charts/02_longhorn
+  destination:
+    server: https://kubernetes.default.svc
+    namespace: longhorn-system
+  syncPolicy:
+    managedNamespaceMetadata: # manager/driver pods need privileged; Talos would otherwise reject them, it defaults every namespace to the `baseline` pod-security level
+      labels:
+        pod-security.kubernetes.io/enforce: privileged
+        pod-security.kubernetes.io/warn: privileged
+        pod-security.kubernetes.io/audit: privileged
+    automated:
+      prune: true
+      selfHeal: true
+    retry:
+      limit: -1
+      refresh: true
+      backoff:
+        duration: 5s
+        factor: 2
+        maxDuration: 1m
+    syncOptions:
+      - CreateNamespace=true
+      - ServerSideApply=true # these CRDs are too big for client-side apply's 256KiB manifest annotation

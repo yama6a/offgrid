@@ -91,8 +91,8 @@ which runs `talosctl upgrade --image "$INSTALLER_REF"` one node at a time. Re-ru
 target image is a no-op. The image package is public, so nodes need no registry auth to pull it.
 
 **Draining during the upgrade (why `03e` cordons/drains itself).** Talos's upgrade sequence cordons the node and
-drains it (honoring the eviction API / PodDisruptionBudgets) before the reboot. On this cluster that drain used to
-*hang*, three pods it cannot gracefully evict, each for a different reason:
+drains it (honoring the eviction API / PodDisruptionBudgets) before the reboot. Without the mitigations below
+that drain *hangs*, on three pods it cannot gracefully evict, each for a different reason:
 
 - CNPG single-instance DB (`highAvailability: false`): the operator's PDB is `minAvailable: 1`, so with one instance
   ANY eviction violates it. A hard block, unrelated to storage. The wrapper turns the PDB off automatically for a
@@ -229,9 +229,9 @@ Reserve one MAC/IP pair per Pi so each always boots at a known IP. My values:
 
 | Node   | IP (my choice) |
 |--------|----------------|
-| pi-cp1 | 192.168.10.201 |
-| pi-cp2 | 192.168.10.202 |
-| pi-cp3 | 192.168.10.203 |
+| talos-cp1 | 192.168.10.201 |
+| talos-cp2 | 192.168.10.202 |
+| talos-cp3 | 192.168.10.203 |
 
 Boot the Pis one by one, read their MAC addresses from the router's client list, and add a reservation for each. (You
 can do this with a standard PiOS image on an SD card first, or with the Talos image on the NVMe, as long as the Pi

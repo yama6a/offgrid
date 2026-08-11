@@ -33,8 +33,8 @@ half-rack mount, NVMe-booted.
 
 - GeeekPi DP-0046: a 10" 2U rack mount with PCIe NVMe boards for Pi 5/4B. Same product DeskPi documents as the
   "Rackmate 2U Rack Mount with PCIe NVMe Board" (GeeekPi / DeskPi are sister brands).
-- Holds up to 4 Pi 5 boards and slots into a standard 10" cabinet; I already had a 10" rack at home, so the 10"
-  2U was the natural choice.
+- Holds up to 4 Pi 5 boards and slots into a standard 10" cabinet, which is the common half-rack size for a
+  homelab.
 - The kit bundles 4x RS-P11 bottom NVMe boards (one per bay), so NVMe per node without buying separate HATs.
 
 ## NVMe: bundled RS-P11 boards
@@ -65,9 +65,9 @@ Model CT1000P310SSD8, M.2 2280, ~220 TBW, ~1700 SEK (~$180 USD) (NAND prices sti
 - Rejected Crucial E100 (~80 TBW): fine for light IO, but weak once every node is doing fsync-heavy etcd writes
   around the clock. P310's 220 TBW removes the question for little extra.
 - PCIe Gen3 is possible, but we don't need the speed, and it risks instability, so Gen2 is fine for us.
-- The first one I bought was a CT1000P310SSD5, same SSD with an attached heat spreader. It did not clear the gap
-  between the RS-P11 board and the Pi above it, so I pried it off. No sustained heavy IO here and it is throttled
-  to the Pi's Gen2 lane anyway, so it barely warms up. The other two are the no-spreader CT1000P310SSD8.
+- Buy the bare-PCB CT1000P310SSD8, not the CT1000P310SSD5: the SSD5 is the same drive with a heat spreader
+  attached, and it does not clear the gap between the RS-P11 board and the Pi above it. No heat sink is needed
+  here anyway, since the drive is throttled to the Pi's Gen2 lane and sees no sustained heavy IO.
 
 ## Power: 3x 27W USB-C PD
 

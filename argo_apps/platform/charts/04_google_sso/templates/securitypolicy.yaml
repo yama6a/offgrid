@@ -1,19 +1,18 @@
 {{/*
-ONE Google-OIDC SecurityPolicy per domain, attached to the domain's callback route AND every gated app route,
-so a single OAuth flow completes on the shared callback host under one cookie identity.
-Login gate is oidc; authorization is per-host, each rule allowing a host only for its own allowlist. A host
-with no rule is denied, which includes the callback whoami itself.
+ONE Google-OIDC SecurityPolicy, attached to the callback route AND every gated app route, so a single OAuth
+flow completes on the shared callback host under one cookie identity.
+Login gate is oidc; authorization is per-host, each rule allowing a host only for the allowlist. A host with
+no rule is denied, which includes the callback whoami itself.
 */}}
 {{- $oidc := .Values.oidc -}}
-{{- $ns := .Values.namespace -}}
-{{- range $d := .Values.domains }}
-{{- $slug := $d.domain | replace "." "-" }}
+{{- $domain := required "domain is required (07_values.sh writes it from .env BASE_DOMAIN)" .Values.domain -}}
+{{- $slug := $domain | replace "." "-" }}
 ---
 apiVersion: gateway.envoyproxy.io/v1alpha1
 kind: SecurityPolicy
 metadata:
   name: sso-{{ $slug }}
-  namespace: {{ $ns }}
+  namespace: {{ .Values.namespace }}
 spec:
   # Route names are the full host with dots turned to dashes, the ingress chart's naming, so they resolve
   # whichever chart created the route.
@@ -21,10 +20,10 @@ spec:
     - group: gateway.networking.k8s.io
       kind: HTTPRoute
       name: google-sso-{{ $slug }}
-    {{- range $h := $d.hosts }}
+    {{- range $h := .Values.hosts }}
     - group: gateway.networking.k8s.io
       kind: HTTPRoute
-      name: {{ $h.host | replace "." "-" }}
+      name: {{ printf "%s.%s" $h.subdomain $domain | replace "." "-" }}
     {{- end }}
 
   oidc:
@@ -33,11 +32,11 @@ spec:
     clientID: {{ $oidc.clientID | quote }}
     clientSecret:
       name: {{ $oidc.clientSecretName | quote }}
-    # The one callback host for this domain (register it on the Google OAuth client).
-    redirectURL: {{ printf "https://%s.%s/oauth2/callback" $oidc.authSubdomain $d.domain | quote }}
+    # The one callback host (register it on the Google OAuth client).
+    redirectURL: {{ printf "https://%s.%s/oauth2/callback" $oidc.authSubdomain $domain | quote }}
     logoutPath: {{ $oidc.logoutPath | quote }}
-    # Domain-scoped, so one login covers every host on the domain. Each host still re-checks its allowlist.
-    cookieDomain: {{ $d.domain | quote }}
+    # Domain-scoped, so one login covers every host under it. Each host still re-checks the allowlist.
+    cookieDomain: {{ $domain | quote }}
     cookieNames:
       idToken: {{ $oidc.idTokenCookie | quote }}
     refreshToken: {{ $oidc.refreshToken }}
@@ -71,23 +70,23 @@ spec:
     # oidc filter BEFORE authorization, so login still works.
     defaultAction: Deny
     rules:
-      {{- range $h := $d.hosts }}
-      - name: allow-{{ $h.host | replace "." "-" }}
+      {{- range $h := .Values.hosts }}
+      {{- $fqdn := printf "%s.%s" $h.subdomain $domain }}
+      - name: allow-{{ $fqdn | replace "." "-" }}
         action: Allow
         principal:
-          # BOTH must match: the request host AND an email in that host's allowlist.
+          # BOTH must match: the request host AND an email in the allowlist.
           headers:
             - name: ":authority"
               values:
-                - {{ $h.host | quote }}
+                - {{ $fqdn | quote }}
           jwt:
             provider: google
             claims:
               - name: email
                 valueType: String
                 values:
-                  {{- range $h.allowlist }}
+                  {{- range $.Values.allowlist }}
                   - {{ . | quote }}
                   {{- end }}
       {{- end }}
-{{- end }}

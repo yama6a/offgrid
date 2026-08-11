@@ -1,6 +1,6 @@
 schedule: "0 1 * * *" # daily 01:00 UTC, offset from cnpg/redis (02:00) and longhorn (03:00) to spread S3 load
-bucket: "my-cluster-backups" # written by 17_vm_backup.sh from .env; EMPTY = backups off, nothing renders
-region: "eu-central-1" # written by 17_vm_backup.sh from .env
+bucket: "" # written by 17_vm_backup.sh from .env; EMPTY = backups off, nothing renders
+region: "" # written by 17_vm_backup.sh from .env
 prefix: "vm/" # metrics land under vm/metrics/<UTC>.native.gz, logs under vm/logs/<UTC>.jsonl.gz
 secretName: "vm-backup-s3" # sealed S3 writer creds in ns monitoring; keys AWS_ACCESS_KEY_ID / AWS_SECRET_ACCESS_KEY
 vmsingle: "http://vmsingle-victoria-metrics-k8s-stack.monitoring.svc:8428"

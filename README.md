@@ -14,10 +14,11 @@
   <img src="docs/images/rackmount_0.jpeg" alt="The assembled 3-node Raspberry Pi 5 cluster in a 10-inch rack" width="600">
 </p>
 
-> A personal homelab, documented end to end so you can follow it, learn from it, or adapt it. Not a one-click
-> template: the OS image, network, domains and sizing are specific to my build. But the repo is a **numbered,
-> ordered runbook**, so running the steps in sequence gets you a cluster.
-> See **[Make it your own](#make-it-your-own)** for what an adopter has to change.
+> A homelab cluster documented end to end, so you can follow it, learn from it, or run it yourself. Every
+> per-deployment value lives in `.env` and `inventory.yaml`, and `make configure-values` stamps them into the
+> chart values Argo CD renders, so a fork changes those two files and nothing else. The repo is a **numbered,
+> ordered runbook**: run the steps in sequence and you get a cluster.
+> See **[Make it your own](#make-it-your-own)** to get started.
 
 ## Contents
 
@@ -31,6 +32,7 @@
 - [Day-2 operations](#day-2-operations)
 - [Troubleshooting](#troubleshooting)
 - [Documentation](#documentation)
+- [Contributing](CONTRIBUTING.md)
 - [License](#license) and [Credits](#credits)
 
 ## Overview
@@ -149,7 +151,7 @@ flowchart LR
 |-- argo_apps/          # everything Argo CD delivers (two-tree GitOps)
 |   |-- root.yaml       #   root-of-roots (applied once by the 05 script)
 |   |-- roots/          #   0_platform -> 1_workloads
-|   |-- platform/{apps,charts}/
+|   |-- platform/{apps,charts}/   # apps/ is a chart: Applications in templates/, repoURL in values.yaml
 |   `-- workloads/{apps,charts}/
 `-- secrets/            # gitignored: talos certs, talosconfig, kubeconfig, sealed key
 ```
@@ -202,17 +204,34 @@ Per-phase reasoning and verification is in [the docs](#documentation).
 
 ## Make it your own
 
-Edit `.env` (copied from `.env.example`) and expect to change at least:
+Fork the repo, then edit exactly two gitignored files, both copied from a committed template:
 
-- Topology: `inventory.yaml` (one entry per node: role, hardware type, image). Network: `CLUSTER_VIP`,
-  `LB_RANGE_START`/`LB_RANGE_STOP` in `.env`.
+```bash
+cp .env.example .env                      # domains, network, secrets
+cp inventory.example.yaml inventory.yaml  # one entry per node: role, hardware type, image
+make configure-values                     # stamps both into every chart value Argo CD renders
+git add -A && git commit && git push      # Argo CD reconciles the REMOTE, never your working tree
+```
+
+`make configure-values` is the whole story for per-deployment config: it writes your repo URL into all five
+places that carry it, your `BASE_DOMAIN` into every public hostname, the SSO allowlist, the ingress IP, the
+ACME email, and the control-plane scrape endpoints read straight out of `inventory.yaml`. It needs no cluster,
+it is idempotent, and re-running it after any `.env` change is the supported way to re-apply config. Because a
+fork only ever edits `.env` and `inventory.yaml`, rebasing on upstream does not conflict.
+
+What to put in those two files:
+
+- Topology: `inventory.yaml`, plus `CLUSTER_VIP` and `LB_RANGE_START`/`LB_RANGE_STOP` in `.env`.
   Reserve each node IP in your router, and keep the VIP and LB pool on the nodes' L2, outside your DHCP range.
     - To reserve them: connect the Pis, read their MAC addresses off your router, then pin the intended IPs to
       those MACs in its DHCP settings.
-- Domains and TLS: `LE_EMAIL`, plus your Google OAuth app (`GOOGLE_SSO_CLIENT_ID` + `GOOGLE_SSO_CLIENT_SECRET`).
-  Add each exposed hostname to `argo_apps/platform/charts/04_google_sso`.
-- Git remote: `REPO_URL` must equal the `repoURL` committed across `argo_apps/`. Argo CD reconciles the pushed
-  remote, not your working tree, so commit and push before you expect a sync.
+- Domains: `BASE_DOMAIN` is a registrable domain you own. Platform UIs land on `*.ops.<base>` and workloads on
+  `*.app.<base>`; both tiers must stay under the base domain, because one SSO cookie covers them all.
+  `INGRESS_LB_IP` is the single IP every host resolves to, and must sit inside the LB pool.
+- TLS and login: `LE_EMAIL`, `SSO_ALLOWLIST`, plus your Google OAuth app (`GOOGLE_SSO_CLIENT_ID` +
+  `GOOGLE_SSO_CLIENT_SECRET`). Which hosts are gated is policy, so that list lives in
+  `argo_apps/platform/charts/04_google_sso`.
+- Git remote: `REPO_URL`, your fork. Nothing else references a repo URL by hand.
 - Registry: `GHCR_USER`, and the GHCR tokens if you publish the installer image or use private images.
 - Alerting: alerts reach your phone via self-hosted ntfy, no email. Set `NTFY_PHONE_PASSWORD_SECRET`, then
   post-boot run `make configure-ntfy-auth`. See `docs/09_monitoring.md`.
@@ -236,7 +255,7 @@ Hardware caveats before you commit:
 | Add a node                | `make add-node NODE=<host>`                                                      | Joins one node from maintenance into the running cluster, control-plane or worker ([docs/17](docs/17_worker_nodes.md)).           |
 | Upgrade Kubernetes        | `make upgrade-k8s`                                                               | Rolling, no reboot (03f). (Bump `KUBERNETES_VERSION` in `versions.env`)                                             |
 | Restore a datastore       | `make restore-cnpg`, `restore-redis`, `restore-longhorn`, `restore-vm`            | From the off-cluster S3 backups ([docs/13](docs/13_backups.md)).                                                     |
-| Recover a lost node       | `make recover-node NODE=pi-cp3`                                                  | Rejoins one wiped/replaced node and fixes its etcd member and Longhorn disk record. Workloads move on their own ([docs/15](docs/15_node_recovery.md)). |
+| Recover a lost node       | `make recover-node NODE=talos-cp3`                                                  | Rejoins one wiped/replaced node and fixes its etcd member and Longhorn disk record. Workloads move on their own ([docs/15](docs/15_node_recovery.md)). |
 | Rightsize requests        | `make krr`                                                                       | Prints current requests next to what usage history suggests. Read-only; you hand-edit the chart values.             |
 | Rebuild a running cluster | `make rebuild-cluster`                                                           | Wipes + rebuilds end-to-end, restores the sealed-secret key. Destructive to the persistence layer (cnpg, longhorn). |
 | Reset all nodes           | `make reset-cluster`                                                             | Wipes back to maintenance mode. Destructive to the persistence layer (cnpg, longhorn).                              |
@@ -280,6 +299,9 @@ Each doc holds the why behind a step, with verification commands:
 | [16_storage_bench](docs/16_storage_bench.md)       | Measuring what Longhorn r2 costs CNPG and RabbitMQ in write latency.            |
 | [17_worker_nodes](docs/17_worker_nodes.md)         | The node inventory, and adding a worker that does not have to be a Pi.           |
 
+Repo-wide conventions (layout, where a value lives, chart and Argo CD rules) are in
+[CONTRIBUTING.md](CONTRIBUTING.md).
+
 
 ## Credits
 
@@ -294,18 +316,3 @@ own upstreams.
 ## License
 
 MIT. See [LICENSE](LICENSE).
-
-## Todos
-
-- put a worker in the 4th bay (the inventory and scripts already take one, see docs/17_worker_nodes.md)
-- should we keep the nic-keeper? Run in prod for a while and see if it ever triggers. If it never triggers, remove it.
-- migrate old pi stuff to cluster
-- fork my personal cluster project for OSS version
-- rewrite git history to remove secrets and email addresses and domains from past commits
-- 
-- look at all latest ntfy alerts, and check if they are actionable or just noise. if noise, change limits, or suggest how to deal with them.
-- look at all latest error logs in the last 24h. noise or actionable? if noise, or suggest how to deal with them.
-- check all logs/hubble for network policies in audit more that are dropping traffic that should be allowed
-- check log accumulation and metrics cardinality, drop noise so storage doesn't grow meaninglessly
-
-- read and shorten all md files. 

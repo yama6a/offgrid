@@ -57,10 +57,10 @@ By default Envoy Gateway spawns one Envoy Deployment and one LoadBalancer Servic
 fresh external IP per app. `mergeGateways: true` on the `EnvoyProxy` collapses every `eg`-class Gateway onto a
 single Envoy Deployment and Service, so the per-app split still presents one ingress point on one IP.
 
-That IP is pinned solely by the `EnvoyProxy` provider annotation `lbipam.cilium.io/ips: 192.168.100.10`. Per-Gateway
-`spec.addresses` is dropped everywhere, because multiple Gateways asserting an address on the one merged Service
-would conflict. The IP must stay inside the LB-IPAM pool from `.env`, and it is the fixed IP the old Pi forwards
-to, so keep it stable.
+That IP is pinned solely by the `EnvoyProxy` provider annotation `lbipam.cilium.io/ips`, written from `.env`
+`INGRESS_LB_IP` by `07_values.sh`. Per-Gateway `spec.addresses` is dropped everywhere, because multiple Gateways
+asserting an address on the one merged Service would conflict. It must stay inside the LB-IPAM pool, which
+`07_values.sh` enforces, and it is the IP your router forwards to, so keep it stable.
 
 ### Cutover: free the pinned IP
 
@@ -167,7 +167,7 @@ every HTTPS host lives on its own per-app Gateway, all merged onto the one Envoy
 - `argo_apps/platform/apps/03_gateway.yaml`: the Application, wave 3.
 - `argo_apps/platform/charts/03_gateway/`: the `:80` Gateway plus the ClusterIssuers.
 - A one-line `enableGatewayAPI: true` in `02_cert_manager/values.yaml`.
-- `lib/shell/07_gateway.sh`: writes `.env`'s `LE_EMAIL` into `acme.email` and propagates
+- `lib/shell/07_values.sh`: writes `.env`'s `LE_EMAIL` into `acme.email` and propagates
   `CLOUDFLARE_WILDCARD_DOMAINS` into `acme.cloudflare.zones` here AND the ingress chart's `cloudflareZones`.
   Values only, no cluster access, so it runs early at bootstrap step 7, before ArgoCD. Non-interactive; commit
   the rewritten files. Writes go through `ys_set`/`ys_set_list`, not `yq -i`: see 05_gitops.md.
@@ -201,7 +201,7 @@ are configured each issuer ALSO gets a `dns01.cloudflare` solver, and cert-manag
 We have Cloudflare for only some domains, so DNS-01 is optional and per-domain. One list drives it:
 `CLOUDFLARE_WILDCARD_DOMAINS` in `.env`, space-separated host tiers on Cloudflare, gated by
 `CLOUDFLARE_API_TOKEN_SECRET` (a scoped API token, Zone:DNS:Edit + Zone:Read). Empty means DNS-01 off and HTTP-01
-for everything. `07_gateway.sh` writes the zones into two places:
+for everything. `07_values.sh` writes the zones into two places:
 
 - `03_gateway`: each ClusterIssuer gets a `dns01.cloudflare` solver scoped `selector.dnsZones: <zones>` plus the
   existing `http01` catch-all. cert-manager picks the most-specific matching solver per dnsName, so names under a
@@ -221,7 +221,7 @@ cert-manager runs a DNS self-check before validation. It is pointed at public re
 NetworkPolicy allows egress on `:53` and `:443` to the world for the Cloudflare API and that check.
 
 After changing the ingress chart you must re-vendor its consumers with `helm dependency update` per consumer.
-`07_gateway.sh` prints the exact loop.
+`07_values.sh` prints the exact loop.
 
 ### Enabling Gateway API in cert-manager
 
@@ -229,23 +229,6 @@ HTTP-01-via-Gateway needs cert-manager to manage `HTTPRoute`s. That is the contr
 `config.enableGatewayAPI: true`, NOT a feature gate, set under the `cert-manager:` key. The Gateway API CRDs must
 exist before the controller starts; they do, because Envoy Gateway installs them at wave 1. If you ever install
 the CRDs after cert-manager, restart its Deployment.
-
-### Old-Pi Traefik migration
-
-The old single Raspberry Pi still receives all `:80` and `:443` from the home router and runs Traefik. Migrated
-hosts move here one at a time, and for a migrated host Traefik becomes a dumb forwarder to this Gateway's IP:
-
-- `:443` becomes a TCP/SNI passthrough (`HostSNI` plus `tls.passthrough`). The cluster terminates TLS and owns
-  the cert, so the eventual router-straight-to-Gateway cutover is a no-op on the cluster.
-- `:80` becomes a per-host `Host(...)` L7 forward, carrying the ACME HTTP-01 challenge in so cert-manager can mint
-  that host's cert. Plaintext has no SNI, so it cannot be routed per-host at L4.
-
-Two old-Pi landmines when forwarding `:80`:
-
-- Set `--entrypoints.http.allowACMEByPass=true`, or Traefik's ACME router swallows
-  `/.well-known/acme-challenge/` before the forward fires.
-- Remove the migrated host from the old Pi's cert SANs. It can no longer satisfy HTTP-01 for that host, and its
-  monolithic cert must keep renewing.
 
 ### Verify
 
@@ -257,9 +240,8 @@ kubectl get clusterissuer                 # letsencrypt-staging + letsencrypt-pr
 
 ## The shared ingress chart
 
-The per-host edge used to be four hand-copied templates in every app chart. It now lives in ONE `type:
-application` chart, `lib/helm/ingress/`. For a list of `ingresses[]`, each a group of subdomains under one
-`domain`, it renders:
+The per-host edge lives in ONE `type: application` chart, `lib/helm/ingress/`, instead of being hand-copied into
+every app chart. For a list of `ingresses[]`, each a group of subdomains under one `domain`, it renders:
 
 - A Gateway, HTTPRoute and ReferenceGrant per host. ReferenceGrants only for cross-namespace backends.
 - For a non-Cloudflare domain, ONE multi-SAN `Certificate` per ingress covering all its hosts, into one shared

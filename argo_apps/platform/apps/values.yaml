@@ -1,0 +1,1 @@
+repoURL: "https://github.com/yama6a/offgrid" # REQUIRED: (string) the git remote ArgoCD reconciles. Written by 07_values.sh from .env REPO_URL

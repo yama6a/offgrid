@@ -8,7 +8,7 @@
 #
 # Usage:
 #   bash recover_node.sh <hostname> [--yes]
-#   make recover-node NODE=pi-cp3
+#   make recover-node NODE=talos-cp3
 set -uo pipefail
 
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"

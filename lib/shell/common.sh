@@ -42,6 +42,9 @@ source "$ENV_FILE"
 : "${AWS_DEPLOY_ACCESS_KEY_ID:=}"          # 13 runs Terraform with these; empty = skip S3 backups (13/14 no-op)
 : "${AWS_DEPLOY_SECRET_ACCESS_KEY_SECRET:=}"  # 13 Terraform deployer secret (never sealed into the cluster)
 # Not secrets, defaulted for the same set -u reason.
+: "${BASE_DOMAIN:=}"               # 07 writes it into the SSO + ingress chart values; every public host sits under it
+: "${SSO_ALLOWLIST:=}"             # 07 writes it into the google-sso allowlist (space-separated accounts)
+: "${INGRESS_LB_IP:=}"             # 07 writes it into the envoy-gateway values (the one IP every ingress answers on)
 : "${POLL_SYNC_ENABLED:=false}"    # 08 patches timeout.reconciliation from this (false=300s fallback / true=60s)
 : "${CLOUDFLARE_WILDCARD_DOMAINS:=}"  # 07 writes into the gateway + ingress-lib values (DNS-01 wildcard host tiers; empty = none, HTTP-01 only)
 : "${AWS_REGION:=}"                    # 13 Terraform region + 14 CNPG S3 endpoint region
@@ -74,6 +77,10 @@ INSTALL_DISK="/dev/${EXPECT_DISK}"              # nvme0n1 -> /dev/nvme0n1
 TALOS_VERSION="${TALOS_IMAGE_RELEASE%-*}"
 TALOSCTL_VERSION="${TALOS_VERSION}"             # talosctl container (talosctl() below; boot-verify)
 IMAGE_CACHE="${REPO_ROOT}/.cache/images"        # 03a downloads each node type's raw image here (gitignored)
+# The two host tiers. Fixed labels, not knobs: the SSO policy sets one cookieDomain for BASE_DOMAIN, and a
+# cookie only ever reaches that domain and its subdomains, so a tier outside it could never be logged into.
+OPS_DOMAIN="ops.${BASE_DOMAIN}"                 # platform UIs:  <sub>.ops.<base>
+APP_DOMAIN="app.${BASE_DOMAIN}"                 # workloads:     <sub>.app.<base>
 
 say()  { printf '\n\033[1;36m>> %s\033[0m\n' "$*"; }
 die()  { printf '\033[1;31mERROR: %s\033[0m\n' "$*" >&2; exit 1; }
@@ -227,6 +234,33 @@ ys_set_list() {
       print pre want[n] ":" (m ? "" : " []") tail
       for (i = 1; i <= m; i++) print pre "  - " item[i]
       eating = 1
+    }
+  ' "$f" > "$tmp" && cat "$tmp" > "$f"
+  rm -f "$tmp"
+}
+
+# ys_set_each <file> <value> <key...> <leaf>: set <leaf> on EVERY item of the block sequence at <key...>.
+# ys_set walks mappings only, so it cannot reach a key under a `- ` item; this is the sequence counterpart.
+ys_set_each() {
+  local f="$1" v="$2"; shift 2
+  local tmp; tmp="$(mktemp)" || return 1
+  VAL="$v" awk -v path="$*" '
+    function keyof(s) { sub(/^ *(- )?/, "", s); sub(/:.*/, "", s); gsub(/^"|"$/, "", s); return s }
+    BEGIN { n = split(path, want, " "); lvl = 1; parent = -1; val = ENVIRON["VAL"] }
+    /^ *(#|$)/ { print; next }
+    lvl <= n - 1 {                                     # still walking down to the sequence key
+      match($0, /^ */); ind = RLENGTH
+      if (ind <= parent || (lvl == 1 && ind != 0)) { print; next }
+      if ($0 !~ /^ *[^ ]+:/ || keyof($0) != want[lvl]) { print; next }
+      parent = ind; lvl++; print; next
+    }
+    {                                                  # inside the sequence: rewrite the leaf on every item
+      match($0, /^ */); ind = RLENGTH
+      if (ind <= parent) { lvl = n + 1; print; next }  # dedented out of the sequence block, stop
+      if ($0 !~ /^ *(- )?[^ ]+:/ || keyof($0) != want[n]) { print; next }
+      tail = ""; if (match($0, / +#.*$/)) tail = substr($0, RSTART)
+      match($0, /^ *(- )?/)                            # keep the item marker where the leaf carries one
+      print substr($0, 1, RLENGTH) want[n] ": " val tail
     }
   ' "$f" > "$tmp" && cat "$tmp" > "$f"
   rm -f "$tmp"

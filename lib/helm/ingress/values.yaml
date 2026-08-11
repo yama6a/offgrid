@@ -13,8 +13,5 @@ ingresses: []
 
 # Domains covered by the shared Cloudflare DNS-01 wildcard cert 03_gateway mints. A listed domain references
 # `wildcard-<domain-dashed>-tls` and skips its own Certificate; everything else stays on per-ingress HTTP-01.
-# Written by 07_gateway.sh from .env CLOUDFLARE_WILDCARD_DOMAINS.
-cloudflareZones:
-  - example.com
-  - ops.example.com
-  - app.example.com
+# Written by 07_values.sh from .env CLOUDFLARE_WILDCARD_DOMAINS.
+cloudflareZones: []

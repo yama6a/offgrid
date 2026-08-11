@@ -21,7 +21,7 @@ groups:
             - the webhook to ntfy is erroring, so alerts fire but nobody is told
             - kubectl -n monitoring logs deploy/grafana | grep -i notif
             - check the ntfy topic + token still match: make configure-ntfy-auth, then reseal
-            - verify from a pod: curl -H "Authorization: Bearer <token>" https://ntfy.ops.example.com/<topic>
+            - verify from a pod: curl -H "Authorization: Bearer <token>" http://ntfy.monitoring.svc.cluster.local:8080/<topic>
         noDataState: OK
         execErrState: KeepLast
         data:

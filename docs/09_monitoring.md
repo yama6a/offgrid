@@ -115,7 +115,7 @@ The policy only takes effect once the machine config is pushed, and pushing it r
 pod on every node it touches:
 
 ```bash
-make reapply-talos-config NODE=pi-cp1   # one node, dry-run + confirm
+make reapply-talos-config NODE=talos-cp1   # one node, dry-run + confirm
 kubectl get --raw /healthz              # it came back? then do the rest
 make reapply-talos-config
 ```

@@ -29,7 +29,7 @@ wait_app() {  # $1=app name  $2=timeout secs
 }
 
 say "prerequisites"
-require kubectl helm
+require kubectl helm yq
 [ -f "${CHART_DIR}/Chart.yaml" ] || die "no chart at ${CHART_DIR} (expected argo_apps/platform/charts/01_argocd)"
 [ -f "${ROOT_APP}" ] || die "no root app at ${ROOT_APP}"
 use_kubeconfig
@@ -100,32 +100,20 @@ kubectl -n "$NS" rollout status deploy/argocd-server --timeout=180s >/dev/null 2
 # apps report a ComparisonError. Re-running after pushing is safe.
 say "handing off to GitOps (kubectl apply root)"
 
-# Pin .env REPO_URL into root.yaml. Idempotent when it already matches.
+# repoURL is written by 07_values.sh, which runs before the bootstrap's commit+push, so by here it is already
+# committed. Assert rather than rewrite: a mismatch means 07 was skipped and ArgoCD would reconcile the wrong
+# remote.
 [ -n "$REPO_URL" ] || die "REPO_URL is empty, set it in .env"
-# Only the root-of-roots is rewritten here. The child roots and every app under argo_apps/*/apps/ carry
-# their own repoURL, so pointing at a fork means rewriting those too.
-# Temp-file rewrite, not `sed -i`: portable across BSD and GNU sed.
-RA_TMP="$(mktemp)" || die "mktemp failed"
-if ! sed -E "s|^([[:space:]]*repoURL:[[:space:]]*).*|\1${REPO_URL}|" "$ROOT_APP" > "$RA_TMP"; then
-  rm -f "$RA_TMP"
-  bad "could not rewrite repoURL in ${ROOT_APP}"
-elif cmp -s "$RA_TMP" "$ROOT_APP"; then
-  rm -f "$RA_TMP"
-  ok "root repoURL already ${REPO_URL}"
-elif mv "$RA_TMP" "$ROOT_APP"; then
-  ok "root repoURL -> ${REPO_URL} (locally modified, commit it)"
-else
-  rm -f "$RA_TMP"
-  bad "could not replace ${ROOT_APP}"
-fi
+got_root_url="$(yq -r '.spec.source.repoURL' "$ROOT_APP" 2>/dev/null)"
+[ "$got_root_url" = "$REPO_URL" ] \
+  && ok "root repoURL == ${REPO_URL}" \
+  || bad "root repoURL is '${got_root_url}', expected '${REPO_URL}'. Run \`make configure-values\`, commit and push first"
 
 # ArgoCD clones the PUSHED repo, so local-only changes are invisible to the root app. Flags uncommitted
 # changes under argo_apps/ or the shared lib/helm/ charts it resolves, and unpushed commits on the branch.
-# root.yaml is the ONE exemption: kubectl applies it from the working tree just below and nothing reads it
-# from the remote (the root's path is argo_apps/roots), so counting the rewrite above would fail this gate on
-# a fork or a REPO_URL change with no way to satisfy it.
+# No exemption: nothing here writes to the tree any more, so a dirty argo_apps/ is always a real problem.
 if [ -n "$REPO_ROOT" ]; then
-  [ -n "$(git -C "$REPO_ROOT" status --porcelain -- argo_apps lib/helm ':!argo_apps/root.yaml' 2>/dev/null)" ] \
+  [ -n "$(git -C "$REPO_ROOT" status --porcelain -- argo_apps lib/helm 2>/dev/null)" ] \
     && bad "uncommitted changes under argo_apps/ or lib/helm/, commit & push them, then re-run"
   ahead="$(git -C "$REPO_ROOT" rev-list --count '@{u}..HEAD' 2>/dev/null || echo 0)"
   [ "${ahead:-0}" -gt 0 ] \

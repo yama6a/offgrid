@@ -1,14 +1,12 @@
 {{/*
-Per domain, render the shared callback host google-sso.<domain> via the ingress chart, fronting the shared
-whoami. The SecurityPolicy attaches to this route plus the domain's app routes, so one flow completes here.
+Render the shared callback host google-sso.<domain> via the ingress chart, fronting the shared whoami. The
+SecurityPolicy attaches to this route plus the app routes, so one flow completes here.
 */}}
 {{- $zones := (.Values.ingress | default (dict)).cloudflareZones | default (list) -}}
-{{- range $d := .Values.domains }}
-{{- $slug := $d.domain | replace "." "-" -}}
+{{- $domain := required "domain is required (07_values.sh writes it from .env BASE_DOMAIN)" .Values.domain -}}
 {{- $ing := dict
-      "name" (printf "google-sso-%s" $slug)
-      "domain" $d.domain
-      "issuer" $d.issuer
-      "hosts" (list (dict "subdomain" $.Values.oidc.authSubdomain "targetService" "gateway-sso-callback" "targetNamespace" $.Values.namespace "targetPort" 80)) -}}
-{{ include "ingress.renderIngress" (dict "ingress" $ing "release" $.Release "cloudflareZones" $zones) }}
-{{- end }}
+      "name" (printf "google-sso-%s" ($domain | replace "." "-"))
+      "domain" $domain
+      "issuer" .Values.issuer
+      "hosts" (list (dict "subdomain" .Values.oidc.authSubdomain "targetService" "gateway-sso-callback" "targetNamespace" .Values.namespace "targetPort" 80)) -}}
+{{ include "ingress.renderIngress" (dict "ingress" $ing "release" .Release "cloudflareZones" $zones) }}

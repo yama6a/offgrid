@@ -3,9 +3,9 @@ callbackImage: "traefik/whoami:v1.12.0"  # Envoy intercepts /oauth2/callback bef
 
 # One Google client for everything. clientID written by 07_google_sso.sh, the secret is sealed.
 oidc:
-  clientID: "000000000000-xxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxx.apps.googleusercontent.com"
+  clientID: ""
   clientSecretName: google-oauth   # sealed Secret, key `client-secret`
-  authSubdomain: google-sso        # callback host = <authSubdomain>.<domain>; one Google redirect URI per domain
+  authSubdomain: google-sso        # callback host = <authSubdomain>.<domain>; register it as the redirect URI
   idTokenCookie: "google-id-token"
   logoutPath: "/oauth2/sign_out"   # off the default /logout so it doesn't swallow a backend's own /logout
   refreshToken: true               # renew silently so a session outlives Google's ~1h token...
@@ -15,36 +15,27 @@ oidc:
   # resets the stream (ERR_HTTP2_PROTOCOL_ERROR). Empty disables.
   denyRedirectSecFetchMode: "cors|no-cors|same-origin|websocket"
 
-# Which hosts are SSO-gated, and by whom. One SecurityPolicy per domain covers all its hosts plus the callback
-# host, so one cookie identity completes the flow. Each host MUST equal the FQDN its ingress renders: the
-# policy attaches to routes by dashed-host name.
-domains:
-  - domain: example.com
-    issuer: letsencrypt-prod   # callback cert issuer (letsencrypt-staging | letsencrypt-prod)
-    hosts:
-      # Platform UIs sit under *.ops, the workload under *.app. Both share this one example.com entry because
-      # cookieDomain and the callback host are a parent of both, so no Google Console change is needed.
-      - host: argocd.ops.example.com
-        allowlist:
-          - you@example.com
-      - host: grafana.ops.example.com
-        allowlist:
-          - you@example.com
-      - host: vmui.ops.example.com
-        allowlist:
-          - you@example.com
-      - host: vlogs.ops.example.com
-        allowlist:
-          - you@example.com
-      - host: hubble.ops.example.com
-        allowlist:
-          - you@example.com
-      - host: longhorn.ops.example.com
-        allowlist:
-          - you@example.com
-      - host: sample-user-manager-sso.app.example.com
-        allowlist:
-          - you@example.com
-      - host: rabbitmq.ops.example.com   # edge SSO, then RabbitMQ's own login
-        allowlist:
-          - you@example.com
+# The registrable domain every gated host sits under. ONE domain, deliberately: the policy sets a single
+# cookieDomain and a single callback host, and a cookie only ever reaches that domain and its subdomains, so a
+# host outside it would never receive the id token and would loop through Google forever.
+domain: example.com        # written by 07_values.sh from .env BASE_DOMAIN
+issuer: letsencrypt-prod   # callback cert issuer (letsencrypt-staging | letsencrypt-prod)
+
+# Who may log in, applied to every gated host below. Never leave this empty on a real deployment: an empty
+# allowlist denies everyone, including you.
+allowlist:                 # written by 07_values.sh from .env SSO_ALLOWLIST
+  - you@example.com
+
+# Which hosts are SSO-gated. `subdomain` composes against `domain` into the FQDN its ingress renders, because
+# the policy attaches to routes by dashed-host name and both sides must agree.
+# This list is policy, not config, so it is NOT stamped: sample-user-manager is deliberately absent (open)
+# while sample-user-manager-sso is listed, and that contrast is the demo.
+hosts:
+  - subdomain: argocd.ops
+  - subdomain: grafana.ops
+  - subdomain: vmui.ops
+  - subdomain: vlogs.ops
+  - subdomain: hubble.ops
+  - subdomain: longhorn.ops
+  - subdomain: rabbitmq.ops   # edge SSO, then RabbitMQ's own login
+  - subdomain: sample-user-manager-sso.app

@@ -1,4 +1,4 @@
-# The platform root. Recurses argo_apps/platform/apps/ and manages every platform Application it finds there.
+# The platform root. Renders argo_apps/platform/apps/ and manages every platform Application it finds there.
 apiVersion: argoproj.io/v1alpha1
 kind: Application
 metadata:
@@ -15,8 +15,6 @@ spec:
     repoURL: https://github.com/yama6a/offgrid
     targetRevision: HEAD
     path: argo_apps/platform/apps
-    directory:
-      recurse: true
   destination:
     server: https://kubernetes.default.svc
     namespace: argocd

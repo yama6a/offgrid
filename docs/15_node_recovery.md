@@ -159,7 +159,7 @@ that window stops writes. A 4th machine removes this.
 
 ```bash
 make flash-talos-nvme                # only if the NVMe itself is being replaced; pick the node, power on with no SD card
-make recover-node NODE=pi-cp3        # steps 3 and 5 to 6 below, in order, idempotent
+make recover-node NODE=talos-cp3        # steps 3 and 5 to 6 below, in order, idempotent
 make rebalance-workloads             # once everything is healthy
 ```
 
@@ -168,7 +168,7 @@ waits for the kubelet, drops the stale Longhorn replicas and resets the disk rec
 action, so re-running it is how you get past a step that needed more time.
 
 The rest of this section is what it does and why, which is what you need when it stops half way. Nodes are
-addressed by IP throughout; `pi-cp3` / `192.168.10.203` is the example. Do not run `talosctl bootstrap` at any
+addressed by IP throughout; `talos-cp3` / `192.168.10.203` is the example. Do not run `talosctl bootstrap` at any
 point: that is for creating a cluster, not joining one.
 
 1. Confirm the node is really gone, not just slow to boot.
@@ -208,7 +208,7 @@ point: that is for creating a cluster, not joining one.
    preserved. Give it a hostname and it applies to that node alone and skips the etcd bootstrap:
 
    ```bash
-   make add-node NODE=pi-cp3
+   make add-node NODE=talos-cp3
    ```
 
    Only the apply and its two waits narrow to the one node. certSANs and the `secrets/talosconfig` endpoints
@@ -220,10 +220,10 @@ point: that is for creating a cluster, not joining one.
 
    ```bash
    make talosctl -- -n 192.168.10.201 etcd members    # expect 3, new ID for the replaced node
-   kubectl uncordon pi-cp3                            # if it came back cordoned
+   kubectl uncordon talos-cp3                            # if it came back cordoned
    ```
 
-   If the node object is stuck on a stale identity, `kubectl delete node pi-cp3` and let the kubelet
+   If the node object is stuck on a stale identity, `kubectl delete node talos-cp3` and let the kubelet
    re-register. The watcher's out-of-service taint clears itself once the node is Ready.
 
 6. Reset the Longhorn disk record. Longhorn stores the disk's UUID in BOTH the node CR and a
@@ -245,36 +245,36 @@ point: that is for creating a cluster, not joining one.
    kubectl -n longhorn-system get replicas.longhorn.io \
      -o custom-columns=VOL:.spec.volumeName,NODE:.spec.nodeID,STATE:.status.currentState | sort   # one running elsewhere per volume
    kubectl -n longhorn-system get replicas.longhorn.io \
-     -o jsonpath='{range .items[?(@.spec.nodeID=="pi-cp3")]}{.metadata.name}{"\n"}{end}' \
+     -o jsonpath='{range .items[?(@.spec.nodeID=="talos-cp3")]}{.metadata.name}{"\n"}{end}' \
      | xargs -r kubectl -n longhorn-system delete replicas.longhorn.io
    ```
 
    Then disable, remove and re-add the disk, with the same spec as a healthy node's:
 
    ```bash
-   D=$(kubectl -n longhorn-system get nodes.longhorn.io pi-cp3 \
+   D=$(kubectl -n longhorn-system get nodes.longhorn.io talos-cp3 \
        -o go-template='{{range $k,$v := .spec.disks}}{{$k}}{{end}}')
-   SPEC=$(kubectl -n longhorn-system get nodes.longhorn.io pi-cp1 -o jsonpath='{.spec.disks}')
+   SPEC=$(kubectl -n longhorn-system get nodes.longhorn.io talos-cp1 -o jsonpath='{.spec.disks}')
 
-   kubectl -n longhorn-system patch nodes.longhorn.io pi-cp3 --type merge \
+   kubectl -n longhorn-system patch nodes.longhorn.io talos-cp3 --type merge \
      -p "{\"spec\":{\"disks\":{\"$D\":{\"allowScheduling\":false}}}}"
-   kubectl -n longhorn-system patch nodes.longhorn.io pi-cp3 --type json \
+   kubectl -n longhorn-system patch nodes.longhorn.io talos-cp3 --type json \
      -p "[{\"op\":\"remove\",\"path\":\"/spec/disks/$D\"}]"
-   kubectl -n longhorn-system patch nodes.longhorn.io pi-cp3 --type merge \
+   kubectl -n longhorn-system patch nodes.longhorn.io talos-cp3 --type merge \
      -p "{\"spec\":{\"disks\":$SPEC}}"        # retry this one, see below
    ```
 
    Confirm a NEW diskUUID, `Ready=True` and `Schedulable=True`:
 
    ```bash
-   kubectl -n longhorn-system get nodes.longhorn.io pi-cp3 -o jsonpath=\
+   kubectl -n longhorn-system get nodes.longhorn.io talos-cp3 -o jsonpath=\
 '{range .status.diskStatus.*}{.diskUUID}{" "}{range .conditions[*]}{.type}={.status} {end}{" avail="}{.storageAvailable}{"\n"}{end}'
    ```
 
    Three gotchas that cost time. The validating webhook refuses to remove a disk that is still schedulable,
    so `allowScheduling: false` has to land first. A merge patch of `{"disks":{}}` is a NO-OP, because JSON
    merge patch deletes keys only when they are set to `null`; use a json patch `remove` op instead. And the
-   re-add is rejected once with `spec and status of disks on node pi-cp3 are being syncing and please retry
+   re-add is rejected once with `spec and status of disks on node talos-cp3 are being syncing and please retry
    later`, because the manager has not finished reacting to the removal; wait ~10s and repeat it.
 
    Rebuilds do not start the moment the node returns. `replica-replenishment-wait-interval` is 1800, so
@@ -379,7 +379,7 @@ When it is not coming back, tell all three layers, in this order:
 ```bash
 make talosctl -- -n 192.168.10.201 etcd members             # find the ID
 make talosctl -- -n 192.168.10.201 etcd remove-member <id>  # etcd
-kubectl delete node pi-cp3                                 # kubernetes
+kubectl delete node talos-cp3                                 # kubernetes
 ```
 
 Then remove its entry from `inventory.yaml`, so `03a` to `03e` stop targeting it.

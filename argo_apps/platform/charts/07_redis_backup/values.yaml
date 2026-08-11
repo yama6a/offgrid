@@ -1,6 +1,6 @@
 schedule: "0 2 * * *" # daily 02:00 UTC, one schedule for every instance
-bucket: "my-cluster-backups" # written by 15_redis_backup.sh from .env; EMPTY = backups off, nothing renders
-region: "eu-central-1" # written by 15_redis_backup.sh from .env
+bucket: "" # written by 15_redis_backup.sh from .env; EMPTY = backups off, nothing renders
+region: "" # written by 15_redis_backup.sh from .env
 prefix: "redis/" # cnpg/, vm/ and longhorn/ are the other prefixes in this bucket
 secretName: "redis-backup-s3" # sealed S3 writer creds in THIS namespace; keys AWS_ACCESS_KEY_ID / AWS_SECRET_ACCESS_KEY
 discoveryLabel: "redis-backup.raspi-cluster/enabled" # lib/helm/redis-instance stamps it on persistence:true

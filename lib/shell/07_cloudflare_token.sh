@@ -2,7 +2,7 @@
 # Seals the Cloudflare API token from .env into cert-manager's namespace, where the DNS-01 ClusterIssuer's
 # apiTokenSecretRef resolves it. The Secret name and data key are READ from 03_gateway/values.yaml, so the
 # issuer and this Secret always agree.
-# Split out of 07_gateway.sh because sealing needs the LIVE sealed-secrets controller, and 07_gateway runs
+# Split out of 07_values.sh because sealing needs the LIVE sealed-secrets controller, and 07_values runs
 # before ArgoCD exists.
 # Empty token means DNS-01 off: removes any stale sealed file and exits 0.
 # Idempotent: re-run to rotate.

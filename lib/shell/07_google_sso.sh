@@ -23,26 +23,23 @@ assert_api
 assert_sealed_secrets_ready
 ok "kubeseal/kubectl/yq present, API + sealed-secrets controller reachable"
 
-say "reading OIDC config + domains from ${SSO_VALUES}"
+say "reading OIDC config + domain from ${SSO_VALUES}"
 AUTH_SUBDOMAIN="$(yq -r '.oidc.authSubdomain' "$SSO_VALUES" 2>/dev/null)"
 SEAL_NAME="$(yq -r '.oidc.clientSecretName' "$SSO_VALUES" 2>/dev/null)"
 SEAL_NAMESPACE="$(yq -r '.namespace' "$SSO_VALUES" 2>/dev/null)"
-for v in AUTH_SUBDOMAIN:"$AUTH_SUBDOMAIN" SEAL_NAME:"$SEAL_NAME" SEAL_NAMESPACE:"$SEAL_NAMESPACE"; do
+DOMAIN="$(yq -r '.domain' "$SSO_VALUES" 2>/dev/null)"
+for v in AUTH_SUBDOMAIN:"$AUTH_SUBDOMAIN" SEAL_NAME:"$SEAL_NAME" SEAL_NAMESPACE:"$SEAL_NAMESPACE" DOMAIN:"$DOMAIN"; do
   [ -n "${v#*:}" ] && [ "${v#*:}" != "null" ] || die "couldn't read ${v%%:*} from ${SSO_VALUES}"
 done
-DOMAINS=()
-while IFS= read -r d; do [ -n "$d" ] && [ "$d" != "null" ] && DOMAINS+=("$d"); done \
-  < <(yq -r '.domains[].domain' "$SSO_VALUES" 2>/dev/null)
-[ "${#DOMAINS[@]}" -ge 1 ] || die "no SSO domains (.domains[].domain) in ${SSO_VALUES}"
-ok "domains: ${DOMAINS[*]}  callback: ${AUTH_SUBDOMAIN}.<domain>  seal: ${SEAL_NAME}/${SEAL_NAMESPACE}"
+ok "domain: ${DOMAIN}  callback: ${AUTH_SUBDOMAIN}.${DOMAIN}  seal: ${SEAL_NAME}/${SEAL_NAMESPACE}"
 
-say "Google OAuth client, ONE client covers all domains"
+say "Google OAuth client"
 echo "  In Google Cloud Console (https://console.cloud.google.com/apis/credentials):"
-echo "    1. OAuth consent screen: 'External', Published. Under 'Authorized domains' add each apex:"
-for d in "${DOMAINS[@]}"; do echo "         ${d}"; done
+echo "    1. OAuth consent screen: 'External', Published. Under 'Authorized domains' add the apex:"
+echo "         ${DOMAIN}"
 echo "    2. Credentials -> Create credentials -> 'OAuth client ID' -> type 'Web application'."
-echo "    3. Authorized redirect URIs -> add ONE per domain, EXACTLY:"
-for d in "${DOMAINS[@]}"; do echo "         https://${AUTH_SUBDOMAIN}.${d}/oauth2/callback"; done
+echo "    3. Authorized redirect URIs -> add EXACTLY:"
+echo "         https://${AUTH_SUBDOMAIN}.${DOMAIN}/oauth2/callback"
 echo "    4. Create -> copy the Client ID (...apps.googleusercontent.com) and Client secret."
 echo "  No service account needed (that's only for Google Workspace *group* restriction)."
 
@@ -67,20 +64,19 @@ seal_secret "$SEAL_NAME" "$SEAL_NAMESPACE" "$SEALED_OUT" "${CLIENT_SECRET_KEY}=$
 
 summary
 if [ "$FAIL" -eq 0 ]; then
-  echo "Google SSO client wired for ${#DOMAINS[@]} domain(s). Register these redirect URIs on the OAuth client:"
-  for d in "${DOMAINS[@]}"; do echo "  https://${AUTH_SUBDOMAIN}.${d}/oauth2/callback"; done
   cat <<EOF
+Google SSO client wired for ${DOMAIN}. Register this redirect URI on the OAuth client:
+  https://${AUTH_SUBDOMAIN}.${DOMAIN}/oauth2/callback
 
 Next:
   - git add -A && git commit && git push   # ArgoCD unseals the secret + applies the callbacks/policies
-  - for EACH domain's callback host (${AUTH_SUBDOMAIN}.<domain>) AND each gated app host: point public DNS
-    at the home router + forward :80 to the Gateway IP on the old Pi so cert-manager's HTTP-01 issues.
-  - test:  open https://sample-user-manager-sso.app.example.com/  -> Google login; only its allowlist passes.
-           (sample-user-manager.app.example.com stays OPEN, not listed in google-sso.)
-  - protect another host: add it to \`domains[].hosts\` in 04_google_sso/values.yaml (with its allowlist).
-    No Google change if that domain already has a callback host; a NEW domain = add a \`domains\` entry +
-    register one more redirect URI here. See 07_ingress.md.
-  - change WHO may log in: edit that host's \`allowlist\` in 04_google_sso/values.yaml, commit, push.
+  - for the callback host (${AUTH_SUBDOMAIN}.${DOMAIN}) AND each gated app host: point public DNS at your
+    router + forward :80 to the Gateway IP so cert-manager's HTTP-01 issues.
+  - test:  open https://sample-user-manager-sso.app.${DOMAIN}/  -> Google login; only the allowlist passes.
+           (sample-user-manager.app.${DOMAIN} stays OPEN, not listed in google-sso.)
+  - protect another host: add a \`subdomain\` under \`hosts\` in 04_google_sso/values.yaml. It must sit under
+    \`domain\`, else the login cookie never reaches it and the host loops through Google forever.
+  - change WHO may log in: set SSO_ALLOWLIST in .env and re-run \`make configure-values\`, commit, push.
   - re-run this script to rotate the client secret.
 EOF
 else

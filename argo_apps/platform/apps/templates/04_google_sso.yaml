@@ -1,0 +1,34 @@
+# Central Google-SSO: one SecurityPolicy per domain with per-host allowlists, plus the callback edges and the sealed OAuth secret.
+apiVersion: argoproj.io/v1alpha1
+kind: Application
+metadata:
+  name: google-sso
+  namespace: argocd
+  finalizers:
+    - resources-finalizer.argocd.argoproj.io
+  annotations:
+    argocd.argoproj.io/sync-wave: "4"
+    argocd.argoproj.io/compare-options: ServerSideDiff=true # else server-defaulted Gateway API fields read as perpetual OutOfSync
+spec:
+  project: default
+  revisionHistoryLimit: 0
+  source:
+    repoURL: {{ .Values.repoURL }}
+    targetRevision: HEAD
+    path: argo_apps/platform/charts/04_google_sso
+  destination:
+    server: https://kubernetes.default.svc
+    namespace: gateway
+  syncPolicy:
+    automated:
+      prune: true
+      selfHeal: true
+    retry:
+      limit: -1
+      refresh: true
+      backoff:
+        duration: 5s
+        factor: 2
+        maxDuration: 1m
+    syncOptions:
+      - ServerSideApply=true

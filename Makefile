@@ -66,7 +66,7 @@ rebalance-workloads: ## 03g: rolling-restart the stateless Deployments so the sc
 
 .PHONY: recover-node
 recover-node: ## 15: rejoin ONE wiped/replaced node and fix what does not self-heal. NODE=<hostname>, add YES=1 to skip the prompt.
-	@test -n "$(NODE)" || { echo "usage: make recover-node NODE=pi-cp3 [YES=1]"; exit 1; }
+	@test -n "$(NODE)" || { echo "usage: make recover-node NODE=talos-cp3 [YES=1]"; exit 1; }
 	bash lib/shell/recover_node.sh $(NODE) $(if $(YES),--yes,)
 
 ##@ Cluster delivery  (step 04-09; native helm/kubectl)
@@ -82,9 +82,9 @@ install-argocd: ## 05: bootstrap ArgoCD; it then delivers the whole platform fro
 configure-argocd-webhook: ## 08: generate+seal the ArgoCD GitHub webhook secret (-> secrets/) + set poll cadence from .env.
 	bash lib/shell/08_argocd_webhook.sh
 
-.PHONY: configure-gateway
-configure-gateway: ## 07: write LE_EMAIL + Cloudflare DNS-01 zones into the gateway/ingress chart values (pure yq, no cluster).
-	bash lib/shell/07_gateway.sh
+.PHONY: configure-values
+configure-values: ## 07: write every per-deployment value (repo URL, domains, SSO allowlist, ingress IP, ACME, scrape endpoints) from .env + inventory.yaml into the chart values (pure yq, no cluster).
+	bash lib/shell/07_values.sh
 
 .PHONY: configure-cloudflare-token
 configure-cloudflare-token: ## 07: seal the Cloudflare DNS-01 API token into cert-manager (needs the sealed-secrets controller + .env token).

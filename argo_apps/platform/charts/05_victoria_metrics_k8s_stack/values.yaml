@@ -270,7 +270,7 @@ victoria-metrics-k8s-stack:
   # and only those: a worker runs none of the three. Add an entry here when you add a control-plane node.
   kubeControllerManager:
     enabled: true
-    endpoints: ["192.168.10.201", "192.168.10.202", "192.168.10.203"]
+    endpoints: []
     service:
       enabled: true
       port: 10257
@@ -288,7 +288,7 @@ victoria-metrics-k8s-stack:
           matchNames: []
   kubeScheduler:
     enabled: true
-    endpoints: ["192.168.10.201", "192.168.10.202", "192.168.10.203"]
+    endpoints: []
     service:
       enabled: true
       port: 10259
@@ -306,7 +306,7 @@ victoria-metrics-k8s-stack:
           matchNames: []
   kubeEtcd:
     enabled: true
-    endpoints: ["192.168.10.201", "192.168.10.202", "192.168.10.203"]
+    endpoints: []
     service:
       enabled: true
       port: 2381   # Talos etcd listen-metrics-urls, plain HTTP, no auth

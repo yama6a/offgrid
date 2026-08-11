@@ -81,7 +81,8 @@ jobs:
           done < <(find argo_apps lib/helm -name Chart.yaml)
           exit $fail
       - name: helm lint + template + kubeconform
-        # Only the ArgoCD-delivered wrappers: the lib/helm/ shared charts are validated transitively as their deps.
+        # The ArgoCD-delivered wrappers plus the two apps/ charts that render the Application manifests
+        # themselves. The lib/helm/ shared charts are validated transitively as their deps.
         run: |
           fail=0
           schema='https://raw.githubusercontent.com/datreeio/CRDs-catalog/main/{{.Group}}/{{.ResourceKind}}_{{.ResourceAPIVersion}}.json'
@@ -94,5 +95,6 @@ jobs:
               echo "::error::template/kubeconform failed: $dir"; fail=1
             fi
             echo "::endgroup::"
-          done < <(find argo_apps -path '*/charts/*/Chart.yaml' -not -path '*/charts/*/charts/*')
+          done < <(find argo_apps \( -path '*/charts/*/Chart.yaml' -o -path '*/apps/Chart.yaml' \) \
+                     -not -path '*/charts/*/charts/*')
           exit $fail

@@ -1,0 +1,34 @@
+# The edges for every platform UI (argocd, grafana, vmui, vlogs). SSO is applied centrally by 04_google_sso.
+apiVersion: argoproj.io/v1alpha1
+kind: Application
+metadata:
+  name: platform-ingress
+  namespace: argocd
+  finalizers:
+    - resources-finalizer.argocd.argoproj.io
+  annotations:
+    argocd.argoproj.io/sync-wave: "6"
+    argocd.argoproj.io/compare-options: ServerSideDiff=true
+spec:
+  project: default
+  revisionHistoryLimit: 0
+  source:
+    repoURL: {{ .Values.repoURL }}
+    targetRevision: HEAD
+    path: argo_apps/platform/charts/06_platform_ingress
+  destination:
+    server: https://kubernetes.default.svc
+    namespace: gateway # each ReferenceGrant overrides this with its own namespace (argocd / monitoring)
+  syncPolicy:
+    automated:
+      prune: true
+      selfHeal: true
+    retry:
+      limit: -1
+      refresh: true
+      backoff:
+        duration: 5s
+        factor: 2
+        maxDuration: 1m
+    syncOptions:
+      - ServerSideApply=true

@@ -174,7 +174,7 @@ arrive, and Cilium would not select an address-less device anyway); a connected 
 
 Announcing is independent of both role and backend placement: the service is `externalTrafficPolicy: Cluster`,
 so whichever node answers the ARP forwards through the eBPF datapath to Envoy wherever it runs. Measured on the
-live cluster, the lease sat on `pi-cp2` while the only Envoy pod ran on `pi-cp3`, and the ingress served in
+live cluster, the lease sat on `talos-cp2` while the only Envoy pod ran on `talos-cp3`, and the ingress served in
 ~100ms. So every node being a candidate is wanted: more of them means the lease survives more node losses. See
 [04_networking.md](04_networking.md).
 
