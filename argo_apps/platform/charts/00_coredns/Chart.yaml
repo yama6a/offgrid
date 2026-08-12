@@ -3,3 +3,10 @@ name: coredns
 description: Scheduling constraints patched onto the Talos-owned coredns Deployment. Renders no coredns of its own.
 type: application
 version: 0.1.0 # local chart, never bump version
+
+# Authored in the OS repo because it is hardware/OS-specific, published there on merge to main. Bump this
+# version to adopt a new one; renovate opens that PR itself.
+dependencies:
+  - name: coredns
+    version: "1.0.1"
+    repository: oci://ghcr.io/yama6a/charts

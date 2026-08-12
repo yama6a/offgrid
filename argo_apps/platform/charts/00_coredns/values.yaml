@@ -1,5 +1,9 @@
-# Identifies the Talos-owned Deployment to patch. Not per-deployment config: Talos fixes all four, so changing
-# any of them here just makes the patch miss its target and silently do nothing.
-deployment: {name: coredns, namespace: kube-system}
-selector: {key: k8s-app, value: kube-dns}
-topologyKey: kubernetes.io/hostname
+# Every knob below belongs to the upstream coredns chart, so it nests under its dependency name.
+# The chart itself is authored in the OS repo and published to ghcr.io:
+#   https://github.com/yama6a/talos-raspberry-pi5-cluster
+coredns:
+  # Identifies the Talos-owned Deployment to patch. Not per-deployment config: Talos fixes all four, so changing
+  # any of them here just makes the patch miss its target and silently do nothing.
+  deployment: {name: coredns, namespace: kube-system}
+  selector: {key: k8s-app, value: kube-dns}
+  topologyKey: kubernetes.io/hostname

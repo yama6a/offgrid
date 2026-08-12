@@ -1,0 +1,6 @@
+dependencies:
+- name: coredns
+  repository: oci://ghcr.io/yama6a/charts
+  version: 1.0.1
+digest: sha256:e0c012e073a1baf3bfff6048f4b1b1dc3f052e86858938d8996b234c44c966d0
+generated: "2026-08-12T18:47:48.687716583Z"

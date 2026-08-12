@@ -178,26 +178,10 @@ validated, then gets enforced by turning audit off. Three places to look, cheape
 
 ## CoreDNS placement
 
-Talos ships coredns with a `preferred` hostname anti-affinity, which the scheduler is free to ignore. On a fresh
-cluster it does: every node is empty when coredns first schedules, so nothing outweighs the preference and both
-replicas can land on one node. That node then owns all cluster DNS.
-
-`cluster.coreDNS` in the Talos machine config takes `image` and `disabled`, nothing else, so there is no way to
-express this in the config that creates the Deployment. Instead the `coredns` app (wave 0) server-side-applies a
-partial Deployment carrying only `requiredDuringSchedulingIgnoredDuringExecution`.
-
-- Talos owns the Deployment via its own server-side apply, but only ever sets the `preferred` sibling key. An
-  applier does not strip fields it never owned, so the two coexist. Re-check after a Talos MINOR upgrade.
-- `ServerSideApply=true` is required, not tuning: a client-side apply of a partial Deployment strips every field
-  Talos owns. `ServerSideDiff=true` goes with it, or Argo diffs against the whole live object and stays OutOfSync
-  forever over fields it never sent.
-- The manifest carries `Prune=false,Delete=false`. Every app here has the `resources-finalizer`, so without it,
-  deleting or renaming the app cascade-deletes coredns.
-- Price of `required` over `preferred`: at 2 replicas, one stays Pending if only a single node is schedulable.
-  Fine at 3 nodes, 03e's one-at-a-time drain included. A 2-node cluster would deadlock the rolling update.
-- Nothing enforces this during bootstrap: Argo does not exist until step 05, and coredns first schedules at 04.
-  Both replicas may share a node for those few minutes, then reschedule when wave 0 syncs. The rollout is
-  surge-first (`maxUnavailable` rounds to 0 at 2 replicas), so DNS does not dip.
+Talos owns the coredns Deployment, and the anti-affinity patch that keeps its two replicas off one node is a
+chart in the OS repo, delivered here as the wave-0 `coredns` app. The reasoning lives with the chart:
+[03_operating_system.md](https://github.com/yama6a/talos-raspberry-pi5-cluster/blob/main/docs/03_operating_system.md)
+("CoreDNS placement").
 
 ## Caveats
 
