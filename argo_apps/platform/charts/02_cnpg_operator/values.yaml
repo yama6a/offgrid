@@ -12,7 +12,7 @@ cloudnative-pg:
     podMonitorEnabled: true
     grafanaDashboard:
       # Off: we ship a fork of it as 05_grafana/files/dashboards/cnpg.json, same uid, with the handful of
-      # queries this cluster cannot answer rewritten. Re-fork it on a chart bump, see 09_monitoring.md.
+      # queries this cluster cannot answer rewritten. Re-fork it on a chart bump, see 06_monitoring.md.
       create: false
 
   # 2, not 1: the operator is what moves the primary label a switchover depends on, and the -rw Service selects

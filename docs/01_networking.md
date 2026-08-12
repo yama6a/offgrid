@@ -1,7 +1,7 @@
 # Networking: Cilium
 
-The cluster from [step 03](03_operating_system.md) comes up with no CNI (`cni: none`) and no kube-proxy
-(`proxy.disabled: true`), both set in [bring-up](03_operating_system.md#cluster-bring-up). Cilium fills all of it
+The cluster from [step 03](https://github.com/yama6a/talos-raspberry-pi5-cluster/blob/main/docs/03_operating_system.md) comes up with no CNI (`cni: none`) and no kube-proxy
+(`proxy.disabled: true`), both set in [bring-up](https://github.com/yama6a/talos-raspberry-pi5-cluster/blob/main/docs/03_operating_system.md#cluster-bring-up). Cilium fills all of it
 from one install: CNI, load balancer, and node-to-node encryption. `04_cilium.sh` does it and flips the nodes to
 Ready.
 
@@ -15,7 +15,7 @@ Ready.
 |----------------------------|--------------------------------------------------------------------------------------------|
 | `Chart.yaml`               | the cilium chart, declared as a dependency on `helm.cilium.io`                              |
 | `values.yaml`              | the Talos-flavoured cilium values (under the `cilium:` key) + the `loadBalancer` gate       |
-| `crds/`                    | empty. Cilium does not vendor the Gateway API CRDs; Envoy Gateway owns them. See [07_ingress.md](07_ingress.md) |
+| `crds/`                    | empty. Cilium does not vendor the Gateway API CRDs; Envoy Gateway owns them. See [04_ingress.md](04_ingress.md) |
 | `templates/cilium-lb.yaml` | the LB-IPAM pool + L2 policy, gated by `.Values.loadBalancer.enabled`                       |
 
 ## Why Cilium: one component instead of three
@@ -26,7 +26,7 @@ single-purpose tools. Cilium does all of it from one agent plus operator.
 | Need              | Cilium provides                  | What it replaces, and why |
 |-------------------|----------------------------------|---------------------------|
 | LoadBalancer IPs  | LB-IPAM + L2 announcements (ARP) | MetalLB. On an all-Cilium cluster it only duplicates the IP-announce half (eBPF already does the data-path LB), adds a second ARP owner on the same nodes, and adds pods plus CRDs for no gain. Trade-off: Cilium L2 is Beta vs MetalLB's GA L2, fine for a homelab. |
-| Ingress / gateway | Gateway API (Envoy-backed)       | ingress-nginx, which the community retires in March 2026. Gateway API is the forward path. Cilium can serve it, but ingress went to Envoy Gateway for its `SecurityPolicy` CRD (label-attached SSO), so Cilium's `gatewayAPI` is off and it vendors no Gateway API CRDs. See [07_ingress.md](07_ingress.md) |
+| Ingress / gateway | Gateway API (Envoy-backed)       | ingress-nginx, which the community retires in March 2026. Gateway API is the forward path. Cilium can serve it, but ingress went to Envoy Gateway for its `SecurityPolicy` CRD (label-attached SSO), so Cilium's `gatewayAPI` is off and it vendors no Gateway API CRDs. See [04_ingress.md](04_ingress.md) |
 | Pod encryption    | transparent WireGuard, one flag  | Istio or another service mesh. We wanted the wire encrypted plus a gateway, not AuthorizationPolicy or VirtualService. Sidecar Istio is also heavy on 3x 8 GB Pis, one Envoy per pod |
 | A mesh, if needed | sidecarless L7 + Hubble          | covers what we would use a mesh for, without per-pod sidecars |
 
@@ -84,7 +84,7 @@ it surfaces:
   `workload-name|reserved-identity`). A bare handler name emits the counter with NO peer or namespace labels at
   all, so nothing can be split by who sent the traffic. The same `cilium_*` metrics drive the `cilium-health`
   Grafana alert group: agent-down, BPF-map pressure, unreachable nodes. See
-  [09_monitoring.md](09_monitoring.md).
+  [06_monitoring.md](06_monitoring.md).
 - Dashboard. ONE first-party `hubble` dashboard, in `05_grafana/files/dashboards/hubble.json`, and
   `hubble.metrics.dashboards.enabled: false` so the chart's own four stay out of Grafana. Theirs group every
   panel by cilium-agent pod without printing it, so each panel draws one indistinguishable line per node; ours
@@ -97,15 +97,15 @@ it surfaces:
   the handler: Hubble only sees HTTP for traffic an L7 `http` rule in a CiliumNetworkPolicy pulls through the
   Envoy L7 proxy, so it costs a per-workload policy change plus a proxy hop, and for the ingress path it would
   recount what the edge already counts. HTTP observability lives in the `ingress-http` dashboard off Envoy's own
-  metrics instead. See [07_ingress.md](07_ingress.md).
+  metrics instead. See [04_ingress.md](04_ingress.md).
 - UI. The `hubble-ui` Service is exposed as `hubble.<domain>` by the platform-ingress app (wave 6) and gated by
   Google SSO: a plain cross-namespace edge into `kube-system`, in the same `hosts` list and `04_google_sso`
-  allowlist as the other platform UIs. See [07_ingress.md](07_ingress.md).
+  allowlist as the other platform UIs. See [04_ingress.md](04_ingress.md).
 - Dropped-flow logs. `hubble.export.dynamic` writes one JSON line per `DROPPED` flow to a file on the node, which
   the log collector ships to VictoriaLogs (`source:hubble`). The `drop` metric above only counts drops; the log
   names the pod, port and identity, which is what you need to find the missing rule in a default-deny CNP. The
   live equivalent is `hubble observe --verdict DROPPED`, but that only shows what is happening right now. See
-  [09_monitoring.md](09_monitoring.md).
+  [06_monitoring.md](06_monitoring.md).
 
 ## Network policy
 
@@ -114,7 +114,7 @@ vanilla `NetworkPolicy` buys the `kube-apiserver` and `world` entities, so no ha
 policy-verdict visibility (`hubble observe --verdict DROPPED`).
 
 Two places carry policies. Workloads: the sample workload's app plus its CNPG Postgres, see
-[10_sample_workload.md](10_sample_workload.md) for those and for the reusable DB policy baked into the
+[07_sample_workload.md](07_sample_workload.md) for those and for the reusable DB policy baked into the
 `pg-cluster` wrapper. Platform: a full explicit policy per chart in its own `templates/networkpolicy.yaml`, so
 the file you open is the policy that gets applied, with no shared library or render abstraction. Three groups:
 
@@ -149,8 +149,8 @@ Three Cilium subtleties to know:
   selector, which is also same-namespace.
 - The RabbitMQ operator subchart ships bundled vanilla `NetworkPolicy`s that default to allow-all-egress. Cilium
   UNIONs those with our CNP and would blow the default-deny open, so we pin `...networkPolicy.enabled: false`.
-  Same move as argocd's `global.networkPolicy.create: false`. See [05_gitops.md](05_gitops.md) and
-  [11_messaging.md](11_messaging.md).
+  Same move as argocd's `global.networkPolicy.create: false`. See [02_gitops.md](02_gitops.md) and
+  [08_messaging.md](08_messaging.md).
 
 Deliberately NOT policed, listed so it reads as a decision rather than an omission:
 
@@ -163,7 +163,7 @@ Deliberately NOT policed, listed so it reads as a decision rather than an omissi
 - `03_gateway` and `google-sso`, which have no or thin pods.
 - `kube-system` and Cilium itself. Policing those risks cutting the cluster off its own network.
 - The `storage-bench` namespace, which exists for hours at a time and holds no data. See
-  [16_storage_bench.md](16_storage_bench.md).
+  [12_storage_bench.md](12_storage_bench.md).
 
 Rollout is audit-first: with Cilium's global `policyAuditMode` on, every policy stages as log-only until
 validated, then gets enforced by turning audit off. Three places to look, cheapest first:
@@ -171,7 +171,7 @@ validated, then gets enforced by turning audit off. Three places to look, cheape
 - `sum by (source, destination) (increase(hubble_flows_processed_total{verdict="AUDIT"}[24h]))` in Grafana, or
   the "would-be drops" row of the `hubble` dashboard. Cluster-wide and survives restarts, but has no port label.
 - `source:hubble AND verdict:AUDIT` in VictoriaLogs, which has the port and identity. Retained, so use it for
-  anything that already happened. See [09_monitoring.md](09_monitoring.md).
+  anything that already happened. See [06_monitoring.md](06_monitoring.md).
 - `hubble observe --verdict AUDIT -f` inside a `cilium-agent` pod, per node. Live only, and the ring buffer holds
   a few minutes, so it is for reproducing on demand: `kubectl apply --dry-run=server` re-triggers admission
   webhooks without changing anything.
@@ -218,7 +218,7 @@ partial Deployment carrying only `requiredDuringSchedulingIgnoredDuringExecution
   dropped from the chart. Keep `04_cilium.sh` as break-glass, and after using it commit the fix to git FAST,
   before `selfHeal` reverts it. A bad change pushed to git applies unattended and is self-healed in place, so
   mind your pushes: this is the one app that can take the whole cluster down. See
-  [05_gitops.md](05_gitops.md).
+  [02_gitops.md](02_gitops.md).
 
 ## Troubleshooting
 
@@ -233,6 +233,6 @@ partial Deployment carrying only `requiredDuringSchedulingIgnoredDuringExecution
   but matches no device takes the lease and programs nothing. `interfaces` is therefore the ethernet CLASS
   (`^en`, matching `end0` on a Pi and `eno1`/`enp0s31f6` on x86) rather than one device name, which is what lets
   `nodeSelector` stay broad without that risk. Check who holds it with `kubectl get lease -n kube-system | grep
-  l2announce`, and `kubectl get ciliuml2announcementpolicy`. See [17_worker_nodes.md](17_worker_nodes.md).
+  l2announce`, and `kubectl get ciliuml2announcementpolicy`. See [https://github.com/yama6a/talos-raspberry-pi5-cluster/blob/main/docs/04_worker_nodes.md](https://github.com/yama6a/talos-raspberry-pi5-cluster/blob/main/docs/04_worker_nodes.md).
 - Gateway not programmed: that is Envoy Gateway now, not Cilium, whose `gatewayAPI` is disabled. The Gateway API
-  CRDs and the `eg` GatewayClass come from the `01_envoy_gateway` app. See [07_ingress.md](07_ingress.md).
+  CRDs and the `eg` GatewayClass come from the `01_envoy_gateway` app. See [04_ingress.md](04_ingress.md).

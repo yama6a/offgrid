@@ -13,7 +13,7 @@ eeeReassertEachCycle: false
 ssKillFilter: "dport = :6443" # post-recovery socket drop, so kubelet reconnects to the VIP cleanly
 
 # Everything this agent does is specific to the Pi 5 macb NIC, so it must not land on any other hardware type.
-# 03c stamps instance-type from the node's `type` in inventory.yaml.
+# The OS repo's 03c stamps instance-type from the node's `type` in its inventory.yaml.
 nodeSelector:
   node.kubernetes.io/instance-type: rpi5
 

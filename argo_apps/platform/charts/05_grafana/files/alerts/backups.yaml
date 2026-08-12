@@ -1,7 +1,7 @@
 apiVersion: 1
 groups:
   # Job-level, not per-instance: which instance failed is in the job's stdout. The per-instance gap is covered
-  # by redis-backup-unrecoverable at the bottom of this group. See docs/13_backups.md.
+  # by redis-backup-unrecoverable at the bottom of this group. See docs/10_backups.md.
   - orgId: 1
     name: backups
     folder: raspi-cluster

@@ -96,7 +96,7 @@ groups:
             - disk {{ $labels.disk }} on {{ $labels.node }} is rejected outright: it holds no replicas and takes none
             - the node can still report Ready, so check the DISK conditions: kubectl -n longhorn-system get nodes.longhorn.io {{ $labels.node }} -o yaml
             - DiskFilesystemChanged, "record diskUUID doesn't match", means that node was replaced or reflashed
-              and the CR still records the old filesystem. Reset the disk: docs/15_node_recovery.md
+              and the CR still records the old filesystem. Reset the disk: https://github.com/yama6a/talos-raspberry-pi5-cluster/blob/main/docs/05_node_recovery.md
             - otherwise suspect the /var/mnt/longhorn mount, or iscsi/multipathd on that node
         noDataState: OK
         execErrState: KeepLast

@@ -8,7 +8,7 @@ Asymmetric, so anyone can seal and only the cluster can unseal.
 - Not an imperative bootstrap like Cilium or ArgoCD. It is a plain wave-2 ArgoCD app.
 - One out-of-band step: backing up the controller's private key. Lose it and every committed `SealedSecret` is
   permanently undecryptable.
-- [05_gitops.md](05_gitops.md) flagged the split: the repo clone credential stays imperative
+- [02_gitops.md](02_gitops.md) flagged the split: the repo clone credential stays imperative
   (chicken-and-egg), everything else waits for this.
 
 ## The wrapper chart
@@ -26,7 +26,7 @@ vendored `charts/*.tgz` is gitignored and reproduced from the lock, same as the 
 
 ## Where it sits: wave 2
 
-The [`nic-keeper`](03_operating_system.md) DaemonSet and this controller are independent leaves, neither
+The [`nic-keeper`](https://github.com/yama6a/talos-raspberry-pi5-cluster/blob/main/docs/03_operating_system.md) DaemonSet and this controller are independent leaves, neither
 depending on the other, so they share wave `2`: the "after the CNI and ArgoCD are in place" slot. Both carry the
 `02_` prefix, and `ls argo_apps/platform/apps/templates/` still reads in deploy order.
 

@@ -8,10 +8,10 @@
 # replication costs. Not in `all`, because it is another ~45 min.
 #
 # The node-local-storage arms this once carried are gone with the local-path class; their numbers are
-# recorded in docs/16_storage_bench.md and are not reproducible here any more.
+# recorded in docs/12_storage_bench.md and are not reproducible here any more.
 #
 # Subcommands: run (default) | teardown | report <dir> | corroborate <dir>
-# See docs/16_storage_bench.md.
+# See docs/12_storage_bench.md.
 
 set -uo pipefail
 
@@ -121,7 +121,7 @@ usage: storage_bench.sh [run] [--workload fio|pgbench|amqp|pgsync|all] [--repeat
 
   pgsync    what SYNCHRONOUS replication costs, i.e. the price of highAvailability: true. NOT part of
             `all`: another ~45 min, and a different question from the replica-locality one the other
-            workloads share. See docs/16_storage_bench.md.
+            workloads share. See docs/12_storage_bench.md.
 EOF
   exit 1
 }
@@ -559,7 +559,7 @@ pg_arm_up() {
   # locality arms need. Several instances cannot be: they have to sit on DIFFERENT nodes or the
   # synchronous ack never crosses the network and the measurement is meaningless. So required
   # anti-affinity spreads them one per node instead, and which node ends up primary is recorded
-  # per cell rather than controlled. See the threats section in docs/16_storage_bench.md.
+  # per cell rather than controlled. See the threats section in docs/12_storage_bench.md.
   local placement="    nodeSelector: { kubernetes.io/hostname: ${BENCH_NODE} }"
   [ "$instances" -gt 1 ] && placement="    podAntiAffinityType: required
     topologyKey: kubernetes.io/hostname"

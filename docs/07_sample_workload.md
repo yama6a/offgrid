@@ -11,7 +11,7 @@ Three workloads, one image, three binaries. The sample-app image bakes three bin
 | `sample_user_signup` | `/signup` | emits the command every 10s, consumes created + audit. Messaging only |
 | `sample_audit_logger` | `/auditor` | consumes audit only. Messaging only |
 
-The messaging topology and isolation live in [11_messaging.md](11_messaging.md). The rest of this doc is
+The messaging topology and isolation live in [08_messaging.md](08_messaging.md). The rest of this doc is
 `sample-user-manager`'s app, Postgres, Redis and ingress.
 
 ## What the chart ships
@@ -25,9 +25,9 @@ The messaging topology and isolation live in [11_messaging.md](11_messaging.md).
 - Redis: two instances via the shared `redis-instance` wrapper, one per persistence mode.
   `sample-user-manager-redis-cache` is ephemeral (1h-TTL audit log, regenerable);
   `sample-user-manager-redis-sessions` is durable and enrolled in the central S3 RDB backup. See
-  [12_redis.md](12_redis.md).
+  [09_redis.md](09_redis.md).
 - Ingress: one ingress, two hosts, plain edges rendered by the shared `ingress` chart (see
-  [07_ingress.md](07_ingress.md)), each host's Gateway folded onto the one shared Envoy via `mergeGateways`.
+  [04_ingress.md](04_ingress.md)), each host's Gateway folded onto the one shared Envoy via `mergeGateways`.
   This chart configures NO SSO; gating is central in `04_google_sso`:
     - `sample-user-manager.app.example.com` is OPEN, not listed in `04_google_sso`. The unprotected control.
     - `sample-user-manager-sso.app.example.com` is GATED, its subdomain listed in `04_google_sso` `hosts`.
@@ -82,7 +82,7 @@ Cluster and writes the Secret. Expected, and it self-heals.
 A real sample app needs a database, and the old split (an echo server plus a standalone CNPG cluster) never
 exercised an app-to-DB path. One workload proves the full chain (ingress, open and SSO, to app to Postgres) and
 is the template for any stateful app behind the Gateway. The CNPG operator stays a platform app
-([08_storage.md](08_storage.md)); only the clusters live here.
+([05_storage.md](05_storage.md)); only the clusters live here.
 
 ### One-place edit: the whole ingress is a values list
 
@@ -90,7 +90,7 @@ Every HTTPS host needs its own `:443` listener, and that listener lives on the h
 `ingress` chart, folded onto the shared Envoy via `mergeGateways`, not on a shared Gateway in `03_gateway`.
 
 What differs is the cert behind those listeners: HTTP-01 gives a per-ingress multi-SAN cert, while a Cloudflare
-domain (DNS-01) shares one `*.<tier>` wildcard across every listener. See [07_ingress.md](07_ingress.md).
+domain (DNS-01) shares one `*.<tier>` wildcard across every listener. See [04_ingress.md](04_ingress.md).
 
 Adding a host is one `{ subdomain, targetService, targetPort }` under `hosts:`, where the host is
 `<subdomain>.<domain>` and `subdomain: "@"` means the apex. A different domain is a new `ingresses[]` entry. The
@@ -134,19 +134,19 @@ This workload needs the CNPG `Cluster` CRD and the Longhorn classes (platform wa
 
 As a workload it gets that ordering without a `sync-wave`: the root-of-roots creates the workloads tree about 5s
 after the platform tree. There is NO health gate, so if a CRD it needs is not registered yet, the first sync
-fails and unbounded retry converges it. See [05_gitops.md](05_gitops.md).
+fails and unbounded retry converges it. See [02_gitops.md](02_gitops.md).
 
 ### Storage
 
 Both `Cluster`s run on `longhorn-r2-ephemeral`: `sample-user-manager-db` at 3 instances, one per Pi, with
 synchronous streaming replication and a 10Gi ceiling each, and `sample-user-manager-analytics` as a single
 instance with 5Gi. Both survive losing a machine without hands, for different reasons. Full reasoning in
-[08_storage.md](08_storage.md).
+[05_storage.md](05_storage.md).
 
 ### Network policy: default-deny both ways
 
 This workload is where east-west lockdown is exercised; the cluster is otherwise default-allow, see
-[04_networking.md](04_networking.md). Every `CiliumNetworkPolicy` here lists ingress AND egress, which makes its
+[01_networking.md](01_networking.md). Every `CiliumNetworkPolicy` here lists ingress AND egress, which makes its
 endpoints deny-by-default in each direction, then allows only what is needed.
 
 App (`sample-user-manager`, in this chart's `templates/networkpolicy.yaml`):
@@ -186,7 +186,7 @@ platform component was relabelled and a legitimate flow shows AUDIT, fix the sel
 ## Apply and verify
 
 1. Point each host's public DNS at the home router, and forward `:80` to the Gateway IP so HTTP-01 can issue.
-   The `:443` listener ships with the host's own Gateway, see [07_ingress.md](07_ingress.md).
+   The `:443` listener ships with the host's own Gateway, see [04_ingress.md](04_ingress.md).
 2. `git add -A && git commit && git push`. ArgoCD applies the workload via the workloads tree. If a CRD it needs
    is not registered yet, the first sync fails and retries until it is.
 
@@ -201,7 +201,7 @@ kubectl -n gateway get certificate                        # READY=True once DNS 
 
 - `https://sample-user-manager.app.example.com/` serves the app with no login. The open control.
 - `https://sample-user-manager-sso.app.example.com/` bounces to Google via `google-sso.example.com`. An
-  allowlisted account reaches the app; a non-listed one is denied. See [07_ingress.md](07_ingress.md).
+  allowlisted account reaches the app; a non-listed one is denied. See [04_ingress.md](04_ingress.md).
 
 ## Caveats
 
@@ -214,8 +214,8 @@ kubectl -n gateway get certificate                        # READY=True once DNS 
 - `prune` is data-safe because every stateful unit sets `deletionProtection: true`, which stamps
   `Prune=false,Delete=false`. Removing the app ORPHANS the Postgres Clusters and Redis instances, still running
   on their volumes, rather than deleting them, and restoring the files re-adopts them. This is NOT the storage
-  class doing it: `longhorn-r2-ephemeral` is `reclaimPolicy: Delete`. See [08_storage.md](08_storage.md).
+  class doing it: `longhorn-r2-ephemeral` is `reclaimPolicy: Delete`. See [05_storage.md](05_storage.md).
 - Point-in-time recovery comes from the wrapper's `backupsEnabled` (default true), which only renders once
   `lib/helm/pg-cluster/files/backup.yaml` is populated by `14_cnpg_backup.sh`. Until then durability rests on
   Postgres replication across the 3 instances plus Longhorn's 2 volume replicas. See
-  [13_backups.md](13_backups.md).
+  [10_backups.md](10_backups.md).

@@ -1,7 +1,7 @@
 # 13: Off-cluster backups, CNPG Postgres + Redis + Longhorn + VM/VL to S3
 
 Until now durability was entirely in-cluster: Postgres replication across the instances, Longhorn's 2 volume
-replicas under them, plus orphan-not-delete ([08_storage.md](08_storage.md)). That survives a machine loss
+replicas under them, plus orphan-not-delete ([05_storage.md](05_storage.md)). That survives a machine loss
 unaided, but not a bad `DROP`, data corruption, losing every replica of a volume, or a full rebuild.
 
 This step adds the off-cluster tier: continuous WAL archiving plus daily base backups from every CloudNativePG
@@ -72,7 +72,7 @@ the primary goes read-only or crashes. That is why the WAL-archive alert is `cri
   server, and S3 on `world:443` for backup-catalog and recovery-window reads. The instance SIDECAR does its own S3
   upload, allowed by the `pg-cluster` netpol, and talks to its instance-manager over localhost, so it does NOT dial
   this central Service and there is deliberately no instance-to-`:9090` rule. See
-  [04_networking.md](04_networking.md).
+  [01_networking.md](01_networking.md).
 
 ## Terraform
 
@@ -256,7 +256,7 @@ secret in one namespace and no per-namespace list. The trade is a single global 
 with the failing instance named in the job's stdout, which lands in VictoriaLogs.
 
 Full mechanism, the `make configure-redis-backup` runbook, and `make restore-redis` are in
-[12_redis.md](12_redis.md), under "Off-cluster backups: RDB to S3". Unlike CNPG, whose retention Barman manages,
+[09_redis.md](09_redis.md), under "Off-cluster backups: RDB to S3". Unlike CNPG, whose retention Barman manages,
 Redis relies entirely on the bucket's S3 lifecycle for expiry.
 
 ## Longhorn volume backups
@@ -444,7 +444,7 @@ Durability is two layers, and only the second has a recovery step:
   state loud.
 - Off-cluster in S3: Barman Cloud, continuous WAL plus a daily base, for real data loss: a dropped table, a bad
   migration, or losing every replica of a volume at once. Losing a MACHINE no longer needs it, since the volume
-  reattaches on a survivor ([15_node_recovery.md](15_node_recovery.md)).
+  reattaches on a survivor ([https://github.com/yama6a/talos-raspberry-pi5-cluster/blob/main/docs/05_node_recovery.md](https://github.com/yama6a/talos-raspberry-pi5-cluster/blob/main/docs/05_node_recovery.md)).
 
 Pick by what is actually wrong:
 
@@ -454,7 +454,7 @@ Pick by what is actually wrong:
 | `Cluster` is GONE and you want it back as itself | `make restore-cnpg`, mode in-place |
 | DB is fine; verify a backup, read old rows, test a PITR target | `make restore-cnpg`, mode side |
 | Whole cluster rebuilt | `make restore-secrets-key` first, so the sealed S3 creds decrypt, then mode in-place per DB |
-| A machine died or was replaced | Nothing here, and nothing to delete. The volume reattaches on a survivor and Postgres replays WAL; an HA primary is replaced by a promoted standby: [15_node_recovery.md](15_node_recovery.md) |
+| A machine died or was replaced | Nothing here, and nothing to delete. The volume reattaches on a survivor and Postgres replays WAL; an HA primary is replaced by a promoted standby: [https://github.com/yama6a/talos-raspberry-pi5-cluster/blob/main/docs/05_node_recovery.md](https://github.com/yama6a/talos-raspberry-pi5-cluster/blob/main/docs/05_node_recovery.md) |
 | Every replica of one volume is gone (`faulted`) | `make restore-cnpg` for a database; `make restore-longhorn` for a volume on the backed-up class |
 
 ### `make restore-cnpg`
@@ -580,7 +580,7 @@ bucket survives.
    `cnpg-backup-too-old` alerts on the second of those, because CNPG's own
    `cnpg_collector_last_available_backup_timestamp` is flat 0 here and an alert on it can never fire; and the
    `cnpg` dashboard's Backups panels are rewritten onto the same two (see
-   [09_monitoring.md](09_monitoring.md)). There are also no `backups.postgresql.cnpg.io` objects to list under
+   [06_monitoring.md](06_monitoring.md)). There are also no `backups.postgresql.cnpg.io` objects to list under
    the plugin, so a runbook step that says `kubectl get backup` will always come back empty.
 
    ```bash

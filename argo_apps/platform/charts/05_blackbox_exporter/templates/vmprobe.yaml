@@ -1,6 +1,6 @@
 {{- /*
 One VMProbe per expected answer. vmagent picks these up and asks the exporter to fetch each target, so the
-resulting `probe_*` series carry the URL in the `instance` label. See docs/09_monitoring.md.
+resulting `probe_*` series carry the URL in the `instance` label. See docs/06_monitoring.md.
 */ -}}
 {{- range $name, $module := dict "sso" "http_sso_302" "open" "http_open_200" }}
 {{- $targets := index $.Values.probes $name }}

@@ -16,15 +16,17 @@ at a glance.
 | `lib/bench/` | static payloads for `lib/shell/storage_bench.sh`: the fio job files and the pgbench percentile awk |
 | `argo_apps/` | everything Argo CD delivers, the two-tree GitOps root |
 | `Makefile` | a thin dispatcher over `lib/shell/` plus the orchestrators. `make help` lists every target |
-| `versions.env` | committed. The shared, renovate-managed version recipe: upstream versions + digest pins |
-| `inventory.yaml` | gitignored. One entry per node. `inventory.example.yaml` is the template and documents the fields |
+| `terraform/` | the S3 backup bucket + its scoped IAM writer, consumed by steps 13-17 |
 | `.env` | gitignored. Per-deployment config + secrets, in two blocks: CONFIG then SECRETS. Template: `.env.example` |
-| `lib/talos/` | static Talos payloads: the Image Factory schematic per node type without a custom build |
-| `secrets/` | cluster credentials written by `03c`. A symlink to an off-repo store, gitignored, never committed |
-| `.cache/` | scratch: downloaded Talos images, benchmark runs. Gitignored |
+| `secrets/` | cluster credentials written by the OS repo. A symlink to an off-repo store, never committed |
+| `.cache/` | scratch: benchmark runs. Gitignored |
 
-Run the steps in order: `02_raspi_eeprom`, then `03a` to `03g`, then `04_cilium`, `05_argocd`, and onward.
-Either by hand (`bash lib/shell/NN_name.sh`) or via the Makefile.
+Run the steps in order: `04_cilium`, `05_argocd`, and onward. Either by hand (`bash lib/shell/NN_name.sh`) or
+via the Makefile.
+
+This repo starts from a cluster that already exists. Hardware, Talos and node lifecycle live in
+[talos-raspberry-pi5-cluster](https://github.com/yama6a/talos-raspberry-pi5-cluster), which writes the `kubeconfig` this repo
+reads out of the shared `secrets/` symlink.
 
 ## Where a value lives
 
@@ -32,27 +34,31 @@ Every value lives in exactly one place.
 
 | Kind of value | Lives in |
 |---|---|
-| Versions and digest pins | `versions.env`, committed |
-| The node list: per-node role, hardware type and image source | `inventory.yaml`, gitignored |
-| Per-deployment scalars (domains, VIP, sizing) and all secrets | `.env`, gitignored |
-| Fixed identifiers that are not per-deployment config (namespaces, operator names, the Pi 5 NIC and disk, the Talos API port) | constants in `lib/shell/common.sh` |
+| Upstream chart versions and digest pins | each chart's own `Chart.yaml` |
+| Per-deployment scalars (domains, ingress IP, backups) and all secrets | `.env`, gitignored |
+| Fixed identifiers that are not per-deployment config (namespaces, operator names) | constants in `lib/shell/common.sh` |
 | Internals used by one script (its own check expectations, asset filenames, tool refs it alone runs) | that script |
 
 **No per-deployment value is ever hand-edited into a chart.** `lib/shell/07_values.sh` (`make configure-values`)
-reads `.env` and `inventory.yaml` and stamps every one of them into the chart values Argo CD renders: the repo
-URL in all five places that carry it, `BASE_DOMAIN` into every public hostname, the SSO allowlist, the ingress
-IP, the ACME email, the Cloudflare zones, and the control-plane scrape endpoints. That is what lets a fork
-change two gitignored files and rebase on upstream without conflicts. If you add a per-deployment value, add it
-to `.env.example` and teach `07_values.sh` to write it; do not commit it into a chart.
+reads `.env` and stamps every one of them into the chart values Argo CD renders: the repo URL in all five places
+that carry it, `BASE_DOMAIN` into every public hostname, the SSO allowlist, the ingress IP, the ACME email and
+the Cloudflare zones. That is what lets a fork change one gitignored file and rebase on upstream without
+conflicts. If you add a per-deployment value, add it to `.env.example` and teach `07_values.sh` to write it; do
+not commit it into a chart.
 
-It must keep running with **no cluster**: Argo CD reconciles the pushed remote, so these values have to be
-committed and pushed before the bootstrap reaches `05_argocd.sh`. Anything needing a live cluster (sealing a
-secret) goes in a later step instead.
+It **writes** values only, and must stay that way: Argo CD reconciles the pushed remote, so these values have to
+be committed and pushed before the bootstrap reaches `05_argocd.sh`. Anything that applies to the cluster
+(sealing a secret) goes in a later step instead.
+
+It does **read** the cluster, for one thing: the control-plane node IPs that become the vm-k8s-stack scrape
+endpoints, since Talos binds controller-manager, scheduler and etcd to localhost and they are scraped per node.
+Reading them from the API rather than a config file means adding a control-plane node updates them on the next
+run. Safe here because this repo always runs against a cluster the OS repo already built.
 
 `.env` is plain `KEY=value` only: no logic, arrays or command substitution. Anything derived is derived in
-`common.sh` (`OPS_DOMAIN` and `APP_DOMAIN` from `BASE_DOMAIN`, for example). Node topology outgrew that, which
-is why it is a separate YAML file. Secrets are read from `.env`, never prompted; `common.sh` defaults each to
-empty so an older `.env` does not trip `set -u`, and an empty secret skips the feature it enables.
+`common.sh` (`OPS_DOMAIN` and `APP_DOMAIN` from `BASE_DOMAIN`, for example). Secrets are read from `.env`, never
+prompted; `common.sh` defaults each to empty so an older `.env` does not trip `set -u`, and an empty secret
+skips the feature it enables.
 
 ## Bootstrap scripts
 
@@ -69,9 +75,9 @@ empty so an older `.env` does not trip `set -u`, and an empty secret skips the f
 
 ### `common.sh`
 
-Sourced by every script. It self-locates the repo root, loads `versions.env` then `.env`, derives what a flat
-file cannot express, parses `inventory.yaml` into the per-role arrays, and provides the output helpers,
-`require`, `use_kubeconfig`, a dockerized `talosctl`, `seal_secret`, and the values writers.
+Sourced by every script. It self-locates the repo root, loads `.env`, derives the `ops.`/`app.` tiers from
+`BASE_DOMAIN`, and provides the output helpers, `require`, `use_kubeconfig`, `seal_secret`, and the values
+writers.
 
 **Never write a tracked YAML file with `yq -i`.** It rewrites the whole document and drops the blank line before
 a comment block, so even a no-op write leaves the file dirty, which aborts the rebuild at `05_argocd`'s
@@ -143,7 +149,7 @@ reads in deploy order.
 - **Every Application carries the `resources-finalizer`,** so removing or renaming one cascade-deletes its
   resources instead of orphaning them. `prune` is within-app and does not cascade on deletion.
 - **Every pod-running app carries an explicit `CiliumNetworkPolicy`,** default-deny both ways, rolled out
-  audit-first, unless it is on the deliberately-unpoliced list in `docs/04_networking.md`. Two gotchas: a
+  audit-first, unless it is on the deliberately-unpoliced list in `docs/01_networking.md`. Two gotchas: a
   cross-namespace peer needs `matchExpressions: [{key: k8s:io.kubernetes.pod.namespace, operator: Exists}]`,
   because an omitted namespace label is same-namespace-only; and disable any upstream-bundled vanilla
   `NetworkPolicy`, since those default to allow-all-egress and Cilium unions them with ours.

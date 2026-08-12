@@ -1,19 +1,17 @@
 #!/usr/bin/env bash
-# One-shot orchestrator: wipe the cluster and rebuild it end to end. One confirmation, up front.
+# One-shot orchestrator: tear the platform down to bare Kubernetes and redeliver it. One confirmation,
+# up front. It does NOT touch the nodes: wiping Talos itself is the OS repo's `make reset-cluster`.
 #
 # Sequence:
-#   0. git add/commit/push             : ArgoCD deploys the REMOTE repo, not your laptop, so sync it first
-#   1. DANGEROUS_reset_talos_cluster.sh: wipe STATE+EPHEMERAL+u-longhorn, reboot to maintenance
-#   2. 03c_talos_cluster_config.sh     : wait for maintenance, apply config, bootstrap etcd
-#   3. 03d_nic_hardening.sh            : NIC hardening
-#   4. 04_cilium.sh                    : CNI + prometheus-operator CRDs + LB-IPAM/L2 + Hubble
-#   5. git add/commit/push             : 04 wrote the LB range into the chart values; 05 refuses a dirty argo_apps/
-#   6. 05_argocd.sh                    : bootstrap ArgoCD, which then deploys everything else from git
-#   7. 06_restore_sealed_secrets_key.sh: restore the master key so committed SealedSecrets decrypt
-#   8. 13_s3_backup_bucket.sh wipe     : DELETE all backups in the bucket, keeping the bucket and IAM
-#   9. converge argocd apps            : settle, then drive every app to Synced+Healthy
-#  10. 10_ntfy_auth.sh                 : seed ntfy users, seal Grafana's token, push, restart grafana
-#  11. verify ingress serving          : wait until each HTTPS host serves an LE cert
+#   1. git add/commit/push             : ArgoCD deploys the REMOTE repo, not your laptop, so sync it first
+#   2. 04_cilium.sh                    : CNI + prometheus-operator CRDs + LB-IPAM/L2 + Hubble
+#   3. git add/commit/push             : 04 wrote the LB range into the chart values; 05 refuses a dirty argo_apps/
+#   4. 05_argocd.sh                    : bootstrap ArgoCD, which then deploys everything else from git
+#   5. 06_restore_sealed_secrets_key.sh: restore the master key so committed SealedSecrets decrypt
+#   6. 13_s3_backup_bucket.sh wipe     : DELETE all backups in the bucket, keeping the bucket and IAM
+#   7. converge argocd apps            : settle, then drive every app to Synced+Healthy
+#   8. 10_ntfy_auth.sh                 : seed ntfy users, seal Grafana's token, push it, restart grafana
+#   9. verify ingress serving          : wait until each HTTPS host serves an LE cert
 #
 # A rebuild is a FULL fresh start: it wipes local data AND the S3 backups, so the empty same-named clusters
 # ArgoCD recreates begin a clean backup history with no old-vs-new systemID conflict. To keep the OLD data,
@@ -24,10 +22,14 @@
 # about-to-be-wiped cluster's key. Back up DELIBERATELY beforehand so step 7 has something to restore. With
 # no backup, step 7 fails cleanly and you re-seal instead.
 #
-# Skips 03a/03b: a reset keeps BOOT/EFI/META, so the OS is already on the NVMe and 03c waits for
-# maintenance itself. Steps 0-6 abort on the first failure; 7 onwards are best-effort.
+# PRECONDITION: the nodes are already wiped and reconfigured. That is the OS repo's job:
+#   https://github.com/yama6a/talos-raspberry-pi5-cluster
+#   there:  make reset-cluster && make bootstrap-cluster
+# This script checks the cluster answers and refuses to start otherwise.
 #
-# Needs Docker (host networking), git, kubectl.
+# Steps 1-4 abort on the first failure; 5 onwards are best-effort.
+#
+# Needs git, kubectl, helm, yq, kubeseal.
 set -uo pipefail
 
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
@@ -35,9 +37,8 @@ source "${SCRIPT_DIR}/common.sh"   # say/die/warn/ok + CLUSTER_DIR + the invento
 cd "$REPO_ROOT" || exit 1           # run from the repo root (git ops); set -e is off, so guard cd
 
 # ---- knobs ------------------------------------------------------------------
-STEP=0; STEP_TOTAL=12                           # shared step counter (common.sh step/run_step); bump TOTAL if you add/remove a step
+STEP=0; STEP_TOTAL=9                            # shared step counter (common.sh step/run_step); bump TOTAL if you add/remove a step
 STEP_DIR="$SCRIPT_DIR"                          # every step script (+ the reset script) is a sibling of this orchestrator in lib/shell/
-RESET="${STEP_DIR}/DANGEROUS_reset_talos_cluster.sh"
 RESTORE="${STEP_DIR}/06_restore_sealed_secrets_key.sh"
 KUBECONFIG_FILE="${CLUSTER_DIR}/kubeconfig"
 INGRESS_GW_NS="gateway"                        # namespace of the shared Gateway
@@ -49,20 +50,19 @@ INGRESS_HOSTS=""                               # space-separated hosts to check;
 CONVERGE_SETTLE=120                            # secs to let ArgoCD create its apps + roll the early waves before the backstop kicks in
 CONVERGE_WAIT=900                              # max secs for the converge backstop to drive every app to Synced+Healthy
 
-require docker git kubectl
-[ -f "$RESET" ]   || die "missing ${RESET}"
+require git kubectl helm yq kubeseal
 [ -f "$RESTORE" ] || die "missing ${RESTORE}"
-IPS=("${ALL_IPS[@]}")   # workers included: the reset wipes them and 03c reconfigures them in the same pass
 
 cat <<EOF
 
-This will DESTROY and REBUILD the entire Talos cluster:
-  nodes : ${IPS[*]}
-  wipe  : STATE + EPHEMERAL + u-longhorn  (ALL k8s state AND every Longhorn volume, gone for good)
-  flow  : commit+push -> reset -> 03c -> 03d -> 04 -> commit+push -> 05 -> restore sealed-secrets key -> WIPE S3 backups -> seed ntfy
-          (ArgoCD then redeploys cilium/cert-manager/longhorn/gateway/SSO/monitoring from git)
-  note  : FULL fresh start, wipes the CNPG volumes AND the S3 backups. The DBs come back EMPTY. If you want
-          the old data, restore from S3 BEFORE rebuilding (make restore-cnpg); a rebuild discards it.
+This will REDELIVER the entire platform onto the cluster ${KUBECONFIG_FILE} points at:
+  flow  : commit+push -> 04 (CNI) -> commit+push -> 05 (ArgoCD) -> restore sealed-secrets key
+          -> WIPE S3 backups -> converge -> seed ntfy -> verify ingress
+          (ArgoCD redeploys cilium/cert-manager/longhorn/gateway/SSO/monitoring from git)
+  note  : it WIPES the S3 backups, so the DBs come back EMPTY. If you want the old data, restore from S3
+          BEFORE rebuilding (make restore-cnpg); a rebuild discards it.
+  nodes : NOT touched. To wipe Talos itself, do that first in the OS repo:
+          https://github.com/yama6a/talos-raspberry-pi5-cluster  ->  make reset-cluster && make bootstrap-cluster
 
 Have a CURRENT sealed-secrets key backup (06_backup_sealed_secrets_key.sh), else SSO won't decrypt
 until you re-seal (07_google_sso). ntfy alerting is seeded post-boot via 10_ntfy_auth regardless.
@@ -79,15 +79,16 @@ fi
 git push || die "git push failed, ArgoCD deploys the REMOTE; push manually then re-run"
 ok "remote up to date"
 
-# REBUILD_IN_PROGRESS=1 tells the reset script to SKIP its S3 teardown (terraform destroy): a rebuild keeps
-# the bucket + IAM and only wipes the backup CONTENTS (STEP 9). Only `make reset-cluster` (standalone) destroys
-# the S3 infrastructure.
-step "reset to maintenance (DANGEROUS_reset_talos_cluster.sh)"
-printf 'YES\n' | REBUILD_IN_PROGRESS=1 bash "$RESET" || die "reset failed"
-ok "reset issued"
+# The nodes are the OS repo's to wipe. All this needs is a cluster that answers.
+say "precondition: the cluster exists and is reachable"
+use_kubeconfig
+assert_api
+NODE_COUNT="$(kubectl get nodes --no-headers 2>/dev/null | wc -l | tr -d ' ')"
+[ "${NODE_COUNT:-0}" -gt 0 ] || die "no nodes found via ${KUBECONFIG}.
+       Wipe and rebuild the cluster first, in the OS repo:  https://github.com/yama6a/talos-raspberry-pi5-cluster
+       there:  make reset-cluster && make bootstrap-cluster"
+ok "${NODE_COUNT} node(s) reachable"
 
-run_step "waits for maintenance, applies config, bootstraps etcd" "$STEP_DIR" 03c_talos_cluster_config.sh
-run_step "NIC hardening (EEE/watchdog)"                            "$STEP_DIR" 03d_nic_hardening.sh
 run_step "CNI + monitoring CRDs + LB/L2 + Hubble"                 "$STEP_DIR" 04_cilium.sh
 
 # 04_cilium writes the .env LB-IPAM range into 00_cilium's values.yaml, AFTER the commit above, and 05 refuses
@@ -131,8 +132,8 @@ fi
 # nothing wedges. The converge step is the bootstrap backstop: it hard-refreshes EVERY app so it re-compares
 # against this rebuild's pushed commit + the STEP-7 key restore right away (the webhook isn't up yet, the poll
 # is 300s), and nudges any straggler to Synced+Healthy. Settle first so the platform has created its apps.
-# Best-effort; never fails the rebuild. See 05_gitops.md.
-export KUBECONFIG="$KUBECONFIG_FILE"           # 03c regenerated it above; needed by converge_argocd_apps
+# Best-effort; never fails the rebuild. See 02_gitops.md.
+export KUBECONFIG="$KUBECONFIG_FILE"           # needed by converge_argocd_apps
 step "let ArgoCD settle ${CONVERGE_SETTLE}s, then converge all apps to Synced+Healthy (backstop, up to ${CONVERGE_WAIT}s)"
 sleep "$CONVERGE_SETTLE"
 converge_argocd_apps "$CONVERGE_WAIT" || true
@@ -140,7 +141,7 @@ converge_argocd_apps "$CONVERGE_WAIT" || true
 # The reset wiped ntfy's Longhorn PVC, so ntfy came back with an EMPTY auth DB and the committed grafana-ntfy
 # token is stale. 10_ntfy_auth.sh re-creates the phone/grafana users + ACLs and mints + re-seals a FRESH token;
 # push it (ArgoCD applies it) and restart Grafana to pick up GF_NTFY_TOKEN. Skipped when the .env password is
-# empty. Best-effort. See docs/09_monitoring.md.
+# empty. Best-effort. See docs/06_monitoring.md.
 if [ -n "$NTFY_PHONE_PASSWORD_SECRET" ]; then
   if run_step "seed ntfy users + seal Grafana's ntfy token" "$STEP_DIR" 10_ntfy_auth.sh best-effort \
        "10_ntfy_auth didn't complete; re-run 'make configure-ntfy-auth' + commit/push once ntfy is up"; then
@@ -181,7 +182,7 @@ Notes:
   - FULL FRESH START: the wipe cleared every volume AND the S3 backups (STEP 9). The DBs come back EMPTY and
     begin a clean backup history. If you wanted the old data, you had to restore BEFORE rebuilding
     (make restore-cnpg) first, because a rebuild discards it. The bucket + IAM stay; only \`make reset-cluster\` destroys them.
-    See docs/13_backups.md.
+    See docs/10_backups.md.
   - TLS certs re-issue via HTTP-01; first issuance takes a few minutes. If you've rebuilt repeatedly,
     validate hosts on letsencrypt-staging before flipping to prod (tight rate limits).
 EOF

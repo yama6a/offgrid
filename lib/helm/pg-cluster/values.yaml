@@ -10,7 +10,7 @@ postgresql: { parameters: { max_connections: "50", shared_buffers: "128MB", effe
 alertCritical: false # OPTIONAL: (bool); true = alert-severity = critical; false = alert-severity = warning
 backupsEnabled: true # OPTIONAL: (bool); Off-cluster S3 backups (daily base + 15min RPO WAL archiving).
 
-#  Restore from S3 backup catalog (base + WAL replay) instead of initdb. See `make restore-cnpg` and docs/13_backups.md.
+#  Restore from S3 backup catalog (base + WAL replay) instead of initdb. See `make restore-cnpg` and docs/10_backups.md.
 restore:
   enabled: false  # SET TO FALSE AFTER RESTORE WAS COMPLETED!!
   serverName: ""  # catalog to read; empty = our own name (in-place).

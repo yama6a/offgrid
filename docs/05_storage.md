@@ -1,7 +1,7 @@
 # 08: Storage & database
 
 One storage layer and a database operator, all pure-GitOps wave-2 leaves with no imperative script. Each needs
-one Talos host prerequisite from [`03_operating_system.md`](03_operating_system.md).
+one Talos host prerequisite from [`https://github.com/yama6a/talos-raspberry-pi5-cluster/blob/main/docs/03_operating_system.md`](https://github.com/yama6a/talos-raspberry-pi5-cluster/blob/main/docs/03_operating_system.md).
 
 | Layer | Classes | Replicates at | Backs |
 |---|---|---|---|
@@ -9,7 +9,7 @@ one Talos host prerequisite from [`03_operating_system.md`](03_operating_system.
 
 There is **no default StorageClass**. Every PVC names one, or it stays `Pending`.
 
-Per-node NVMe layout, carved by [`03c`](03_operating_system.md): EPHEMERAL 64 GiB, then `longhorn` takes the
+Per-node NVMe layout, carved by [`03c`](https://github.com/yama6a/talos-raspberry-pi5-cluster/blob/main/docs/03_operating_system.md): EPHEMERAL 64 GiB, then `longhorn` takes the
 whole remainder.
 
 ## Why everything is on Longhorn, including the apps that replicate themselves
@@ -32,13 +32,13 @@ accepting writes. A single-instance Postgres needs a full S3 restore, two git co
 
 On Longhorn the volume is not tied to the dead machine, so the pod reattaches on a survivor and comes back by
 itself. Measured by unplugging a machine's ethernet: both databases were serving again ~190s later, unattended,
-against 402s when [the dead-node watcher](15_node_recovery.md) was suppressed and forever under node-local
-storage. Timings and the split-brain result are in [15_node_recovery.md](15_node_recovery.md).
+against 402s when [the dead-node watcher](https://github.com/yama6a/talos-raspberry-pi5-cluster/blob/main/docs/05_node_recovery.md) was suppressed and forever under node-local
+storage. Timings and the split-brain result are in [https://github.com/yama6a/talos-raspberry-pi5-cluster/blob/main/docs/05_node_recovery.md](https://github.com/yama6a/talos-raspberry-pi5-cluster/blob/main/docs/05_node_recovery.md).
 
 The price is latency, and it is small: Postgres commit p50 6.02 to 7.50 ms, RabbitMQ confirm p99 9.4 to 18.4 ms
 with a local replica. Both land inside what RDS Multi-AZ, Cloud SQL HA, SQS and Pub/Sub deliver, so the numbers
 we give up are ones a managed service would not have given us either. Full tables in
-[16_storage_bench.md](16_storage_bench.md).
+[12_storage_bench.md](12_storage_bench.md).
 
 ## Longhorn
 
@@ -104,7 +104,7 @@ Rendered by `templates/storageclasses.yaml`, all `numberOfReplicas: 2`.
 | `longhorn-r2-retained-with-backups` | Retain | disabled | daily + weekly | precious data with no app-level backup (sqlite, config). No consumer yet |
 
 The `-with-backups` class adds off-cluster S3 backups via `recurringJobSelector`; see
-[13_backups.md](13_backups.md).
+[10_backups.md](10_backups.md).
 
 **`dataLocality: best-effort`** keeps one of the two replicas on whichever node the pod runs on, so reads and
 half the write path stay on that SSD. Worth 31% off RabbitMQ's confirm p99, and only 4% for Postgres, because a
@@ -141,7 +141,7 @@ also the restore target in `recover_longhorn_from_s3.sh`.
 - `ServerSideApply`, because the CRDs blow the client-side last-applied-annotation limit.
 - `metrics.serviceMonitor.enabled: true` feeds `longhorn_*` to the stack, driving the `longhorn-health` Grafana
   alerts: manager-down, node NotReady, disk-unschedulable, node-storage over 85%, volume degraded or faulted,
-  volume near-full. See [09_monitoring.md](09_monitoring.md).
+  volume near-full. See [06_monitoring.md](06_monitoring.md).
 - If a Longhorn-managed field flaps `OutOfSync` after first sync (it mutates its own StorageClass or a webhook
   config), add a targeted `ignoreDifferences` rather than fighting `selfHeal`.
 - Deliberately deleting the app or its CRDs destroys the volumes. Back up before any teardown.
@@ -163,7 +163,7 @@ and the volume shows 2 healthy replicas on two distinct nodes.
 
 [CNPG](https://cloudnative-pg.io) reconciles a declarative `Cluster` CR into an HA Postgres: primary plus
 streaming replicas, with failover, rolling updates and metrics. Two apps, split across the two trees so operator
-and database land in dependency order (see [`05_gitops.md`](05_gitops.md)):
+and database land in dependency order (see [`02_gitops.md`](02_gitops.md)):
 
 | App | Tree | What |
 |-----|------|------|
@@ -172,7 +172,7 @@ and database land in dependency order (see [`05_gitops.md`](05_gitops.md)):
 
 Workloads carry no `sync-wave`. The root-of-roots creates the workloads tree about 5s after the platform tree
 with no health gate, so a `Cluster` CR applied before its CRD registers fails its sync and retries until the
-operator lands. See [`05_gitops.md`](05_gitops.md).
+operator lands. See [`02_gitops.md`](02_gitops.md).
 
 Versions: the operator dep `cnpg/cloudnative-pg` in `02_cnpg_operator/Chart.yaml`; the `Cluster` comes via the
 shared `pg-cluster` wrapper (`lib/helm/pg-cluster`), which renders the CNPG CRs directly with no upstream chart
@@ -208,7 +208,7 @@ Which means a machine loss is uneventful either way:
 
 The operator pod carries a pod-scoped `CiliumNetworkPolicy`: in from vmagent metrics, the apiserver webhook and
 the kubelet probe; out to DNS, the apiserver, each instance's instance-manager, and the barman-cloud plugin. See
-[04_networking.md](04_networking.md).
+[01_networking.md](01_networking.md).
 
 ### Cluster values
 
@@ -244,7 +244,7 @@ Wrapper-baked, worth knowing:
 - `initdb: { database: app, owner: app }`. The operator auto-generates the owner's credentials into the
   `<name>-app` Secret, so no sealed secret is needed.
 - The chart's own CNPG alert rules are disabled: `vmalert` is off, so a VMRule would never fire. The CNPG backup
-  and operational alerts are Grafana rules instead. See [13_backups.md](13_backups.md).
+  and operational alerts are Grafana rules instead. See [10_backups.md](10_backups.md).
 
 ### Reclaim & durability
 
@@ -259,7 +259,7 @@ Two durability tiers:
    orphan-not-delete.
 2. **Off-cluster**: S3 backups, continuous WAL archiving plus daily base backups via the
    `cnpg/plugin-barman-cloud` plugin, for real PITR and total-loss recovery. Turned on from `.env` by
-   `14_cnpg_backup.sh`. See [13_backups.md](13_backups.md).
+   `14_cnpg_backup.sh`. See [10_backups.md](10_backups.md).
 
 Neither namespace needs privileged PSA: controller and Postgres pods run non-root (uid 26). Both apps use SSA,
 because the CRDs and the `Cluster` CR blow the client-side annotation limit.

@@ -1,7 +1,8 @@
 # A thin dispatcher over the numbered runbook scripts. Holds NO logic, versions or values: every target just
 # runs the step script it names, so `make install-cilium` and running lib/shell/04_cilium.sh by hand are
 # identical. `make help` lists everything; the one-shot orchestrators are bootstrap-cluster and
-# rebuild-cluster. The health targets need a live cluster and a populated .env.
+# rebuild-cluster. Everything here assumes a cluster the OS repo already built:
+#   https://github.com/yama6a/talos-raspberry-pi5-cluster
 
 .DEFAULT_GOAL := help
 
@@ -11,63 +12,14 @@ help: ## Display this help.
 
 ##@ Cluster lifecycle  (DANGEROUS: destructive; each prompts for a typed confirmation)
 .PHONY: bootstrap-cluster
-bootstrap-cluster: ## DANGER: first-time init of freshly-flashed nodes -> full cluster (archives old creds).
+bootstrap-cluster: ## DANGER: first-time platform install onto an existing cluster (CNI -> ArgoCD -> everything).
 	bash lib/shell/DANGEROUS_bootstrap_cluster.sh
 
 .PHONY: rebuild-cluster
-rebuild-cluster: ## DANGER: wipe a RUNNING cluster and rebuild end-to-end (restores the sealed-secrets key).
+rebuild-cluster: ## DANGER: redeliver the whole platform + WIPE the S3 backups (restores the sealed-secrets key). Does not touch the nodes.
 	bash lib/shell/DANGEROUS_rebuild_cluster.sh
 
-.PHONY: reset-cluster
-reset-cluster: ## DANGER: wipe all nodes (STATE + EPHEMERAL + Longhorn) back to maintenance.
-	bash lib/shell/DANGEROUS_reset_talos_cluster.sh
 
-##@ Node image & Talos bring-up  (step 02-03; the talos steps run their tooling in Docker)
-.PHONY: build-eeprom-card
-build-eeprom-card: ## 02: build a reusable SD card that flashes the Pi 5 EEPROM (boot order / PCIe probe).
-	bash lib/shell/02_raspi_eeprom.sh
-
-.PHONY: flash-talos-nvme
-flash-talos-nvme: ## 03a: download a node's Talos image and write it to an NVMe SSD over USB. NODE=<hostname> picks which image; omit it to choose from a list.
-	bash lib/shell/03a_talos_image_flasher.sh $(NODE)
-
-.PHONY: verify-talos-boot
-verify-talos-boot: ## 03b: verify freshly-flashed nodes boot into maintenance mode (the inventory's bootVerify nodes).
-	bash lib/shell/03b_talos_boot_verify.sh
-
-.PHONY: init-talos
-init-talos: ## 03c: FIRST bring-up. Needs EVERY node in maintenance (fresh flash, or after reset-cluster): applies config, bootstraps etcd, writes kube/talosconfig.
-	bash lib/shell/03c_talos_cluster_config.sh
-
-.PHONY: add-node
-add-node: ## 03c: configure and join ONE node from maintenance into the RUNNING cluster (control-plane or worker), no etcd bootstrap. NODE=<hostname>.
-	@test -n "$(NODE)" || { echo "usage: make add-node NODE=talos-w1   (hostnames come from inventory.yaml)"; exit 1; }
-	bash lib/shell/03c_talos_cluster_config.sh $(NODE)
-
-.PHONY: reapply-talos-config
-reapply-talos-config: ## 03c: push a changed machine config to nodes that are already RUNNING (dry-run + confirm first). NODE=<hostname> for one, omit for all.
-	bash lib/shell/03c_talos_cluster_config.sh --reapply $(NODE)
-
-.PHONY: harden-nics
-harden-nics: ## 03d: apply NIC hardening (disable EEE / watchdog) to every node.
-	bash lib/shell/03d_nic_hardening.sh
-
-.PHONY: upgrade-talos
-upgrade-talos: ## 03e: rolling in-place upgrade of the Talos OS to the pinned installer image.
-	bash lib/shell/03e_talos_upgrade.sh
-
-.PHONY: upgrade-k8s
-upgrade-k8s: ## 03f: rolling in-place upgrade of Kubernetes to the pinned version.
-	bash lib/shell/03f_k8s_upgrade.sh
-
-.PHONY: rebalance-workloads
-rebalance-workloads: ## 03g: rolling-restart the stateless Deployments so the scheduler re-spreads them (03e runs this).
-	bash lib/shell/03g_rebalance_workloads.sh
-
-.PHONY: recover-node
-recover-node: ## 15: rejoin ONE wiped/replaced node and fix what does not self-heal. NODE=<hostname>, add YES=1 to skip the prompt.
-	@test -n "$(NODE)" || { echo "usage: make recover-node NODE=talos-cp3 [YES=1]"; exit 1; }
-	bash lib/shell/recover_node.sh $(NODE) $(if $(YES),--yes,)
 
 ##@ Cluster delivery  (step 04-09; native helm/kubectl)
 .PHONY: install-cilium
@@ -83,7 +35,7 @@ configure-argocd-webhook: ## 08: generate+seal the ArgoCD GitHub webhook secret 
 	bash lib/shell/08_argocd_webhook.sh
 
 .PHONY: configure-values
-configure-values: ## 07: write every per-deployment value (repo URL, domains, SSO allowlist, ingress IP, ACME, scrape endpoints) from .env + inventory.yaml into the chart values (pure yq, no cluster).
+configure-values: ## 07: write every per-deployment value (repo URL, domains, SSO allowlist, ingress IP, ACME, scrape endpoints) from .env into the chart values.
 	bash lib/shell/07_values.sh
 
 .PHONY: configure-cloudflare-token
@@ -157,22 +109,10 @@ restore-vm: ## Restore VictoriaMetrics/Logs from an S3 export: stream it into th
 fix-chart-locks: ## Regenerate any stale Chart.lock (out of sync with Chart.yaml) across all charts; no git.
 	bash lib/shell/fix_chart_locks.sh
 
-##@ Health & inspection  (read-only; use the dockerized talosctl + the 03c kubeconfig)
-.PHONY: check-multiarch
-check-multiarch: ## Check every running image has a manifest for every architecture in the cluster. ARCH="amd64" to check before adding such a node.
-	bash lib/shell/check_multiarch.sh
+##@ Health & inspection  (read-only)
 
-.PHONY: check-health
-check-health: ## Talos: wait for and report overall cluster health.
-	@bash -c 'source lib/shell/common.sh && talosctl health'
 
-.PHONY: talosctl
-talosctl: ## Run dockerized talosctl, e.g. `make talosctl get members`. Any FLAG needs a `--` first: `make talosctl -- -n <ip> etcd members`.
-	@bash -c 'source lib/shell/common.sh && talosctl $(filter-out $@,$(MAKECMDGOALS))'
 
-.PHONY: print-kubeconfig
-print-kubeconfig: ## Print the 03c kubeconfig export line (eval it to point your kubectl at the cluster).
-	@bash -c 'source lib/shell/common.sh && echo "export KUBECONFIG=$$CLUSTER_DIR/kubeconfig"'
 
 .PHONY: view-credentials
 view-credentials: ## Print login URLs + credentials (RabbitMQ, ntfy phone, GitHub webhook) and the SSO-only UI URLs.
@@ -189,6 +129,11 @@ krr-json: ## Rightsizing: same as `krr` but emits JSON.
 .PHONY: krr-yaml
 krr-yaml: ## Rightsizing: same as `krr` but emits YAML.
 	bash lib/shell/krr.sh -f yaml
+
+##@ Health & inspection  (read-only)
+.PHONY: check-multiarch
+check-multiarch: ## Check every running image has a manifest for every architecture in the cluster. ARCH="amd64" to check before adding such a node.
+	bash lib/shell/check_multiarch.sh
 
 ##@ Benchmarks  (NOT read-only: create a throwaway namespace and load the live cluster for hours)
 
@@ -207,13 +152,3 @@ storage-bench-sync: ## What SYNCHRONOUS replication costs CNPG on longhorn r2 (~
 .PHONY: storage-bench-teardown
 storage-bench-teardown: ## Remove everything the benchmark created (namespace, bench StorageClasses, node tags, operator CNP).
 	bash lib/shell/storage_bench.sh teardown
-
-# Words after `make talosctl ...` (get, members, services, ...) are extra goals to Make; this no-op catch-all
-# swallows them so they're passed to talosctl instead of erroring. Explicit targets above still take priority,
-# so a mistyped real target quietly no-ops rather than erroring, the one cost of positional passthrough args.
-#
-# A flag never reaches talosctl on its own: Make claims it first, and `-n` is Make's own --just-print, so
-# `make talosctl -n <ip> etcd members` silently prints the command instead of running it. Put a `--` before
-# the first flag and Make stops parsing options: `make talosctl -- -n <ip> etcd members`.
-%:
-	@:

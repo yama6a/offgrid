@@ -15,7 +15,7 @@ Two pieces:
 - The reusable chart: `lib/helm/rabbitmq-topology/` (`type: application`, like `pg-cluster` and
   `redis-instance`). A workload consumes it via a `file://` dependency and declares its topology in a
   `rabbitmq-topology:` values block, with no template of its own. Demonstrated by the sample-user-* workloads, see
-  [10_sample_workload.md](10_sample_workload.md).
+  [07_sample_workload.md](07_sample_workload.md).
 
 ## The two patterns, and who owns what
 
@@ -130,7 +130,7 @@ The `User` CR omits `importCredentialsSecret`, so the Messaging Topology Operato
 password into a Secret `<user>-user-credentials` (keys `username`/`password`) in the workload's OWN namespace. The
 pod mounts it via `secretKeyRef`, identical to how the app reads CNPG's `<db>-app` Secret.
 
-This is the repo's operator-generated secret class from [06_secrets.md](06_secrets.md): nothing secret is
+This is the repo's operator-generated secret class from [03_secrets.md](03_secrets.md): nothing secret is
 committed, no `SealedSecret`, no `.env` key, no `seal_secret` call. Sealing is only for secrets originating
 OUTSIDE the cluster, like OAuth. RabbitMQ has none. The username is generated too, so the app reads it from the
 Secret rather than hardcoding it, and the `Permission` references the user via `userReference` (the User CR name)
@@ -152,7 +152,7 @@ in the binary, so a pod cannot be pointed at the wrong topic:
 ```
 
 On a cold start the pod may briefly sit in `CreateContainerConfigError` until the operator writes the Secret, then
-self-heals. Same as the CNPG cold-start note in [10_sample_workload.md](10_sample_workload.md).
+self-heals. Same as the CNPG cold-start note in [07_sample_workload.md](07_sample_workload.md).
 
 ## Cross-namespace topology
 
@@ -198,7 +198,7 @@ So a poison message, one a consumer repeatedly fails to process, is routed to it
 rather than being silently dropped, which is RabbitMQ's default at-most-once strategy.
 
 DLQs are holding queues: nothing consumes them. You alert on their depth (`rabbitmq-dlq-not-empty`, see
-[09_monitoring.md](09_monitoring.md)) and drain or replay by hand. The DLX and DLQ are admin-operator-declared like
+[06_monitoring.md](06_monitoring.md)) and drain or replay by hand. The DLX and DLQ are admin-operator-declared like
 the rest of the topology, so the app user gets no extra permission: the broker dead-letters internally and the app
 never publishes to the DLX or consumes the DLQ. The DLQ itself carries no `x-dead-letter-exchange`, so there is no
 loop. Set `deadLetter: false` to opt a workload out.
@@ -214,7 +214,7 @@ Quorum queues already replicate every message across the 3 brokers and fsync loc
 replication is redundant for durability. It is there for a different reason: a node-local volume cannot follow its
 broker to a surviving machine, so the pod would sit wedged on a dead one until a human wiped it. On Longhorn the
 replacement broker reattaches its own data and rejoins with its Raft log intact. Full reasoning in
-[08_storage.md](08_storage.md).
+[05_storage.md](05_storage.md).
 
 `dataLocality: best-effort` keeps one replica on the broker's own node, so the fsync path stays on that SSD:
 worth 31% off confirm p99 here. Affordable because a queue its consumers keep drained holds almost nothing, so
@@ -230,7 +230,7 @@ Trade-offs, all accepted:
   so they go read-unavailable until a majority returns.
 - A broker whose machine dies comes back on a survivor by itself, in about two minutes, with its data. Expect
   one container restart while the startup probe waits for it to catch up. Never data loss. See
-  [15_node_recovery.md](15_node_recovery.md).
+  [https://github.com/yama6a/talos-raspberry-pi5-cluster/blob/main/docs/05_node_recovery.md](https://github.com/yama6a/talos-raspberry-pi5-cluster/blob/main/docs/05_node_recovery.md).
 - `10Gi` per replica is a CEILING, not a reservation: Longhorn is thin. The operator hardcodes
   `disk_free_limit.absolute = 2GB`, so publishers block once any broker's volume hits 8Gi used, and that is the
   real backlog budget this number buys. The disk alarm is cluster-wide: ONE broker over the line blocks
@@ -281,7 +281,7 @@ DNS, the API server, and for the topology operator the broker management API on 
 
 The subchart's bundled vanilla `NetworkPolicy`s are DISABLED via `...networkPolicy.enabled: false`. They default
 to allow-all-egress and Cilium UNIONs them with our CNPs, which would blow the default-deny open. Same reason
-argocd pins `global.networkPolicy.create: false`. See [04_networking.md](04_networking.md).
+argocd pins `global.networkPolicy.create: false`. See [01_networking.md](01_networking.md).
 
 ### Management UI
 
@@ -367,4 +367,4 @@ Checks, with `export KUBECONFIG=secrets/kubeconfig`:
   `longhorn-r2-ephemeral-local` (`Delete`) class, so a prune tears them down and there is no volume to recover.
   That is intentional: HA is the running quorum, not the volume, so a re-created broker rebuilds its state from
   the healthy peers. CNPG's class is also `Delete`; what protects Postgres data from a prune is the DB unit's
-  `deletionProtection`, not the reclaim policy. See [08_storage.md](08_storage.md).
+  `deletionProtection`, not the reclaim policy. See [05_storage.md](05_storage.md).

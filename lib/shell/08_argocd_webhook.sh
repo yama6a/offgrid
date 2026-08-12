@@ -109,7 +109,7 @@ ArgoCD webhook wired. Finish in TWO places:
    Then push a trivial commit and watch: kubectl -n argocd get applications -w  (refreshes in seconds).
 
 Rotate the secret: delete ${WEBHOOK_FILE}, re-run this script, commit/push, update the GitHub webhook secret.
-See 05_gitops.md (Webhook-driven sync).
+See 02_gitops.md (Webhook-driven sync).
 EOF
 else
   echo "Something failed, see above. Fix and re-run (idempotent)."

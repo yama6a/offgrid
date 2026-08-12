@@ -107,7 +107,7 @@ Restore it in git FIRST, then re-run this and it will wait for Argo to build it:
   1. put back its values block AND its Chart.yaml alias entry (the alias is not recoverable from values alone)
   2. git add/commit/push
   3. make restore-redis
-It comes back EMPTY on a fresh PVC; this script then loads the dump into it. See docs/12_redis.md."
+It comes back EMPTY on a fresh PVC; this script then loads the dump into it. See docs/09_redis.md."
 fi
 if [ "$DIRTY" = "yes" ]; then
   warn "${VALUES#${REPO_ROOT}/} has uncommitted changes: ArgoCD syncs the pushed remote, not your working tree."
@@ -419,7 +419,7 @@ Last step, commit and push:
     git push
 
 NB this flip is NOT inert: the operator copies the CR's annotations onto its StatefulSet pod template, so adding
-the sync-options back RESTARTS the pod (~20s). The data survives on the AOF. See docs/12_redis.md.
+the sync-options back RESTARTS the pod (~20s). The data survives on the AOF. See docs/09_redis.md.
 NEXT
 fi
 

@@ -11,7 +11,7 @@ The GitOps L7 ingress layer, delivered entirely by ArgoCD. Five pieces stack in 
 | 6 | `06_platform_ingress` | the platform UIs' edges |
 
 Together they terminate TLS and route and authenticate every ingress host on one pinned LoadBalancer IP. Cilium
-([04_networking.md](04_networking.md)) stays the CNI and LB-IPAM provider; only the gateway lives here.
+([01_networking.md](01_networking.md)) stays the CNI and LB-IPAM provider; only the gateway lives here.
 
 The repeated edge shape (per host a Gateway, HTTPRoute and ReferenceGrant, plus one multi-SAN `Certificate` per
 ingress) is rendered once by the shared `ingress` chart in `lib/helm/ingress/`. Envoy Gateway's `mergeGateways`
@@ -84,7 +84,7 @@ reaches VictoriaMetrics.
 
 Envoy's upstream-cluster stats are labelled `envoy_cluster_name="httproute/<gw-ns>/<route>/rule/N"`, one cluster
 per HTTPRoute rule, so the `ingress-http` Grafana alerts (5xx and 4xx rate, p95 latency, no-healthy-upstream,
-connect failures) are per route with no extra config. See [09_monitoring.md](09_monitoring.md).
+connect failures) are per route with no extra config. See [06_monitoring.md](06_monitoring.md).
 
 ### The `ingress-http` dashboard
 
@@ -95,7 +95,7 @@ This is where cluster HTTP observability lives, NOT in Hubble. Hubble's L7 HTTP 
 L7 `http` rule in a CiliumNetworkPolicy to pull matched traffic through the Envoy L7 proxy, which for the
 ingress path means a second proxy hop to recount what the edge already counts. `httpV2` stays off, and Cilium's
 bundled "L7 HTTP metrics by workload" dashboard stays out of Grafana with it. See
-[04_networking.md](04_networking.md).
+[01_networking.md](01_networking.md).
 
 Three things about these metrics that read as bugs and are not:
 
@@ -144,8 +144,8 @@ Runs in its own namespace (`CreateNamespace=true`).
 
 ### Wave 2, with nic-keeper and sealed-secrets
 
-cert-manager, nic-keeper ([03_operating_system.md](03_operating_system.md)) and sealed-secrets
-([06_secrets.md](06_secrets.md)) are independent leaves, so they share wave 2: the "after the CNI and ArgoCD are
+cert-manager, nic-keeper ([https://github.com/yama6a/talos-raspberry-pi5-cluster/blob/main/docs/03_operating_system.md](https://github.com/yama6a/talos-raspberry-pi5-cluster/blob/main/docs/03_operating_system.md)) and sealed-secrets
+([03_secrets.md](03_secrets.md)) are independent leaves, so they share wave 2: the "after the CNI and ArgoCD are
 in place" slot.
 
 ### Verify
@@ -170,7 +170,7 @@ every HTTPS host lives on its own per-app Gateway, all merged onto the one Envoy
 - `lib/shell/07_values.sh`: writes `.env`'s `LE_EMAIL` into `acme.email` and propagates
   `CLOUDFLARE_WILDCARD_DOMAINS` into `acme.cloudflare.zones` here AND the ingress chart's `cloudflareZones`.
   Values only, no cluster access, so it runs early at bootstrap step 7, before ArgoCD. Non-interactive; commit
-  the rewritten files. Writes go through `ys_set`/`ys_set_list`, not `yq -i`: see 05_gitops.md.
+  the rewritten files. Writes go through `ys_set`/`ys_set_list`, not `yq -i`: see 02_gitops.md.
 - `lib/shell/07_cloudflare_token.sh`: seals `CLOUDFLARE_API_TOKEN_SECRET` into `cert-manager`. Split out because
   sealing needs the live sealed-secrets controller, so it runs AFTER ArgoCD is up. `make
   configure-cloudflare-token`. Skips and cleans up if the token is empty.
@@ -349,7 +349,7 @@ Safe because ArgoCD authenticates that path itself via the GitHub HMAC signature
 the match is `type: Exact` so ONLY the webhook endpoint escapes SSO, never the rest of the admin API. That last
 part matters here, since ArgoCD's anonymous user is admin. No `ReferenceGrant` is added: the chart's existing
 `gateway-routes-to-argocd-<domain>` grant already allows any route in `gateway` to reach `argocd-server`. Setup
-and the secret live in [05_gitops.md](05_gitops.md#webhook-driven-sync-and-the-poll-fallback).
+and the secret live in [02_gitops.md](02_gitops.md#webhook-driven-sync-and-the-poll-fallback).
 
 The whole platform ingress is on `letsencrypt-prod`, not staging, precisely so GitHub's webhook SSL verification
 trusts `argocd.<domain>`. The `google-sso.<domain>` callback edge is separate and follows its own `issuer`.
@@ -378,7 +378,7 @@ Moving to a base domain `example.org`:
 Envoy Gateway's `authorization` takes allowed emails as inline literals and cannot read them from a Secret, so
 they live in `04_google_sso/values.yaml` under `allowlist`, written there from `.env` `SSO_ALLOWLIST` by
 `07_values.sh`. Change access with `make configure-values` then push; no script prompts for them. Only the OAuth client secret is sealed, see
-[06_secrets.md](06_secrets.md).
+[03_secrets.md](03_secrets.md).
 
 ### Fail-closed until sealed
 

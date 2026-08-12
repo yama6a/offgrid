@@ -76,7 +76,7 @@ resources:
 # drained by its consumers holds almost nothing, so the copy Longhorn drags along on a reschedule is cheap.
 # Longhorn at all, despite Raft already replicating every message across the 3 brokers, because a node-local
 # volume cannot follow its broker to a surviving node: the pod would sit Pending on a dead machine until a
-# human wiped it. See docs/08_storage.md.
+# human wiped it. See docs/05_storage.md.
 storage:
   className: longhorn-r2-ephemeral-local
   size: 10Gi # a ceiling, not a reservation. The operator hardcodes a 2GB disk_free_limit, so publishers block

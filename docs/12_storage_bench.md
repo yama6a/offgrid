@@ -4,7 +4,7 @@ What Longhorn r2 and synchronous replication cost CNPG and RabbitMQ in write lat
 bring-up step.
 
 This is also the evidence behind two live decisions: everything runs on Longhorn, and RabbitMQ gets a local
-replica while Postgres does not ([08_storage.md](08_storage.md)). The `local-path` rows below are the baseline
+replica while Postgres does not ([05_storage.md](05_storage.md)). The `local-path` rows below are the baseline
 the Longhorn numbers are measured against. That class is not installed here, so the script cannot reproduce
 those rows.
 The verdict they support: Longhorn's latency cost is real but small, self-healing on a machine loss is worth it,
@@ -52,7 +52,7 @@ bash lib/shell/storage_bench.sh corroborate <dir>        # vs VictoriaMetrics, n
 - No vendor publishes a latency figure or a latency SLA. AWS's own three-way Multi-AZ benchmark reports
   New Orders Per Minute in a chart; Google documents only that regional disk is slower than zonal.
 
-Recovery behaviour per row is measured separately, in [`15_node_recovery.md`](15_node_recovery.md), and that is
+Recovery behaviour per row is measured separately, in [`https://github.com/yama6a/talos-raspberry-pi5-cluster/blob/main/docs/05_node_recovery.md`](https://github.com/yama6a/talos-raspberry-pi5-cluster/blob/main/docs/05_node_recovery.md), and that is
 what the latency buys: on a machine loss both databases were serving again ~190s later with nobody involved,
 where node-local storage needed a human and a 6-minute multi-attach wait first.
 
@@ -239,7 +239,7 @@ replace them.
   hostPath-mounted. The fio pod runs as root because `apk add fio` needs to, dropping all capabilities
   with `seccompProfile: RuntimeDefault`. **Do not stamp `privileged` on the bench namespace.**
 - The bench namespace carries **no CiliumNetworkPolicy**, a deliberate addition to the unpoliced list in
-  [`04_networking.md`](04_networking.md). Policing it would mean getting DNS, the package fetch, both
+  [`01_networking.md`](01_networking.md). Policing it would mean getting DNS, the package fetch, both
   operators, kubelet probes, AMQP and 5432 right first time or losing a five-hour run to a silent drop.
   It exists for hours and holds no data.
 - **One CNP IS required, in the `rabbitmq` namespace.** `03_rabbitmq`'s operator policy allows egress to
@@ -262,7 +262,7 @@ wedge teardown for a week. The one place the bench breaks parity with production
 ## What would change the answer
 
 - A second NIC or 2.5GbE, which is most of the storage delta.
-- Longhorn V2/SPDK, once its ARM64 stuck-I/O bug is fixed. See [`08_storage.md`](08_storage.md).
+- Longhorn V2/SPDK, once its ARM64 stuck-I/O bug is fixed. See [`05_storage.md`](05_storage.md).
 - NVMe with power-loss protection, which would take fsync from ~1 ms to tens of microseconds and remove
   most of the tail. Does not exist in a Pi-friendly form factor.
 

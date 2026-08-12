@@ -14,10 +14,14 @@
   <img src="docs/images/rackmount_0.jpeg" alt="The assembled 3-node Raspberry Pi 5 cluster in a 10-inch rack" width="600">
 </p>
 
-> A homelab cluster documented end to end, so you can follow it, learn from it, or run it yourself. Every
-> per-deployment value lives in `.env` and `inventory.yaml`, and `make configure-values` stamps them into the
-> chart values Argo CD renders, so a fork changes those two files and nothing else. The repo is a **numbered,
-> ordered runbook**: run the steps in sequence and you get a cluster.
+> The platform: everything that runs *on* a Kubernetes cluster, delivered by Argo CD from this repo. Ingress,
+> TLS, SSO, storage, databases, messaging, monitoring, backups, and a sample workload on top.
+>
+> It starts from a cluster that already exists. Building that cluster (hardware, Talos, etcd, node lifecycle) is
+> [talos-raspberry-pi5-cluster](https://github.com/yama6a/talos-raspberry-pi5-cluster), which hands over a `kubeconfig`.
+>
+> Every per-deployment value lives in `.env`, and `make configure-values` stamps it into the chart values Argo CD
+> renders, so a fork changes one gitignored file and nothing else.
 > See **[Make it your own](#make-it-your-own)** to get started.
 
 ## Contents
@@ -37,23 +41,18 @@
 
 ## Overview
 
-- Three Raspberry Pi 5s, every node a control-plane node: HA etcd, workloads co-located.
-- Booting Talos off NVMe. Talos ships no official Pi 5 image, so this one flashes a release of
-  [yama6a/talos-raspberry-pi5](https://github.com/yama6a/talos-raspberry-pi5): a Raspberry Pi kernel at 4K pages
-  (Longhorn and XFS need that), plus the extensions the cluster needs.
-- The shell steps do only what must exist before GitOps: flash Talos onto the NVMe, bootstrap etcd, install the
-  Cilium CNI, install Argo CD.
+- Starts from a Kubernetes cluster that already exists. Building it is the OS repo's job.
+- `04_cilium.sh` and `05_argocd.sh` are the only imperative steps: install the CNI, then install Argo CD.
 - Everything after that is GitOps. Argo CD reconciles `argo_apps/` and delivers the platform (ingress, TLS, SSO,
   storage, databases, messaging, monitoring) plus the workloads on top.
-- Config is three files: committed `versions.env` (the renovate-managed version recipe), plus gitignored
-  `inventory.yaml` (your nodes: role, hardware type, image) and `.env` (everything else, plus secrets), each
-  copied from a committed template. Nothing is hardcoded in a script.
-- Every app is a thin Helm wrapper chart pinning its upstream version. `docs/01` to `docs/14` hold the why.
+- Config is one gitignored file, `.env`, copied from the committed `.env.example`. `make configure-values`
+  stamps it into every chart value Argo CD renders. Nothing is hardcoded in a script.
+- Every app is a thin Helm wrapper chart pinning its upstream version. `docs/01` to `docs/12` hold the why.
 
 ## The stack
 
-Everything after `04`/`05` is an Argo CD-delivered wrapper chart. Versions are pinned per chart (`Chart.yaml`)
-and in `versions.env`; those files are the source of truth.
+Everything after `04`/`05` is an Argo CD-delivered wrapper chart, each pinning its upstream version in its own
+`Chart.yaml`. That file is the source of truth; no version is restated anywhere else.
 
 | Layer             | Component                      | Role                                                                                                         |
 |-------------------|--------------------------------|--------------------------------------------------------------------------------------------------------------|
@@ -86,24 +85,9 @@ Four shared charts under `lib/helm/` are consumed as `file://` dependencies, all
 
 ## Hardware
 
-3x Raspberry Pi 5 (8 GB), all control-plane, NVMe-booted, in a 10" 2U half-rack. The 4th bay takes a worker, Pi
-or x86: the node list carries a hardware type per node and picks the image from it. See
-[docs/01_hardware.md](docs/01_hardware.md) and [docs/17_worker_nodes.md](docs/17_worker_nodes.md).
-
-| Component    | Choice                                       | Qty                  |
-|--------------|----------------------------------------------|----------------------|
-| SBC          | Raspberry Pi 5, 8 GB                         | 3                    |
-| Rack         | GeeekPi DP-0046 (10" 2U)                     | 1                    |
-| NVMe carrier | 52Pi RS-P11 boards                           | 4 (1 unused for now) |
-| SSD          | Crucial P310 1 TB (CT1000P310SSD8, ~220 TBW) | 3                    |
-| Power        | 27 W USB-C PD (5.1 V / 5 A)                  | 3                    |
-| Cooling      | Pi 5 active cooler + aluminum heat sink      | 3                    |
-
-Why these parts:
-
-- Endurance-focused SSDs: all-control-plane means constant fsync-heavy etcd writes.
-- 8 GB: headroom for co-locating etcd and workloads.
-- Power delivery into the Pi's own USB-C port, which is the only way to get the full 5 A.
+Built and documented in the OS repo: 3x Raspberry Pi 5 (8 GB), all control-plane, NVMe-booted. Nothing here
+assumes that hardware beyond the two charts it consumes from there (`nic-keeper`, `coredns`). See
+[its docs](https://github.com/yama6a/talos-raspberry-pi5-cluster/blob/main/docs/01_hardware.md).
 
 ## Architecture
 
@@ -138,11 +122,9 @@ flowchart LR
 ```
 .
 |-- Makefile            # thin dispatcher over lib/shell; run `make help`
-|-- versions.env        # committed version recipe (renovate-managed)
-|-- inventory.example.yaml  # template for the node list; copy to inventory.yaml
 |-- .env.example        # template for config + secrets; copy to .env
 |-- .env                # your config + secrets (gitignored)
-|-- docs/               # the numbered runbook + decision records (01 to 14)
+|-- docs/               # the numbered runbook + decision records (01 to 12)
 |-- terraform/          # the S3 backup bucket + its scoped IAM writer
 |-- lib/
 |   |-- shell/          # bootstrap shell scripts + helpers
@@ -158,122 +140,101 @@ flowchart LR
 
 The `NN_` prefixes mirror the sync-wave: the order Argo *creates* the apps in, roughly 5s apart, with no health
 gate, so a later app that races ahead of a dependency just retries until it lands. See
-[05_gitops](docs/05_gitops.md).
+[02_gitops](docs/02_gitops.md).
 
 ## Getting started
 
-Only ever run on macOS, so Linux or WSL may need tweaks. The scripts assume a bash/zsh shell, GNU `make`, and a
-POSIX-y environment.
-
-On your machine:
-
-- `docker` (with host networking), `git`, `kubectl`, `helm`, `yq`, `kubeseal`
-- no native `talosctl` needed: it runs dockerized via `make talosctl`, because the macOS build is unreliable
-  however you install it
-
-Instead of `make bootstrap-cluster` you can run steps 04 onward in runbook order. Every target maps to a script
-in `lib/shell/`; `make help` lists them all.
+**Prerequisite: a running Talos cluster.** Build it first in
+[talos-raspberry-pi5-cluster](https://github.com/yama6a/talos-raspberry-pi5-cluster), which ends by printing the handoff:
 
 ```bash
-# 0. Assemble the hardware (docs/01) and flash each Pi's EEPROM boot order (insert microSD into your laptop)
-make build-eeprom-card              # 02 - write the EEPROM boot config to a microSD card (same card for all nodes)
-
-# Now insert the SD card into each pi one-by-one, power on, wait for the LED to flash green rapidly, which means
-# flashing is done, then power off and remove the card.
-
-# 1. Configure - versions.env is committed; copy the config+secrets template
-cp inventory.example.yaml inventory.yaml   # then edit: one entry per node (role, hardware type, image)
-cp .env.example .env                # then edit: VIP, domains, secrets. Go over everything, to be sure.
-
-# 2. Flash the NVMe drives: connect each NVMe to your laptop (e.g. via a USB adapter) and run, per drive:
-make flash-talos-nvme               # 03a - pick a node from the inventory, write its Talos image (repeat per drive)
-
-# 3. Verify the nodes boot into Talos maintenance mode
-make verify-talos-boot              # 03b - confirm each node boots into maintenance mode
-
-# 4. Bootstrap the cluster
-make bootstrap-cluster              # config + etcd + Cilium + Argo CD + seed secrets
-
-# 5. Verify
-make check-health                   # Talos cluster health
-eval "$(make print-kubeconfig)"     # point kubectl at the cluster
-kubectl get applications -n argocd  # watch Argo CD deliver the platform, then workloads
+# in the OS repo
+make bootstrap-cluster              # flashes, configures Talos, bootstraps etcd, writes secrets/kubeconfig
 ```
 
-Per-phase reasoning and verification is in [the docs](#documentation).
+Both repos read the same credentials, because `secrets/` is a symlink to the same off-repo store in each. If
+that symlink is missing here, point it at the same directory before continuing.
+
+Only ever run on macOS, so Linux or WSL may need tweaks. The scripts assume a bash/zsh shell, GNU `make`, and a
+POSIX-y environment. On your machine: `git`, `kubectl`, `helm`, `yq`, `kubeseal`.
+
+```bash
+# 1. Configure
+cp .env.example .env                # then edit: repo URL, domains, ingress IP, secrets. Go over everything.
+
+# 2. Install the platform
+make bootstrap-cluster              # CNI -> stamp values -> push -> Argo CD -> seal secrets -> converge
+
+# 3. Verify
+kubectl get applications -n argocd  # watch Argo CD deliver the platform, then workloads
+make view-credentials               # login URLs + credentials
+```
+
+Instead of `make bootstrap-cluster` you can run the steps in runbook order. Every target maps to a script in
+`lib/shell/`; `make help` lists them all. Per-phase reasoning and verification is in [the docs](#documentation).
 
 ## Make it your own
 
-Fork the repo, then edit exactly two gitignored files, both copied from a committed template:
+Fork the repo, then edit exactly one gitignored file, copied from a committed template:
 
 ```bash
-cp .env.example .env                      # domains, network, secrets
-cp inventory.example.yaml inventory.yaml  # one entry per node: role, hardware type, image
-make configure-values                     # stamps both into every chart value Argo CD renders
-git add -A && git commit && git push      # Argo CD reconciles the REMOTE, never your working tree
+cp .env.example .env                 # repo URL, domains, ingress IP, secrets
+make configure-values                # stamps it into every chart value Argo CD renders
+git add -A && git commit && git push # Argo CD reconciles the REMOTE, never your working tree
 ```
 
 `make configure-values` is the whole story for per-deployment config: it writes your repo URL into all five
 places that carry it, your `BASE_DOMAIN` into every public hostname, the SSO allowlist, the ingress IP, the
-ACME email, and the control-plane scrape endpoints read straight out of `inventory.yaml`. It needs no cluster,
-it is idempotent, and re-running it after any `.env` change is the supported way to re-apply config. Because a
-fork only ever edits `.env` and `inventory.yaml`, rebasing on upstream does not conflict.
+ACME email and the Cloudflare zones. It is idempotent, and re-running it after any `.env` change is the
+supported way to re-apply config. Because a fork only ever edits `.env`, rebasing on upstream does not conflict.
 
-What to put in those two files:
+What to put in it:
 
-- Topology: `inventory.yaml`, plus `CLUSTER_VIP` and `LB_RANGE_START`/`LB_RANGE_STOP` in `.env`.
-  Reserve each node IP in your router, and keep the VIP and LB pool on the nodes' L2, outside your DHCP range.
-    - To reserve them: connect the Pis, read their MAC addresses off your router, then pin the intended IPs to
-      those MACs in its DHCP settings.
+- Git remote: `REPO_URL`, your fork. Nothing else references a repo URL by hand.
 - Domains: `BASE_DOMAIN` is a registrable domain you own. Platform UIs land on `*.ops.<base>` and workloads on
   `*.app.<base>`; both tiers must stay under the base domain, because one SSO cookie covers them all.
-  `INGRESS_LB_IP` is the single IP every host resolves to, and must sit inside the LB pool.
+  `INGRESS_LB_IP` is the single IP every host resolves to, and must sit inside `LB_RANGE_START`/`LB_RANGE_STOP`.
 - TLS and login: `LE_EMAIL`, `SSO_ALLOWLIST`, plus your Google OAuth app (`GOOGLE_SSO_CLIENT_ID` +
   `GOOGLE_SSO_CLIENT_SECRET`). Which hosts are gated is policy, so that list lives in
   `argo_apps/platform/charts/04_google_sso`.
-- Git remote: `REPO_URL`, your fork. Nothing else references a repo URL by hand.
-- Registry: `GHCR_USER`, and the GHCR tokens if you publish the installer image or use private images.
+- Registry: `GHCR_USER`, and the GHCR tokens if you use private images.
 - Alerting: alerts reach your phone via self-hosted ntfy, no email. Set `NTFY_PHONE_PASSWORD_SECRET`, then
-  post-boot run `make configure-ntfy-auth`. See `docs/09_monitoring.md`.
-- Backups: off-cluster S3 needs the `AWS_DEPLOY_*` creds plus `S3_BACKUP_BUCKET`. See `docs/13_backups.md`.
-- Secrets: every secret is optional. Leaving one empty disables the feature it enables (Google SSO, private GHCR
-  pulls, Talos upgrades via pushed images, Argo CD private-repo access, ntfy, S3 backups).
+  post-boot run `make configure-ntfy-auth`. See `docs/06_monitoring.md`.
+- Backups: off-cluster S3 needs the `AWS_DEPLOY_*` creds plus `S3_BACKUP_BUCKET`. See `docs/10_backups.md`.
+- Secrets: every secret is optional. Leaving one empty disables the feature it enables.
 
-Hardware caveats before you commit:
-
-- The build assumes Raspberry Pi 5 + NVMe with all nodes control-plane.
-- The kernel is custom-built at 4K pages, which Longhorn and XFS need.
-- Not drop-in for other SBCs or for the stock Talos image. Start from
-  [docs/03](docs/03_operating_system.md) if your hardware differs.
+The node topology, VIP and Talos version are NOT here. They belong to the OS repo,
+[talos-raspberry-pi5-cluster](https://github.com/yama6a/talos-raspberry-pi5-cluster).
 
 ## Day-2 operations
 
-| Task                      | Command                                                                          | Notes                                                                                                               |
-|---------------------------|----------------------------------------------------------------------------------|---------------------------------------------------------------------------------------------------------------------|
-| Upgrade Talos             | `make upgrade-talos`                                                             | Rolling A/B in-place to the pinned installer (03e) (bump `TALOS_IMAGE_RELEASE` in `versions.env`)                   |
-| Change machine config     | `make reapply-talos-config [NODE=<host>]`                                        | Pushes a changed machine config to RUNNING nodes (03c `--reapply`): dry-run and confirm first, reboots only if the change needs it. Volume sizes are fixed at provision time and will not change. |
-| Add a node                | `make add-node NODE=<host>`                                                      | Joins one node from maintenance into the running cluster, control-plane or worker ([docs/17](docs/17_worker_nodes.md)).           |
-| Upgrade Kubernetes        | `make upgrade-k8s`                                                               | Rolling, no reboot (03f). (Bump `KUBERNETES_VERSION` in `versions.env`)                                             |
-| Restore a datastore       | `make restore-cnpg`, `restore-redis`, `restore-longhorn`, `restore-vm`            | From the off-cluster S3 backups ([docs/13](docs/13_backups.md)).                                                     |
-| Recover a lost node       | `make recover-node NODE=talos-cp3`                                                  | Rejoins one wiped/replaced node and fixes its etcd member and Longhorn disk record. Workloads move on their own ([docs/15](docs/15_node_recovery.md)). |
-| Rightsize requests        | `make krr`                                                                       | Prints current requests next to what usage history suggests. Read-only; you hand-edit the chart values.             |
-| Rebuild a running cluster | `make rebuild-cluster`                                                           | Wipes + rebuilds end-to-end, restores the sealed-secret key. Destructive to the persistence layer (cnpg, longhorn). |
-| Reset all nodes           | `make reset-cluster`                                                             | Wipes back to maintenance mode. Destructive to the persistence layer (cnpg, longhorn).                              |
-| Inspect                   | `make check-health`, `make talosctl <args>`, `eval "$(make print-kubeconfig)"`     | Read-only.                                                                                                           |
+| Task                        | Command                                                                |
+|-----------------------------|------------------------------------------------------------------------|
+| Re-apply `.env` to charts   | `make configure-values`                                                |
+| Restore a datastore         | `make restore-cnpg`, `restore-redis`, `restore-longhorn`, `restore-vm` |
+| Rightsize requests          | `make krr`                                                             |
+| Rotate the SSO client       | `make configure-sso`                                                   |
+| Re-seed ntfy auth           | `make configure-ntfy-auth`                                             |
+| Back up the sealing key     | `make backup-secrets-key`                                              |
+| Redeliver the whole platform| `make rebuild-cluster`                                                 |
+| Credentials + login URLs    | `make view-credentials`                                                |
+
+Anything about the nodes themselves (Talos or Kubernetes upgrades, adding or recovering a node, resetting the
+cluster) is in the OS repo: [talos-raspberry-pi5-cluster](https://github.com/yama6a/talos-raspberry-pi5-cluster).
 
 ## Troubleshooting
 
-- **`talosctl` misbehaves on macOS**: use the dockerized `make talosctl <args>`. A native client is not
-  required ([docs/03](docs/03_operating_system.md)).
-- **Nodes are `NotReady` after Talos bring-up**: expected until the Cilium CNI lands (`make install-cilium`, 04).
+- **Nodes are `NotReady`**: expected until the Cilium CNI lands (`make install-cilium`, 04).
 - **An Argo CD app is `OutOfSync` or "path does not exist"**: you did not git-push. Commit and push
-  `argo_apps/**`, including any `Chart.lock` ([docs/05](docs/05_gitops.md)).
+  `argo_apps/**`, including any `Chart.lock` ([docs/02](docs/02_gitops.md)).
 - **An app is permanently `OutOfSync` with nothing apparently wrong**: that is the orphan-not-delete signal. A
-  stateful CR removed from a live app is kept, not pruned ([docs/13](docs/13_backups.md)).
-- **LoadBalancer IP stuck `<pending>`**: the Cilium LB pool must be on the nodes' L2, avoiding the DHCP range
-  and the VIP ([docs/04](docs/04_networking.md)).
-- **Intermittent NIC drops on a Pi 5**: the `macb` wedge, handled by NIC hardening (03d) plus the `nic-keeper`
-  DaemonSet ([docs/03](docs/03_operating_system.md)).
+  stateful CR removed from a live app is kept, not pruned ([docs/10](docs/10_backups.md)).
+- **LoadBalancer IP stuck `<pending>`**: `INGRESS_LB_IP` must be inside the Cilium LB pool, on the nodes' L2,
+  avoiding the DHCP range and the VIP ([docs/01](docs/01_networking.md)).
+- **A gated host loops through Google forever**: its subdomain must sit under `BASE_DOMAIN`, because the SSO
+  policy sets one cookie domain ([docs/04](docs/04_ingress.md)).
+- **`make bootstrap-cluster` refuses to start**: it found no reachable cluster. Build one first in the OS repo,
+  [talos-raspberry-pi5-cluster](https://github.com/yama6a/talos-raspberry-pi5-cluster).
 
 ## Documentation
 
@@ -281,23 +242,21 @@ Each doc holds the why behind a step, with verification commands:
 
 | Doc                                                | Covers                                                                          |
 |----------------------------------------------------|---------------------------------------------------------------------------------|
-| [01_hardware](docs/01_hardware.md)                 | Bill of materials + the reasoning behind every part.                            |
-| [02_raspi_eeprom](docs/02_raspi_eeprom.md)         | Flashing a common Pi 5 EEPROM boot config.                                      |
-| [03_operating_system](docs/03_operating_system.md) | Talos: OS choice, where the Pi 5 image comes from, cluster bring-up, NIC hardening. |
-| [04_networking](docs/04_networking.md)             | Cilium as CNI + LoadBalancer + WireGuard (the last imperative infra).           |
-| [05_gitops](docs/05_gitops.md)                     | Argo CD, the two-tree app-of-apps, sync-wave convention.                        |
-| [06_secrets](docs/06_secrets.md)                   | Sealed Secrets + the master-key custody you can't lose.                         |
-| [07_ingress](docs/07_ingress.md)                   | Envoy Gateway, cert-manager, Let's Encrypt, central Google SSO.                 |
-| [08_storage](docs/08_storage.md)                   | Longhorn, why nothing is node-local, CloudNativePG.                             |
-| [09_monitoring](docs/09_monitoring.md)             | VictoriaMetrics + VictoriaLogs, Grafana, alerting, metrics-server.              |
-| [10_sample_workload](docs/10_sample_workload.md)   | An end-to-end app + Postgres behind the Gateway.                                |
-| [11_messaging](docs/11_messaging.md)               | The shared RabbitMQ broker and the per-workload topology chart.                 |
-| [12_redis](docs/12_redis.md)                       | Standalone Redis instances, persistence modes, resizing.                        |
-| [13_backups](docs/13_backups.md)                   | Off-cluster S3 backups for Postgres, Redis, Longhorn and the monitoring stores. |
-| [14_renovate](docs/14_renovate.md)                 | Automated dependency updates and when Renovate is allowed to self-merge.        |
-| [15_node_recovery](docs/15_node_recovery.md)       | Losing or replacing a node: etcd, Talos, Longhorn, CNPG, RabbitMQ.              |
-| [16_storage_bench](docs/16_storage_bench.md)       | Measuring what Longhorn r2 costs CNPG and RabbitMQ in write latency.            |
-| [17_worker_nodes](docs/17_worker_nodes.md)         | The node inventory, and adding a worker that does not have to be a Pi.           |
+| [01_networking](docs/01_networking.md)             | Cilium as CNI + LoadBalancer + WireGuard (the last imperative infra).           |
+| [02_gitops](docs/02_gitops.md)                     | Argo CD, the two-tree app-of-apps, sync-wave convention.                        |
+| [03_secrets](docs/03_secrets.md)                   | Sealed Secrets + the master-key custody you can't lose.                         |
+| [04_ingress](docs/04_ingress.md)                   | Envoy Gateway, cert-manager, Let's Encrypt, central Google SSO.                 |
+| [05_storage](docs/05_storage.md)                   | Longhorn, why nothing is node-local, CloudNativePG.                             |
+| [06_monitoring](docs/06_monitoring.md)             | VictoriaMetrics + VictoriaLogs, Grafana, alerting, metrics-server.              |
+| [07_sample_workload](docs/07_sample_workload.md)   | An end-to-end app + Postgres behind the Gateway.                                |
+| [08_messaging](docs/08_messaging.md)               | The shared RabbitMQ broker and the per-workload topology chart.                 |
+| [09_redis](docs/09_redis.md)                       | Standalone Redis instances, persistence modes, resizing.                        |
+| [10_backups](docs/10_backups.md)                   | Off-cluster S3 backups for Postgres, Redis, Longhorn and the monitoring stores. |
+| [11_renovate](docs/11_renovate.md)                 | Automated dependency updates and when Renovate is allowed to self-merge.        |
+| [12_storage_bench](docs/12_storage_bench.md)       | Measuring what Longhorn r2 costs CNPG and RabbitMQ in write latency.            |
+
+Hardware, Talos bring-up and node recovery are documented in the OS repo,
+[talos-raspberry-pi5-cluster](https://github.com/yama6a/talos-raspberry-pi5-cluster).
 
 Repo-wide conventions (layout, where a value lives, chart and Argo CD rules) are in
 [CONTRIBUTING.md](CONTRIBUTING.md).

@@ -1,7 +1,7 @@
 # ingress
 
 Interface: `Chart.yaml` description + `values.yaml`. Model and schema:
-[`docs/07_ingress.md`](../../../docs/07_ingress.md).
+[`docs/04_ingress.md`](../../../docs/04_ingress.md).
 
 This file covers only why the templates are shaped the way they are.
 

@@ -5,8 +5,8 @@
 - metrics-server serves the narrow in-tree resource-metrics API (`kubectl top`, HPA) that the observability
   stack deliberately does not.
 
-Ingress and SSO for each UI live in [07_ingress.md](07_ingress.md); storage classes in
-[08_storage.md](08_storage.md).
+Ingress and SSO for each UI live in [04_ingress.md](04_ingress.md); storage classes in
+[05_storage.md](05_storage.md).
 
 ## VictoriaMetrics and VictoriaLogs
 
@@ -218,7 +218,7 @@ export. To delete one deliberately, drop the protection first, sync, then remove
   `05_victoria_metrics_k8s_stack/values.yaml`. That block IS the flag, because `values.yaml` cannot be templated.
 
 Never leave a store sitting unprotected. Off-cluster backup is opt-in via `make configure-vm-backup`; mechanism
-and disaster recovery are in [13_backups.md](13_backups.md).
+and disaster recovery are in [10_backups.md](10_backups.md).
 
 ### Other decisions
 
@@ -226,14 +226,14 @@ and disaster recovery are in [13_backups.md](13_backups.md).
   all-control-plane cluster, so a `node-role.kubernetes.io/control-plane: DoesNotExist` selector would match ZERO
   nodes.
 - Each UI (vmui, vlogs) is exposed by the platform-ingress app at wave 6 behind Google SSO, not by its own chart.
-  The Hubble UI rides the same app. See [07_ingress.md](07_ingress.md).
+  The Hubble UI rides the same app. See [04_ingress.md](04_ingress.md).
 - Dashboards come from two places. An upstream chart's own (`grafana_dashboard`-labelled ConfigMaps in ITS
   namespace, picked up because the sidecar runs `searchNamespace: ALL`), and ours, one JSON per file in
   `05_grafana/files/dashboards/`, rendered by `templates/dashboards-configmaps.yaml` the same way the alert
   files are. Write a dashboard there rather than patching an upstream one: the patch has to be reapplied on
-  every chart bump. `hubble` is the case that made the rule. See [04_networking.md](04_networking.md).
-- Ours so far: `hubble` (Cilium flows, [04_networking.md](04_networking.md)), `ingress-http` (Envoy edge and
-  per-HTTPRoute HTTP, [07_ingress.md](07_ingress.md)) and `persistent-volumes`. All hand-written against metrics
+  every chart bump. `hubble` is the case that made the rule. See [01_networking.md](01_networking.md).
+- Ours so far: `hubble` (Cilium flows, [01_networking.md](01_networking.md)), `ingress-http` (Envoy edge and
+  per-HTTPRoute HTTP, [04_ingress.md](04_ingress.md)) and `persistent-volumes`. All hand-written against metrics
   checked to exist first. An upstream dashboard assumes upstream's config: Cilium's four assume `httpV2` and
   context options we do not all run, which is exactly how you end up with a dashboard of empty panels.
 - `cnpg` is the ONE fork, not a rewrite: 66 panels of CNPG internals is too much to re-author for the sake of a
@@ -250,7 +250,7 @@ and disaster recovery are in [13_backups.md](13_backups.md).
   - Backups (4 targets) read orphan-exporter's `cnpg_backup_last_success_seconds` and
     `cnpg_backup_first_recoverability_seconds` instead of `cnpg_collector_last_available_backup_timestamp` and
     `cnpg_collector_first_recoverability_point`, which the Barman Cloud plugin leaves at 0 forever. See
-    [13_backups.md](13_backups.md).
+    [10_backups.md](10_backups.md).
   - The `Volume Space Usage: Tablespaces` panel is DELETED, the one panel removed rather than rewritten. It
     charts `<instance>-tbs*` PVCs, and `pg-cluster` declares no tablespaces, so it could only ever read "No
     data". The same `-tbs` and `-wal` targets survive inside the multi-target Volume panels, where an empty
@@ -466,8 +466,8 @@ One rule per problem, all cluster-wide. Each group is its own file under `05_gra
 | `rabbitmq-cluster` | static | `-cluster-down` and `-quorum-at-risk` (critical, <2 nodes), `-node-down` (warning, <3), `-memory-alarm` and `-disk-alarm` (critical, publishers already blocked), `-disk-low` |
 | `rabbitmq-queues` | warning | `-queue-no-consumer`, `-queue-backlog` and `-queue-unacked` (>100), `-dlq-not-empty`, `-dead-letter-rate` |
 | `redis-health` | `redis-down` dynamic, rest warning | `-memory-high` and `-memory-critical` (percent of maxmemory; noeviction, so writes fail near 100%), `-rejected-connections` and `-connections-high`, `-rdb-save-failing` and `-aof-write-failing`, `-fragmentation-high` |
-| `backups` | warning, 2 critical | redis, longhorn, CNPG and VM/VL backup failure plus staleness, and the two unrecoverable-catalog rules. See [13_backups.md](13_backups.md) |
-| `orphan` | warning | orphaned and untracked CNPG, Redis and VM/VL CRs, plus the exporter deadman. See [13_backups.md](13_backups.md) |
+| `backups` | warning, 2 critical | redis, longhorn, CNPG and VM/VL backup failure plus staleness, and the two unrecoverable-catalog rules. See [10_backups.md](10_backups.md) |
+| `orphan` | warning | orphaned and untracked CNPG, Redis and VM/VL CRs, plus the exporter deadman. See [10_backups.md](10_backups.md) |
 | `node-hardware` | warning, `node-undervoltage` static critical | `node-undervoltage` (the Pi's own 5V alarm), `node-soc-temp-high` (>80C, where the SoC starts throttling), `node-nvme-temp-high` (>70C) |
 | `probes` | warning | `ingress-probe-failing`, `ingress-cert-expiring` (<14d, on the cert actually SERVED). See "Synthetic probes" |
 | `alerting-path` | warning | `alert-delivery-failing`: Grafana's webhook to ntfy is erroring, so alerts fire and nobody is told |
@@ -532,7 +532,7 @@ sealed token, disabling ntfy alerting.
 
 This is the only imperative script for this step; the VM stack and metrics-server are pure GitOps. Grafana's
 `grafana.ops.example.com` edge is served by the platform-ingress app at wave 6, not the `05_grafana` chart. See
-[07_ingress.md](07_ingress.md).
+[04_ingress.md](04_ingress.md).
 
 #### Watching the alert path itself
 
@@ -581,7 +581,7 @@ are node IPs and Talos hostnames are not in DNS. `--kubelet-certificate-authorit
 works if the kubelet cert is CA-signed, which Talos does not do by default.
 
 The security gain of the secure path is marginal here. It is a pod-to-kubelet hop on the cluster's own trusted,
-NIC-hardened L2 (see [03_operating_system.md](03_operating_system.md)), and the connection is encrypted either
+NIC-hardened L2 (see [https://github.com/yama6a/talos-raspberry-pi5-cluster/blob/main/docs/03_operating_system.md](https://github.com/yama6a/talos-raspberry-pi5-cluster/blob/main/docs/03_operating_system.md)), and the connection is encrypted either
 way. Only the cert identity goes unchecked, so we take the one-flag, zero-OS-change route.
 
 The secure-path upgrade stays open. To drop the flag: add `rotate-server-certificates: true` to 03c's

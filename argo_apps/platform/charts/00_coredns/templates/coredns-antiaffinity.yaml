@@ -1,5 +1,5 @@
 # A PARTIAL Deployment: only the fields below are sent, and the app server-side-applies them onto the coredns
-# that Talos owns. See docs/04_networking.md ("CoreDNS placement").
+# that Talos owns. See docs/01_networking.md ("CoreDNS placement").
 apiVersion: apps/v1
 kind: Deployment
 metadata:

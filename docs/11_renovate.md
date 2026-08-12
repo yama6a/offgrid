@@ -10,8 +10,8 @@ Renovate opens PRs to bump every pinned dependency in the repo.
 
 ## Why Renovate, not Dependabot
 
-Dependabot has no Helm manager and cannot touch image tags inside `values.yaml` or the version vars in
-`versions.env`. It would cover Terraform and GitHub Actions only. Renovate covers everything this repo pins:
+Dependabot has no Helm manager and cannot touch image tags inside `values.yaml`. It would cover Terraform and
+GitHub Actions only. Renovate covers everything this repo pins:
 
 | Manager | Covers |
 |---|---|
@@ -19,7 +19,7 @@ Dependabot has no Helm manager and cannot touch image tags inside `values.yaml` 
 | `terraform` | the aws provider in `terraform/versions.tf` + `.terraform.lock.hcl` |
 | `github-actions` | the workflow's own action pins, kept digest-pinned |
 | `helm-values` | standard-shape `image:` / `repository`+`tag` in a `values.yaml` |
-| regex, annotated | anything carrying `# renovate: datasource=...`: chart-template images, shell-script image literals, the per-workload `postgresVersion`/`redisVersion` scalars, the pg-cluster image map, the Talos/kernel recipe in `versions.env` |
+| regex, annotated | anything carrying `# renovate: datasource=...`: chart-template images, shell-script image literals, the per-workload `postgresVersion`/`redisVersion` scalars, the pg-cluster image map |
 
 `helmUpdateSubChartArchives` is on but currently does nothing: no chart commits a vendored `charts/*.tgz` any
 more. Kept as a guard in case one comes back.
@@ -85,13 +85,8 @@ CI blocks a bump that fails to render or produces invalid manifests. It does NOT
 cleanly but misbehaves at runtime, like a Cilium regression or a changed default. A merge reaches the live
 cluster: ArgoCD syncs it and most apps run `selfHeal`, so the combined PR applies everything in it unattended.
 
-Three things in that PR need care:
-
-- Cilium: the one app that can cut the cluster, and Argo with it, off its own network. See
-  [04_networking.md](04_networking.md) and [05_gitops.md](05_gitops.md).
-- The Talos/kernel recipe in `versions.env`: merging those lines does NOT apply them. A real bump needs a manual
-  image rebuild ([03_operating_system.md](03_operating_system.md)), so treat them as a "newer version exists"
-  signal. `KUBERNETES_VERSION` is capped by the Talos release's k8s default, so move it WITH Talos.
+One thing in that PR needs care: Cilium is the app that can cut the cluster, and Argo with it, off its own
+network. See [01_networking.md](01_networking.md) and [02_gitops.md](02_gitops.md).
 
 Accepted hands-off trade-off. To de-risk without splitting the PR: add `minimumReleaseAge` (e.g. `"3 days"`) so
 bumps bake before they are eligible, or drop `automerge` from the specific deps you want to gate.
@@ -116,9 +111,4 @@ bumps bake before they are eligible, or drop `automerge` from the specific deps 
 - The barman-cloud vendored manifest is in `ignorePaths`. Bumping it re-vendors an upstream release verbatim per
   that chart's README, not a line edit.
 - VictoriaMetrics charts are grouped. The CRD chart's app version must match its operator, which is a human
-  check on the grouped PR. See [09_monitoring.md](09_monitoring.md).
-- The Talos image is ONE pin, `TALOS_IMAGE_RELEASE`, tracking releases of
-  [yama6a/talos-raspberry-pi5](https://github.com/yama6a/talos-raspberry-pi5). Its `-<build revision>` suffix
-  would read as a semver prerelease and be skipped as unstable, so its annotation carries a custom
-  `versioning=regex:` that treats the revision as a 4th component. `common.sh` derives `TALOS_VERSION` from it,
-  and the kernel, pkgs and overlay pins live in that repo. See [03_operating_system.md](03_operating_system.md).
+  check on the grouped PR. See [06_monitoring.md](06_monitoring.md).

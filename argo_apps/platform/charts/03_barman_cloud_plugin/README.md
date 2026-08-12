@@ -13,7 +13,7 @@ VER=vX.Y.Z   # the new release tag; the current pin is appVersion in Chart.yaml
 {
   printf '# Vendored VERBATIM from the plugin-barman-cloud release pinned in Chart.yaml appVersion. DO NOT EDIT BY HAND.\n'
   printf '# Source: https://github.com/cloudnative-pg/plugin-barman-cloud/releases/download/<appVersion>/manifest.yaml\n'
-  printf '# Re-vendor via this chart README; bump appVersion in Chart.yaml to match. See docs/13_backups.md.\n---\n'
+  printf '# Re-vendor via this chart README; bump appVersion in Chart.yaml to match. See docs/10_backups.md.\n---\n'
   curl -fsSL "https://github.com/cloudnative-pg/plugin-barman-cloud/releases/download/${VER}/manifest.yaml"
 } > templates/plugin-barman-cloud.yaml
 ```

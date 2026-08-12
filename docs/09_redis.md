@@ -1,8 +1,8 @@
 # 12: Redis, per-workload caches via the OpsTree operator
 
-Same shape as [Postgres](08_storage.md#cloudnativepg): an operator installed once as platform infrastructure, plus
+Same shape as [Postgres](05_storage.md#cloudnativepg): an operator installed once as platform infrastructure, plus
 a reusable shared chart a workload instantiates one or more times. There is no single shared Redis, unlike the one
-shared RabbitMQ broker in [11_messaging.md](11_messaging.md): each workload owns its own instances, private and
+shared RabbitMQ broker in [08_messaging.md](08_messaging.md): each workload owns its own instances, private and
 unshared.
 
 | Piece | Where | What |
@@ -12,7 +12,7 @@ unshared.
 | sample usage | `argo_apps/workloads/charts/sample_user_manager` | two instances showing both modes, both dialled by the manager: `redis-cache` (the audit-log demo, ephemeral) and `redis-sessions` (the session store, durable) |
 
 The Longhorn class every instance uses (`longhorn-r2-ephemeral`, 2-replica, reclaim Delete) is shipped by
-`02_longhorn`, not here. See [08_storage.md](08_storage.md).
+`02_longhorn`, not here. See [05_storage.md](05_storage.md).
 
 Why OpsTree (`ot-container-kit/redis-operator`): mature, CNCF-adjacent, a plain CRD, and its operator plus
 `quay.io/opstree/redis` images are multi-arch including arm64. That last part is the Pi-5 gate, see the exporter
@@ -86,7 +86,7 @@ version. The full knob list lives in `lib/helm/redis-instance/values.yaml`.
 
 A standalone `Redis` is one PVC, always on `longhorn-r2-ephemeral` (`numberOfReplicas: 2` so even a cache survives
 a node loss, `reclaimPolicy: Delete`). That is a shared generic Longhorn tier from `02_longhorn`, not a
-Redis-specific class. See [08_storage.md](08_storage.md).
+Redis-specific class. See [05_storage.md](05_storage.md).
 
 `persistence` does NOT pick a class. Reclaim policy stopped being a safety knob once `deletionProtection` arrived:
 an accidental prune cannot delete the instance at all (restore the files, zero loss), and an intentional delete
@@ -148,7 +148,7 @@ definition.
 One central platform app does it for the whole cluster, `07_redis_backup` (wave 7, ns `redis-backup`), rather than
 a per-instance CronJob. That means one sealed secret in one namespace and no per-namespace list. The price is a
 single global schedule and job-level rather than per-instance alerting. It shares the S3 bucket and IAM writer
-with CNPG; see [13_backups.md](13_backups.md) for the bucket, Terraform and creds.
+with CNPG; see [10_backups.md](10_backups.md) for the bucket, Terraform and creds.
 
 How it works:
 
@@ -176,7 +176,7 @@ so a fresh cluster comes up with backups on. The schedule lives in the app's `va
 
 Monitoring is three Grafana alerts: `redis-backup-failed` and `redis-backup-stale` (job-level, warning) plus
 `redis-no-recoverable-backup` (per instance, critical). Only the last catches a single instance silently going
-unbacked or a dump that uploaded empty. See [13_backups.md](13_backups.md).
+unbacked or a dump that uploaded empty. See [10_backups.md](10_backups.md).
 
 ### Restore from S3
 
@@ -269,7 +269,7 @@ and leaves the app permanently OutOfSync. Deleting is deliberately two steps, pu
    Delete, so it is gone for good and the off-cluster S3 dump is the only copy left.
 
 Never leave an instance sitting on `false`. That is a transient state between those two commits, not a config
-choice. Same flow as CNPG, see [13_backups.md](13_backups.md).
+choice. Same flow as CNPG, see [10_backups.md](10_backups.md).
 
 ## Security: no password, gated by network policy
 
@@ -280,9 +280,9 @@ reconcile and vmagent for metrics. Instances are ClusterIP-only and never expose
 The operator pod carries its own default-deny policy too
 (`03_redis_operator/templates/networkpolicy.yaml`): kubelet health probe in; DNS, API server, and egress to any
 managed Redis on `:6379` out. That last one is cross-namespace via `matchExpressions` with ns-Exists, because the
-empty `{}` selector is same-namespace-only in Cilium. See [04_networking.md](04_networking.md).
+empty `{}` selector is same-namespace-only in Cilium. See [01_networking.md](01_networking.md).
 
-Why not a password? The repo's [secrets bright line](06_secrets.md) is: never commit cluster-mintable secrets.
+Why not a password? The repo's [secrets bright line](03_secrets.md) is: never commit cluster-mintable secrets.
 Sealed Secrets are for externally-sourced, human-supplied credentials like the OAuth client secret. A Redis
 password is cluster-mintable, so it would want the CNPG or RabbitMQ route, where the operator generates it and the
 app reads it via `secretKeyRef` with nothing in git. But the OpsTree operator does not auto-generate one, and a
@@ -309,7 +309,7 @@ Each instance enables the redis-exporter sidecar and ships a `ServiceMonitor` se
 operator-created Service (`app: <name>, redis_setup_type: standalone, role: standalone`, port `redis-exporter`).
 The VM operator auto-converts it to a `VMServiceScrape` and vmagent discovers it cluster-wide
 (`selectAllByDefault`), so it wires into VictoriaMetrics with no extra config. See
-[09_monitoring.md](09_monitoring.md).
+[06_monitoring.md](06_monitoring.md).
 
 Those `redis_*` metrics feed the `redis-health` group (`05_grafana/files/alerts/redis-health.yaml`):
 

@@ -153,7 +153,7 @@ The 2-replica components carry `global.topologySpreadConstraints` (`maxSkew 1`, 
   limit, `05_argocd.sh` seeds a read-only PAT before hand-off. See [Git auth](#git-auth).
 - Cilium auto-syncs with full `selfHeal` and `prune`, the same as every leaf, chosen for convenience even though
   it is the one app that can cut Argo and the cluster off its own network. That circular dependency is called out
-  in [04_networking.md](04_networking.md). Auto-sync gives hands-off upgrades; the knowingly-accepted danger is
+  in [01_networking.md](01_networking.md). Auto-sync gives hands-off upgrades; the knowingly-accepted danger is
   that `selfHeal: true` reverts an out-of-band break-glass fix unless you commit it fast, and `prune: true`
   cascade-deletes any resource or CRD dropped from the chart. A bad Cilium change pushed to git applies unattended
   AND is self-healed in place, so mind your pushes. First sync auto-adopts the running release with no pod churn,
@@ -298,13 +298,13 @@ kubectl -n argocd get applications -w
 ```
 
 The `/api/webhook` path reaches ArgoCD WITHOUT passing Google SSO. That bypass, and why it is safe, is in
-[07_ingress.md](07_ingress.md#bypassing-sso-for-a-path-the-argocd-webhook) and the Exposure note below.
+[04_ingress.md](04_ingress.md#bypassing-sso-for-a-path-the-argocd-webhook) and the Exposure note below.
 
 ## Exposure: the ArgoCD UI behind Google SSO
 
 The bootstrap reaches the UI over port-forward. For day-to-day access the UI is exposed through its own Gateway,
 folded onto the one Envoy via `mergeGateways`, fronted by the same Google SSO built in
-[07_ingress.md](07_ingress.md#google-sso).
+[04_ingress.md](04_ingress.md#google-sso).
 
 The Google gate decides who can reach the UI. ArgoCD's OWN login is turned off: the anonymous user is admin, the
 local admin account is disabled, and there is no Dex or OIDC, so whoever clears Google lands straight in as admin.

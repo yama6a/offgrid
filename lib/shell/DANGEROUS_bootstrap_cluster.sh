@@ -1,44 +1,40 @@
 #!/usr/bin/env bash
-# One-shot orchestrator for a FIRST-TIME cluster init. Assumes freshly-flashed nodes (03a done) sitting
-# in MAINTENANCE mode, and takes them to a fully delivered cluster. One confirmation up front,
-# non-interactive after that. To re-initialize a RUNNING cluster use DANGEROUS_rebuild_cluster.sh instead.
+# One-shot orchestrator for a FIRST-TIME platform install. Assumes a freshly built Talos cluster with a
+# working kubeconfig, and takes it to a fully delivered platform. One confirmation up front, non-interactive
+# after that. To re-deliver onto a RUNNING cluster use DANGEROUS_rebuild_cluster.sh instead.
 #
-# Sequence (STEP N/23):
-#   1. maintenance preflight        : every node must answer the INSECURE API, fast-fail if any is already
-#                                      configured (that is a rebuild, not a bootstrap)
-#   2. 03b_talos_boot_verify.sh     : deep per-node verify, a hard gate BEFORE we archive creds or mint PKI
-#   3. archive local creds          : move the old secrets into secrets/backup_<ts>/ so 03c mints a NEW PKI
-#   4. 03c_talos_cluster_config.sh  : generate fresh config, apply, bootstrap etcd, write kube/talosconfig
-#   5. 03d_nic_hardening.sh         : NIC hardening
-#   6. 04_cilium.sh                 : CNI + prometheus-operator CRDs + LB-IPAM/L2 + Hubble
-#   7. 07_values.sh                 : write repo URL, domains, SSO allowlist, ingress IP, ACME + scrape endpoints into the chart values
-#   8. git add/commit/push          : 05 refuses a dirty argo_apps/ tree; ArgoCD deploys the REMOTE
-#   9. 05_argocd.sh                 : bootstrap ArgoCD, which then delivers the platform from git
-#  10. wait sealed-secrets ctrl     : every later seal step needs it up
-#  11. 07_google_sso.sh             : write the clientID + RE-SEAL google-oauth against the NEW key
-#  12. 07_cloudflare_token.sh       : RE-SEAL the DNS-01 token against the NEW key
-#  13. 08_argocd_webhook.sh         : mint + seal the GitHub webhook secret, set the poll cadence
-#  14. 13_s3_backup_bucket.sh       : Terraform, S3 bucket + scoped IAM writer
-#  15. 14_cnpg_backup.sh            : seal the writer creds + enable CNPG backups
-#  16. 15_redis_backup.sh           : seal the writer creds + enable the central Redis backup job
-#  17. 16_longhorn_backup.sh        : seal the writer creds + set the Longhorn backup target
-#  18. 17_vm_backup.sh              : seal the writer creds + enable the central VM/VL backup job
-#  19. git add/commit/push          : push the re-sealed secrets + backup values
-#  20. converge argocd apps         : pull the pushed commit, wait for Healthy (ntfy must be up for STEP 21)
-#  21. 10_ntfy_auth.sh              : seed ntfy users, seal Grafana's token, push it, restart grafana
-#  22. 06_backup_sealed_secrets_key.sh : back up the NEW master key so a future rebuild can restore it
-#  23. verify ingress serving       : wait until each HTTPS host serves an LE cert
+# Sequence (STEP N/18):
+#   1. 04_cilium.sh                 : CNI + prometheus-operator CRDs + LB-IPAM/L2 + Hubble
+#   2. 07_values.sh                 : write repo URL, domains, SSO allowlist, ingress IP + ACME into the chart values
+#   3. git add/commit/push          : 05 refuses a dirty argo_apps/ tree; ArgoCD deploys the REMOTE
+#   4. 05_argocd.sh                 : bootstrap ArgoCD, which then delivers the platform from git
+#   5. wait sealed-secrets ctrl     : every later seal step needs it up
+#   6. 07_google_sso.sh             : write the clientID + RE-SEAL google-oauth against the NEW key
+#   7. 07_cloudflare_token.sh       : RE-SEAL the DNS-01 token against the NEW key
+#   8. 08_argocd_webhook.sh         : mint + seal the GitHub webhook secret, set the poll cadence
+#   9. 13_s3_backup_bucket.sh       : Terraform, S3 bucket + scoped IAM writer
+#  10. 14_cnpg_backup.sh            : seal the writer creds + enable CNPG backups
+#  11. 15_redis_backup.sh           : seal the writer creds + enable the central Redis backup job
+#  12. 16_longhorn_backup.sh        : seal the writer creds + set the Longhorn backup target
+#  13. 17_vm_backup.sh              : seal the writer creds + enable the central VM/VL backup job
+#  14. git add/commit/push          : push the re-sealed secrets + backup values
+#  15. converge argocd apps         : pull the pushed commit, wait for Healthy (ntfy must be up for STEP 16)
+#  16. 10_ntfy_auth.sh              : seed ntfy users, seal Grafana's token, push it, restart grafana
+#  17. 06_backup_sealed_secrets_key.sh : back up the NEW master key so a future rebuild can restore it
+#  18. verify ingress serving       : wait until each HTTPS host serves an LE cert
+#
+# PRECONDITION: a Talos cluster already exists and secrets/kubeconfig points at it. That is the OS repo's job:
+#   https://github.com/yama6a/talos-raspberry-pi5-cluster
+# Run `make bootstrap-cluster` there first. This script checks for it and refuses to start otherwise.
 #
 # Why re-seal AND back up, where a rebuild does neither: a fresh controller mints a brand-new master key, so
 # a SealedSecret committed against the OLD key is orphaned. A rebuild instead RESTORES the old key. Here
 # there is no old key, so we re-seal and then back the new one up.
 #
-# Steps 1-10 abort on the first failure with a resume hint; 11-23 are best-effort, so a slow ArgoCD never
+# Steps 1-5 abort on the first failure with a resume hint; 6-18 are best-effort, so a slow ArgoCD never
 # wedges the run.
-# Archiving secrets.yaml makes 03c mint a NEW Talos CA, so the archived talosconfig and kubeconfig stop
-# working. That is intended for a genuine from-scratch init.
 #
-# Needs Docker (host networking), git, kubectl, helm, yq, kubeseal.
+# Needs git, kubectl, helm, yq, kubeseal.
 set -uo pipefail
 
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
@@ -46,83 +42,47 @@ source "${SCRIPT_DIR}/common.sh"   # say/die/warn/ok + CLUSTER_DIR + the invento
 cd "$REPO_ROOT" || exit 1           # run from the repo root (git ops, relative hints); set -e is off, so guard cd
 
 # ---- knobs ------------------------------------------------------------------
-STEP=0; STEP_TOTAL=23                          # shared step counter (common.sh step/run_step); bump TOTAL if you add/remove a step
+STEP=0; STEP_TOTAL=18                          # shared step counter (common.sh step/run_step); bump TOTAL if you add/remove a step
 STEP_DIR="$SCRIPT_DIR"                          # every step script is a sibling of this orchestrator in lib/shell/
 KUBECONFIG_FILE="${CLUSTER_DIR}/kubeconfig"
 INGRESS_GW_NS="gateway"                        # namespace of the shared Gateway (ingress verify)
 INGRESS_HOSTS=""                               # space-separated hosts to check; empty = derive from Gateways
-MAINT_TIMEOUT=30                               # secs/node to confirm maintenance API before giving up
 CONTROLLER_WAIT=900                            # secs to wait for the sealed-secrets controller (ArgoCD wave 2)
 INGRESS_WAIT=900                               # secs to wait for the ingress to actually serve (HTTP-01 is slow)
 CONVERGE_WAIT=900                              # secs for the converge backstop to drive every app to Synced+Healthy
 COMMIT_MSG_SYNC="bootstrap: sync config before ArgoCD bootstrap"
 COMMIT_MSG_SEAL="bootstrap: re-seal SSO + argocd webhook secrets + CNPG/Redis S3 backup creds/values"
 
-require docker git kubectl helm yq kubeseal
+require git kubectl helm yq kubeseal
 docker info >/dev/null 2>&1 || die "docker not responding (start Rancher/Docker Desktop)"
-[ -f "${STEP_DIR}/03c_talos_cluster_config.sh" ] || die "missing 03c, run from the repo root"
-IPS=("${ALL_IPS[@]}")   # workers included: 03c configures them in the same pass, so they must be up front too
+[ -f "${STEP_DIR}/04_cilium.sh" ] || die "missing 04_cilium.sh, run from the repo root"
 
 cat <<EOF
 
-This will BOOTSTRAP a FIRST-TIME Talos cluster on freshly-flashed nodes:
-  nodes   : ${IPS[*]}
-  archive : secrets.yaml + kubeconfig + talosconfig + sealed-secrets-master.key (+ 03c scratch)
-            -> secrets/backup_<timestamp>/   (03c then mints a NEW Talos CA; the old creds stop working)
-  flow    : preflight -> 03b verify -> archive -> 03c -> 03d -> 04 -> 07_values -> commit/push -> 05 (ArgoCD)
-            -> re-seal SSO -> commit/push -> converge -> seed ntfy -> back up the new key -> verify ingress
+This will install the ENTIRE platform onto the cluster ${KUBECONFIG_FILE} points at:
+  flow    : 04 (CNI) -> 07_values -> commit/push -> 05 (ArgoCD) -> re-seal SSO/webhook/backup creds
+            -> commit/push -> converge -> seed ntfy -> back up the new key -> verify ingress
 
-Requires nodes in MAINTENANCE mode (03a done; 03b boot-verify is run for you below). To re-initialize
-a RUNNING cluster instead, abort and use DANGEROUS_rebuild_cluster.sh (it wipes first).
+Requires a Talos cluster that already exists, built in the OS repo:
+  https://github.com/yama6a/talos-raspberry-pi5-cluster
+To re-deliver onto a cluster that already has a platform, abort and use DANGEROUS_rebuild_cluster.sh.
 EOF
 confirm_word_always BOOTSTRAP || { echo "aborted (phew!)."; exit 0; }
 
-say "pulling ghcr.io/siderolabs/talosctl:${TALOSCTL_VERSION} (first run only)"
-docker pull -q "ghcr.io/siderolabs/talosctl:${TALOSCTL_VERSION}" >/dev/null 2>&1 || true
-
-# A maintenance node answers the INSECURE API; a CONFIGURED one does NOT (see 03c). So requiring the
-# insecure `version` to succeed proves the node is fresh-in-maintenance, not already running a cluster.
-# --insecure needs no talosconfig, so this works even though we're about to archive it.
-step "checking every node is in MAINTENANCE mode (fresh-init preflight)"
-for ip in "${IPS[@]}"; do
-  printf '   %-15s ' "$ip"
-  wait_talos_api "$ip" "$MAINT_TIMEOUT" insecure 3 || { echo "NOT IN MAINTENANCE"; \
-    die "${ip} is not answering the maintenance API within ${MAINT_TIMEOUT}s. Bootstrap needs freshly-flashed nodes in maintenance mode (03a/03b). If this is a RUNNING cluster, use DANGEROUS_rebuild_cluster.sh to wipe first."; }
-  echo "maintenance"
-done
-ok "all nodes in maintenance"
-
-# STEP 1 only proves the maintenance API answers. 03b additionally asserts each node booted OUR image
-# (Talos version + rpi5 overlay in the kernel cmdline), sees its NVMe, and has its wired NIC: exactly the
-# failure modes that would otherwise surface confusingly deep inside 03c/04. It's a one-shot snapshot (no
-# wait of its own), which is why STEP 1's maintenance poll runs first. Fatal run_step: 03b exits non-zero
-# on any FAIL, so we die here, before archiving creds / minting fresh PKI, rather than proceed on a bad node.
-run_step "boot-verify every node (our image/NIC/NVMe/overlay)" "$STEP_DIR" 03b_talos_boot_verify.sh
-
-# Clears secrets/ of every file holding PKI so 03c generates a FRESH secrets.yaml, and with it a new CA. Moves EVERY file present (incl. dotfiles like a stray .env.other-secrets) into the dated backup,
-# so nothing lingers to make 03c reuse the old identity, and there is no fixed allowlist to keep in sync now that
-# 03c/03d's render scratch lives in an OS temp dir, not here. Skips DIRECTORIES (so prior backup_<ts>/ dirs
-# are never re-nested into the new one) and .DS_Store (macOS noise, not a cred).
-TS="$(date +%Y%m%d-%H%M%S)"
-BACKUP_SUBDIR="${CLUSTER_DIR}/backup_${TS}"
-step "archiving existing creds -> ${BACKUP_SUBDIR}"
-mkdir -p "$BACKUP_SUBDIR"
-moved=0
-for path in "${CLUSTER_DIR}"/* "${CLUSTER_DIR}"/.[!.]*; do
-  [ -e "$path" ] || continue                       # glob matched nothing (nullglob off)
-  [ -d "$path" ] && continue                        # files only; skips backup_<ts>/ and any other dirs
-  f="$(basename "$path")"
-  [ "$f" = ".DS_Store" ] && continue                # macOS noise, leave it
-  mv "$path" "${BACKUP_SUBDIR}/" && moved=$((moved+1)) || die "could not archive ${f}"
-done
-if [ "$moved" -gt 0 ]; then ok "archived ${moved} file(s)"; else rmdir "$BACKUP_SUBDIR" 2>/dev/null; ok "nothing to archive (already a clean start)"; fi
-
-run_step "fresh PKI, apply config, bootstrap etcd" "$STEP_DIR" 03c_talos_cluster_config.sh
-run_step "NIC hardening (EEE/watchdog)"            "$STEP_DIR" 03d_nic_hardening.sh
+# This repo does not build the cluster, so the only preflight is that one exists and we can reach it. A
+# missing or stale kubeconfig here means the OS repo has not run, and every step below would fail obscurely.
+say "precondition: the cluster exists and is reachable"
+use_kubeconfig
+assert_api
+NODE_COUNT="$(kubectl get nodes --no-headers 2>/dev/null | wc -l | tr -d ' ')"
+[ "${NODE_COUNT:-0}" -gt 0 ] || die "no nodes found via ${KUBECONFIG}.
+       Build the cluster first, in the OS repo:  https://github.com/yama6a/talos-raspberry-pi5-cluster
+       there:  make bootstrap-cluster"
+ok "${NODE_COUNT} node(s) reachable (NotReady is expected until step 1 installs the CNI)"
 
 run_step "CNI + monitoring CRDs + LB/L2 + Hubble" "$STEP_DIR" 04_cilium.sh
 
-run_step "propagate .env + inventory into every chart value ArgoCD renders" "$STEP_DIR" 07_values.sh
+run_step "propagate .env into every chart value ArgoCD renders" "$STEP_DIR" 07_values.sh
 
 step "git add + commit + push (config so far: LB range + every stamped chart value)"
 git add -A
@@ -172,7 +132,7 @@ fi
 # Not guarded on a .env secret: 08 GENERATES its own webhook secret (into secrets/) and always runs. It
 # seals webhook.github.secret into argocd-secret (patch-merge; 05 marked the live secret patch-managed) and
 # writes timeout.reconciliation from .env POLL_SYNC_ENABLED. The GitHub webhook itself is a manual post-boot
-# step (it needs public DNS + the prod cert); 08 prints the exact setup. See 05_gitops.md.
+# step (it needs public DNS + the prod cert); 08 prints the exact setup. See 02_gitops.md.
 run_step "generate+seal the GitHub webhook secret + set poll cadence" "$STEP_DIR" 08_argocd_webhook.sh best-effort \
   "08_argocd_webhook didn't complete; re-run it by hand ('08_argocd_webhook.sh') + commit/push"
 
@@ -247,7 +207,7 @@ converge_argocd_apps "$CONVERGE_WAIT" || true
 # ntfy (05_ntfy, wave 5) is up now that STEP 20 converged the platform, so seed it: 10_ntfy_auth.sh execs the
 # running pod to create the phone/grafana users + ACLs and seal Grafana's write token into grafana-ntfy. Then push
 # it (so ArgoCD applies the SealedSecret) and restart Grafana to pick up GF_NTFY_TOKEN. Skipped when the .env
-# password is empty. Best-effort: a slow/absent ntfy never wedges the run. See docs/09_monitoring.md.
+# password is empty. Best-effort: a slow/absent ntfy never wedges the run. See docs/06_monitoring.md.
 if [ -n "$NTFY_PHONE_PASSWORD_SECRET" ]; then
   if run_step "seed ntfy users + seal Grafana's ntfy token" "$STEP_DIR" 10_ntfy_auth.sh best-effort \
        "10_ntfy_auth didn't complete; re-run 'make configure-ntfy-auth' + commit/push once ntfy is up"; then
@@ -293,7 +253,7 @@ Notes:
     skipped/failed, set the .env password + run 'make configure-ntfy-auth' + commit/push + restart grafana.
   - ArgoCD git-poll is a slow fallback now (webhook-driven). Finish the GitHub webhook: paste
     ${CLUSTER_DIR}/argocd-github-webhook-secret.txt into the repo's webhook (Payload URL
-    https://argocd.<domain>/api/webhook, content-type application/json, push event). See 05_gitops.md.
+    https://argocd.<domain>/api/webhook, content-type application/json, push event). See 02_gitops.md.
   - TLS certs issue via HTTP-01; first issuance takes a few minutes. NB the platform ingress is on
     letsencrypt-PROD now (GitHub webhook SSL verification needs a trusted cert). Mind the prod rate limits.
 EOF

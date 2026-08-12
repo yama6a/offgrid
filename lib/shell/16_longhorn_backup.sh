@@ -37,7 +37,7 @@ ok "tools present, values file found"
 read_backup_creds
 
 # Longhorn's S3 URL is s3://<bucket>@<region>/<prefix>/ (region after @, trailing slash). Setting backupTarget also
-# flips the backup StorageClass + RecurringJobs on (they render `{{- if backupTarget }}`). See docs/13_backups.md.
+# flips the backup StorageClass + RecurringJobs on (they render `{{- if backupTarget }}`). See docs/10_backups.md.
 say "enabling backups: injecting backupTarget + credential secret into ${LH_VALUES}"
 BACKUP_TARGET="s3://${S3_BACKUP_BUCKET}@${AWS_REGION}/longhorn/"
 ys_set "$LH_VALUES" "\"${BACKUP_TARGET}\"" longhorn defaultBackupStore backupTarget

@@ -188,7 +188,7 @@ if [ "$FAIL" -eq 0 ]; then
 ArgoCD is up and self-managed from argo_apps/platform/charts/01_argocd/. The root-of-roots
 (argo_apps/root.yaml) watches argo_apps/roots/ and creates the platform root, then the workloads root ~5s
 later (no health wait; both converge async via retry). Add a PLATFORM app under argo_apps/platform/{charts,apps}/ (NN_ = sync-wave);
-add a WORKLOAD under argo_apps/workloads/{charts,apps}/ (no number, no wave). See 05_gitops.md.
+add a WORKLOAD under argo_apps/workloads/{charts,apps}/ (no number, no wave). See 02_gitops.md.
 EOF
 else
   echo "Some checks failed. If helm timed out, re-run (idempotent). If apps show ComparisonError,"
