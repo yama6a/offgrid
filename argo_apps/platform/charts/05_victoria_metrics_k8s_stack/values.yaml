@@ -266,8 +266,9 @@ victoria-metrics-k8s-stack:
       probes: {enabled: false}
 
   # Talos binds controller-manager, scheduler and etcd metrics to localhost by default. They are exposed via
-  # Talos machine config, OUTSIDE ArgoCD. `endpoints` are the static CONTROL-PLANE node IPs from inventory.yaml,
-  # and only those: a worker runs none of the three. Add an entry here when you add a control-plane node.
+  # Talos machine config, OUTSIDE ArgoCD. `endpoints` are the CONTROL-PLANE node IPs, and only those: a worker
+  # runs none of the three. Do NOT hand-edit them: 04_values.sh reads them from the live cluster and rewrites
+  # this list, so adding a control-plane node updates it on the next run.
   kubeControllerManager:
     enabled: true
     endpoints: []

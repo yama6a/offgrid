@@ -1,4 +1,4 @@
-# 14: Renovate (automatic dependency updates)
+# Renovate (automatic dependency updates)
 
 Renovate opens PRs to bump every pinned dependency in the repo.
 

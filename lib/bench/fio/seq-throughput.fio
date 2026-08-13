@@ -1,5 +1,5 @@
 # Bandwidth ceiling per arm. Explains WHY a latency result looks the way it does; never decides it.
-# On the Longhorn arms this shows the 1GbE cap with TSO/GSO/GRO off (03d_nic_hardening.sh) directly.
+# On the Longhorn arms this shows the 1GbE cap with TSO/GSO/GRO off (the OS repo's NIC hardening) directly.
 
 [global]
 filename=/data/fio-seq

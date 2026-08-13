@@ -1,5 +1,5 @@
 #!/usr/bin/env bash
-# Installs Cilium as the CNI on the cluster from 03c. The one-time imperative bootstrap that breaks the
+# Installs Cilium as the CNI on the cluster the OS repo built. The one-time imperative bootstrap that breaks the
 # chicken-and-egg: ArgoCD and everything else need pod networking to exist first. ArgoCD later adopts the
 # same release from argo_apps/platform/charts/00_cilium, so no versions or values live here.
 # Also installs the prometheus-operator CRDs FIRST: 00_cilium enables a ServiceMonitor and cilium's chart
@@ -15,7 +15,7 @@ CHART_DIR="${PLATFORM_CHARTS}/00_cilium"   # the wrapper chart (Argo consumes it
 CRDS_CHART_DIR="${PLATFORM_CHARTS}/00_prometheus_operator_crds"  # monitoring CRDs (cilium's ServiceMonitor needs them)
 RELEASE="cilium"
 NS="kube-system"
-API_WAIT=300                                       # secs to wait for the API to answer (the VIP lags the 03d reboot)
+API_WAIT=300                                       # secs to wait for the API to answer (the VIP lags the OS repo's NIC-hardening reboot)
 VALUES="${CHART_DIR}/values.yaml"
 
 say "prerequisites"
@@ -25,13 +25,13 @@ require kubectl helm yq
 use_kubeconfig
 ok "kubectl + helm + yq present, chart + values found"
 
-# The VIP can take a minute or two to answer after the 03d reboot, so probe instead of dying on the first
+# The VIP can take a minute or two to answer after the OS repo's NIC-hardening reboot, so probe instead of dying on the first
 # miss. Override the budget with API_WAIT=<secs>.
-say "waiting for the Kubernetes API to answer (up to ${API_WAIT}s; the VIP lags the 03d reboot)"
+say "waiting for the Kubernetes API to answer (up to ${API_WAIT}s; the VIP lags the OS repo's NIC-hardening reboot)"
 deadline=$(( $(date +%s) + API_WAIT ))
 until kubectl get nodes >/dev/null 2>&1; do
   [ "$(date +%s)" -lt "$deadline" ] \
-    || die "API still unreachable via ${KUBECONFIG} after ${API_WAIT}s, is the cluster up? (run step 03, or wait longer after the 03d reboot, or raise API_WAIT)"
+    || die "API still unreachable via ${KUBECONFIG} after ${API_WAIT}s, is the cluster up? (build it in the OS repo, or wait longer after its NIC-hardening reboot, or raise API_WAIT)"
   printf '.'; sleep 5
 done
 echo

@@ -130,7 +130,7 @@ ys_set_list "$BB_VALUES" "${BB_OPEN_URLS# }"  probes open
 CP_IPS="$(kubectl get nodes -l node-role.kubernetes.io/control-plane \
             -o jsonpath='{range .items[*]}{.status.addresses[?(@.type=="InternalIP")].address} {end}' 2>/dev/null)"
 CP_IPS="$(printf '%s' "$CP_IPS" | tr -s ' ' | sed 's/ $//')"
-[ -n "$CP_IPS" ] || die "no control-plane nodes found. Is the kubeconfig from the OS repo pointing at the right cluster?"
+[ -n "$CP_IPS" ] || die "no control-plane nodes found. Is your kubectl context pointing at the right cluster?"
 say "control-plane node IPs -> vm-k8s-stack scrape endpoints  (${CP_IPS})"
 for k in kubeControllerManager kubeScheduler kubeEtcd; do
   ys_set_list "$VM_VALUES" "$CP_IPS" victoria-metrics-k8s-stack "$k" endpoints

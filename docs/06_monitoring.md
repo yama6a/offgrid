@@ -1,4 +1,4 @@
-# 09: Monitoring and observability
+# Monitoring and observability
 
 - VictoriaMetrics + VictoriaLogs are the metrics and logs backend, with one operator reconciling both.
 - Grafana is the UI and the alerting front over them.
@@ -91,7 +91,9 @@ Two things to keep in mind:
 ### The kube-apiserver audit log
 
 Talos turns audit logging on by DEFAULT and at `level: Metadata` for everything, which measured ~1GB a day per
-node here, and none of it was being read. `03c` narrows the policy instead of collecting it raw:
+node here, and none of it was being read. The machine config narrows the policy instead of collecting it raw.
+The policy itself lives in the OS repo's `03c_talos_cluster_config.sh`, not here; this section explains what it
+does and how to change it, because the consequences land on this repo's log pipeline:
 
 - reads (`get`, `list`, `watch`) are dropped: the bulk of the volume,
 - `leases` are dropped: leader election plus kubelet heartbeats were 65% of the events on their own,
@@ -112,11 +114,13 @@ audit events name theirs `stageTimestamp`. Note that Talos keeps up to 10 rotate
 node's EPHEMERAL volume whatever the policy says.
 
 The policy only takes effect once the machine config is pushed, and pushing it restarts the apiserver static
-pod on every node it touches:
+pod on every node it touches. Both commands are the OS repo's, run from a checkout of
+[talos-raspberry-pi5-cluster](https://github.com/yama6a/talos-raspberry-pi5-cluster):
 
 ```bash
+# in the OS repo, NOT here
 make reapply-talos-config NODE=talos-cp1   # one node, dry-run + confirm
-kubectl get --raw /healthz              # it came back? then do the rest
+kubectl get --raw /healthz                 # it came back? then do the rest
 make reapply-talos-config
 ```
 
@@ -124,7 +128,7 @@ Do it one node first, because an audit policy the apiserver REJECTS stops it fro
 walks every control-plane node in one loop. Better still, validate the policy before pushing anything:
 
 ```bash
-# policy.yaml = just the auditPolicy body from 03c. The key is only there because the apiserver checks it
+# policy.yaml = just the auditPolicy body from the OS repo's 03c. The key is only there because the apiserver checks it
 # BEFORE the policy and any earlier error hides the one you are looking for.
 openssl genrsa -out /tmp/sa.key 2048
 docker run --rm -v /tmp:/x registry.k8s.io/kube-apiserver:v1.36.3 kube-apiserver \
@@ -621,7 +625,7 @@ At 3-node homelab scale, a handful of workloads and one operator, a weekly in-cl
 plus a dedicated Robusta UI is overkill. `make krr` is the right-sized answer: run it when you want to retune,
 read the table, hand-edit the relevant chart `values.yaml`.
 
-It also matches the repo's tooling conventions. KRR runs dockerized like `talosctl()`, reaching the metrics store
+It also matches the repo's tooling conventions. KRR runs dockerized, reaching the metrics store
 over the same documented break-glass port-forward that `05_victoria_metrics_k8s_stack` already advertises, and the
 kube API via the 03c kubeconfig. It reuses `MONITORING_NS` and adds no cluster workload, no ArgoCD app and no SSO
 host.

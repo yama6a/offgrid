@@ -18,15 +18,22 @@ at a glance.
 | `Makefile` | a thin dispatcher over `lib/shell/` plus the orchestrators. `make help` lists every target |
 | `terraform/` | the S3 backup bucket + its scoped IAM writer, consumed by steps 13-17 |
 | `.env` | gitignored. Per-deployment config + secrets, in two blocks: CONFIG then SECRETS. Template: `.env.example` |
-| `secrets/` | cluster credentials written by the OS repo. A symlink to an off-repo store, never committed |
+| `secrets/` | this repo's own creds: the sealed-secrets master key + the ArgoCD webhook secret. A symlink to an off-repo store, never committed |
 | `.cache/` | scratch: benchmark runs. Gitignored |
 
 Run the steps in order: `01_cilium`, `02a_argocd`, and onward. Either by hand (`bash lib/shell/NN_name.sh`) or
 via the Makefile.
 
 This repo starts from a cluster that already exists. Hardware, Talos and node lifecycle live in
-[talos-raspberry-pi5-cluster](https://github.com/yama6a/talos-raspberry-pi5-cluster), which writes the `kubeconfig` this repo
-reads out of the shared `secrets/` symlink.
+[talos-raspberry-pi5-cluster](https://github.com/yama6a/talos-raspberry-pi5-cluster). Each repo has its own
+off-repo `secrets/` store, so nothing is shared on disk: the OS repo mints the kubeconfig and its
+`make merge-kubeconfig` puts it in `~/.kube/config`.
+
+Which cluster this repo may touch is pinned by `KUBE_CONTEXT` in `.env`, never inferred from the selected
+context. `use_kubeconfig` in `common.sh` is the single choke point: it derives a one-context, cert-inlined
+kubeconfig into gitignored `.cache/kubeconfig` and exports `KUBECONFIG` at it, so every `kubectl`, `helm` and
+`kubeseal` below inherits the pin and no other cluster is reachable. Call it before touching the cluster, and
+`assert_api` after. Set `KUBECONFIG_SOURCE` to read the contexts from somewhere other than `~/.kube/config`.
 
 ## Where a value lives
 
@@ -69,8 +76,8 @@ skips the feature it enables.
   `${VAR:-default}` env overrides: to change a value, edit it.
 - `set -uo pipefail`, deliberately not `-e` in the PASS/FAIL scripts so checks accumulate and report a full
   summary. One-shot scripts that should abort early use `-euo`.
-- Talos work runs its tooling in Docker; apply-to-cluster scripts use native `helm`/`kubectl` and hard-fail if
-  either is missing.
+- Apply-to-cluster scripts use native `helm`/`kubectl` and hard-fail if either is missing. Anything that needs
+  a pinned tool version (KRR) runs it in Docker.
 - A `DANGEROUS_` prefix on anything that wipes or resets state, so it cannot be run by reflex.
 
 ### `common.sh`

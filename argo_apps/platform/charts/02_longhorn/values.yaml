@@ -1,6 +1,6 @@
 longhorn:
   defaultSettings:
-    defaultDataPath: /var/mnt/longhorn # the dedicated XFS volume 03c creates and extraMounts for the kubelet
+    defaultDataPath: /var/mnt/storage # the dedicated XFS volume 03c creates and extraMounts for the kubelet
     # Survives the one node loss we design for AND leaves at least one spare node to rebuild onto. Raising this
     # to the node count would leave no spare, so a volume would stay degraded until the dead node came back.
     defaultReplicaCount: 2

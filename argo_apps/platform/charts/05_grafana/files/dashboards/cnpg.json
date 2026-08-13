@@ -106,7 +106,7 @@
       }
     ]
   },
-  "description": "Forked from the cloudnative-pg chart. Only the CPU, operator-readiness and backup queries differ; see docs/09_monitoring.md.",
+  "description": "Forked from the cloudnative-pg chart. Only the CPU, operator-readiness and backup queries differ; see docs/06_monitoring.md.",
   "editable": true,
   "fiscalYearStartMonth": 0,
   "graphTooltip": 1,

@@ -21,34 +21,35 @@ source "$ENV_FILE"
 
 # Scripts run under `set -u`, so default every key here: an older .env missing one must not trip it.
 # Empty means "skip the feature it enables", see each key's comment in .env.example.
-: "${GITHUB_GHCR_PULL_TOKEN_SECRET:=}"    # 03c bakes into node machine config (kubelet pulls private ghcr.io)
-: "${ARGOCD_GITHUB_PAT_SECRET:=}"         # 05 seeds ArgoCD's repo-creds Secret
-: "${NTFY_PHONE_PASSWORD_SECRET:=}"       # 10 seeds the ntfy 'phone' user (Grafana pushes alerts to ntfy, phone subscribes)
-: "${GOOGLE_SSO_CLIENT_ID:=}"      # 07 writes into the google-sso values
-: "${GOOGLE_SSO_CLIENT_SECRET:=}"  # 07 seals it for Envoy Gateway OIDC
-: "${CLOUDFLARE_API_TOKEN_SECRET:=}"  # 07 seals it into cert-manager for DNS-01 (empty = HTTP-01 only)
-: "${AWS_DEPLOY_ACCESS_KEY_ID:=}"          # 13 runs Terraform with these; empty = skip S3 backups (13/14 no-op)
-: "${AWS_DEPLOY_SECRET_ACCESS_KEY_SECRET:=}"  # 13 Terraform deployer secret (never sealed into the cluster)
+: "${KUBE_CONTEXT:=}"                     # the ONE kubectl context every script here may touch; empty = ask once and write it back to .env
+: "${GITHUB_GHCR_PULL_TOKEN_SECRET:=}"    # the OS repo bakes this into the node machine config (kubelet pulls private ghcr.io); here it is only a docker login
+: "${ARGOCD_GITHUB_PAT_SECRET:=}"         # 02a seeds ArgoCD's repo-creds Secret
+: "${NTFY_PHONE_PASSWORD_SECRET:=}"       # 06 seeds the ntfy 'phone' user (Grafana pushes alerts to ntfy, phone subscribes)
+: "${GOOGLE_SSO_CLIENT_ID:=}"      # 04_google_sso writes it into the google-sso values
+: "${GOOGLE_SSO_CLIENT_SECRET:=}"  # 04_google_sso seals it for Envoy Gateway OIDC
+: "${CLOUDFLARE_API_TOKEN_SECRET:=}"  # 04_cloudflare_token seals it into cert-manager for DNS-01 (empty = HTTP-01 only)
+: "${AWS_DEPLOY_ACCESS_KEY_ID:=}"          # 10a runs Terraform with these; empty = skip S3 backups (10a-10e no-op)
+: "${AWS_DEPLOY_SECRET_ACCESS_KEY_SECRET:=}"  # 10a Terraform deployer secret (never sealed into the cluster)
 # Not secrets, defaulted for the same set -u reason.
-: "${BASE_DOMAIN:=}"               # 07 writes it into the SSO + ingress chart values; every public host sits under it
-: "${SSO_ALLOWLIST:=}"             # 07 writes it into the google-sso allowlist (space-separated accounts)
-: "${INGRESS_LB_IP:=}"             # 07 writes it into the envoy-gateway values (the one IP every ingress answers on)
-: "${POLL_SYNC_ENABLED:=false}"    # 08 patches timeout.reconciliation from this (false=300s fallback / true=60s)
-: "${CLOUDFLARE_WILDCARD_DOMAINS:=}"  # 07 writes into the gateway + ingress-lib values (DNS-01 wildcard host tiers; empty = none, HTTP-01 only)
-: "${AWS_REGION:=}"                    # 13 Terraform region + 14 CNPG S3 endpoint region
-: "${S3_BACKUP_BUCKET:=}"              # 13 Terraform bucket name + 14 injects it into pg-cluster values
-: "${S3_BACKUP_TRANSITION_DAYS:=30}"   # 13 lifecycle: Glacier-IR transition age
-: "${S3_BACKUP_RETENTION_DAYS:=180}"   # 13 lifecycle: expiry age (recovery window)
-: "${CNPG_BACKUP_RPO:=15min}"          # 14 sets archive_timeout in pg-cluster values
+: "${BASE_DOMAIN:=}"               # 04_values writes it into the SSO + ingress chart values; every public host sits under it
+: "${SSO_ALLOWLIST:=}"             # 04_values writes it into the google-sso allowlist (space-separated accounts)
+: "${INGRESS_LB_IP:=}"             # 04_values writes it into the envoy-gateway values (the one IP every ingress answers on)
+: "${POLL_SYNC_ENABLED:=false}"    # 02b patches timeout.reconciliation from this (false=300s fallback / true=60s)
+: "${CLOUDFLARE_WILDCARD_DOMAINS:=}"  # 04_values writes into the gateway + ingress-lib values (DNS-01 wildcard host tiers; empty = none, HTTP-01 only)
+: "${AWS_REGION:=}"                    # 10a Terraform region + 10b CNPG S3 endpoint region
+: "${S3_BACKUP_BUCKET:=}"              # 10a Terraform bucket name + 10b injects it into pg-cluster values
+: "${S3_BACKUP_TRANSITION_DAYS:=30}"   # 10a lifecycle: Glacier-IR transition age
+: "${S3_BACKUP_RETENTION_DAYS:=180}"   # 10a lifecycle: expiry age (recovery window)
+: "${CNPG_BACKUP_RPO:=15min}"          # 10b sets archive_timeout in pg-cluster values
 
 SS_CONTROLLER_NS="sealed-secrets"                            # kubeseal --controller-namespace (== 02_sealed_secrets)
 SS_CONTROLLER_NAME="sealed-secrets"                          # kubeseal --controller-name
 SS_POD_SELECTOR="app.kubernetes.io/name=sealed-secrets"     # the controller pods (readiness probe)
-SS_KEY_LABEL="sealedsecrets.bitnami.com/sealed-secrets-key"  # label on its key Secrets (06 backup/restore)
-MONITORING_NS="monitoring"                                   # the monitoring-stack namespace (09/krr)
+SS_KEY_LABEL="sealedsecrets.bitnami.com/sealed-secrets-key"  # label on its key Secrets (03 backup/restore)
+MONITORING_NS="monitoring"                                   # the monitoring-stack namespace (ntfy seal / krr)
 WORKLOAD_CHARTS="${REPO_ROOT}/argo_apps/workloads/charts"    # the workloads tree the recover_* scripts edit
 PLATFORM_CHARTS="${REPO_ROOT}/argo_apps/platform/charts"     # the platform tree the step scripts write values into
-TF_DIR="${REPO_ROOT}/terraform"                              # the Terraform root (13 applies it; 14-17 read its outputs)
+TF_DIR="${REPO_ROOT}/terraform"                              # the Terraform root (10a applies it; 10b-10e read its outputs)
 
 # Cannot live in a flat .env: it interpolates.
 # The two host tiers. Fixed labels, not knobs: the SSO policy sets one cookieDomain for BASE_DOMAIN, and a
@@ -235,13 +236,58 @@ vy_protect_off() {
   rm -f "$tmp"
 }
 
-CLUSTER_DIR="${REPO_ROOT}/secrets"   # the only real talosconfig + kubeconfig; a symlink to an off-repo store
+CLUSTER_DIR="${REPO_ROOT}/secrets"   # this repo's sealed-secrets key + webhook secret; a symlink to an off-repo store
+PINNED_KUBECONFIG="${REPO_ROOT}/.cache/kubeconfig"   # derived, gitignored; rewritten by every use_kubeconfig call
 
-use_kubeconfig() {
-  export KUBECONFIG="${CLUSTER_DIR}/kubeconfig"   # the 03c kubeconfig (points at the VIP)
-  [ -f "$KUBECONFIG" ] || die "missing ${KUBECONFIG}, run step 03 (03c) first"
+# Offers the contexts in $1 and writes the pick back to .env, so this is asked once per checkout. Needs a TTY:
+# an orchestrator step running unattended must not silently pick a cluster.
+_pick_kube_context() {
+  local src="$1" names n choice
+  mapfile -t names < <(KUBECONFIG="$src" kubectl config get-contexts -o name | sort)
+  [ "${#names[@]}" -gt 0 ] || die "no contexts in ${src}. Build the cluster in the OS repo
+       (https://github.com/yama6a/talos-raspberry-pi5-cluster), then there:  make bootstrap-cluster && make merge-kubeconfig"
+  [ -t 0 ] || die "KUBE_CONTEXT is not set in .env and there is no terminal to ask on.
+       Set it by hand to the cluster THIS repo may touch, one of:
+$(printf '         %s\n' "${names[@]}")"
+  say "KUBE_CONTEXT is not set in .env. Which cluster may this repo touch?"
+  warn "every script here applies to it, and the DANGEROUS_ ones redeliver the whole platform. Choose carefully."
+  for n in "${!names[@]}"; do printf '   %2d) %s\n' "$((n+1))" "${names[$n]}"; done
+  read -r -p ">> number: " choice || die "aborted"
+  [[ "$choice" =~ ^[0-9]+$ ]] && [ "$choice" -ge 1 ] && [ "$choice" -le "${#names[@]}" ] || die "not a listed number: ${choice}"
+  KUBE_CONTEXT="${names[$((choice-1))]}"
+  if grep -q '^KUBE_CONTEXT=' "$ENV_FILE"; then
+    local tmp; tmp="$(mktemp)"
+    sed "s|^KUBE_CONTEXT=.*|KUBE_CONTEXT=\"${KUBE_CONTEXT}\"|" "$ENV_FILE" > "$tmp" && cat "$tmp" > "$ENV_FILE"
+    rm -f "$tmp"
+  else
+    printf '\nKUBE_CONTEXT="%s"\n' "$KUBE_CONTEXT" >> "$ENV_FILE"
+  fi
+  ok "wrote KUBE_CONTEXT=\"${KUBE_CONTEXT}\" to .env (edit it there to change clusters)"
 }
-assert_api() { kubectl get nodes >/dev/null 2>&1 || die "kubectl can't reach the API via ${KUBECONFIG}"; }
+
+# The OS repo builds the cluster and keeps its kubeconfig in its OWN store, so nothing hands us a path to one.
+# We read the ambient kubectl config, which `make merge-kubeconfig` over there populates.
+#
+# But that config holds every cluster you use, so "whatever is currently selected" is not safe to apply a whole
+# platform to. So PIN: write a one-context, self-contained copy and point KUBECONFIG at THAT. Every kubectl,
+# helm and kubeseal below inherits it, and a `kubectl config use-context` elsewhere mid-run cannot retarget us.
+# Re-derived on every call (cheap) so an edited .env takes effect on the next step, not the next reboot.
+use_kubeconfig() {
+  local src="${KUBECONFIG_SOURCE:-${KUBECONFIG:-$HOME/.kube/config}}"
+  [ -f "$src" ] || die "no kubeconfig at ${src}. Build the cluster in the OS repo
+       (https://github.com/yama6a/talos-raspberry-pi5-cluster), then there:
+       make bootstrap-cluster && make merge-kubeconfig"
+  [ -n "$KUBE_CONTEXT" ] || _pick_kube_context "$src"
+  mkdir -p "$(dirname "$PINNED_KUBECONFIG")"
+  # Subshell so the umask does not leak into the caller. --minify keeps one context, --flatten inlines its
+  # certs, so the result stands alone and no other cluster is even reachable from it.
+  ( umask 077; KUBECONFIG="$src" kubectl config view --flatten --minify --context="$KUBE_CONTEXT" \
+      > "$PINNED_KUBECONFIG" 2>/dev/null ) \
+    || die "context \"${KUBE_CONTEXT}\" (from .env) is not in ${src}. Available:
+$(KUBECONFIG="$src" kubectl config get-contexts -o name | sed 's/^/         /')"
+  export KUBECONFIG="$PINNED_KUBECONFIG"
+}
+assert_api() { kubectl get nodes >/dev/null 2>&1 || die "kubectl can't reach the API via ${KUBECONFIG} (context: $(kubectl config current-context 2>/dev/null || echo none))"; }
 
 # Every sealing step's preflight. Asserts a controller pod is READY, not merely that the get succeeded:
 # `kubectl get pods -l <selector>` exits 0 when NOTHING matches, so a plain get catches an unreachable API but

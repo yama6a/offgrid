@@ -18,7 +18,7 @@
 > TLS, SSO, storage, databases, messaging, monitoring, backups, and a sample workload on top.
 >
 > It starts from a cluster that already exists. Building that cluster (hardware, Talos, etcd, node lifecycle) is
-> [talos-raspberry-pi5-cluster](https://github.com/yama6a/talos-raspberry-pi5-cluster), which hands over a `kubeconfig`.
+> [talos-raspberry-pi5-cluster](https://github.com/yama6a/talos-raspberry-pi5-cluster), which hands over an active kubectl context.
 >
 > Every per-deployment value lives in `.env`, and `make configure-values` stamps it into the chart values Argo CD
 > renders, so a fork changes one gitignored file and nothing else.
@@ -51,7 +51,7 @@
 
 ## The stack
 
-Everything after `04`/`05` is an Argo CD-delivered wrapper chart, each pinning its upstream version in its own
+Everything after `01`/`02a` is an Argo CD-delivered wrapper chart, each pinning its upstream version in its own
 `Chart.yaml`. That file is the source of truth; no version is restated anywhere else.
 
 | Layer             | Component                      | Role                                                                                                         |
@@ -69,7 +69,6 @@ Everything after `04`/`05` is an Argo CD-delivered wrapper chart, each pinning i
 | **Cache**         | OpsTree Redis operator         | Standalone Redis instances, one per workload alias.                                                          |
 | **Messaging**     | RabbitMQ                       | One shared broker; workloads declare their own topology.                                                     |
 | **Metrics API**   | metrics-server                 | `metrics.k8s.io` for `kubectl top` and HPAs.                                                                 |
-| **NIC**           | nic-keeper                     | Custom DaemonSet that keeps the flaky Pi 5 `macb` NIC and VIP healthy.                                       |
 | **Observability** | VictoriaMetrics + VictoriaLogs | PromQL-compatible metrics and logs backend (over Prometheus/Mimir + Loki, for 8 GB nodes).                   |
 | **Observability** | Grafana                        | Dashboards + alerting, provisioned as code. No persistence layer.                                            |
 | **Alerting**      | ntfy                           | Self-hosted mobile push. No email.                                                                           |
@@ -86,7 +85,8 @@ Four shared charts under `lib/helm/` are consumed as `file://` dependencies, all
 ## Hardware
 
 Built and documented in the OS repo: 3x Raspberry Pi 5 (8 GB), all control-plane, NVMe-booted. Nothing here
-assumes that hardware beyond the two charts it consumes from there (`nic-keeper`, `coredns`). See
+assumes that hardware, and nothing here is consumed from there: the OS repo hands over a kubeconfig and
+stops. Its own hardware mitigations, including the `nic-keeper` DaemonSet, are applied on its side. See
 [its docs](https://github.com/yama6a/talos-raspberry-pi5-cluster/blob/main/docs/01_hardware.md).
 
 ## Architecture
@@ -100,19 +100,23 @@ its own via unbounded retry.
 
 ```mermaid
 flowchart LR
-    subgraph imp["Shell bootstrap - make"]
+    subgraph os["OS repo - talos-raspberry-pi5-cluster"]
         direction TB
-        HW["Hardware + EEPROM<br/>docs 01-02"] --> IMG["Flash the Talos Pi 5<br/>image release, 03a-03b"]
-        IMG --> TAL["Talos machine config<br/>+ etcd + NIC hardening, 03c-03d"]
-        TAL --> CIL["Cilium CNI, 04"]
-        CIL --> ARGO["Argo CD, 05"]
+        HW["Hardware + EEPROM"] --> IMG["Flash the Talos Pi 5 image"]
+        IMG --> TAL["Talos machine config<br/>+ etcd + NIC hardening"]
+        TAL --> KC["make merge-kubeconfig"]
+    end
+    KC -->|" hands over an active kubectl context "| CIL
+    subgraph imp["Shell bootstrap - make (this repo)"]
+        direction TB
+        CIL["Cilium CNI, 01"] --> ARGO["Argo CD, 02a"]
     end
     ARGO -->|" adopts Cilium, reconciles the git remote "| ROOT["root-of-roots"]
     subgraph gitops["GitOps delivery - Argo CD"]
         direction TB
         ROOT --> PLAT["platform tree, waves 0-8"]
         PLAT -->|" created ~5s later, no health gate "| WORK["workloads tree"]
-        PLAT --- PC["Envoy Gateway, cert-manager, Google SSO, Sealed Secrets<br/>Longhorn, CNPG, Redis, RabbitMQ<br/>metrics-server, nic-keeper, dead-node-watcher, VictoriaMetrics/Logs, Grafana, ntfy"]
+        PLAT --- PC["Envoy Gateway, cert-manager, Google SSO, Sealed Secrets<br/>Longhorn, CNPG, Redis, RabbitMQ<br/>metrics-server, dead-node-watcher, VictoriaMetrics/Logs, Grafana, ntfy"]
         WORK --- WC["sample-user-manager, sample-user-signup, sample-audit-logger"]
     end
 ```
@@ -124,7 +128,7 @@ flowchart LR
 |-- Makefile            # thin dispatcher over lib/shell; run `make help`
 |-- .env.example        # template for config + secrets; copy to .env
 |-- .env                # your config + secrets (gitignored)
-|-- docs/               # the numbered runbook + decision records (01 to 12)
+|-- docs/               # the numbered runbook + decision records (01 to 13)
 |-- terraform/          # the S3 backup bucket + its scoped IAM writer
 |-- lib/
 |   |-- shell/          # bootstrap shell scripts + helpers
@@ -135,7 +139,7 @@ flowchart LR
 |   |-- roots/          #   0_platform -> 1_workloads
 |   |-- platform/{apps,charts}/   # apps/ is a chart: Applications in templates/, repoURL in values.yaml
 |   `-- workloads/{apps,charts}/
-`-- secrets/            # gitignored: talos certs, talosconfig, kubeconfig, sealed key
+`-- secrets/            # gitignored: this repo's sealed-secrets key + webhook secret (own off-repo store)
 ```
 
 The `NN_` prefixes mirror the sync-wave: the order Argo *creates* the apps in, roughly 5s apart, with no health
@@ -144,23 +148,32 @@ gate, so a later app that races ahead of a dependency just retries until it land
 
 ## Getting started
 
-**Prerequisite: a running Talos cluster.** Build it first in
+**Prerequisite: a running Talos cluster, and a kubectl context pointing at it.** Build it first in
 [talos-raspberry-pi5-cluster](https://github.com/yama6a/talos-raspberry-pi5-cluster), which ends by printing the handoff:
 
 ```bash
 # in the OS repo
-make bootstrap-cluster              # flashes, configures Talos, bootstraps etcd, writes secrets/kubeconfig
+make bootstrap-cluster              # flashes, configures Talos, bootstraps etcd, writes its secrets/kubeconfig
+make merge-kubeconfig               # merges that into ~/.kube/config and makes it the active context
 ```
 
-Both repos read the same credentials, because `secrets/` is a symlink to the same off-repo store in each. If
-that symlink is missing here, point it at the same directory before continuing.
+Each repo has its own off-repo `secrets/` store, so nothing is shared on disk: the OS repo keeps the Talos PKI,
+this one keeps the sealed-secrets key. The kubeconfig crosses over via `~/.kube/config`, which
+`make merge-kubeconfig` populates.
+
+Which cluster this repo may touch is then pinned by `KUBE_CONTEXT` in `.env`, and it is not the same thing as
+your currently-selected context. Your `~/.kube/config` probably holds work clusters too, and nothing here is
+read-only, so the target is stated once rather than inherited from whatever `kubectl config use-context` last
+ran. Leave `KUBE_CONTEXT` empty and the first run lists your contexts, asks, and writes the answer back to
+`.env`. Every script then derives a single-context kubeconfig from it into gitignored `.cache/kubeconfig`, so
+no other cluster is reachable for the length of the run.
 
 Only ever run on macOS, so Linux or WSL may need tweaks. The scripts assume a bash/zsh shell, GNU `make`, and a
 POSIX-y environment. On your machine: `git`, `kubectl`, `helm`, `yq`, `kubeseal`.
 
 ```bash
 # 1. Configure
-cp .env.example .env                # then edit: repo URL, domains, ingress IP, secrets. Go over everything.
+cp .env.example .env                # then edit: KUBE_CONTEXT, repo URL, domains, ingress IP, secrets. Go over everything.
 
 # 2. Install the platform
 make bootstrap-cluster              # CNI -> stamp values -> push -> Argo CD -> seal secrets -> converge
@@ -224,7 +237,7 @@ cluster) is in the OS repo: [talos-raspberry-pi5-cluster](https://github.com/yam
 
 ## Troubleshooting
 
-- **Nodes are `NotReady`**: expected until the Cilium CNI lands (`make install-cilium`, 04).
+- **Nodes are `NotReady`**: expected until the Cilium CNI lands (`make install-cilium`, 01).
 - **An Argo CD app is `OutOfSync` or "path does not exist"**: you did not git-push. Commit and push
   `argo_apps/**`, including any `Chart.lock` ([docs/02](docs/02_gitops.md)).
 - **An app is permanently `OutOfSync` with nothing apparently wrong**: that is the orphan-not-delete signal. A
@@ -254,6 +267,7 @@ Each doc holds the why behind a step, with verification commands:
 | [10_backups](docs/10_backups.md)                   | Off-cluster S3 backups for Postgres, Redis, Longhorn and the monitoring stores. |
 | [11_renovate](docs/11_renovate.md)                 | Automated dependency updates and when Renovate is allowed to self-merge.        |
 | [12_storage_bench](docs/12_storage_bench.md)       | Measuring what Longhorn r2 costs CNPG and RabbitMQ in write latency.            |
+| [13_node_loss](docs/13_node_loss.md)               | What the workloads do when a machine dies, measured, and reconciling a replaced one. |
 
 Hardware, Talos bring-up and node recovery are documented in the OS repo,
 [talos-raspberry-pi5-cluster](https://github.com/yama6a/talos-raspberry-pi5-cluster).

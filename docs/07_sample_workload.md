@@ -1,4 +1,4 @@
-# 10: sample-user-manager, a real app + its Postgres behind the Gateway
+# sample-user-manager, a real app + its Postgres behind the Gateway
 
 The end-to-end sample workload. It proves the whole stack at once: a real app, its own database, both ingress
 modes (open and SSO), Redis in both persistence modes, and a live RabbitMQ message loop.

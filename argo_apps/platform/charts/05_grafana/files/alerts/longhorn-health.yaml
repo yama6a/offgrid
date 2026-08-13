@@ -57,7 +57,7 @@ groups:
           description: |
             - node {{ $labels.node }} can't host replicas: disk mount, kernel modules, or multipathd likely
             - inspect: kubectl -n longhorn-system get nodes.longhorn.io {{ $labels.node }} -o yaml
-            - verify the /var/mnt/longhorn mount + iscsi/multipathd on that node
+            - verify the /var/mnt/storage mount + iscsi/multipathd on that node
         noDataState: OK
         execErrState: KeepLast
         data:
@@ -97,7 +97,7 @@ groups:
             - the node can still report Ready, so check the DISK conditions: kubectl -n longhorn-system get nodes.longhorn.io {{ $labels.node }} -o yaml
             - DiskFilesystemChanged, "record diskUUID doesn't match", means that node was replaced or reflashed
               and the CR still records the old filesystem. Reset the disk: https://github.com/yama6a/talos-raspberry-pi5-cluster/blob/main/docs/05_node_recovery.md
-            - otherwise suspect the /var/mnt/longhorn mount, or iscsi/multipathd on that node
+            - otherwise suspect the /var/mnt/storage mount, or iscsi/multipathd on that node
         noDataState: OK
         execErrState: KeepLast
         data:

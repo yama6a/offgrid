@@ -1,4 +1,4 @@
-# 08: Storage & database
+# Storage & database
 
 One storage layer and a database operator, all pure-GitOps wave-2 leaves with no imperative script. Each needs
 one Talos host prerequisite from [`https://github.com/yama6a/talos-raspberry-pi5-cluster/blob/main/docs/03_operating_system.md`](https://github.com/yama6a/talos-raspberry-pi5-cluster/blob/main/docs/03_operating_system.md).
@@ -32,8 +32,8 @@ accepting writes. A single-instance Postgres needs a full S3 restore, two git co
 
 On Longhorn the volume is not tied to the dead machine, so the pod reattaches on a survivor and comes back by
 itself. Measured by unplugging a machine's ethernet: both databases were serving again ~190s later, unattended,
-against 402s when [the dead-node watcher](https://github.com/yama6a/talos-raspberry-pi5-cluster/blob/main/docs/05_node_recovery.md) was suppressed and forever under node-local
-storage. Timings and the split-brain result are in [https://github.com/yama6a/talos-raspberry-pi5-cluster/blob/main/docs/05_node_recovery.md](https://github.com/yama6a/talos-raspberry-pi5-cluster/blob/main/docs/05_node_recovery.md).
+against 402s when [the dead-node watcher](13_node_loss.md) was suppressed and forever under node-local
+storage. Timings and the split-brain result are in [13_node_loss.md](13_node_loss.md).
 
 The price is latency, and it is small: Postgres commit p50 6.02 to 7.50 ms, RabbitMQ confirm p99 9.4 to 18.4 ms
 with a local replica. Both land inside what RDS Multi-AZ, Cloud SQL HA, SQS and Pub/Sub deliver, so the numbers
@@ -43,7 +43,7 @@ we give up are ones a managed service would not have given us either. Full table
 ## Longhorn
 
 Distributed block storage that replicates each volume across nodes, on the dedicated XFS `longhorn` user volume
-mounted at `/var/mnt/longhorn`.
+mounted at `/var/mnt/storage`.
 
 Chart: `argo_apps/platform/charts/02_longhorn/`.
 
@@ -55,15 +55,15 @@ on low-power nodes. Revisit if upstream fixes it.
 ### Talos prerequisites
 
 From step 03: the `iscsi-tools` and `util-linux-tools` extensions, 4K kernel pages (XFS will not mount on 16K),
-and the `/var/mnt/longhorn` XFS volume. Longhorn adds one thing, a kubelet bind-mount in `03c`'s `cp-patch.yaml`:
+and the `/var/mnt/storage` XFS volume. Longhorn adds one thing, a kubelet bind-mount in `03c`'s `cp-patch.yaml`:
 
 ```yaml
 machine:
   kubelet:
     extraMounts:
-      - destination: /var/mnt/longhorn
+      - destination: /var/mnt/storage
         type: bind
-        source: /var/mnt/longhorn
+        source: /var/mnt/storage
         options: [ bind, rshared, rw ]
 ```
 
@@ -79,7 +79,7 @@ every node's disk unschedulable.
 
 | Value | Why |
 |---|---|
-| `defaultDataPath: /var/mnt/longhorn` | the dedicated user volume, not the ephemeral `/var/lib/longhorn` |
+| `defaultDataPath: /var/mnt/storage` | the dedicated user volume, not the ephemeral `/var/lib/longhorn` |
 | `defaultReplicaCount: 2` | with `replicaSoftAntiAffinity` at its default `false`, so hard anti-affinity, one replica per node |
 | `persistence.defaultClass: false` | no cluster-default class; a PVC that omits one stays `Pending` |
 | `storageMinimalAvailablePercentage: 15` | headroom on the Pi NVMes; do not schedule onto a disk under 15% free |
@@ -149,7 +149,7 @@ also the restore target in `recover_longhorn_from_s3.sh`.
 ### Verify
 
 ```bash
-talosctl -n 192.168.10.201 read /proc/mounts | grep longhorn   # /var/mnt/longhorn present (after the patch)
+talosctl -n 192.168.10.201 read /proc/mounts | grep storage    # /var/mnt/storage present (after the patch)
 kubectl -n longhorn-system get pods                            # manager on all 3 nodes + CSI Running
 kubectl -n longhorn-system get nodes.longhorn.io -o wide       # each node's disk Schedulable
 kubectl get storageclass                                       # the three longhorn-r2-* classes, NO default

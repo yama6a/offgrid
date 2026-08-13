@@ -16,7 +16,7 @@ RABBITMQ_SECRET="rabbitmq-default-user"                                         
 RABBITMQ_SUBDOMAIN="rabbitmq"                                                             # its host in the platform ingress
 NTFY_USER="phone"                                                                         # Android subscriber (read-only)
 NTFY_TOPIC="cluster-alerts"                                                               # matches 06_ntfy_auth.sh / 05_ntfy
-WEBHOOK_FILE="${CLUSTER_DIR}/argocd-github-webhook-secret.txt"                             # plaintext webhook secret (08 mints it)
+WEBHOOK_FILE="${CLUSTER_DIR}/argocd-github-webhook-secret.txt"                             # plaintext webhook secret (02b mints it)
 ARGOCD_SUBDOMAIN="argocd"                                                                  # its host in the platform ingress (webhook endpoint)
 
 say "prerequisites"

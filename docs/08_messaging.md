@@ -1,4 +1,4 @@
-# 11: messaging, one shared RabbitMQ broker + a reusable topology chart
+# Messaging, one shared RabbitMQ broker + a reusable topology chart
 
 One RabbitMQ broker every workload shares, plus a reusable Helm chart that lets a workload declare its own
 topology (exchanges, queues, users) with isolation from the others.
@@ -230,7 +230,7 @@ Trade-offs, all accepted:
   so they go read-unavailable until a majority returns.
 - A broker whose machine dies comes back on a survivor by itself, in about two minutes, with its data. Expect
   one container restart while the startup probe waits for it to catch up. Never data loss. See
-  [https://github.com/yama6a/talos-raspberry-pi5-cluster/blob/main/docs/05_node_recovery.md](https://github.com/yama6a/talos-raspberry-pi5-cluster/blob/main/docs/05_node_recovery.md).
+  [13_node_loss.md](13_node_loss.md).
 - `10Gi` per replica is a CEILING, not a reservation: Longhorn is thin. The operator hardcodes
   `disk_free_limit.absolute = 2GB`, so publishers block once any broker's volume hits 8Gi used, and that is the
   real backlog budget this number buys. The disk alarm is cluster-wide: ONE broker over the line blocks

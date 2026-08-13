@@ -62,19 +62,20 @@ kubectl delete pod -n sealed-secrets -l app.kubernetes.io/name=sealed-secrets   
 
 ### First-time bootstrap vs rebuild
 
-The key is exactly what separates the two one-shot orchestrators:
+The key is exactly what separates the two one-shot orchestrators. Neither touches the nodes: wiping Talos is
+the OS repo's `make reset-cluster`, run before either of these if you want one.
 
-- `DANGEROUS_rebuild_cluster.sh` wipes a RUNNING cluster and rebuilds it, then RESTORES the backed-up master key
-  so the committed `SealedSecret`s decrypt unchanged. It does not re-seal. Needs a current backup, so run
-  `06_backup` beforehand.
-- `DANGEROUS_bootstrap_cluster.sh` is a FIRST-TIME init on freshly-flashed nodes in maintenance mode. There is
-  no prior key, so the fresh controller mints a brand-new one and the committed `google-oauth` `SealedSecret` is
+- `DANGEROUS_rebuild_cluster.sh` redelivers the platform onto a cluster that already has one, then RESTORES the
+  backed-up master key so the committed `SealedSecret`s decrypt unchanged. It does not re-seal. Needs a current
+  backup, so run `03_backup_sealed_secrets_key.sh` beforehand.
+- `DANGEROUS_bootstrap_cluster.sh` is a FIRST-TIME platform install onto a cluster that has none. There is no
+  prior key, so the fresh controller mints a brand-new one and the committed `google-oauth` `SealedSecret` is
   orphaned. It therefore re-seals against the new key (keeping the committed allowlists), commits, pushes, then
-  backs the new key up so future rebuilds can restore it. It also archives the old
-  `secrets.yaml`/`kubeconfig`/`talosconfig`/`sealed-secrets-master.key` to `secrets/backup_<timestamp>/` and
-  starts from a fresh Talos CA.
+  backs the new key up so future rebuilds can restore it.
 
-To re-initialize a running cluster use the rebuild script, which wipes first.
+Which one you want depends on whether the cluster already has a platform on it, not on whether the nodes were
+just wiped. After an OS-repo `make reset-cluster && make bootstrap-cluster` the cluster is bare, so that is a
+bootstrap.
 
 ## Sealing a secret
 

@@ -1,5 +1,5 @@
 #!/usr/bin/env bash
-# Restores the Sealed Secrets master key from the 06_backup dump and restarts the controller so it loads it.
+# Restores the Sealed Secrets master key from the 03_backup dump and restarts the controller so it loads it.
 # Without this, a rebuilt cluster's controller mints a brand-new key and every committed SealedSecret is
 # orphaned.
 # On a fresh rebuild the controller may not be up yet, so this WAITS for it. The fresh controller mints its
@@ -16,7 +16,7 @@ source "${SCRIPT_DIR}/common.sh"
 NS="$SS_CONTROLLER_NS"                                                        # controller namespace
 CONTROLLER_LABEL="$SS_POD_SELECTOR"                                          # the controller pods
 KEY_LABEL="$SS_KEY_LABEL"                                                     # label the controller stamps on its key Secrets
-BACKUP_FILE="${CLUSTER_DIR}/sealed-secrets-master.key"                       # the backup 06_backup wrote
+BACKUP_FILE="${CLUSTER_DIR}/sealed-secrets-master.key"                       # the backup 03_backup_sealed_secrets_key.sh wrote
 WAIT=900                                                                     # secs to wait for the controller (ArgoCD wave 2)
 
 say "prerequisites"
@@ -40,7 +40,7 @@ done
 echo
 ok "controller is Running"
 
-# `kubectl apply` of the labelled key Secret(s) is the official restore form (matches what 06_backup dumped).
+# `kubectl apply` of the labelled key Secret(s) is the official restore form (matches what 03_backup dumped).
 say "applying ${BACKUP_FILE} into ns/${NS}"
 if kubectl apply -f "$BACKUP_FILE" >/dev/null 2>&1; then
   ok "key Secret(s) applied"

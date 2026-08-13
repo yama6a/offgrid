@@ -1,4 +1,4 @@
-# 16: Storage benchmark
+# Storage benchmark
 
 What Longhorn r2 and synchronous replication cost CNPG and RabbitMQ in write latency. On-demand, not a
 bring-up step.
@@ -52,7 +52,7 @@ bash lib/shell/storage_bench.sh corroborate <dir>        # vs VictoriaMetrics, n
 - No vendor publishes a latency figure or a latency SLA. AWS's own three-way Multi-AZ benchmark reports
   New Orders Per Minute in a chart; Google documents only that regional disk is slower than zonal.
 
-Recovery behaviour per row is measured separately, in [`https://github.com/yama6a/talos-raspberry-pi5-cluster/blob/main/docs/05_node_recovery.md`](https://github.com/yama6a/talos-raspberry-pi5-cluster/blob/main/docs/05_node_recovery.md), and that is
+Recovery behaviour per row is measured separately, in [13_node_loss.md](13_node_loss.md), and that is
 what the latency buys: on a machine loss both databases were serving again ~190s later with nobody involved,
 where node-local storage needed a human and a 6-minute multi-attach wait first.
 

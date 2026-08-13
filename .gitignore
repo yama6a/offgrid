@@ -1,13 +1,14 @@
 # Personal config + secrets: your real IPs / domains / usernames / tokens. Gitignored so they stay out of
-# git. Copy the committed template and edit:  cp .env.example .env  (the version recipe is the COMMITTED
-# versions.env is deliberately NOT ignored; only bare `.env` is, so `.env.example`/`versions.env` are tracked.)
+# git. Copy the committed template and edit:  cp .env.example .env
+# Only bare `.env` is ignored, so `.env.example` stays tracked.
 .env
 .env.bak
 .env.bak.*
 
-# Live cluster credentials (talosconfig, kubeconfig, sealed-secrets master key). Written by the OS repo's 03c
-# into `secrets/`, a symlink to an off-repo store (a synced drive) that both repos point at. Never commit the
-# symlink or anything it points at: the creds live and are backed up outside the repo.
+# This repo's own credentials: the sealed-secrets master key and the plaintext ArgoCD webhook secret, written
+# into `secrets/`, a symlink to an off-repo store (a synced drive). The OS repo has a SEPARATE store; no
+# talosconfig or kubeconfig lands here. kubectl comes from your active context, which the OS repo's
+# `make merge-kubeconfig` sets. Never commit the symlink or anything it points at.
 /secrets
 
 # Scratch: benchmark runs and other throwaway output.

@@ -1,4 +1,4 @@
-# 12: Redis, per-workload caches via the OpsTree operator
+# Redis, per-workload caches via the OpsTree operator
 
 Same shape as [Postgres](05_storage.md#cloudnativepg): an operator installed once as platform infrastructure, plus
 a reusable shared chart a workload instantiates one or more times. There is no single shared Redis, unlike the one

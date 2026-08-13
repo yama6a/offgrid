@@ -20,8 +20,9 @@ require docker kubectl
 use_kubeconfig
 assert_api
 
-# The live kubeconfig is a symlink into an off-repo synced drive that Docker Desktop's file sharing may not
-# expose for bind-mounts, so mount a plain temp COPY instead.
+# Mount a temp copy, not $KUBECONFIG itself: it lives under the repo's .cache/, which Docker Desktop's file
+# sharing may not expose for bind-mounts. A plain copy is enough because use_kubeconfig already pinned it to
+# one context with the certs inlined, so it stands alone inside the container.
 TMP_KUBECONFIG="$(mktemp -t krr-kubeconfig.XXXXXX)"
 cp "$KUBECONFIG" "$TMP_KUBECONFIG"
 

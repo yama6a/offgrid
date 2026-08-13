@@ -1,4 +1,4 @@
-# 07: Ingress, TLS and SSO
+# Ingress, TLS and SSO
 
 The GitOps L7 ingress layer, delivered entirely by ArgoCD. Five pieces stack in wave order:
 

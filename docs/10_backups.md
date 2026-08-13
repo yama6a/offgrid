@@ -1,4 +1,4 @@
-# 13: Off-cluster backups, CNPG Postgres + Redis + Longhorn + VM/VL to S3
+# Off-cluster backups, CNPG Postgres + Redis + Longhorn + VM/VL to S3
 
 Until now durability was entirely in-cluster: Postgres replication across the instances, Longhorn's 2 volume
 replicas under them, plus orphan-not-delete ([05_storage.md](05_storage.md)). That survives a machine loss
@@ -202,11 +202,11 @@ unseal into any name in any namespace. That is exactly what lets every instance 
 per-instance secret name, so N DBs in one namespace never collide and there is no shared secret to elect an owner
 for. Accepted because it is the same S3 writer for all CNPG workloads.
 
-`13` and `14` are wired best-effort into `DANGEROUS_bootstrap_cluster.sh`, guarded on the deployer key, so a full
-bootstrap runs `terraform apply` and seals automatically. A REBUILD runs `13 wipe`, discarding the old backups
-while keeping the bucket and IAM so the fresh clusters start a clean history. It does NOT re-seal, since the
-restored key already decrypts the committed secret, and does NOT `terraform destroy`. Only `make reset-cluster`
-tears the bucket down.
+`10a` and `10b` are wired best-effort into `DANGEROUS_bootstrap_cluster.sh`, guarded on the deployer key, so a
+full bootstrap runs `terraform apply` and seals automatically. A REBUILD runs `10a wipe`, discarding the old
+backups while keeping the bucket and IAM so the fresh clusters start a clean history. It does NOT re-seal, since
+the restored key already decrypts the committed secret, and does NOT `terraform destroy`. Only
+`make s3-backup-destroy` tears the bucket down.
 
 ## Monitoring
 
@@ -444,7 +444,7 @@ Durability is two layers, and only the second has a recovery step:
   state loud.
 - Off-cluster in S3: Barman Cloud, continuous WAL plus a daily base, for real data loss: a dropped table, a bad
   migration, or losing every replica of a volume at once. Losing a MACHINE no longer needs it, since the volume
-  reattaches on a survivor ([https://github.com/yama6a/talos-raspberry-pi5-cluster/blob/main/docs/05_node_recovery.md](https://github.com/yama6a/talos-raspberry-pi5-cluster/blob/main/docs/05_node_recovery.md)).
+  reattaches on a survivor ([13_node_loss.md](13_node_loss.md)).
 
 Pick by what is actually wrong:
 
@@ -454,7 +454,7 @@ Pick by what is actually wrong:
 | `Cluster` is GONE and you want it back as itself | `make restore-cnpg`, mode in-place |
 | DB is fine; verify a backup, read old rows, test a PITR target | `make restore-cnpg`, mode side |
 | Whole cluster rebuilt | `make restore-secrets-key` first, so the sealed S3 creds decrypt, then mode in-place per DB |
-| A machine died or was replaced | Nothing here, and nothing to delete. The volume reattaches on a survivor and Postgres replays WAL; an HA primary is replaced by a promoted standby: [https://github.com/yama6a/talos-raspberry-pi5-cluster/blob/main/docs/05_node_recovery.md](https://github.com/yama6a/talos-raspberry-pi5-cluster/blob/main/docs/05_node_recovery.md) |
+| A machine died or was replaced | Nothing here, and nothing to delete. The volume reattaches on a survivor and Postgres replays WAL; an HA primary is replaced by a promoted standby: [13_node_loss.md](13_node_loss.md) |
 | Every replica of one volume is gone (`faulted`) | `make restore-cnpg` for a database; `make restore-longhorn` for a volume on the backed-up class |
 
 ### `make restore-cnpg`
@@ -515,8 +515,10 @@ Never leave a DB sitting on `false`.
 
 ### Rebuild vs reset, and why rebuild wipes the backups
 
-A REBUILD is a deliberate full fresh start: it wipes every Longhorn volume AND empties the S3 bucket via
-`13 wipe`, keeping the bucket and IAM.
+A REBUILD is a deliberate full fresh start. It empties the S3 bucket via `10a wipe`, keeping the bucket and
+IAM. It does NOT touch the nodes: wiping the Longhorn volumes means resetting Talos, which is the OS repo's
+`make reset-cluster`, run before this. A rebuild on un-reset nodes redelivers the platform onto the existing
+volumes.
 
 Wiping the backups is required for correctness, not a side effect. The rebuilt, same-named clusters would
 otherwise inherit the old backup path, and Barman refuses to mix a new Postgres systemID into an existing server's
@@ -560,9 +562,9 @@ restore immediately, force the switch:
 kubectl -n <ns> exec <primary> -c postgres -- psql -U postgres -tAc 'select pg_switch_wal()'
 ```
 
-A RESET (`make reset-cluster`) goes further: it empties the bucket AND `terraform destroy`s it plus the IAM writer.
-The full teardown. A rebuild calls reset internally with `REBUILD_IN_PROGRESS=1`, which skips that destroy so the
-bucket survives.
+Tearing the bucket down is a separate, explicit act: `make s3-backup-destroy` empties it AND `terraform
+destroy`s it plus the IAM writer. Nothing calls that for you, and the OS repo's `make reset-cluster` knows
+nothing about S3: it wipes node state only.
 
 ## Verify end to end
 

@@ -157,7 +157,7 @@ Deliberately NOT policed, listed so it reads as a decision rather than an omissi
 - The Envoy data plane (`mergeGateways` means egress fans out to every backend) and its Gateway controller (same
   namespace, on the ingress critical path).
 - `vmagent` and the VictoriaLogs collector, which scrape everything.
-- `metrics-server` and `nic-keeper`, which are kube-system or host-network.
+- `metrics-server`, and `nic-keeper` (applied by the OS repo's 03d), which are kube-system or host-network.
 - `longhorn`, which runs a node-to-node replication mesh.
 - `vm-operator`, a tiny apiserver-only surface.
 - `03_gateway` and `google-sso`, which have no or thin pods.
@@ -178,10 +178,14 @@ validated, then gets enforced by turning audit off. Three places to look, cheape
 
 ## CoreDNS placement
 
-Talos owns the coredns Deployment, and the anti-affinity patch that keeps its two replicas off one node is a
-chart in the OS repo, delivered here as the wave-0 `coredns` app. The reasoning lives with the chart:
-[03_operating_system.md](https://github.com/yama6a/talos-raspberry-pi5-cluster/blob/main/docs/03_operating_system.md)
-("CoreDNS placement").
+Talos owns the coredns Deployment and sets a `preferred` hostname anti-affinity on it at weight 100. Nothing
+here strengthens that. `preferred` is only a score, summed with ImageLocality and the rest, so on a fresh
+cluster both replicas CAN land on one node and that node then owns all cluster DNS until something
+reschedules them.
+
+That was previously patched to `required` by a wave-0 app. It was removed deliberately: `required` at 2
+replicas leaves a pod Pending forever on a single-node cluster, and the risk was judged not worth the
+mechanism. The `CoreDNS replica down` alert is what catches the failure now.
 
 ## Caveats
 

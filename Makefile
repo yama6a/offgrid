@@ -21,7 +21,7 @@ rebuild-cluster: ## DANGER: redeliver the whole platform + WIPE the S3 backups (
 
 
 
-##@ Cluster delivery  (step 04-09; native helm/kubectl)
+##@ Cluster delivery  (step 01-06; native helm/kubectl)
 .PHONY: install-cilium
 install-cilium: ## 01: install/upgrade the Cilium CNI (+ monitoring CRDs, LB-IPAM/L2, Hubble).
 	bash lib/shell/01_cilium.sh
@@ -50,7 +50,7 @@ configure-sso: ## 04: write the SSO clientID + seal the OAuth client secret (nee
 configure-ntfy-auth: ## 06: seed ntfy users/ACLs + seal Grafana's ntfy write token (needs 05_ntfy synced + .env secret).
 	bash lib/shell/06_ntfy_auth.sh
 
-##@ Backups  (step 13-17; S3 bucket via Terraform + CNPG WAL/base + Redis RDB + Longhorn volume + VM/VL export backups)
+##@ Backups  (step 10a-10e; S3 bucket via Terraform + CNPG WAL/base + Redis RDB + Longhorn volume + VM/VL export backups)
 .PHONY: s3-backup-bucket
 s3-backup-bucket: ## 10a: create/update the shared S3 backup bucket + scoped IAM writer (Terraform; needs .env AWS creds).
 	bash lib/shell/10a_s3_backup_bucket.sh
@@ -88,6 +88,16 @@ backup-secrets-key: ## 03: back up the sealed-secrets master key (do this BEFORE
 restore-secrets-key: ## 03: restore the sealed-secrets master key so committed SealedSecrets decrypt.
 	bash lib/shell/03_restore_sealed_secrets_key.sh
 
+##@ Node lifecycle  (the platform half of what the OS repo's node operations leave behind)
+.PHONY: reconcile-storage
+reconcile-storage: ## After the OS repo's `make recover-node`: drop a rejoined node's stale replicas and reset its Longhorn disk record. NODE=<hostname>, add YES=1 to skip the prompt.
+	@test -n "$(NODE)" || { echo "usage: make reconcile-storage NODE=talos-cp3 [YES=1]"; exit 1; }
+	bash lib/shell/reconcile_storage_after_rejoin.sh $(NODE) $(if $(YES),--yes,)
+
+.PHONY: check-replication-health
+check-replication-health: ## Are Longhorn, CNPG and RabbitMQ all healthy + in sync? Exits non-zero if not. Point the OS repo's PRE_DRAIN_HEALTH_HOOK at this.
+	bash lib/shell/check_replication_health.sh
+
 ##@ Data recovery  (restore from S3: CNPG + Redis + Longhorn + VM/VL. A GitOps-pruned CNPG cluster is not deleted; just restore its files.)
 .PHONY: restore-cnpg
 restore-cnpg: ## Restore a CNPG database from S3, latest or PITR: in-place under its own name, or into a throwaway side cluster (interactive, resumable).
@@ -110,10 +120,6 @@ fix-chart-locks: ## Regenerate any stale Chart.lock (out of sync with Chart.yaml
 	bash lib/shell/fix_chart_locks.sh
 
 ##@ Health & inspection  (read-only)
-
-
-
-
 .PHONY: view-credentials
 view-credentials: ## Print login URLs + credentials (RabbitMQ, ntfy phone, GitHub webhook) and the SSO-only UI URLs.
 	bash lib/shell/view_credentials.sh
@@ -130,7 +136,6 @@ krr-json: ## Rightsizing: same as `krr` but emits JSON.
 krr-yaml: ## Rightsizing: same as `krr` but emits YAML.
 	bash lib/shell/krr.sh -f yaml
 
-##@ Health & inspection  (read-only)
 .PHONY: check-multiarch
 check-multiarch: ## Check every running image has a manifest for every architecture in the cluster. ARCH="amd64" to check before adding such a node.
 	bash lib/shell/check_multiarch.sh

@@ -1,6 +1,0 @@
-dependencies:
-- name: nic-keeper
-  repository: oci://ghcr.io/yama6a/charts
-  version: 1.0.0
-digest: sha256:097631b134c5dcf991329819fcd4a522b1746f46d406b38fd354ce9fb190cfa9
-generated: "2026-08-12T18:46:11.333111828Z"
