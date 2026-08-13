@@ -1,4 +1,4 @@
-# ArgoCD managing itself. 05_argocd.sh installs the same chart and release by hand first; this adopts it.
+# ArgoCD managing itself. 02a_argocd.sh installs the same chart and release by hand first; this adopts it.
 apiVersion: argoproj.io/v1alpha1
 kind: Application
 metadata:

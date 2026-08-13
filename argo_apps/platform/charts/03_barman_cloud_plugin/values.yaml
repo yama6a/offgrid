@@ -1,2 +1,2 @@
 # Nothing to configure. The chart vendors the upstream release manifest verbatim; per-cluster backup config
-# lives in lib/helm/pg-cluster + lib/shell/14_cnpg_backup.sh.
+# lives in lib/helm/pg-cluster + lib/shell/10b_cnpg_backup.sh.

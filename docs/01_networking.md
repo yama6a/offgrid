@@ -2,7 +2,7 @@
 
 The cluster from [step 03](https://github.com/yama6a/talos-raspberry-pi5-cluster/blob/main/docs/03_operating_system.md) comes up with no CNI (`cni: none`) and no kube-proxy
 (`proxy.disabled: true`), both set in [bring-up](https://github.com/yama6a/talos-raspberry-pi5-cluster/blob/main/docs/03_operating_system.md#cluster-bring-up). Cilium fills all of it
-from one install: CNI, load balancer, and node-to-node encryption. `04_cilium.sh` does it and flips the nodes to
+from one install: CNI, load balancer, and node-to-node encryption. `01_cilium.sh` does it and flips the nodes to
 Ready.
 
 - The one component installed imperatively. Everything after it is GitOps.
@@ -40,7 +40,7 @@ Decisions:
 - KubePrism (`localhost:7445`) is Cilium's API endpoint. Pure host networking, so Cilium needs no external LB to
   reach the API server.
 
-## What `04_cilium.sh` does
+## What `01_cilium.sh` does
 
 Native `helm` + `kubectl`, erroring out if either is missing, unlike the dockerized 03b-03d scripts. Talks to the
 cluster via `secrets/kubeconfig` (written by 03c). Idempotent.
@@ -61,7 +61,7 @@ once the operator is up. On a re-run the CRD is already there and it happens in 
 `loadBalancer.enabled=true` and relies on sync-retry.
 
 ```bash
-./04_cilium.sh
+./01_cilium.sh
 ```
 
 Smoke-test the LoadBalancer end to end:
@@ -199,14 +199,14 @@ chart in the OS repo, delivered here as the wave-0 `coredns` app. The reasoning 
   Argo can cut Argo off. Upgrades are normally non-disruptive (per-node agent restart, the eBPF datapath
   persists). The Cilium Application auto-syncs with full `selfHeal` + `prune`, chosen for convenience, so
   upgrades are hands-off but Argo WILL revert an out-of-band fix and WILL cascade-delete a resource or CRD
-  dropped from the chart. Keep `04_cilium.sh` as break-glass, and after using it commit the fix to git FAST,
+  dropped from the chart. Keep `01_cilium.sh` as break-glass, and after using it commit the fix to git FAST,
   before `selfHeal` reverts it. A bad change pushed to git applies unattended and is self-healed in place, so
   mind your pushes: this is the one app that can take the whole cluster down. See
   [02_gitops.md](02_gitops.md).
 
 ## Troubleshooting
 
-- Nodes stay NotReady after `04_cilium.sh`: the agents are not Ready. `kubectl -n kube-system get pods -l
+- Nodes stay NotReady after `01_cilium.sh`: the agents are not Ready. `kubectl -n kube-system get pods -l
   k8s-app=cilium`, then `kubectl -n kube-system logs ds/cilium`. Usual causes are the Talos
   `cgroup`/`securityContext` values missing or wrong, or KubePrism unreachable, in which case check that
   `proxy.disabled` and `kubePrism` landed in the machine config.

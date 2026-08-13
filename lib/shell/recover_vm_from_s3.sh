@@ -46,7 +46,7 @@ BUCKET="$(yq -r '.bucket' "$VB_VALUES")"
 PREFIX="$(yq -r '.prefix' "$VB_VALUES")"
 VMSINGLE="$(yq -r '.vmsingle' "$VB_VALUES")"
 VLSINGLE="$(yq -r '.vlsingle' "$VB_VALUES")"
-[ -n "$BUCKET" ] && [ "$BUCKET" != "null" ] || die "bucket is unset in ${VB_VALUES}: run 17_vm_backup.sh first"
+[ -n "$BUCKET" ] && [ "$BUCKET" != "null" ] || die "bucket is unset in ${VB_VALUES}: run 10e_vm_backup.sh first"
 
 say "VM/VL restore from S3: stream a gzip'd export back into the live store's /import endpoint"
 

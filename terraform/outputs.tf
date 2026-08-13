@@ -1,4 +1,4 @@
-# Consumed by lib/shell/14_cnpg_backup.sh via `terraform output -raw <name>` to seal the in-cluster S3 creds.
+# Consumed by lib/shell/10b_cnpg_backup.sh via `terraform output -raw <name>` to seal the in-cluster S3 creds.
 output "bucket" {
   description = "The backup bucket name."
   value       = aws_s3_bucket.backups.id

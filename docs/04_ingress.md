@@ -58,9 +58,9 @@ fresh external IP per app. `mergeGateways: true` on the `EnvoyProxy` collapses e
 single Envoy Deployment and Service, so the per-app split still presents one ingress point on one IP.
 
 That IP is pinned solely by the `EnvoyProxy` provider annotation `lbipam.cilium.io/ips`, written from `.env`
-`INGRESS_LB_IP` by `07_values.sh`. Per-Gateway `spec.addresses` is dropped everywhere, because multiple Gateways
+`INGRESS_LB_IP` by `04_values.sh`. Per-Gateway `spec.addresses` is dropped everywhere, because multiple Gateways
 asserting an address on the one merged Service would conflict. It must stay inside the LB-IPAM pool, which
-`07_values.sh` enforces, and it is the IP your router forwards to, so keep it stable.
+`04_values.sh` enforces, and it is the IP your router forwards to, so keep it stable.
 
 ### Cutover: free the pinned IP
 
@@ -167,11 +167,11 @@ every HTTPS host lives on its own per-app Gateway, all merged onto the one Envoy
 - `argo_apps/platform/apps/templates/03_gateway.yaml`: the Application, wave 3.
 - `argo_apps/platform/charts/03_gateway/`: the `:80` Gateway plus the ClusterIssuers.
 - A one-line `enableGatewayAPI: true` in `02_cert_manager/values.yaml`.
-- `lib/shell/07_values.sh`: writes `.env`'s `LE_EMAIL` into `acme.email` and propagates
+- `lib/shell/04_values.sh`: writes `.env`'s `LE_EMAIL` into `acme.email` and propagates
   `CLOUDFLARE_WILDCARD_DOMAINS` into `acme.cloudflare.zones` here AND the ingress chart's `cloudflareZones`.
   Values only, no cluster access, so it runs early at bootstrap step 7, before ArgoCD. Non-interactive; commit
   the rewritten files. Writes go through `ys_set`/`ys_set_list`, not `yq -i`: see 02_gitops.md.
-- `lib/shell/07_cloudflare_token.sh`: seals `CLOUDFLARE_API_TOKEN_SECRET` into `cert-manager`. Split out because
+- `lib/shell/04_cloudflare_token.sh`: seals `CLOUDFLARE_API_TOKEN_SECRET` into `cert-manager`. Split out because
   sealing needs the live sealed-secrets controller, so it runs AFTER ArgoCD is up. `make
   configure-cloudflare-token`. Skips and cleans up if the token is empty.
 
@@ -201,7 +201,7 @@ are configured each issuer ALSO gets a `dns01.cloudflare` solver, and cert-manag
 We have Cloudflare for only some domains, so DNS-01 is optional and per-domain. One list drives it:
 `CLOUDFLARE_WILDCARD_DOMAINS` in `.env`, space-separated host tiers on Cloudflare, gated by
 `CLOUDFLARE_API_TOKEN_SECRET` (a scoped API token, Zone:DNS:Edit + Zone:Read). Empty means DNS-01 off and HTTP-01
-for everything. `07_values.sh` writes the zones into two places:
+for everything. `04_values.sh` writes the zones into two places:
 
 - `03_gateway`: each ClusterIssuer gets a `dns01.cloudflare` solver scoped `selector.dnsZones: <zones>` plus the
   existing `http01` catch-all. cert-manager picks the most-specific matching solver per dnsName, so names under a
@@ -221,7 +221,7 @@ cert-manager runs a DNS self-check before validation. It is pointed at public re
 NetworkPolicy allows egress on `:53` and `:443` to the world for the Cloudflare API and that check.
 
 After changing the ingress chart you must re-vendor its consumers with `helm dependency update` per consumer.
-`07_values.sh` prints the exact loop.
+`04_values.sh` prints the exact loop.
 
 ### Enabling Gateway API in cert-manager
 
@@ -308,9 +308,9 @@ A chart declares only its ingress: domain, hosts and backends. Plain edges. Whic
 whom, is the central `hosts` list in `04_google_sso/values.yaml`:
 
 ```yaml
-domain: example.com        # written by 07_values.sh from .env BASE_DOMAIN
+domain: example.com        # written by 04_values.sh from .env BASE_DOMAIN
 issuer: letsencrypt-prod
-allowlist:                 # written by 07_values.sh from .env SSO_ALLOWLIST
+allowlist:                 # written by 04_values.sh from .env SSO_ALLOWLIST
   - you@example.com
 hosts:
   - subdomain: argocd.ops                    # a platform UI
@@ -361,7 +361,7 @@ trusts `argocd.<domain>`. The `google-sso.<domain>` callback edge is separate an
 | a subdomain to an existing ingress | nothing, if the domain is already gated | add `{ subdomain, targetService, targetPort }` to that ingress's `hosts:` |
 | protection for a host | nothing | add a `subdomain` to `04_google_sso` `hosts` |
 | change who may log in | nothing | set `SSO_ALLOWLIST` in `.env`, run `make configure-values` |
-| a different base domain | one redirect URI, plus the apex under "Authorized domains" | set `BASE_DOMAIN` in `.env`, run `make configure-values`, then `07_google_sso.sh` |
+| a different base domain | one redirect URI, plus the apex under "Authorized domains" | set `BASE_DOMAIN` in `.env`, run `make configure-values`, then `04_google_sso.sh` |
 
 Moving to a base domain `example.org`:
 
@@ -369,7 +369,7 @@ Moving to a base domain `example.org`:
 2. Point `google-sso.example.org` and each gated host at the router, with the `:80` forward for HTTP-01.
 3. In Google, add `example.org` under Authorized domains and
    `https://google-sso.example.org/oauth2/callback` as a redirect URI.
-4. Run `lib/shell/07_google_sso.sh`, which prints the URIs, writes `clientID` and re-seals the secret. Commit and
+4. Run `lib/shell/04_google_sso.sh`, which prints the URIs, writes `clientID` and re-seals the secret. Commit and
    push.
 5. Flip `issuer` to `letsencrypt-prod` once the staging callback cert issues.
 
@@ -377,18 +377,18 @@ Moving to a base domain `example.org`:
 
 Envoy Gateway's `authorization` takes allowed emails as inline literals and cannot read them from a Secret, so
 they live in `04_google_sso/values.yaml` under `allowlist`, written there from `.env` `SSO_ALLOWLIST` by
-`07_values.sh`. Change access with `make configure-values` then push; no script prompts for them. Only the OAuth client secret is sealed, see
+`04_values.sh`. Change access with `make configure-values` then push; no script prompts for them. Only the OAuth client secret is sealed, see
 [03_secrets.md](03_secrets.md).
 
 ### Fail-closed until sealed
 
-Until `07_google_sso.sh` seals the client secret and you commit it, the policy references a missing Secret and the
+Until `04_google_sso.sh` seals the client secret and you commit it, the policy references a missing Secret and the
 placeholder `clientID` denies everyone. A half-configured policy never leaks access. Run the script first.
 
 ### Apply and verify
 
 1. Put `GOOGLE_SSO_CLIENT_ID` and `GOOGLE_SSO_CLIENT_SECRET` in the gitignored `.env`, then run
-   `lib/shell/07_google_sso.sh`, which needs the cluster for `kubeseal`. It reads the domains from
+   `lib/shell/04_google_sso.sh`, which needs the cluster for `kubeseal`. It reads the domains from
    `04_google_sso/values.yaml`, prints the redirect URIs, writes `clientID`, and seals the secret. Edit the
    `hosts` list and the `allowlist` by hand.
 2. Register each printed redirect URI on the one OAuth client, and add each apex under "Authorized domains".

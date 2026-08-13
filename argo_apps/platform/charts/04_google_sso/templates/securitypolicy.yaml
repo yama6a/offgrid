@@ -5,7 +5,7 @@ Login gate is oidc; authorization is per-host, each rule allowing a host only fo
 no rule is denied, which includes the callback whoami itself.
 */}}
 {{- $oidc := .Values.oidc -}}
-{{- $domain := required "domain is required (07_values.sh writes it from .env BASE_DOMAIN)" .Values.domain -}}
+{{- $domain := required "domain is required (04_values.sh writes it from .env BASE_DOMAIN)" .Values.domain -}}
 {{- $slug := $domain | replace "." "-" }}
 ---
 apiVersion: gateway.envoyproxy.io/v1alpha1

@@ -2,7 +2,7 @@
 
 ArgoCD is the last component installed imperatively. From here on everything is GitOps. It manages itself from a
 wrapper chart in this repo, adopts the already-running Cilium, and becomes the delivery path for every later app.
-`05_argocd.sh` does the one-time bootstrap.
+`02a_argocd.sh` does the one-time bootstrap.
 
 Source of truth is `argo_apps/platform/charts/01_argocd/`. The script installs that chart by hand, then hands off
 to git: ArgoCD adopts the same release (same chart, namespace, release name, values) so Argo sees it in-sync
@@ -18,13 +18,13 @@ rather than fighting it. No version and no value lives in the script.
 
 ```
 argo_apps/
-  root.yaml              # the ROOT-OF-ROOTS (applied once by 05_argocd.sh); recurses roots/
+  root.yaml              # the ROOT-OF-ROOTS (applied once by 02a_argocd.sh); recurses roots/
   roots/
     0_platform.yaml      #   Application "platform"  (sync-wave 0), renders platform/apps
     1_workloads.yaml     #   Application "workloads" (sync-wave 1), renders workloads/apps
   platform/
     apps/                #   a chart: repoURL in values.yaml, one Application per app in templates/
-      values.yaml        #     the ONE repoURL for this tree, written by 07_values.sh
+      values.yaml        #     the ONE repoURL for this tree, written by 04_values.sh
       templates/
         00_cilium.yaml   #     adopts Cilium      (auto-sync, selfHeal+prune), wave 0
         01_argocd.yaml   #     ArgoCD self-manage (automated),                 wave 1
@@ -150,7 +150,7 @@ The 2-replica components carry `global.topologySpreadConstraints` (`maxSkew 1`, 
 
 - Git auth is anonymous by default, with a single-repo PAT for private repos. The repo is public, so ArgoCD clones
   it anonymously over HTTPS with no secret. To run this against a private repo, or to lift the anonymous git rate
-  limit, `05_argocd.sh` seeds a read-only PAT before hand-off. See [Git auth](#git-auth).
+  limit, `02a_argocd.sh` seeds a read-only PAT before hand-off. See [Git auth](#git-auth).
 - Cilium auto-syncs with full `selfHeal` and `prune`, the same as every leaf, chosen for convenience even though
   it is the one app that can cut Argo and the cluster off its own network. That circular dependency is called out
   in [01_networking.md](01_networking.md). Auto-sync gives hands-off upgrades; the knowingly-accepted danger is
@@ -161,7 +161,7 @@ The 2-replica components carry `global.topologySpreadConstraints` (`maxSkew 1`, 
   matches live.
 - `Chart.lock` must be committed for any wrapper chart with a REMOTE dependency, because ArgoCD's repo-server
   renders with `helm dependency build`, which requires it. `01_argocd`'s is generated on the first run of
-  `05_argocd.sh`; commit it before the `argocd` app reconciles, and the script reminds you.
+  `02a_argocd.sh`; commit it before the `argocd` app reconciles, and the script reminds you.
 - `global.networkPolicy.create` is pinned `false`. The chart defaults it true, which renders standard k8s
   NetworkPolicy objects, and the server's is `ingress: - {}`, allow-all. Cilium enforces those too and UNIONs them
   with our own default-deny policy for the argocd namespace, so an allow-all NP would blow the default-deny open
@@ -207,7 +207,7 @@ This repo is public, so ArgoCD clones it anonymously over HTTPS with no credenti
 git smart-HTTP rather than the REST API, so even the fast-poll setting stays well under GitHub's limits. Sync is
 webhook-driven anyway, with the poll only a slow fallback.
 
-For a private repo, or to lift the anonymous rate limit, `05_argocd.sh` seeds a credential: at hand-off it reads
+For a private repo, or to lift the anonymous rate limit, `02a_argocd.sh` seeds a credential: at hand-off it reads
 `ARGOCD_GITHUB_PAT_SECRET`, a fine-grained read-only single-repo PAT, from the gitignored `.env`. Leave it empty
 for a public repo. It then creates an ArgoCD `repository` Secret, labelled `argocd.argoproj.io/secret-type:
 repository` with `url` equal to the polled `repoURL`, before applying the root app.
@@ -218,7 +218,7 @@ repository` with `url` equal to the polled `repoURL`, before applying the root a
 #   Permissions: Repository -> Contents -> Read-only   (nothing else)
 # Put it in .env:  ARGOCD_GITHUB_PAT_SECRET="github_pat_..."   (gitignored; empty = anonymous clone)
 # Then run the script (no prompt):
-lib/shell/05_argocd.sh
+lib/shell/02a_argocd.sh
 ```
 
 Why the credential is seeded imperatively rather than via sealed-secrets: a private repo's clone credential cannot
@@ -241,7 +241,7 @@ the poll demoted to a slow safety net.
 
 Poll is the slow fallback, toggled from `.env`. `POLL_SYNC_ENABLED` drives `timeout.reconciliation`: `false`, the
 default, gives `300s` as a 5-minute net for a dropped webhook, and `true` gives a `60s` fast poll.
-`08_argocd_webhook.sh` writes it into `01_argocd/values.yaml`, which is the single source ArgoCD reads, so do not
+`02b_argocd_webhook.sh` writes it into `01_argocd/values.yaml`, which is the single source ArgoCD reads, so do not
 hand-edit `timeout.reconciliation`; flip the `.env` knob and re-run the script.
 
 We keep the `300s` default rather than `60s`: the poll re-drives OutOfSync apps and recomputes stale health, but it
@@ -249,7 +249,7 @@ does NOT re-drive a FAILED sync, which is `syncPolicy.retry`'s job. So a faster 
 convergence, and it costs controller CPU that scales with object count. We also do not use `0s`, fully off,
 because a lost webhook would then never recover and `0s` also needs `ARGOCD_DEFAULT_CACHE_EXPIRATION` tuned.
 
-The webhook secret is generated, not configured. `08_argocd_webhook.sh` mints a random shared secret, writes the
+The webhook secret is generated, not configured. `02b_argocd_webhook.sh` mints a random shared secret, writes the
 plaintext to `secrets/argocd-github-webhook-secret.txt` (the gitignored off-repo store, for pasting into GitHub)
 and seals it into `argocd-secret`'s `webhook.github.secret` key. Re-running reuses the stored value, so the secret
 you configured in GitHub keeps working. Delete the file to rotate.
@@ -260,13 +260,13 @@ Secret, since ArgoCD self-heal would otherwise fight the key we merge in.
 
 The catch: `argocd-server` reads `argocd-secret` at startup and FATALS if it is absent. It only populates
 `server.secretkey` and TLS into a secret that already exists, and does not reliably create it on a cold cluster.
-With `createSecret: false` nothing else creates it before boot, so `05_argocd.sh` seeds an empty `argocd-secret`
+With `createSecret: false` nothing else creates it before boot, so `02a_argocd.sh` seeds an empty `argocd-secret`
 BEFORE the Helm install, and `argocd-server` then writes its own `server.secretkey` into it.
 
 The webhook key arrives separately: the wave-3 `argocd-webhook-secret` app seals in PATCH mode
 (`sealedsecrets.bitnami.com/patch: "true"`), which merges `webhook.github.secret` in and leaves `server.secretkey`
 intact. Patch mode only works if the LIVE Secret already carries that annotation, because the controller checks
-the existing object rather than the SealedSecret template, so `05_argocd.sh` sets it on the seeded secret up front
+the existing object rather than the SealedSecret template, so `02a_argocd.sh` sets it on the seeded secret up front
 in both bootstrap and rebuild.
 
 The sealed secret lives in a SEPARATE wave-3 app, not the wave-1 argocd chart. The `SealedSecret` is delivered by
@@ -284,7 +284,7 @@ Set up the GitHub webhook once, after the cluster is reachable on its prod cert:
 
 ```text
 # 1) Seal the secret + set the poll cadence (writes secrets/argocd-github-webhook-secret.txt):
-make configure-argocd-webhook          # == lib/shell/08_argocd_webhook.sh
+make configure-argocd-webhook          # == lib/shell/02b_argocd_webhook.sh
 git add -A && git commit -m "argocd: github webhook sync" && git push
 
 # 2) GitHub repo -> Settings -> Webhooks -> Add webhook:
@@ -344,9 +344,9 @@ Decisions worth keeping:
 Self-management caveat: ArgoCD manages the app that exposes ArgoCD, so a bad push is reverted by selfHeal and
 port-forward is the escape hatch if you ever wedge it.
 
-## What `05_argocd.sh` does
+## What `02a_argocd.sh` does
 
-Native `helm` and `kubectl`, erroring out if either is missing, like `04_cilium.sh` and unlike the dockerized
+Native `helm` and `kubectl`, erroring out if either is missing, like `01_cilium.sh` and unlike the dockerized
 03b-03d scripts. Talks to the cluster via `secrets/kubeconfig`. Idempotent.
 
 1. Prereqs: `kubectl` and `helm` present, kubeconfig reachable, the chart and root app exist, and Cilium is up,
@@ -365,10 +365,10 @@ Native `helm` and `kubectl`, erroring out if either is missing, like `04_cilium.
 ```bash
 # 1) generate the argo-cd Chart.lock (first time only), commit, and PUSH:
 helm dependency update argo_apps/platform/charts/01_argocd
-git add -A && git commit -m "step 05: ArgoCD" && git push
+git add -A && git commit -m "step 02a: ArgoCD" && git push
 
 # 2) bootstrap:
-lib/shell/05_argocd.sh
+lib/shell/02a_argocd.sh
 
 # 3) reach the UI (no login: anonymous is admin, local admin disabled):
 kubectl -n argocd port-forward svc/argocd-server 8080:80
@@ -396,7 +396,7 @@ kubectl -n argocd port-forward svc/argocd-server 8080:80
   write with a `yq -r` read-back. Writing a kubeseal-generated file with `yq` is also fine, since it is
   regenerated wholesale each run.
 - Self-management is real. Once the `argocd` app is Synced, changes to `01_argocd/values.yaml` are applied by
-  ArgoCD to itself on push. A bad value can disrupt ArgoCD briefly; it self-heals, and `05_argocd.sh` remains
+  ArgoCD to itself on push. A bad value can disrupt ArgoCD briefly; it self-heals, and `02a_argocd.sh` remains
   break-glass, since re-running forces the release back to the chart.
 - The leftover Helm release secret (`sh.helm.release.v1.argocd.*` in `argocd`) from the by-hand install is
   harmless. Once the app is adopted you may delete it.
@@ -408,7 +408,7 @@ kubectl -n argocd port-forward svc/argocd-server 8080:80
 - `argocd` app `OutOfSync` with a `helm dependency build` error: `Chart.lock` is not committed, or is stale. Run
   `helm dependency update argo_apps/platform/charts/01_argocd`, commit the lock, re-sync.
 - `cilium` app `OutOfSync`: it auto-syncs with `selfHeal`, so a transient OutOfSync is normally dragged straight
-  back to the git state. A break-glass `04_cilium.sh` fix not yet in git gets reverted, so commit it fast. A
+  back to the git state. A break-glass `01_cilium.sh` fix not yet in git gets reverted, so commit it fast. A
   persistent OutOfSync means Argo cannot sync at all, from a `Chart.lock`, CRD or path issue; fix those and it
   reconciles.
 - `server` or `repo-server` pods pending: the `DoNotSchedule` topology spread needs 2 schedulable nodes free.

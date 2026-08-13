@@ -1,7 +1,7 @@
 namespace: gateway                       # must equal the ingress chart's hardcoded gateway namespace
 callbackImage: "traefik/whoami:v1.12.0"  # Envoy intercepts /oauth2/callback before it reaches this
 
-# One Google client for everything. clientID written by 07_google_sso.sh, the secret is sealed.
+# One Google client for everything. clientID written by 04_google_sso.sh, the secret is sealed.
 oidc:
   clientID: ""
   clientSecretName: google-oauth   # sealed Secret, key `client-secret`
@@ -18,12 +18,12 @@ oidc:
 # The registrable domain every gated host sits under. ONE domain, deliberately: the policy sets a single
 # cookieDomain and a single callback host, and a cookie only ever reaches that domain and its subdomains, so a
 # host outside it would never receive the id token and would loop through Google forever.
-domain: example.com        # written by 07_values.sh from .env BASE_DOMAIN
+domain: example.com        # written by 04_values.sh from .env BASE_DOMAIN
 issuer: letsencrypt-prod   # callback cert issuer (letsencrypt-staging | letsencrypt-prod)
 
 # Who may log in, applied to every gated host below. Never leave this empty on a real deployment: an empty
 # allowlist denies everyone, including you.
-allowlist:                 # written by 07_values.sh from .env SSO_ALLOWLIST
+allowlist:                 # written by 04_values.sh from .env SSO_ALLOWLIST
   - you@example.com
 
 # Which hosts are SSO-gated. `subdomain` composes against `domain` into the FQDN its ingress renders, because

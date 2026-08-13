@@ -1,4 +1,4 @@
-# All values come from .env via TF_VAR_* (exported by lib/shell/13_s3_backup_bucket.sh). No committed tfvars.
+# All values come from .env via TF_VAR_* (exported by lib/shell/10a_s3_backup_bucket.sh). No committed tfvars.
 variable "region" {
   description = "AWS region for the backup bucket (.env AWS_REGION)."
   type        = string

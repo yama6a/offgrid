@@ -140,11 +140,11 @@ cilium:
       cleanCiliumState: [NET_ADMIN, SYS_ADMIN, SYS_RESOURCE]
 
 # LB-IPAM pool + L2 announcement policy (templates/cilium-lb.yaml). These reference CRDs the operator only
-# registers at runtime, so 04_cilium.sh installs with this OFF first, waits for the operator, then re-applies
+# registers at runtime, so 01_cilium.sh installs with this OFF first, waits for the operator, then re-applies
 # with it ON. ArgoCD just leaves it true.
 loadBalancer:
   enabled: true
-  # Written here by 04_cilium.sh from .env, don't hand-edit: change it in the .env and re-run the script.
+  # Written here by 01_cilium.sh from .env, don't hand-edit: change it in the .env and re-run the script.
   ipPool:
     start: ""
     stop: ""

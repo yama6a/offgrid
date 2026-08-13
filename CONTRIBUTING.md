@@ -21,7 +21,7 @@ at a glance.
 | `secrets/` | cluster credentials written by the OS repo. A symlink to an off-repo store, never committed |
 | `.cache/` | scratch: benchmark runs. Gitignored |
 
-Run the steps in order: `04_cilium`, `05_argocd`, and onward. Either by hand (`bash lib/shell/NN_name.sh`) or
+Run the steps in order: `01_cilium`, `02a_argocd`, and onward. Either by hand (`bash lib/shell/NN_name.sh`) or
 via the Makefile.
 
 This repo starts from a cluster that already exists. Hardware, Talos and node lifecycle live in
@@ -39,15 +39,15 @@ Every value lives in exactly one place.
 | Fixed identifiers that are not per-deployment config (namespaces, operator names) | constants in `lib/shell/common.sh` |
 | Internals used by one script (its own check expectations, asset filenames, tool refs it alone runs) | that script |
 
-**No per-deployment value is ever hand-edited into a chart.** `lib/shell/07_values.sh` (`make configure-values`)
+**No per-deployment value is ever hand-edited into a chart.** `lib/shell/04_values.sh` (`make configure-values`)
 reads `.env` and stamps every one of them into the chart values Argo CD renders: the repo URL in all five places
 that carry it, `BASE_DOMAIN` into every public hostname, the SSO allowlist, the ingress IP, the ACME email and
 the Cloudflare zones. That is what lets a fork change one gitignored file and rebase on upstream without
-conflicts. If you add a per-deployment value, add it to `.env.example` and teach `07_values.sh` to write it; do
+conflicts. If you add a per-deployment value, add it to `.env.example` and teach `04_values.sh` to write it; do
 not commit it into a chart.
 
 It **writes** values only, and must stay that way: Argo CD reconciles the pushed remote, so these values have to
-be committed and pushed before the bootstrap reaches `05_argocd.sh`. Anything that applies to the cluster
+be committed and pushed before the bootstrap reaches `02a_argocd.sh`. Anything that applies to the cluster
 (sealing a secret) goes in a later step instead.
 
 It does **read** the cluster, for one thing: the control-plane node IPs that become the vm-k8s-stack scrape
@@ -80,7 +80,7 @@ Sourced by every script. It self-locates the repo root, loads `.env`, derives th
 writers.
 
 **Never write a tracked YAML file with `yq -i`.** It rewrites the whole document and drops the blank line before
-a comment block, so even a no-op write leaves the file dirty, which aborts the rebuild at `05_argocd`'s
+a comment block, so even a no-op write leaves the file dirty, which aborts the rebuild at `02a_argocd`'s
 uncommitted-changes gate. Use the line-surgical writers instead, and assert the result with a `yq -r` read-back:
 
 | Writer | Sets |
@@ -126,7 +126,7 @@ namespace, gateway class and fallback issuer; `rabbitmq-topology`'s broker and v
 
 ```
 argo_apps/
-  root.yaml                 # root-of-roots, applied once by 05_argocd.sh
+  root.yaml                 # root-of-roots, applied once by 02a_argocd.sh
   roots/                    #   platform (wave 0) and workloads (wave 1)
   platform/{apps,charts}/   # CNI, operators, CRDs, storage, gateway, SSO, monitoring, platform-ingress
   workloads/{apps,charts}/  # the actual apps

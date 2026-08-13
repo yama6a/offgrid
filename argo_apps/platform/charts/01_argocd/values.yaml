@@ -49,11 +49,11 @@ argo-cd:
       reposerver.parallelism.limit: "4"
     # We merge the GitHub webhook secret into argocd-secret out of band (patch-mode), and chart ownership would
     # make self-heal fight that merge. The catch: nothing then creates argocd-secret on a COLD cluster and
-    # argocd-server fatals without it, so 05_argocd.sh seeds an empty one before the install and marks it
+    # argocd-server fatals without it, so 02a_argocd.sh seeds an empty one before the install and marks it
     # patch-managed. The SealedSecret itself is the separate wave-3 03_argocd_webhook_secret app.
     secret:
       createSecret: false
-    # Git pushes hit /api/webhook, so this poll is only a fallback. 08_argocd_webhook.sh OWNS this value from
+    # Git pushes hit /api/webhook, so this poll is only a fallback. 02b_argocd_webhook.sh OWNS this value from
     # .env POLL_SYNC_ENABLED, do not hand-edit it. Deliberately not 0s, so a missed webhook still converges.
     cm:
       timeout.reconciliation: 300s

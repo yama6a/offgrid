@@ -57,7 +57,7 @@ fi
 # template so the controller MERGES into argocd-secret instead of replacing it:
 #   - sealedsecrets.bitnami.com/patch: "true"  -> merge webhook.github.secret in, KEEP server.secretkey
 #   - app.kubernetes.io/part-of: argocd         -> the label ArgoCD's secret informer selects on
-# The patch annotation must ALSO be on the LIVE argocd-secret for the first merge (step 4 / 05_argocd.sh).
+# The patch annotation must ALSO be on the LIVE argocd-secret for the first merge (step 4 / 02a_argocd.sh).
 say "sealing ${WEBHOOK_KEY} -> ${SEALED_OUT}"
 seal_secret "$SEAL_NAME" "$SEAL_NAMESPACE" "$SEALED_OUT" "${WEBHOOK_KEY}=${WEBHOOK_SECRET}"
 if [ -s "$SEALED_OUT" ]; then   # yq -i is fine here, unlike on hand-written values: kubeseal rewrites this file whole every run
@@ -70,7 +70,7 @@ if [ -s "$SEALED_OUT" ]; then   # yq -i is fine here, unlike on hand-written val
   fi
 fi
 
-# 05_argocd.sh already does this in both orchestrators; repeat it here so a standalone run (e.g.
+# 02a_argocd.sh already does this in both orchestrators; repeat it here so a standalone run (e.g.
 # `make configure-argocd-webhook` on a live cluster) is self-sufficient. Without the annotation on the
 # EXISTING Secret, the controller refuses to touch the argocd-server-created argocd-secret. Best-effort.
 say "marking the live argocd-secret patch-managed"
@@ -78,7 +78,7 @@ if kubectl -n "$SEAL_NAMESPACE" get secret "$SEAL_NAME" >/dev/null 2>&1; then
   kubectl -n "$SEAL_NAMESPACE" annotate secret "$SEAL_NAME" sealedsecrets.bitnami.com/patch=true --overwrite >/dev/null 2>&1 \
     && ok "live ${SEAL_NAME} annotated patch-managed" || warn "could not annotate live ${SEAL_NAME}; do it by hand if the merge is refused"
 else
-  warn "live ${SEAL_NAME} not present yet (created by argocd-server); 05_argocd.sh annotates it, or annotate by hand later"
+  warn "live ${SEAL_NAME} not present yet (created by argocd-server); 02a_argocd.sh annotates it, or annotate by hand later"
 fi
 
 say "writing timeout.reconciliation=${RECON} into ${ARGOCD_VALUES}"

@@ -1,5 +1,5 @@
 apiVersion: v2
 name: redis-backup
-description: One CronJob that discovers every durable Redis cluster-wide by label and dumps each to S3 as an RDB. Sealed S3 creds committed by lib/shell/15_redis_backup.sh.
+description: One CronJob that discovers every durable Redis cluster-wide by label and dumps each to S3 as an RDB. Sealed S3 creds committed by lib/shell/10c_redis_backup.sh.
 type: application
 version: 0.1.0 # local chart, never bump version

@@ -34,7 +34,7 @@ require kubectl helm yq
 [ -f "${ROOT_APP}" ] || die "no root app at ${ROOT_APP}"
 use_kubeconfig
 assert_api
-kubectl -n kube-system get ds/cilium >/dev/null 2>&1 || die "Cilium not found, run step 04 (04_cilium.sh) first"
+kubectl -n kube-system get ds/cilium >/dev/null 2>&1 || die "Cilium not found, run step 04 (01_cilium.sh) first"
 ok "kubectl + helm present, API reachable, chart + root app found, Cilium up"
 
 say "helm dependency build (${CHART_DIR})"
@@ -100,7 +100,7 @@ kubectl -n "$NS" rollout status deploy/argocd-server --timeout=180s >/dev/null 2
 # apps report a ComparisonError. Re-running after pushing is safe.
 say "handing off to GitOps (kubectl apply root)"
 
-# repoURL is written by 07_values.sh, which runs before the bootstrap's commit+push, so by here it is already
+# repoURL is written by 04_values.sh, which runs before the bootstrap's commit+push, so by here it is already
 # committed. Assert rather than rewrite: a mismatch means 07 was skipped and ArgoCD would reconcile the wrong
 # remote.
 [ -n "$REPO_URL" ] || die "REPO_URL is empty, set it in .env"

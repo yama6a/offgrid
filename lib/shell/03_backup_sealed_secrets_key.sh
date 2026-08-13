@@ -5,7 +5,7 @@
 # carrying the sealed-secrets-key label, not just the active one. Re-run after each rotation.
 # Idempotent: overwrites the backup with the current full key set.
 #
-# Restore: 06_restore_sealed_secrets_key.sh
+# Restore: 03_restore_sealed_secrets_key.sh
 set -uo pipefail
 
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"

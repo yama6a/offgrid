@@ -4,13 +4,13 @@
 #
 # Sequence:
 #   1. git add/commit/push             : ArgoCD deploys the REMOTE repo, not your laptop, so sync it first
-#   2. 04_cilium.sh                    : CNI + prometheus-operator CRDs + LB-IPAM/L2 + Hubble
+#   2. 01_cilium.sh                    : CNI + prometheus-operator CRDs + LB-IPAM/L2 + Hubble
 #   3. git add/commit/push             : 04 wrote the LB range into the chart values; 05 refuses a dirty argo_apps/
-#   4. 05_argocd.sh                    : bootstrap ArgoCD, which then deploys everything else from git
-#   5. 06_restore_sealed_secrets_key.sh: restore the master key so committed SealedSecrets decrypt
-#   6. 13_s3_backup_bucket.sh wipe     : DELETE all backups in the bucket, keeping the bucket and IAM
+#   4. 02a_argocd.sh                    : bootstrap ArgoCD, which then deploys everything else from git
+#   5. 03_restore_sealed_secrets_key.sh: restore the master key so committed SealedSecrets decrypt
+#   6. 10a_s3_backup_bucket.sh wipe     : DELETE all backups in the bucket, keeping the bucket and IAM
 #   7. converge argocd apps            : settle, then drive every app to Synced+Healthy
-#   8. 10_ntfy_auth.sh                 : seed ntfy users, seal Grafana's token, push it, restart grafana
+#   8. 06_ntfy_auth.sh                 : seed ntfy users, seal Grafana's token, push it, restart grafana
 #   9. verify ingress serving          : wait until each HTTPS host serves an LE cert
 #
 # A rebuild is a FULL fresh start: it wipes local data AND the S3 backups, so the empty same-named clusters
@@ -39,12 +39,12 @@ cd "$REPO_ROOT" || exit 1           # run from the repo root (git ops); set -e i
 # ---- knobs ------------------------------------------------------------------
 STEP=0; STEP_TOTAL=9                            # shared step counter (common.sh step/run_step); bump TOTAL if you add/remove a step
 STEP_DIR="$SCRIPT_DIR"                          # every step script (+ the reset script) is a sibling of this orchestrator in lib/shell/
-RESTORE="${STEP_DIR}/06_restore_sealed_secrets_key.sh"
+RESTORE="${STEP_DIR}/03_restore_sealed_secrets_key.sh"
 KUBECONFIG_FILE="${CLUSTER_DIR}/kubeconfig"
 INGRESS_GW_NS="gateway"                        # namespace of the shared Gateway
 # operational knobs for this orchestrator:
 COMMIT_MSG="rebuild: sync working tree before cluster rebuild"
-COMMIT_MSG_SYNC="rebuild: sync LB range written by 04_cilium"
+COMMIT_MSG_SYNC="rebuild: sync LB range written by 01_cilium"
 INGRESS_WAIT=900                               # max secs to wait for the ingress to actually serve (HTTP-01 issuance is slow)
 INGRESS_HOSTS=""                               # space-separated hosts to check; empty = derive from the Gateway's HTTPS listeners
 CONVERGE_SETTLE=120                            # secs to let ArgoCD create its apps + roll the early waves before the backstop kicks in
@@ -64,8 +64,8 @@ This will REDELIVER the entire platform onto the cluster ${KUBECONFIG_FILE} poin
   nodes : NOT touched. To wipe Talos itself, do that first in the OS repo:
           https://github.com/yama6a/talos-raspberry-pi5-cluster  ->  make reset-cluster && make bootstrap-cluster
 
-Have a CURRENT sealed-secrets key backup (06_backup_sealed_secrets_key.sh), else SSO won't decrypt
-until you re-seal (07_google_sso). ntfy alerting is seeded post-boot via 10_ntfy_auth regardless.
+Have a CURRENT sealed-secrets key backup (03_backup_sealed_secrets_key.sh), else SSO won't decrypt
+until you re-seal (04_google_sso). ntfy alerting is seeded post-boot via 06_ntfy_auth regardless.
 EOF
 confirm_word_always REBUILD || { echo "aborted (phew!)."; exit 0; }
 
@@ -89,12 +89,12 @@ NODE_COUNT="$(kubectl get nodes --no-headers 2>/dev/null | wc -l | tr -d ' ')"
        there:  make reset-cluster && make bootstrap-cluster"
 ok "${NODE_COUNT} node(s) reachable"
 
-run_step "CNI + monitoring CRDs + LB/L2 + Hubble"                 "$STEP_DIR" 04_cilium.sh
+run_step "CNI + monitoring CRDs + LB/L2 + Hubble"                 "$STEP_DIR" 01_cilium.sh
 
-# 04_cilium writes the .env LB-IPAM range into 00_cilium's values.yaml, AFTER the commit above, and 05 refuses
+# 01_cilium writes the .env LB-IPAM range into 00_cilium's values.yaml, AFTER the commit above, and 05 refuses
 # to hand off with argo_apps/ dirty. So sync again here: a changed LB_RANGE_* is a real edit only this step can
 # catch. Same step the bootstrap orchestrator runs between 04/07 and 05.
-step "git add + commit + push (04_cilium's LB range)"
+step "git add + commit + push (01_cilium's LB range)"
 git add -A
 if git diff --cached --quiet; then
   ok "nothing new to commit"
@@ -104,11 +104,11 @@ fi
 git push || die "git push failed, ArgoCD deploys the REMOTE; push manually then resume from 05 by hand"
 ok "remote up to date"
 
-run_step "bootstrap ArgoCD; it deploys the rest from git"         "$STEP_DIR" 05_argocd.sh
+run_step "bootstrap ArgoCD; it deploys the rest from git"         "$STEP_DIR" 02a_argocd.sh
 
 # Waits for the controller (ArgoCD wave 2), applies the backed-up key + restarts it, so the committed
 # SealedSecrets decrypt. Fails cleanly (no backup / controller never came up) without wedging the rebuild.
-run_step "restore the backed-up sealed-secrets master key" "$STEP_DIR" 06_restore_sealed_secrets_key.sh best-effort \
+run_step "restore the backed-up sealed-secrets master key" "$STEP_DIR" 03_restore_sealed_secrets_key.sh best-effort \
   "key restore didn't complete (see above), restore by hand once sealed-secrets is up, or re-seal (07/09) + commit/push"
 
 # A rebuild discards the local data, so discard the old backups too, else the fresh, same-named clusters
@@ -117,7 +117,7 @@ run_step "restore the backed-up sealed-secrets master key" "$STEP_DIR" 06_restor
 # run_step (which can't pass the `wipe` arg); ASSUME_YES=1 so 13 doesn't re-prompt (the REBUILD confirm covers it).
 if [ -n "$AWS_DEPLOY_ACCESS_KEY_ID" ]; then
   step "wipe the S3 backups (rebuild = fresh start; bucket + IAM kept)"
-  if ASSUME_YES=1 bash "${STEP_DIR}/13_s3_backup_bucket.sh" wipe </dev/null; then
+  if ASSUME_YES=1 bash "${STEP_DIR}/10a_s3_backup_bucket.sh" wipe </dev/null; then
     ok "S3 backups wiped"
   else
     warn "S3 wipe didn't complete; empty it by hand ('make s3-backup-wipe') before the new clusters archive"
@@ -139,12 +139,12 @@ sleep "$CONVERGE_SETTLE"
 converge_argocd_apps "$CONVERGE_WAIT" || true
 
 # The reset wiped ntfy's Longhorn PVC, so ntfy came back with an EMPTY auth DB and the committed grafana-ntfy
-# token is stale. 10_ntfy_auth.sh re-creates the phone/grafana users + ACLs and mints + re-seals a FRESH token;
+# token is stale. 06_ntfy_auth.sh re-creates the phone/grafana users + ACLs and mints + re-seals a FRESH token;
 # push it (ArgoCD applies it) and restart Grafana to pick up GF_NTFY_TOKEN. Skipped when the .env password is
 # empty. Best-effort. See docs/06_monitoring.md.
 if [ -n "$NTFY_PHONE_PASSWORD_SECRET" ]; then
-  if run_step "seed ntfy users + seal Grafana's ntfy token" "$STEP_DIR" 10_ntfy_auth.sh best-effort \
-       "10_ntfy_auth didn't complete; re-run 'make configure-ntfy-auth' + commit/push once ntfy is up"; then
+  if run_step "seed ntfy users + seal Grafana's ntfy token" "$STEP_DIR" 06_ntfy_auth.sh best-effort \
+       "06_ntfy_auth didn't complete; re-run 'make configure-ntfy-auth' + commit/push once ntfy is up"; then
     git add -A
     if git diff --cached --quiet; then ok "no ntfy token change to commit"; else
       git commit -m "rebuild: re-seal Grafana ntfy token" >/dev/null && ok "committed sealed ntfy token" || warn "commit failed; commit by hand"
@@ -175,7 +175,7 @@ envoy-gateway, gateway, SSO, monitoring). Watch it:
 
 Notes:
   - If the key restore (STEP 8) didn't run, do it once sealed-secrets is up
-    (lib/shell/06_restore_sealed_secrets_key.sh), or re-seal with 07_google_sso and commit+push.
+    (lib/shell/03_restore_sealed_secrets_key.sh), or re-seal with 04_google_sso and commit+push.
   - ntfy alerting: STEP 11 re-seeded it automatically (if NTFY_PHONE_PASSWORD_SECRET was set). The reset wiped
     ntfy's PVC, so a fresh token was minted + re-sealed. If it was skipped/failed, run 'make configure-ntfy-auth'
     + commit/push + restart grafana. On your phone, re-subscribe 'cluster-alerts' at https://ntfy.ops.example.com.

@@ -1,1 +1,1 @@
-# Nothing to configure. 08_argocd_webhook.sh writes the SealedSecret in templates/ verbatim.
+# Nothing to configure. 02b_argocd_webhook.sh writes the SealedSecret in templates/ verbatim.

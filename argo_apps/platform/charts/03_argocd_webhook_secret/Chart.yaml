@@ -1,7 +1,7 @@
 apiVersion: v2
 name: argocd-webhook-secret
-description: The sealed GitHub-webhook secret, patch-merged into argocd-secret's webhook.github.secret. Written by 08_argocd_webhook.sh.
-# Deliberately NOT in the wave-1 01_argocd chart: 05_argocd.sh installs that one imperatively before the
+description: The sealed GitHub-webhook secret, patch-merged into argocd-secret's webhook.github.secret. Written by 02b_argocd_webhook.sh.
+# Deliberately NOT in the wave-1 01_argocd chart: 02a_argocd.sh installs that one imperatively before the
 # sealed-secrets CRD exists (wave 2), so a SealedSecret there aborts the cold-boot install.
 type: application
 version: 0.1.0 # local chart, never bump version

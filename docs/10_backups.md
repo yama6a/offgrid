@@ -15,7 +15,7 @@ one prefix each, all sharing the same bucket and IAM writer. The lifecycle is PE
 | the bucket + IAM | `terraform/` | one S3 bucket, a per-prefix lifecycle, encryption at rest, public-access block, and a scoped IAM writer. Local state, gitignored, since it holds the IAM secret |
 | the plugin | `argo_apps/platform/{apps,charts}/03_barman_cloud_plugin` (wave 3) | the `ObjectStore` CRD plus the Barman Cloud plugin Deployment, Service, RBAC and its cert-manager mTLS certs, in `cnpg-system`. A vendored release manifest, since there is no upstream Helm chart |
 | per-cluster backups | `lib/helm/pg-cluster` | every CNPG cluster inherits WAL archiving, a daily `ScheduledBackup` and its own `ObjectStore`, all rendered by the first-party chart. Static wiring hardcoded in the templates; per-deployment facts in `files/backup.yaml` |
-| wiring scripts | `lib/shell/13_s3_backup_bucket.sh`, `14_cnpg_backup.sh` | 13 runs Terraform; 14 writes bucket, region and RPO plus the cluster-wide sealed writer creds into `files/backup.yaml` |
+| wiring scripts | `lib/shell/10a_s3_backup_bucket.sh`, `10b_cnpg_backup.sh` | 13 runs Terraform; 14 writes bucket, region and RPO plus the cluster-wide sealed writer creds into `files/backup.yaml` |
 | recovery | `restore.enabled` in the chart, or `recover_cnpg_from_s3.sh` | two paths, latest or PITR. The chart knob rebuilds the cluster IN PLACE under its own name; the script bootstraps an unmanaged side cluster to verify or read from |
 
 ## The mental model: WAL plus base, not a snapshot
@@ -60,7 +60,7 @@ the primary goes read-only or crashes. That is why the WAL-archive alert is `cri
 - Encryption: bucket-side with AWS-managed keys, and Barman also requests AES256 on upload, so the two agree. No
   KMS keys to manage.
 - Credentials: Terraform makes a scoped IAM user, and `.env` holds only the deployer creds. Terraform provisions a
-  dedicated bucket-scoped IAM writer and exposes its access key as an output; `14_cnpg_backup.sh` reads that output
+  dedicated bucket-scoped IAM writer and exposes its access key as an output; `10b_cnpg_backup.sh` reads that output
   and seals it into the cluster. The powerful deployer creds that run Terraform never enter the cluster. On
   bare-metal Talos there is no instance role, so it is static keys, sealed and never in `.env` or git.
 - One bucket, namespace plus cluster prefix. `destinationPath: s3://<bucket>/cnpg/<namespace>/`, and Barman appends
@@ -291,7 +291,7 @@ backup is also incremental and deduplicated, which is cheap on a home uplink, cr
 content-agnostic with no per-app dump logic.
 
 The classes always exist. The two BACKUP `RecurringJob`s render only `{{- if backupTarget }}`, so no backup runs
-until `16_longhorn_backup.sh` sets the target: the same empty-means-off contract as CNPG and Redis. The
+until `10d_longhorn_backup.sh` sets the target: the same empty-means-off contract as CNPG and Redis. The
 `filesystem-trim` job is unconditional, since it needs no S3 and every volume wants it.
 
 Pieces, all under `argo_apps/platform/charts/02_longhorn/`:
@@ -385,7 +385,7 @@ Each 01:00 run backs up only the PREVIOUS full UTC day, a bounded daily slice, o
 
 Pieces, all under `argo_apps/platform/charts/08_vm_backup/` plus two netpol edits on the stores:
 
-- `values.yaml`: `bucket` and `region` filled by `17_vm_backup.sh` (empty means the feature is off and nothing
+- `values.yaml`: `bucket` and `region` filled by `10e_vm_backup.sh` (empty means the feature is off and nothing
   renders), `prefix: vm/`, the `schedule` at 01:00 UTC to offset from the 02:00 and 03:00 crowd, and the two store
   Service URLs.
 - `templates/cronjob.yaml`: one container (`alpine/k8s`, for curl, aws-cli and gzip) that streams each dump with

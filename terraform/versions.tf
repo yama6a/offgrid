@@ -1,4 +1,4 @@
-# The repo's only Terraform, driven by lib/shell/13_s3_backup_bucket.sh, which exports the AWS deployer creds
+# The repo's only Terraform, driven by lib/shell/10a_s3_backup_bucket.sh, which exports the AWS deployer creds
 # and TF_VAR_* from .env.
 terraform {
   required_version = ">= 1.6"
@@ -17,6 +17,6 @@ terraform {
 
 provider "aws" {
   region = var.region
-  # Creds come from AWS_ACCESS_KEY_ID / AWS_SECRET_ACCESS_KEY, exported by 13_s3_backup_bucket.sh. Never
+  # Creds come from AWS_ACCESS_KEY_ID / AWS_SECRET_ACCESS_KEY, exported by 10a_s3_backup_bucket.sh. Never
   # hardcoded here or in a committed tfvars.
 }

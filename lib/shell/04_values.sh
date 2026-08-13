@@ -3,8 +3,8 @@
 # ArgoCD agree. Writes values only: it never applies anything to the cluster, and must stay that way, because
 # ArgoCD reads the REMOTE and these values have to be committed and pushed before the bootstrap reaches 05.
 # It does READ the cluster, for the control-plane node IPs below. That is safe here: this repo always runs
-# against a cluster the OS repo already built, and 04_cilium has run by the time the orchestrator gets here.
-# The Cloudflare token is NOT sealed here (07_cloudflare_token.sh does that once the controller is up). Here
+# against a cluster the OS repo already built, and 01_cilium has run by the time the orchestrator gets here.
+# The Cloudflare token is NOT sealed here (04_cloudflare_token.sh does that once the controller is up). Here
 # it only GATES the zones: an empty token forces zones to [], because a dns01 solver with no token would
 # reference a missing Secret and fail every challenge.
 # After changing lib/helm/ingress you must re-vendor its consumers once (`helm dependency update` per

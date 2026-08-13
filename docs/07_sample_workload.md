@@ -209,13 +209,13 @@ kubectl -n gateway get certificate                        # READY=True once DNS 
   entry on the ingress's shared cert. Resource names derive from the full host with dots turned to dashes, so
   there is nothing else to keep in sync.
 - The `-sso` host is gated centrally, not here. Its subdomain must be listed in `04_google_sso` `hosts`, and
-  the shared client secret sealed via `lib/shell/07_google_sso.sh`. Unlisted means the host is OPEN; unsealed
+  the shared client secret sealed via `lib/shell/04_google_sso.sh`. Unlisted means the host is OPEN; unsealed
   means login fails.
 - `prune` is data-safe because every stateful unit sets `deletionProtection: true`, which stamps
   `Prune=false,Delete=false`. Removing the app ORPHANS the Postgres Clusters and Redis instances, still running
   on their volumes, rather than deleting them, and restoring the files re-adopts them. This is NOT the storage
   class doing it: `longhorn-r2-ephemeral` is `reclaimPolicy: Delete`. See [05_storage.md](05_storage.md).
 - Point-in-time recovery comes from the wrapper's `backupsEnabled` (default true), which only renders once
-  `lib/helm/pg-cluster/files/backup.yaml` is populated by `14_cnpg_backup.sh`. Until then durability rests on
+  `lib/helm/pg-cluster/files/backup.yaml` is populated by `10b_cnpg_backup.sh`. Until then durability rests on
   Postgres replication across the 3 instances plus Longhorn's 2 volume replicas. See
   [10_backups.md](10_backups.md).

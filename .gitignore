@@ -5,17 +5,12 @@
 .env.bak
 .env.bak.*
 
-# Your node list: real hostnames and IPs, same reason as .env. Copy the committed template and edit:
-#   cp inventory.example.yaml inventory.yaml
-inventory.yaml
-
-# Live cluster credentials (talosconfig, kubeconfig, secrets.yaml, sealed-secrets master key), written by
-# 03c into `secrets/`, which is a symlink to an off-repo store (a synced drive). Never commit the symlink
-# or anything it points at: the creds live and are backed up outside the repo.
+# Live cluster credentials (talosconfig, kubeconfig, sealed-secrets master key). Written by the OS repo's 03c
+# into `secrets/`, a symlink to an off-repo store (a synced drive) that both repos point at. Never commit the
+# symlink or anything it points at: the creds live and are backed up outside the repo.
 /secrets
 
-# Downloaded Talos image releases (03a caches one .raw.xz + its decompressed copy per release tag) and other
-# scratch. A few hundred MB per release; never commit it.
+# Scratch: benchmark runs and other throwaway output.
 /.cache/
 
 # Editor and OS droppings. Listed here rather than left to a personal global gitignore, so a fork on someone

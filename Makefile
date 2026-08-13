@@ -1,5 +1,5 @@
 # A thin dispatcher over the numbered runbook scripts. Holds NO logic, versions or values: every target just
-# runs the step script it names, so `make install-cilium` and running lib/shell/04_cilium.sh by hand are
+# runs the step script it names, so `make install-cilium` and running lib/shell/01_cilium.sh by hand are
 # identical. `make help` lists everything; the one-shot orchestrators are bootstrap-cluster and
 # rebuild-cluster. Everything here assumes a cluster the OS repo already built:
 #   https://github.com/yama6a/talos-raspberry-pi5-cluster
@@ -23,70 +23,70 @@ rebuild-cluster: ## DANGER: redeliver the whole platform + WIPE the S3 backups (
 
 ##@ Cluster delivery  (step 04-09; native helm/kubectl)
 .PHONY: install-cilium
-install-cilium: ## 04: install/upgrade the Cilium CNI (+ monitoring CRDs, LB-IPAM/L2, Hubble).
-	bash lib/shell/04_cilium.sh
+install-cilium: ## 01: install/upgrade the Cilium CNI (+ monitoring CRDs, LB-IPAM/L2, Hubble).
+	bash lib/shell/01_cilium.sh
 
 .PHONY: install-argocd
-install-argocd: ## 05: bootstrap ArgoCD; it then delivers the whole platform from git.
-	bash lib/shell/05_argocd.sh
+install-argocd: ## 02a: bootstrap ArgoCD; it then delivers the whole platform from git.
+	bash lib/shell/02a_argocd.sh
 
 .PHONY: configure-argocd-webhook
-configure-argocd-webhook: ## 08: generate+seal the ArgoCD GitHub webhook secret (-> secrets/) + set poll cadence from .env.
-	bash lib/shell/08_argocd_webhook.sh
+configure-argocd-webhook: ## 02b: generate+seal the ArgoCD GitHub webhook secret (-> secrets/) + set poll cadence from .env.
+	bash lib/shell/02b_argocd_webhook.sh
 
 .PHONY: configure-values
-configure-values: ## 07: write every per-deployment value (repo URL, domains, SSO allowlist, ingress IP, ACME, scrape endpoints) from .env into the chart values.
-	bash lib/shell/07_values.sh
+configure-values: ## 04: write every per-deployment value (repo URL, domains, SSO allowlist, ingress IP, ACME, scrape endpoints) from .env into the chart values.
+	bash lib/shell/04_values.sh
 
 .PHONY: configure-cloudflare-token
-configure-cloudflare-token: ## 07: seal the Cloudflare DNS-01 API token into cert-manager (needs the sealed-secrets controller + .env token).
-	bash lib/shell/07_cloudflare_token.sh
+configure-cloudflare-token: ## 04: seal the Cloudflare DNS-01 API token into cert-manager (needs the sealed-secrets controller + .env token).
+	bash lib/shell/04_cloudflare_token.sh
 
 .PHONY: configure-sso
-configure-sso: ## 07: write the SSO clientID + seal the OAuth client secret (needs .env creds).
-	bash lib/shell/07_google_sso.sh
+configure-sso: ## 04: write the SSO clientID + seal the OAuth client secret (needs .env creds).
+	bash lib/shell/04_google_sso.sh
 
 .PHONY: configure-ntfy-auth
-configure-ntfy-auth: ## 10: seed ntfy users/ACLs + seal Grafana's ntfy write token (needs 05_ntfy synced + .env secret).
-	bash lib/shell/10_ntfy_auth.sh
+configure-ntfy-auth: ## 06: seed ntfy users/ACLs + seal Grafana's ntfy write token (needs 05_ntfy synced + .env secret).
+	bash lib/shell/06_ntfy_auth.sh
 
 ##@ Backups  (step 13-17; S3 bucket via Terraform + CNPG WAL/base + Redis RDB + Longhorn volume + VM/VL export backups)
 .PHONY: s3-backup-bucket
-s3-backup-bucket: ## 13: create/update the shared S3 backup bucket + scoped IAM writer (Terraform; needs .env AWS creds).
-	bash lib/shell/13_s3_backup_bucket.sh
+s3-backup-bucket: ## 10a: create/update the shared S3 backup bucket + scoped IAM writer (Terraform; needs .env AWS creds).
+	bash lib/shell/10a_s3_backup_bucket.sh
 
 .PHONY: s3-backup-wipe
-s3-backup-wipe: ## 13: DANGER delete ALL backups in the bucket, keeping the bucket + IAM (typed confirm).
-	bash lib/shell/13_s3_backup_bucket.sh wipe
+s3-backup-wipe: ## 10a: DANGER delete ALL backups in the bucket, keeping the bucket + IAM (typed confirm).
+	bash lib/shell/10a_s3_backup_bucket.sh wipe
 
 .PHONY: s3-backup-destroy
-s3-backup-destroy: ## 13: DANGER empty the bucket AND terraform-destroy it + the IAM writer (typed confirm).
-	bash lib/shell/13_s3_backup_bucket.sh destroy
+s3-backup-destroy: ## 10a: DANGER empty the bucket AND terraform-destroy it + the IAM writer (typed confirm).
+	bash lib/shell/10a_s3_backup_bucket.sh destroy
 
 .PHONY: configure-cnpg-backup
-configure-cnpg-backup: ## 14: enable CNPG S3 backups: seal the writer creds + write bucket/region/RPO into pg-cluster.
-	bash lib/shell/14_cnpg_backup.sh
+configure-cnpg-backup: ## 10b: enable CNPG S3 backups: seal the writer creds + write bucket/region/RPO into pg-cluster.
+	bash lib/shell/10b_cnpg_backup.sh
 
 .PHONY: configure-redis-backup
-configure-redis-backup: ## 15: enable Redis RDB S3 backups: seal the writer creds + write bucket/region into 07_redis_backup.
-	bash lib/shell/15_redis_backup.sh
+configure-redis-backup: ## 10c: enable Redis RDB S3 backups: seal the writer creds + write bucket/region into 07_redis_backup.
+	bash lib/shell/10c_redis_backup.sh
 
 .PHONY: configure-longhorn-backup
-configure-longhorn-backup: ## 16: enable Longhorn volume S3 backups: seal the writer creds + write the backup target into 02_longhorn.
-	bash lib/shell/16_longhorn_backup.sh
+configure-longhorn-backup: ## 10d: enable Longhorn volume S3 backups: seal the writer creds + write the backup target into 02_longhorn.
+	bash lib/shell/10d_longhorn_backup.sh
 
 .PHONY: configure-vm-backup
-configure-vm-backup: ## 17: enable VictoriaMetrics/Logs S3 export backups: seal the writer creds + write bucket/region into 08_vm_backup.
-	bash lib/shell/17_vm_backup.sh
+configure-vm-backup: ## 10e: enable VictoriaMetrics/Logs S3 export backups: seal the writer creds + write bucket/region into 08_vm_backup.
+	bash lib/shell/10e_vm_backup.sh
 
 ##@ Secrets  (sealed-secrets master key)
 .PHONY: backup-secrets-key
-backup-secrets-key: ## 06: back up the sealed-secrets master key (do this BEFORE a rebuild).
-	bash lib/shell/06_backup_sealed_secrets_key.sh
+backup-secrets-key: ## 03: back up the sealed-secrets master key (do this BEFORE a rebuild).
+	bash lib/shell/03_backup_sealed_secrets_key.sh
 
 .PHONY: restore-secrets-key
-restore-secrets-key: ## 06: restore the sealed-secrets master key so committed SealedSecrets decrypt.
-	bash lib/shell/06_restore_sealed_secrets_key.sh
+restore-secrets-key: ## 03: restore the sealed-secrets master key so committed SealedSecrets decrypt.
+	bash lib/shell/03_restore_sealed_secrets_key.sh
 
 ##@ Data recovery  (restore from S3: CNPG + Redis + Longhorn + VM/VL. A GitOps-pruned CNPG cluster is not deleted; just restore its files.)
 .PHONY: restore-cnpg

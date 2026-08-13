@@ -76,7 +76,7 @@ summary
 if [ "$FAIL" -eq 0 ] && [ "$ACTION" = apply ]; then
   cat <<EOF
 S3 backup bucket '${S3_BACKUP_BUCKET}' ready (region ${AWS_REGION}; ->Glacier IR @${S3_BACKUP_TRANSITION_DAYS}d, expire @${S3_BACKUP_RETENTION_DAYS}d).
-Next:  bash lib/shell/14_cnpg_backup.sh   # seal the writer creds into the cluster + enable CNPG backups
+Next:  bash lib/shell/10b_cnpg_backup.sh   # seal the writer creds into the cluster + enable CNPG backups
 EOF
 fi
 [ "$FAIL" -eq 0 ]

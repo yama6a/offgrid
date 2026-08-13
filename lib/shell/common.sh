@@ -87,7 +87,7 @@ require() {
 # Line-surgical edits, NOT `yq -i`: yq rewrites the whole document (collapses comment alignment, drops blank
 # lines, re-flows inline maps), which turns a two-line change into a huge diff on these hand-formatted values.
 # Worse, it drops the blank line before a comment block, so even a write that changes NOTHING leaves the file
-# modified: that alone aborted a rebuild at 05_argocd's uncommitted-changes gate. yq stays fine for READS.
+# modified: that alone aborted a rebuild at 02a_argocd's uncommitted-changes gate. yq stays fine for READS.
 # Each helper below writes back with `cat tmp > file`, not `mv`: mv would leave the file with mktemp's 0600.
 
 # ys_set <file> <value> <key...>: replace the value of one existing nested key, in place, touching that ONE
@@ -267,7 +267,7 @@ read_backup_creds() {
   AKID="$(terraform -chdir="$TF_DIR" output -raw backup_access_key_id 2>/dev/null)" || true
   SAK="$(terraform -chdir="$TF_DIR" output -raw backup_secret_access_key 2>/dev/null)" || true
   [ -n "$AKID" ] && [ -n "$SAK" ] \
-    || die "no Terraform outputs: run 13_s3_backup_bucket.sh first (and it must have applied)"
+    || die "no Terraform outputs: run 10a_s3_backup_bucket.sh first (and it must have applied)"
   ok "got writer access key id + secret from terraform"
 }
 

@@ -519,7 +519,7 @@ the mobile app cannot do human OAuth. ntfy's own deny-all plus token and user au
 The webhook payload maps the firing alert's `summary` to the push title and `description` to the push message.
 Priority and tag come from `severity`: critical is 5, warning is 4.
 
-ntfy is a private, deny-all instance with no declarative user config, so `lib/shell/10_ntfy_auth.sh` (`make
+ntfy is a private, deny-all instance with no declarative user config, so `lib/shell/06_ntfy_auth.sh` (`make
 configure-ntfy-auth`, run post-boot once the pod is up) seeds two users on `cluster-alerts`:
 
 - `phone`, read-only, password from `NTFY_PHONE_PASSWORD_SECRET` in `.env`.

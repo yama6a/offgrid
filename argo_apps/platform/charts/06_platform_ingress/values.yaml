@@ -1,7 +1,7 @@
 ingress:
   ingresses:
     - name: platform
-      domain: ops.example.com # written by 07_values.sh; platform UIs sit under *.ops.<base>, workloads under *.app.<base>
+      domain: ops.example.com # written by 04_values.sh; platform UIs sit under *.ops.<base>, workloads under *.app.<base>
       issuer: letsencrypt-prod # GitHub webhook SSL verification to argocd.<domain> needs a publicly-trusted cert
       hosts:
         - subdomain: argocd

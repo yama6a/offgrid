@@ -1,4 +1,4 @@
-# Self-hosted ntfy, the alert transport Grafana's webhook publishes to. Users/ACLs/token are seeded post-sync by lib/shell/10_ntfy_auth.sh.
+# Self-hosted ntfy, the alert transport Grafana's webhook publishes to. Users/ACLs/token are seeded post-sync by lib/shell/06_ntfy_auth.sh.
 apiVersion: argoproj.io/v1alpha1
 kind: Application
 metadata:

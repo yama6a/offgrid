@@ -259,7 +259,7 @@ Two durability tiers:
    orphan-not-delete.
 2. **Off-cluster**: S3 backups, continuous WAL archiving plus daily base backups via the
    `cnpg/plugin-barman-cloud` plugin, for real PITR and total-loss recovery. Turned on from `.env` by
-   `14_cnpg_backup.sh`. See [10_backups.md](10_backups.md).
+   `10b_cnpg_backup.sh`. See [10_backups.md](10_backups.md).
 
 Neither namespace needs privileged PSA: controller and Postgres pods run non-root (uid 26). Both apps use SSA,
 because the CRDs and the `Cluster` CR blow the client-side annotation limit.

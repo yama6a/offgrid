@@ -14,7 +14,7 @@ metadata:
     cnpg.io/cluster: {{ include "pg-cluster.name" . }}
     {{- include "pg-cluster.labels" . | nindent 4 }}
 spec:
-  retentionPolicy: {{ required "pg-cluster: files/backup.yaml retentionPolicy missing but backups on; run 14_cnpg_backup.sh" $b.retentionPolicy | quote }}
+  retentionPolicy: {{ required "pg-cluster: files/backup.yaml retentionPolicy missing but backups on; run 10b_cnpg_backup.sh" $b.retentionPolicy | quote }}
   configuration:
     wal:
       compression: gzip # shrink WAL before upload (also shrinks near-empty idle segments).
@@ -24,7 +24,7 @@ spec:
       compression: gzip
       encryption: AES256
       jobs: 2
-    endpointURL: "https://s3.{{ required "pg-cluster: files/backup.yaml region missing but backups on; run 14_cnpg_backup.sh" $b.region }}.amazonaws.com"
+    endpointURL: "https://s3.{{ required "pg-cluster: files/backup.yaml region missing but backups on; run 10b_cnpg_backup.sh" $b.region }}.amazonaws.com"
     destinationPath: "s3://{{ $b.bucket }}/cnpg/{{ .Release.Namespace }}/" # s3://<bucket>/cnpg/<ns>/<name>/{wals,base}
     s3Credentials:
       accessKeyId:

@@ -50,7 +50,7 @@ grafana:
       enabled: true
 
   # Interpolated into the ntfy contact point as ${GF_NTFY_TOKEN}, so the write token never lands in git.
-  # The Secret comes from templates/grafana-ntfy-sealedsecret.yaml, written by 10_ntfy_auth.sh.
+  # The Secret comes from templates/grafana-ntfy-sealedsecret.yaml, written by 06_ntfy_auth.sh.
   envValueFrom:
     GF_NTFY_TOKEN:
       secretKeyRef:

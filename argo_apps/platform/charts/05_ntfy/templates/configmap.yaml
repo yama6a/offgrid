@@ -1,4 +1,4 @@
-# ntfy server.yml. Private instance: deny-all plus per-topic ACLs seeded by lib/shell/10_ntfy_auth.sh, because
+# ntfy server.yml. Private instance: deny-all plus per-topic ACLs seeded by lib/shell/06_ntfy_auth.sh, because
 # ntfy has NO declarative user or token config.
 apiVersion: v1
 kind: ConfigMap
@@ -19,7 +19,7 @@ data:
     metrics-listen-http: ":9091"         # a SEPARATE listener, so /metrics is not served on the internet-facing :8080
     behind-proxy: true                   # Envoy edge fronts it -> trust X-Forwarded-For (real visitor IP / rate-limit)
     auth-file: "/var/lib/ntfy/user.db"   # SQLite users/tokens/ACL, on the Longhorn PVC
-    auth-default-access: "deny-all"      # private: every topic denied unless an ACL grants it (seeded by 10_ntfy_auth.sh)
+    auth-default-access: "deny-all"      # private: every topic denied unless an ACL grants it (seeded by 06_ntfy_auth.sh)
     enable-login: true                   # the phone user logs in via the Android app
     enable-signup: false                 # no self-service signup; users are seeded, not self-registered
     cache-file: "/var/lib/ntfy/cache.db" # message cache (disposable)

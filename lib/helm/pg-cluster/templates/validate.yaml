@@ -32,10 +32,10 @@
 {{- if eq (include "pg-cluster.backupsEnabled" .) "true" }}
 {{- $b := .Files.Get "files/backup.yaml" | fromYaml }}
 {{- if not $b.region }}
-{{- fail "pg-cluster: files/backup.yaml has a bucket but no region; re-run 14_cnpg_backup.sh" }}
+{{- fail "pg-cluster: files/backup.yaml has a bucket but no region; re-run 10b_cnpg_backup.sh" }}
 {{- end }}
 {{- if not $b.retentionPolicy }}
-{{- fail "pg-cluster: files/backup.yaml has a bucket but no retentionPolicy; re-run 14_cnpg_backup.sh" }}
+{{- fail "pg-cluster: files/backup.yaml has a bucket but no retentionPolicy; re-run 10b_cnpg_backup.sh" }}
 {{- end }}
 {{- end }}
 {{- /* A recovery bootstrap pulls from the instance's OWN ObjectStore, which only exists when backups are on. */ -}}

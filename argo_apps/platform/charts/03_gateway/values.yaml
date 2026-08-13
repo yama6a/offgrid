@@ -14,10 +14,10 @@ acme:
       server: "https://acme-staging-v02.api.letsencrypt.org/directory"
     - name: letsencrypt-prod
       server: "https://acme-v02.api.letsencrypt.org/directory"
-  # Optional, per-domain. 07_values.sh writes `zones` from .env and seals the token. Empty zones = no dns01
+  # Optional, per-domain. 04_values.sh writes `zones` from .env and seals the token. Empty zones = no dns01
   # solver and no wildcard certs, HTTP-01 for everything.
   cloudflare:
     zones: []
-    apiTokenSecretName: cloudflare-api-token # SealedSecret in the cert-manager namespace, sealed by 07_values.sh
+    apiTokenSecretName: cloudflare-api-token # SealedSecret in the cert-manager namespace, sealed by 04_values.sh
     apiTokenSecretKey: api-token
     wildcardIssuer: letsencrypt-prod # for ALL shared wildcard certs; wildcards need DNS-01, so staging first dodges prod limits

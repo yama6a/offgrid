@@ -15,7 +15,7 @@ RABBITMQ_NS="rabbitmq"                                                          
 RABBITMQ_SECRET="rabbitmq-default-user"                                                   # operator-generated admin creds
 RABBITMQ_SUBDOMAIN="rabbitmq"                                                             # its host in the platform ingress
 NTFY_USER="phone"                                                                         # Android subscriber (read-only)
-NTFY_TOPIC="cluster-alerts"                                                               # matches 10_ntfy_auth.sh / 05_ntfy
+NTFY_TOPIC="cluster-alerts"                                                               # matches 06_ntfy_auth.sh / 05_ntfy
 WEBHOOK_FILE="${CLUSTER_DIR}/argocd-github-webhook-secret.txt"                             # plaintext webhook secret (08 mints it)
 ARGOCD_SUBDOMAIN="argocd"                                                                  # its host in the platform ingress (webhook endpoint)
 
@@ -60,7 +60,7 @@ if [ -n "$NTFY_PHONE_PASSWORD_SECRET" ]; then
   ok "ntfy phone password present (.env)"
 else
   echo "  Password: <ntfy alerting disabled: NTFY_PHONE_PASSWORD_SECRET empty in .env>"
-  warn "set NTFY_PHONE_PASSWORD_SECRET in .env and re-run 10_ntfy_auth.sh to enable"
+  warn "set NTFY_PHONE_PASSWORD_SECRET in .env and re-run 06_ntfy_auth.sh to enable"
 fi
 echo "  Note:     edge is OPEN (no SSO, the app cannot do OAuth); ntfy's own user/token auth is the only gate."
 
@@ -71,8 +71,8 @@ if [ -s "$WEBHOOK_FILE" ]; then
   echo "  Secret:   $(cat "$WEBHOOK_FILE")"
   ok "read webhook secret (${WEBHOOK_FILE})"
 else
-  echo "  Secret:   <not generated: run 08_argocd_webhook.sh>"
-  warn "run 08_argocd_webhook.sh to mint the webhook secret"
+  echo "  Secret:   <not generated: run 02b_argocd_webhook.sh>"
+  warn "run 02b_argocd_webhook.sh to mint the webhook secret"
 fi
 echo "  Note:     Content type application/json; SSL verification on; event = just the push event."
 

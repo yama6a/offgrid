@@ -1,4 +1,4 @@
-# pg-cluster backup overlay: the per-DEPLOYMENT backup facts, populated by lib/shell/14_cnpg_backup.sh
+# pg-cluster backup overlay: the per-DEPLOYMENT backup facts, populated by lib/shell/10b_cnpg_backup.sh
 bucket: "" # S3_BACKUP_BUCKET
 region: "" # AWS_REGION
 retentionPolicy: "" # "<S3_BACKUP_RETENTION_DAYS>d", e.g. "180d"

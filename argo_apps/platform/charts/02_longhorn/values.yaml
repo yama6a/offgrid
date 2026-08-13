@@ -19,7 +19,7 @@ longhorn:
     orphanResourceAutoDeletion: "replica-data" # stale replica data from node flaps would silently eat the NVMe
     # Trim the 12% default per-instance-manager CPU reservation to free scheduling headroom on a 4-core Pi.
     guaranteedInstanceManagerCPU: '{"v1":"8","v2":"8"}'
-  # 16_longhorn_backup.sh fills these from .env/terraform; empty = backups off. Longhorn owns retention via the
+  # 10d_longhorn_backup.sh fills these from .env/terraform; empty = backups off. Longhorn owns retention via the
   # RecurringJob retain counts, the S3 longhorn/ prefix has no lifecycle rule.
   defaultBackupStore:
     backupTarget: ""

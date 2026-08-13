@@ -1,7 +1,7 @@
 apiVersion: v2
 name: sealed-secrets
 description: The Bitnami Sealed Secrets controller, so secrets can be committed to git as SealedSecret CRs.
-# Its RSA private key is the crown jewel and lives only in-cluster: back it up with lib/shell/06_backup_sealed_secrets_key.sh.
+# Its RSA private key is the crown jewel and lives only in-cluster: back it up with lib/shell/03_backup_sealed_secrets_key.sh.
 type: application
 version: 0.1.0 # local chart, never bump version
 

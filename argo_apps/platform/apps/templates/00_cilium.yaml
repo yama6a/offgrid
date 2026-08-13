@@ -1,4 +1,4 @@
-# Cilium, the CNI. Adopts the release 04_cilium.sh installed imperatively from this same chart.
+# Cilium, the CNI. Adopts the release 01_cilium.sh installed imperatively from this same chart.
 apiVersion: argoproj.io/v1alpha1
 kind: Application
 metadata:

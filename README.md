@@ -42,7 +42,7 @@
 ## Overview
 
 - Starts from a Kubernetes cluster that already exists. Building it is the OS repo's job.
-- `04_cilium.sh` and `05_argocd.sh` are the only imperative steps: install the CNI, then install Argo CD.
+- `01_cilium.sh` and `02a_argocd.sh` are the only imperative steps: install the CNI, then install Argo CD.
 - Everything after that is GitOps. Argo CD reconciles `argo_apps/` and delivers the platform (ingress, TLS, SSO,
   storage, databases, messaging, monitoring) plus the workloads on top.
 - Config is one gitignored file, `.env`, copied from the committed `.env.example`. `make configure-values`
@@ -56,7 +56,7 @@ Everything after `04`/`05` is an Argo CD-delivered wrapper chart, each pinning i
 
 | Layer             | Component                      | Role                                                                                                         |
 |-------------------|--------------------------------|--------------------------------------------------------------------------------------------------------------|
-| **OS**            | Talos Linux                    | Immutable, API-driven Kubernetes OS. Custom Pi 5 NVMe image built in-repo (step 03).                         |
+| **OS**            | Talos Linux                    | Immutable, API-driven Kubernetes OS. Built and installed by the OS repo, not here.                           |
 | **Network**       | Cilium                         | CNI + kube-proxy replacement, LB-IPAM + L2 announcements (LoadBalancer IPs), node-to-node WireGuard, Hubble. |
 | **GitOps**        | Argo CD                        | Delivery engine; self-manages after bootstrap. Two-tree app-of-apps (platform and workloads).                |
 | **Ingress**       | Envoy Gateway                  | Gateway API data plane; one Envoy on a single pinned LoadBalancer IP.                                        |

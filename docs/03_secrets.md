@@ -44,7 +44,7 @@ while keeping the old keys so previously-sealed secrets still decrypt.
 That key set is the only thing that can decrypt the `SealedSecret`s in this repo. A cluster rebuild without it
 orphans every sealed value.
 
-`lib/shell/06_backup_sealed_secrets_key.sh` dumps all labelled key Secrets to
+`lib/shell/03_backup_sealed_secrets_key.sh` dumps all labelled key Secrets to
 `secrets/sealed-secrets-master.key`. That dir is gitignored (`/secrets` in the root `.gitignore`; `secrets/` is a
 symlink to an off-repo store), so the private key is never committed. Same custody as the `kubeconfig` and
 `talosconfig` already there. Native `kubectl`, PASS/FAIL summary, idempotent, re-run after each rotation.
@@ -53,7 +53,7 @@ Keep a copy off-cluster too. A backup that only exists on this cluster is useles
 
 ```bash
 # back up the master key (after the app is Synced/Healthy, and after each ~monthly rotation):
-lib/shell/06_backup_sealed_secrets_key.sh
+lib/shell/03_backup_sealed_secrets_key.sh
 
 # RESTORE on a rebuilt cluster (before sealing/unsealing anything new):
 kubectl apply -f secrets/sealed-secrets-master.key

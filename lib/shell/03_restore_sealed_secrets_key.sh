@@ -22,7 +22,7 @@ WAIT=900                                                                     # s
 say "prerequisites"
 require kubectl
 use_kubeconfig
-[ -f "$BACKUP_FILE" ] || die "no backup at ${BACKUP_FILE}, run 06_backup_sealed_secrets_key.sh first (while a cluster holding the key is up), or re-seal instead (07_google_sso, 10_ntfy_auth)"
+[ -f "$BACKUP_FILE" ] || die "no backup at ${BACKUP_FILE}, run 03_backup_sealed_secrets_key.sh first (while a cluster holding the key is up), or re-seal instead (04_google_sso, 06_ntfy_auth)"
 [ -s "$BACKUP_FILE" ] || die "backup ${BACKUP_FILE} is empty, do not trust it"
 grep -q 'kind: Secret' "$BACKUP_FILE" 2>/dev/null || die "backup ${BACKUP_FILE} has no 'kind: Secret', wrong/corrupt file"
 assert_api
@@ -90,6 +90,6 @@ as ArgoCD (re)applies them. Verify:
 EOF
 else
   echo "Restore did NOT complete cleanly. If the controller wasn't up, wait for ArgoCD (wave 2) and re-run,"
-  echo "or re-seal instead (07_google_sso, 10_ntfy_auth) + commit/push."
+  echo "or re-seal instead (04_google_sso, 06_ntfy_auth) + commit/push."
 fi
 [ "$FAIL" -eq 0 ]

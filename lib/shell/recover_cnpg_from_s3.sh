@@ -135,7 +135,7 @@ if kubectl -n "$NS" get objectstore.barmancloud.cnpg.io "$OBJECTSTORE" >/dev/nul
          -o jsonpath='{.spec.configuration.s3Credentials.accessKeyId.name}' 2>/dev/null)"
   [ -n "$SEC" ] && { kubectl -n "$NS" get secret "$SEC" >/dev/null 2>&1 \
     && ok "S3 creds secret ${SEC} present" \
-    || bad "S3 creds secret ${NS}/${SEC} missing: restore the sealed-secrets key (make restore-secrets-key) or re-run 14_cnpg_backup.sh"; }
+    || bad "S3 creds secret ${NS}/${SEC} missing: restore the sealed-secrets key (make restore-secrets-key) or re-run 10b_cnpg_backup.sh"; }
   if [ -n "$FRP" ]; then RECOVERABLE="yes"; ok "recovery point in the catalog: ${FRP}"
   else RECOVERABLE="no";  bad "ObjectStore reports NO recovery point (no completed base backup) for ${SOURCE}"; fi
 else

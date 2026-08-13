@@ -57,7 +57,7 @@ export_deploy_aws_creds
 
 BUCKET="$(yq -r '.bucket' "$RB_VALUES")"
 PREFIX="$(yq -r '.prefix' "$RB_VALUES")"
-[ -n "$BUCKET" ] && [ "$BUCKET" != "null" ] || die "bucket is unset in ${RB_VALUES}: run 15_redis_backup.sh first"
+[ -n "$BUCKET" ] && [ "$BUCKET" != "null" ] || die "bucket is unset in ${RB_VALUES}: run 10c_redis_backup.sh first"
 
 say "Redis restore from S3: seed pod + replication resync (in-place, non-destructive to the CR)"
 
