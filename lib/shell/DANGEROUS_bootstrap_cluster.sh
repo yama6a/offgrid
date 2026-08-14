@@ -29,6 +29,7 @@ COMMIT_MSG_SEAL="bootstrap: re-seal SSO + argocd webhook secrets + CNPG/Redis S3
 
 check_prerequisites() {
   require git kubectl helm yq kubeseal
+  ensure_cluster_dir
   docker info >/dev/null 2>&1 || die "docker not responding (start Rancher/Docker Desktop)"
   [ -f "${STEP_DIR}/01_cilium.sh" ] || die "missing 01_cilium.sh, run from the repo root"
   # Pinned BEFORE the banner, so the confirmation names the context this installs onto and an unset or typo'd

@@ -34,6 +34,7 @@ CONVERGE_WAIT=900                   # secs for the converge backstop to drive ev
 
 check_prerequisites() {
   require git kubectl helm yq kubeseal
+  ensure_cluster_dir
   [ -f "$RESTORE" ] || die "missing ${RESTORE}"
   # Pinned BEFORE the banner, so the confirmation names the context this redelivers onto and an unset or
   # typo'd KUBE_CONTEXT fails here rather than after you have typed the confirmation word. Cheap (a config

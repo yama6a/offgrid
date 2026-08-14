@@ -16,6 +16,7 @@ BACKUP_FILE="${CLUSTER_DIR}/sealed-secrets-master.key"          # gitignored dir
 check_prerequisites() {
   say "prerequisites"
   require kubectl
+  ensure_cluster_dir
   use_kubeconfig
   assert_api
   ok "kubectl present, API reachable"
@@ -38,12 +39,16 @@ count_key_secrets() {
 # `-o yaml` of the labelled Secrets is the official restore-able form (re-applied with kubectl apply).
 write_backup() {
   say "writing backup -> ${BACKUP_FILE}"
-  mkdir -p "$CLUSTER_DIR"
-  if kubectl get secret -n "$NS" -l "$KEY_LABEL" -o yaml > "$BACKUP_FILE" 2>/dev/null; then
-    chmod 600 "$BACKUP_FILE"
+  # Via a temp file: a direct redirect truncates first, so a failed dump would replace a GOOD backup of the one
+  # key that cannot be regenerated with an empty file. mktemp is 0600 and mv preserves it.
+  local tmp
+  tmp="$(mktemp "${BACKUP_FILE}.XXXXXX")" || { bad "could not write next to ${BACKUP_FILE}"; return; }
+  if kubectl get secret -n "$NS" -l "$KEY_LABEL" -o yaml >"$tmp" 2>/dev/null && [ -s "$tmp" ]; then
+    mv "$tmp" "$BACKUP_FILE"
     ok "key(s) written and chmod 600"
   else
-    bad "kubectl get/dump failed, backup NOT written"
+    rm -f "$tmp"
+    bad "kubectl get/dump failed, backup NOT written (any previous backup is untouched)"
   fi
 }
 

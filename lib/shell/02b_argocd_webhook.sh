@@ -29,6 +29,7 @@ ARGOCD_DOMAIN=""    # set by print_result
 check_prerequisites() {
   say "prerequisites"
   require kubeseal kubectl yq openssl
+  ensure_cluster_dir
   use_kubeconfig
   [ -f "$ARGOCD_VALUES" ]  || die "missing ${ARGOCD_VALUES} (the 01_argocd chart should ship it)"
   [ -f "$INGRESS_VALUES" ] || die "missing ${INGRESS_VALUES} (the 06_platform_ingress chart should ship it)"

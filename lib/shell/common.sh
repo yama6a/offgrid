@@ -241,6 +241,27 @@ vy_protect_off() {
 }
 
 CLUSTER_DIR="${REPO_ROOT}/secrets"   # this repo's sealed-secrets key + webhook secret; a symlink to an off-repo store
+
+# Created on demand, because a missing gitignored dir must not be what stops a bootstrap. It holds the
+# sealed-secrets master key, which cannot be regenerated: lose it and every SealedSecret already committed stays
+# encrypted forever. So when we create it fresh we say so, because a plain directory here dies with the
+# checkout and a symlink to synced storage does not.
+ensure_cluster_dir() {
+  [ -d "$CLUSTER_DIR" ] && return 0
+  # A dangling symlink is not a missing dir: mkdir -p would fail with "File exists" and read as a bug.
+  if [ -L "$CLUSTER_DIR" ]; then
+    die "${CLUSTER_DIR} is a symlink to $(readlink "$CLUSTER_DIR"), which does not exist.
+       Mount or restore that store, or replace the link."
+  fi
+  [ -e "$CLUSTER_DIR" ] && die "${CLUSTER_DIR} exists but is not a directory"
+  mkdir -p "$CLUSTER_DIR" || die "could not create ${CLUSTER_DIR}"
+  chmod 700 "$CLUSTER_DIR"
+  warn "created ${CLUSTER_DIR} (gitignored) for the sealed-secrets master key."
+  warn "  It is a plain directory, so the key dies with this checkout. The key cannot be regenerated, and"
+  warn "  without it every SealedSecret already committed stays encrypted forever. Point it at storage that"
+  warn "  outlives the clone before you rely on this cluster:"
+  warn "    rmdir ${CLUSTER_DIR} && ln -s /path/to/your/synced/store ${CLUSTER_DIR}"
+}
 PINNED_KUBECONFIG="${REPO_ROOT}/.cache/kubeconfig"   # derived, gitignored; rewritten by every use_kubeconfig call
 
 # Offers the contexts in $1 and writes the pick back to .env, so this is asked once per checkout. Needs a TTY:
