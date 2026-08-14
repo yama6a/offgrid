@@ -516,7 +516,7 @@ Never leave a DB sitting on `false`.
 ### Rebuild vs reset, and why rebuild wipes the backups
 
 A REBUILD is a deliberate full fresh start. It empties the S3 bucket via `10a wipe`, keeping the bucket and
-IAM. It does NOT touch the nodes: wiping the Longhorn volumes means resetting Talos, which is the OS repo's
+IAM. It does NOT touch the nodes: wiping the Longhorn volumes means resetting the machines, which is your node tooling's
 `make reset-cluster`, run before this. A rebuild on un-reset nodes redelivers the platform onto the existing
 volumes.
 
@@ -563,7 +563,7 @@ kubectl -n <ns> exec <primary> -c postgres -- psql -U postgres -tAc 'select pg_s
 ```
 
 Tearing the bucket down is a separate, explicit act: `make s3-backup-destroy` empties it AND `terraform
-destroy`s it plus the IAM writer. Nothing calls that for you, and the OS repo's `make reset-cluster` knows
+destroy`s it plus the IAM writer. Nothing calls that for you, and wiping the nodes knows
 nothing about S3: it wipes node state only.
 
 ## Verify end to end

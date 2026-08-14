@@ -9,7 +9,9 @@ cilium:
   ipam:
     mode: kubernetes
   kubeProxyReplacement: true
-  k8sServiceHost: localhost # Talos KubePrism
+  # Where the agent reaches the API before pod networking exists. Written by 04_values.sh from KUBE_API_HOST
+  # and KUBE_API_PORT in .env, so do not hand-edit: the default pair is Talos's KubePrism.
+  k8sServiceHost: localhost
   k8sServicePort: 7445
   # Rewrites pod source IPs to the node IP (needed for pod-to-internet traffic) inside Cilium's in-kernel datapath
   # instead of using the older iptables rules. Keeps the outbound path consistent with kubeProxyReplacement above,
@@ -31,7 +33,7 @@ cilium:
     rollOutPods: true
     priorityClassName: system-cluster-critical
     podDisruptionBudget:
-      enabled: true # keeps the LB-IPAM/L2 leader through Talos node reboots
+      enabled: true # keeps the LB-IPAM/L2 leader through a node reboot
     prometheus:
       enabled: true
       serviceMonitor:
@@ -130,7 +132,8 @@ cilium:
               fileMaxSizeMb: 10
               fileMaxBackups: 1
   cgroup:
-    # Talos already mounts the unified cgroup v2 tree at /sys/fs/cgroup on the host, cilium doesn't need to mount its own
+    # The host already mounts the unified cgroup v2 tree at /sys/fs/cgroup, so cilium need not mount its own.
+    # True on Talos and on any systemd distro booted with cgroup v2; flip autoMount back on if yours does not.
     # (which would double-mount and fail). Instead, we point the agent at the host's tree.
     autoMount: {enabled: false}
     hostRoot: /sys/fs/cgroup

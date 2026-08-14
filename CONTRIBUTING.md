@@ -24,10 +24,10 @@ at a glance.
 Run the steps in order: `01_cilium`, `02a_argocd`, and onward. Either by hand (`bash lib/shell/NN_name.sh`) or
 via the Makefile.
 
-This repo starts from a cluster that already exists. Hardware, Talos and node lifecycle live in
-[talos-raspberry-pi5-cluster](https://github.com/yama6a/talos-raspberry-pi5-cluster). Each repo has its own
-off-repo `secrets/` store, so nothing is shared on disk: the OS repo mints the kubeconfig and its
-`make merge-kubeconfig` puts it in `~/.kube/config`.
+This repo starts from a cluster that already exists. Building, configuring and recovering the machines is
+somebody else's job, whatever tooling you use for it. Nothing is shared on disk with that tooling: the only
+thing that crosses is an active kubectl context, and what this repo needs the cluster to look like is in the
+README under "What this expects of your cluster".
 
 Which cluster this repo may touch is pinned by `KUBE_CONTEXT` in `.env`, never inferred from the selected
 context. `use_kubeconfig` in `common.sh` is the single choke point: it derives a one-context, cert-inlined
@@ -58,9 +58,9 @@ be committed and pushed before the bootstrap reaches `02a_argocd.sh`. Anything t
 (sealing a secret) goes in a later step instead.
 
 It does **read** the cluster, for one thing: the control-plane node IPs that become the vm-k8s-stack scrape
-endpoints, since Talos binds controller-manager, scheduler and etcd to localhost and they are scraped per node.
-Reading them from the API rather than a config file means adding a control-plane node updates them on the next
-run. Safe here because this repo always runs against a cluster the OS repo already built.
+endpoints, since many distributions bind controller-manager, scheduler and etcd to localhost and they are
+scraped per node. Reading them from the API rather than a config file means adding a control-plane node
+updates them on the next run.
 
 `.env` is plain `KEY=value` only: no logic, arrays or command substitution. Anything derived is derived in
 `common.sh` (`OPS_DOMAIN` and `APP_DOMAIN` from `BASE_DOMAIN`, for example). Secrets are read from `.env`, never

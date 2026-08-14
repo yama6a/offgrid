@@ -1,4 +1,5 @@
-# Resource numbers are sized for 8GB Pi 5 nodes already running etcd + control plane + Cilium + Longhorn.
+# Resource numbers are sized for small nodes, roughly 8 GB each, already running etcd + control plane +
+# Cilium + Longhorn. Raise them on bigger hardware; nothing here breaks if you do.
 victoria-metrics-k8s-stack:
   # The operator runs standalone (01_victoria_metrics_operator) and reconciles the CRs this chart emits.
   victoria-metrics-operator:
@@ -64,7 +65,7 @@ victoria-metrics-k8s-stack:
               requests:
                 storage: 2Gi
       externalLabels:
-        cluster: raspi-cluster
+        cluster: offgrid
       extraArgs:
         promscrape.streamParse: "true"
       # Applied to EVERY scrape after collection, so the metric name (the `__name__` label) can be matched on.
@@ -265,10 +266,11 @@ victoria-metrics-k8s-stack:
       # and events instead.
       probes: {enabled: false}
 
-  # Talos binds controller-manager, scheduler and etcd metrics to localhost by default. They are exposed via
-  # Talos machine config, OUTSIDE ArgoCD. `endpoints` are the CONTROL-PLANE node IPs, and only those: a worker
-  # runs none of the three. Do NOT hand-edit them: 04_values.sh reads them from the live cluster and rewrites
-  # this list, so adding a control-plane node updates it on the next run.
+  # Many distributions bind controller-manager, scheduler and etcd metrics to localhost, so exposing them is a
+  # host-level change made OUTSIDE ArgoCD (on Talos, in the machine config). `endpoints` are the CONTROL-PLANE
+  # node IPs, and only those: a worker runs none of the three. Do NOT hand-edit them: 04_values.sh reads them
+  # from the live cluster and rewrites this list, so adding a control-plane node updates it on the next run.
+  # If your control plane does not expose these at all, set enabled: false on all three.
   kubeControllerManager:
     enabled: true
     endpoints: []
@@ -310,7 +312,9 @@ victoria-metrics-k8s-stack:
     endpoints: []
     service:
       enabled: true
-      port: 2381   # Talos etcd listen-metrics-urls, plain HTTP, no auth
+      # From ETCD_METRICS_PORT in .env, written by 04_values.sh. etcd's plain-HTTP metrics listener, with no
+      # auth, which Talos and kubeadm both place on 2381.
+      port: 2381
       targetPort: 2381
     vmScrape:
       spec:

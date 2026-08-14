@@ -4,7 +4,7 @@ groups:
   # delivery engine is stuck. A down controller/repo-server/redis is already covered by target-down.
   - orgId: 1
     name: argocd-health
-    folder: raspi-cluster
+    folder: offgrid
     interval: 1m
     rules:
       - uid: argocd-app-unhealthy

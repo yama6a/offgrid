@@ -26,7 +26,7 @@ vendored `charts/*.tgz` is gitignored and reproduced from the lock, same as the 
 
 ## Where it sits: wave 2
 
-The [`nic-keeper`](https://github.com/yama6a/talos-raspberry-pi5-cluster/blob/main/docs/03_operating_system.md) DaemonSet and this controller are independent leaves, neither
+A host-network node agent and this controller are independent leaves, neither
 depending on the other, so they share wave `2`: the "after the CNI and ArgoCD are in place" slot. Both carry the
 `02_` prefix, and `ls argo_apps/platform/apps/templates/` still reads in deploy order.
 
@@ -63,7 +63,7 @@ kubectl delete pod -n sealed-secrets -l app.kubernetes.io/name=sealed-secrets   
 ### First-time bootstrap vs rebuild
 
 The key is exactly what separates the two one-shot orchestrators. Neither touches the nodes: wiping Talos is
-the OS repo's `make reset-cluster`, run before either of these if you want one.
+a full node wipe by whatever tooling built the cluster, run before either of these if you want one.
 
 - `DANGEROUS_rebuild_cluster.sh` redelivers the platform onto a cluster that already has one, then RESTORES the
   backed-up master key so the committed `SealedSecret`s decrypt unchanged. It does not re-seal. Needs a current

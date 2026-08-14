@@ -1,6 +1,6 @@
 #!/usr/bin/env bash
 # DANGEROUS: tears the platform down to bare Kubernetes and redelivers it. One confirmation, up front.
-# It does NOT touch the nodes: wiping Talos itself is the OS repo's `make reset-cluster`.
+# It does NOT touch the nodes: wiping the machines themselves belongs to whatever tooling built them.
 #
 # A rebuild is a FULL fresh start: it wipes local data AND the S3 backups, so the empty same-named clusters
 # ArgoCD recreates begin a clean backup history with no old-vs-new systemID conflict. To keep the OLD data,
@@ -52,8 +52,8 @@ This will REDELIVER the entire platform onto the cluster KUBE_CONTEXT names in .
           (ArgoCD redeploys cilium/cert-manager/longhorn/gateway/SSO/monitoring from git)
   note  : it WIPES the S3 backups, so the DBs come back EMPTY. If you want the old data, restore from S3
           BEFORE rebuilding (make restore-cnpg); a rebuild discards it.
-  nodes : NOT touched. To wipe Talos itself, do that first in the OS repo:
-          https://github.com/yama6a/talos-raspberry-pi5-cluster  ->  make reset-cluster && make bootstrap-cluster
+  nodes : NOT touched. To wipe the machines themselves, do that first with whatever tooling built them,
+          then come back here.
 
 Have a CURRENT sealed-secrets key backup (03_backup_sealed_secrets_key.sh), else SSO won't decrypt
 until you re-seal (04_google_sso). ntfy alerting is seeded post-boot via 06_ntfy_auth regardless.
@@ -73,15 +73,14 @@ commit_and_push_working_tree() {
   ok "remote up to date"
 }
 
-# The nodes are the OS repo's to wipe. All this needs is a cluster that answers.
+# The nodes belong to whatever tooling built them. All this needs is a cluster that answers.
 assert_cluster_exists() {
   local node_count
   say "precondition: the cluster exists and is reachable"
   assert_api
   node_count="$(kubectl get nodes --no-headers 2>/dev/null | wc -l | tr -d ' ')"
   [ "${node_count:-0}" -gt 0 ] || die "no nodes found via context ${KUBE_CONTEXT} (${KUBECONFIG}).
-       Wipe and rebuild the cluster first, in the OS repo:  https://github.com/yama6a/talos-raspberry-pi5-cluster
-       there:  make reset-cluster && make bootstrap-cluster"
+       Rebuild the cluster first with whatever tooling built it, then point KUBE_CONTEXT at it."
   ok "${node_count} node(s) reachable"
 }
 

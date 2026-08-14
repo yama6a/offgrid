@@ -3,6 +3,6 @@ bucket: "" # written by 10c_redis_backup.sh from .env; EMPTY = backups off, noth
 region: "" # written by 10c_redis_backup.sh from .env
 prefix: "redis/" # cnpg/, vm/ and longhorn/ are the other prefixes in this bucket
 secretName: "redis-backup-s3" # sealed S3 writer creds in THIS namespace; keys AWS_ACCESS_KEY_ID / AWS_SECRET_ACCESS_KEY
-discoveryLabel: "redis-backup.raspi-cluster/enabled" # lib/helm/redis-instance stamps it on persistence:true
+discoveryLabel: "redis-backup.offgrid/enabled" # lib/helm/redis-instance stamps it on persistence:true
 # No image knobs on purpose: both pins are renovate-annotated in templates/cronjob.yaml, which is what the
 # regex manager scans. A copy here would be a second, untracked pin that rots.

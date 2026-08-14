@@ -3,7 +3,7 @@ groups:
   # Symptoms, always warning, no criticality join. The workload-outages group is the critical path.
   - orgId: 1
     name: workload-anomalies
-    folder: raspi-cluster
+    folder: offgrid
     interval: 1m
     rules:
       - uid: container-oomkilled

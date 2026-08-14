@@ -16,7 +16,7 @@ metadata:
   labels:
     {{- include "redis-instance.labels" . | nindent 4 }}
     {{- if .Values.persistence }}
-    redis-backup.raspi-cluster/enabled: "true"   # discovered by the central 07_redis_backup job (durable only)
+    redis-backup.offgrid/enabled: "true"   # discovered by the central 07_redis_backup job (durable only)
     {{- end }}
 spec:
   # A durable store outranks the stateless app pods it serves under node memory pressure. No effect on a

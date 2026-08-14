@@ -40,17 +40,20 @@ victoria-logs-collector:
         fieldRef:
           fieldPath: spec.nodeName
 
-  # The NODE's own logs, not the containers'. Talos persists every system service to /var/log/<service>.log,
-  # kernel/dmesg included, and the chart already hostPath-mounts /var/log read-only. Needs Talos >=1.12: older
-  # releases keep service logs in an in-memory ring buffer and write no files at all.
+  # The NODE's own logs, not the containers'. This is the one block that depends on how your OS stores system
+  # logs, and there is no knob for it: each entry below is a different source with its own settings, so adapt
+  # or delete the entries rather than templating them.
+  # The first entry assumes an OS that persists each system service to /var/log/<service>.log, kernel included,
+  # which Talos does from 1.12 onwards. On a journald distro there are no such files: drop that entry and
+  # collect from journald instead. The chart already hostPath-mounts /var/log read-only either way.
   fileCollector:
-      # Top-level glob only, so it takes the Talos files and not /var/log/{pods,containers}, which the container
+      # Top-level glob only, so it takes the service files and not /var/log/{pods,containers}, which the container
       # collector above already reads. Rotation renames to <service>.log.1, which the glob skips and the
       # collector follows to the end before switching, so a rotation neither duplicates nor drops lines.
     - glob: /var/log/*.log
       # The Linux audit subsystem, one record per syscall it watches: ~340MB a DAY per node against 4.4MB for
       # every container log combined, and it would fill the 30Gi store well inside the 60d retention. Nothing
-      # here reads it and `talosctl logs auditd` still does. Taking it in anyway needs a bigger PVC AND a way to
+      # here reads it and the node's own log tooling still does. Taking it in anyway needs a bigger PVC AND a way to
       # trim the records, not just deleting this line.
       excludeGlob: /var/log/auditd.log
       # controller-runtime and dns-resolve-cache colour their level, so without this the escape sequences land
@@ -60,7 +63,7 @@ victoria-logs-collector:
       # second one from here makes VictoriaLogs reject the whole line ("stream tags must be sorted in
       # alphabetical order ... skipping the log entry"), which is silent loss, visible only in the vlsingle log.
       # So `hostname` stays as-is and holds the collector POD's name, which is of no use here.
-      extraFields: '{"source":"talos","node":"%{NODE_NAME}"}' # `source:talos` separates node from container logs
+      extraFields: '{"source":"node","node":"%{NODE_NAME}"}' # `source:node` separates node from container logs
       # The chart's default. Spelled out because the entries below set their own, and the chart pads the
       # earlier positions with an EMPTY value to keep the flags aligned, which switches `_msg` mapping off for
       # this glob: every etcd and kubelet line would arrive as "missing _msg field".
@@ -76,7 +79,7 @@ victoria-logs-collector:
       msgField: flow.drop_reason_desc # the flow JSON has no message key, so _msg would read "missing _msg field"
       streamFields: node,file
 
-      # The kube-apiserver audit log: who changed what. Talos has it on by DEFAULT, at ~1GB a day per node,
+      # The kube-apiserver audit log: who changed what. Talos enables it by DEFAULT, at ~1GB a day per node,
       # which is why 03c narrows the policy first; this only collects what survives it. The exact filename,
       # NOT a *.log glob: rotation renames to kube-apiserver-<timestamp>.log, and a glob would re-ingest every
       # rotated file whole.

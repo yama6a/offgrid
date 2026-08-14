@@ -4,7 +4,7 @@ groups:
   # longhorn-health.yaml.
   - orgId: 1
     name: storage-tls-health
-    folder: raspi-cluster
+    folder: offgrid
     interval: 1m
     rules:
       # A is seconds until expiry, and `lt` 1209600 is 14d. Also fires once already expired, since that is

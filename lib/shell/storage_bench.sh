@@ -8,7 +8,7 @@ BENCH_NS="storage-bench"
 BENCH_SC_REMOTE="bench-lh-remote"            # dataLocality disabled + replicas pinned OFF the bench node
 BENCH_SC_LOCAL="bench-lh-local"              # dataLocality best-effort, one replica follows the pod
 REPLICA_TAG="benchreplica"                   # Longhorn node tag; teardown removes it from every node
-OWNER_LABEL="bench.raspi-cluster/owner=storage_bench.sh"
+OWNER_LABEL="bench.offgrid/owner=storage_bench.sh"
 RABBIT_NS="rabbitmq"                          # where the live cluster operator lives (needs an egress grant)
 EGRESS_CNP="bench-mq-operator-egress"         # additive CNP in $RABBIT_NS; teardown deletes it BY NAME
 REPEATS=3
@@ -58,7 +58,7 @@ ARMS=(
 # Uses the SHIPPED class, not the two bench ones, because this feeds a decision about the real
 # databases, so the real class settings (dataLocality disabled included) are the ones that matter.
 # 3 instances because `any 1` of two standbys is the config worth running: it survives one node being
-# drained without stalling writes, which is what makes a rolling Talos upgrade safe.
+# drained without stalling writes, which is what makes a rolling node upgrade safe.
 SYNC_ARMS=(
   "f-lh-async|longhorn-r2-ephemeral|1|off|longhorn r2, single instance, no replication"
   "g-lh-sync|longhorn-r2-ephemeral|3|on|longhorn r2, 3 instances, synchronous any 1 required"
@@ -120,7 +120,7 @@ kb()  { kubectl -n "$BENCH_NS" "$@"; }
 lh()  { kubectl -n longhorn-system "$@"; }
 
 # Every delete in this script is scoped to $OWNER_LABEL. Nothing without it is ever touched.
-labelled() { printf 'bench.raspi-cluster/owner: storage_bench.sh'; }
+labelled() { printf 'bench.offgrid/owner: storage_bench.sh'; }
 
 node_cpu_pct() {
   kubectl top node "$1" --no-headers 2>/dev/null | awk '{gsub(/%/,"",$3); print $3+0}'

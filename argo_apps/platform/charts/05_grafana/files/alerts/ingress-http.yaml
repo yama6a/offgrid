@@ -7,7 +7,7 @@ groups:
   # envoy_cluster_upstream_rq_time is in MILLISECONDS.
   - orgId: 1
     name: ingress-http
-    folder: raspi-cluster
+    folder: offgrid
     interval: 1m
     rules:
       - uid: ingress-5xx-high

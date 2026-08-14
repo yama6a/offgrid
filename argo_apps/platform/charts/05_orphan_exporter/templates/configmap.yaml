@@ -15,7 +15,7 @@ data:
     ARGOCD_NS = os.environ.get("ARGOCD_NS", "argocd")
     REDIS_BACKUP_NS = os.environ.get("REDIS_BACKUP_NS", "redis-backup")
     REDIS_STATUS_CM = "redis-backup-status"                        # written by the 07_redis_backup CronJob
-    REDIS_BACKUP_LABEL = "redis-backup.raspi-cluster/enabled"      # stamped by redis-instance on persistence:true
+    REDIS_BACKUP_LABEL = "redis-backup.offgrid/enabled"      # stamped by redis-instance on persistence:true
     EMPTY_RDB_BYTES = 250   # under this an RDB holds no keys; same threshold recover_redis_from_s3.sh guards on
     INTERVAL = int(os.environ.get("INTERVAL", "60"))
     PORT = int(os.environ.get("PORT", "9100"))

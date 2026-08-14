@@ -10,7 +10,7 @@ groups:
   # `kube_<obj>_labels` to attach the criticality label then keeps it 0, so the alert never fires.
   - orgId: 1
     name: workload-outages
-    folder: raspi-cluster
+    folder: offgrid
     interval: 1m
     rules:
       - uid: deployment-not-available

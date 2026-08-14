@@ -2,8 +2,9 @@
 # Exits 0 when every replicated store on this cluster is healthy AND in sync, non-zero otherwise. One shot, no
 # waiting: the caller decides how long to keep asking.
 #
-# Its reason to exist is the OS repo's PRE_DRAIN_HEALTH_HOOK, which cannot know what runs here:
-#   in the OS repo's .env:  PRE_DRAIN_HEALTH_HOOK="/abs/path/to/offgrid/lib/shell/check_replication_health.sh"
+# Its reason to exist is node tooling that drains a node before rebooting it. That tooling cannot know what
+# runs here, so point its pre-drain gate at this script and it will wait for the platform to be in sync.
+#   e.g. a pre-drain hook variable:  PRE_DRAIN_HEALTH_HOOK="/abs/path/to/lib/shell/check_replication_health.sh"
 # Point that at this file and 03e blocks on it before draining EACH node. Also runnable by hand before any
 # disruptive work: `make check-replication-health`.
 set -uo pipefail
@@ -14,7 +15,8 @@ source "${SCRIPT_DIR}/common.sh"
 # ---- knobs ----
 # Each check ECHOES the not-yet-in-sync items, space-separated, empty when all good. A missing CRD or absent
 # subsystem means kubectl errors to /dev/null, so empty, so healthy: there is nothing to protect.
-# etcd is deliberately NOT here: `talosctl upgrade` already refuses to reboot if it would break quorum.
+# etcd is deliberately NOT here: node tooling worth the name already refuses to reboot a machine if doing so
+# would break etcd quorum, and it can see that more directly than this script can.
 # Redis is not here either: the instance is standalone with no replication, its data sits on Longhorn (covered
 # by the first check), and it simply restarts after a reboot.
 CHECKS=(

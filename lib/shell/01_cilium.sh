@@ -1,5 +1,5 @@
 #!/usr/bin/env bash
-# Installs Cilium as the CNI on the cluster the OS repo built: the one imperative bootstrap that breaks the
+# Installs Cilium as the CNI: the one imperative bootstrap that breaks the
 # chicken-and-egg, since ArgoCD and everything else need pod networking first. ArgoCD later adopts the same
 # release from argo_apps/platform/charts/00_cilium, so no versions or values live here.
 # Idempotent: re-run safely.
@@ -13,7 +13,7 @@ CHART_DIR="${PLATFORM_CHARTS}/00_cilium"                         # the wrapper c
 CRDS_CHART_DIR="${PLATFORM_CHARTS}/00_prometheus_operator_crds"  # monitoring CRDs (cilium's ServiceMonitor needs them)
 RELEASE="cilium"
 NS="kube-system"
-API_WAIT=300                                       # secs; the VIP lags the OS repo's NIC-hardening reboot
+API_WAIT=300                                       # secs; the API can lag a node-level change made just before this
 VALUES="${CHART_DIR}/values.yaml"
 
 # ---- state ----
@@ -30,15 +30,15 @@ check_prerequisites() {
   ok "kubectl + helm + yq present, chart + values found"
 }
 
-# The VIP can take a minute or two to answer after the OS repo's NIC-hardening reboot, so probe instead of
+# The API can take a minute or two to answer after a node-level change or reboot, so probe instead of
 # dying on the first miss. Override the budget with API_WAIT=<secs>.
 wait_for_api() {
   local deadline
-  say "waiting for the Kubernetes API to answer (up to ${API_WAIT}s; the VIP lags the OS repo's NIC-hardening reboot)"
+  say "waiting for the Kubernetes API to answer (up to ${API_WAIT}s)"
   deadline=$(( $(date +%s) + API_WAIT ))
   until kubectl get nodes >/dev/null 2>&1; do
     [ "$(date +%s)" -lt "$deadline" ] \
-      || die "API still unreachable via ${KUBECONFIG} after ${API_WAIT}s, is the cluster up? (build it in the OS repo, or wait longer after its NIC-hardening reboot, or raise API_WAIT)"
+      || die "API still unreachable via ${KUBECONFIG} after ${API_WAIT}s. Is the cluster up and is KUBE_CONTEXT pointing at it? If a node-level change just landed, give it longer or raise API_WAIT."
     printf '.'; sleep 5
   done
   echo

@@ -1,8 +1,8 @@
 # A thin dispatcher over the numbered runbook scripts. Holds NO logic, versions or values: every target just
 # runs the step script it names, so `make install-cilium` and running lib/shell/01_cilium.sh by hand are
 # identical. `make help` lists everything; the one-shot orchestrators are bootstrap-cluster and
-# rebuild-cluster. Everything here assumes a cluster the OS repo already built:
-#   https://github.com/yama6a/talos-raspberry-pi5-cluster
+# rebuild-cluster. Everything here assumes a Kubernetes cluster that already exists and meets the
+# requirements in the README ("What this expects of your cluster").
 
 .DEFAULT_GOAL := help
 
@@ -88,14 +88,14 @@ backup-secrets-key: ## 03: back up the sealed-secrets master key (do this BEFORE
 restore-secrets-key: ## 03: restore the sealed-secrets master key so committed SealedSecrets decrypt.
 	bash lib/shell/03_restore_sealed_secrets_key.sh
 
-##@ Node lifecycle  (the platform half of what the OS repo's node operations leave behind)
+##@ Node lifecycle  (the platform half of what your node tooling leaves behind)
 .PHONY: reconcile-storage
-reconcile-storage: ## After the OS repo's `make recover-node`: drop a rejoined node's stale replicas and reset its Longhorn disk record. NODE=<hostname>, add YES=1 to skip the prompt.
-	@test -n "$(NODE)" || { echo "usage: make reconcile-storage NODE=talos-cp3 [YES=1]"; exit 1; }
+reconcile-storage: ## After your node tooling has rejoined a replaced machine: drop its stale replicas and reset its Longhorn disk record. NODE=<hostname>, add YES=1 to skip the prompt.
+	@test -n "$(NODE)" || { echo "usage: make reconcile-storage NODE=<hostname> [YES=1]"; exit 1; }
 	bash lib/shell/reconcile_storage_after_rejoin.sh $(NODE) $(if $(YES),--yes,)
 
 .PHONY: check-replication-health
-check-replication-health: ## Are Longhorn, CNPG and RabbitMQ all healthy + in sync? Exits non-zero if not. Point the OS repo's PRE_DRAIN_HEALTH_HOOK at this.
+check-replication-health: ## Are Longhorn, CNPG and RabbitMQ all healthy + in sync? Exits non-zero if not. Point your node tooling's pre-drain gate at this.
 	bash lib/shell/check_replication_health.sh
 
 ##@ Data recovery  (restore from S3: CNPG + Redis + Longhorn + VM/VL. A GitOps-pruned CNPG cluster is not deleted; just restore its files.)

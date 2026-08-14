@@ -21,8 +21,13 @@ source "$ENV_FILE"
 
 # Scripts run under `set -u`, so default every key here: an older .env missing one must not trip it.
 # Empty means "skip the feature it enables", see each key's comment in .env.example.
+: "${KUBE_API_HOST:=localhost}"           # Cilium reaches the API here before pod networking exists (Talos KubePrism)
+: "${KUBE_API_PORT:=7445}"                # port for the above
+: "${KUBELET_TLS_INSECURE:=true}"         # metrics-server skips kubelet cert verification (self-signed certs, no CSR approver)
+: "${ETCD_METRICS_PORT:=2381}"            # etcd's metrics listener, scraped for control-plane dashboards
+: "${LONGHORN_DATA_PATH:=/var/mnt/storage}"  # where Longhorn stores replica data on each node
 : "${KUBE_CONTEXT:=}"                     # the ONE kubectl context every script here may touch; empty = ask once and write it back to .env
-: "${GITHUB_GHCR_PULL_TOKEN_SECRET:=}"    # the OS repo bakes this into the node machine config (kubelet pulls private ghcr.io); here it is only a docker login
+: "${GITHUB_GHCR_PULL_TOKEN_SECRET:=}"    # here it is only a docker login; node-level pull auth, if you need it, is configured on the nodes
 : "${ARGOCD_GITHUB_PAT_SECRET:=}"         # 02a seeds ArgoCD's repo-creds Secret
 : "${NTFY_PHONE_PASSWORD_SECRET:=}"       # 06 seeds the ntfy 'phone' user (Grafana pushes alerts to ntfy, phone subscribes)
 : "${GOOGLE_SSO_CLIENT_ID:=}"      # 04_google_sso writes it into the google-sso values
@@ -243,8 +248,8 @@ PINNED_KUBECONFIG="${REPO_ROOT}/.cache/kubeconfig"   # derived, gitignored; rewr
 _pick_kube_context() {
   local src="$1" names n choice
   mapfile -t names < <(KUBECONFIG="$src" kubectl config get-contexts -o name | sort)
-  [ "${#names[@]}" -gt 0 ] || die "no contexts in ${src}. Build the cluster in the OS repo
-       (https://github.com/yama6a/talos-raspberry-pi5-cluster), then there:  make bootstrap-cluster && make merge-kubeconfig"
+  [ "${#names[@]}" -gt 0 ] || die "no contexts in ${src}. Point kubectl at a cluster first: this repo starts
+       from one that already exists. See the README, \"What this expects of your cluster\"."
   [ -t 0 ] || die "KUBE_CONTEXT is not set in .env and there is no terminal to ask on.
        Set it by hand to the cluster THIS repo may touch, one of:
 $(printf '         %s\n' "${names[@]}")"
@@ -264,16 +269,14 @@ $(printf '         %s\n' "${names[@]}")"
   ok "wrote KUBE_CONTEXT=\"${KUBE_CONTEXT}\" to .env (edit it there to change clusters)"
 }
 
-# Nothing hands us a kubeconfig path (the OS repo keeps its own in its own store), so we read the ambient
-# kubectl config. That holds every cluster you use, and "whatever is currently selected" is not safe to apply
+# Nothing hands us a kubeconfig path, so we read the ambient kubectl config. That holds every cluster you use, and "whatever is currently selected" is not safe to apply
 # a whole platform to, so PIN: write a one-context, self-contained copy and point KUBECONFIG at THAT. Every
 # kubectl, helm and kubeseal inherits it, and a `kubectl config use-context` elsewhere cannot retarget us.
 # Re-derived on every call (cheap) so an edited .env takes effect on the next step.
 use_kubeconfig() {
   local src="${KUBECONFIG_SOURCE:-${KUBECONFIG:-$HOME/.kube/config}}"
-  [ -f "$src" ] || die "no kubeconfig at ${src}. Build the cluster in the OS repo
-       (https://github.com/yama6a/talos-raspberry-pi5-cluster), then there:
-       make bootstrap-cluster && make merge-kubeconfig"
+  [ -f "$src" ] || die "no kubeconfig at ${src}. This repo starts from a cluster that already exists:
+       point kubectl at one, then set KUBE_CONTEXT in .env. See the README, 'What this expects of your cluster'."
   [ -n "$KUBE_CONTEXT" ] || _pick_kube_context "$src"
   mkdir -p "$(dirname "$PINNED_KUBECONFIG")"
   # Subshell so the umask does not leak into the caller. --minify keeps one context, --flatten inlines its

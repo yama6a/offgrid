@@ -4,7 +4,7 @@ apiVersion: 1
 groups:
   - orgId: 1
     name: probes
-    folder: raspi-cluster
+    folder: offgrid
     interval: 1m
     rules:
       - uid: ingress-probe-failing

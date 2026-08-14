@@ -1,5 +1,5 @@
 #!/usr/bin/env bash
-# Second half of replacing a node: resets the Longhorn disk record the OS repo's `make recover-node` leaves
+# Second half of replacing a node: resets the Longhorn disk record that rejoining a machine leaves
 # stale. Longhorn keeps the disk's UUID in BOTH the node CR and a longhorn-disk.cfg on the disk itself, so a
 # reflash makes a fresh filesystem, the manager writes a new cfg with a new UUID while the CR still holds the
 # old one, and Longhorn refuses the disk rather than risk using the wrong one:
@@ -16,9 +16,8 @@ reconcile_storage_after_rejoin.sh <host> [--yes]     (or: make reconcile-storage
   <host>   the node to reconcile; omit it to pick from the cluster
   --yes    skip the confirmation prompt
 
-Run it after the OS repo has rejoined the machine:
-  there:  make recover-node NODE=talos-cp3
-  here:   make reconcile-storage NODE=talos-cp3
+Run it after your node tooling has rejoined the machine and it reports Ready:
+  make reconcile-storage NODE=<host>
 Re-run it as often as you like: every step re-checks before acting, so a partial failure is recovered by
 running it again, which is the normal way past a step that needed more time.
 EOF

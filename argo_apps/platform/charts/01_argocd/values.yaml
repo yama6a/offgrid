@@ -1,4 +1,5 @@
-# HA-lite for 3x 8GB Pi 5s. ArgoCD is not in the data path of running apps, so a few seconds without
+# HA-lite, sized for a 3-node cluster with roughly 8 GB per node. ArgoCD is not in the data path of running
+# apps, so a few seconds without
 # reconciliation is fine: reconciler and redis stay self-healing singletons, the stateless front-ends run 2-up.
 argo-cd:
   global:

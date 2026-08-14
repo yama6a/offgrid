@@ -16,7 +16,7 @@ grafana:
   # Pinned so the chart stops generating a random password each render, which churns the secret checksum and
   # rolls the pod every sync. The value is irrelevant, login is disabled.
   adminUser: admin
-  adminPassword: raspi-cluster
+  adminPassword: offgrid
 
   # Grafana's OWN auth is OFF. The Google SSO policy on its edge is the only barrier, so every request arrives
   # already authenticated and is served as an anonymous Admin. Dotted keys here are grafana.ini SECTION names.

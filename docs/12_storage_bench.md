@@ -136,7 +136,7 @@ between the two shipped classes, so this pair is still reproducible:
 - pgsync uses the SHIPPED class, not the bench ones, because the decision is whether the real databases
   move, so the real settings (`dataLocality: disabled`) are the ones that matter.
 - 3 instances, not 2: `any 1` of two standbys survives one node being drained without stalling writes,
-  which is what makes a rolling Talos upgrade safe under `required`. `03e`'s `wait_replication_healthy`
+  which is what makes a rolling node upgrade safe under `required`. A pre-drain replication-health gate
   stops the next drain before the displaced instance is back in sync.
 - **The node tag exists because Longhorn picks replica nodes by free space** and will silently put one
   under the pod, turning `b` into `c` while the run still looks fine. The two non-bench nodes are tagged
@@ -223,7 +223,7 @@ replace them.
 
 ## Safety
 
-- Everything carries `bench.raspi-cluster/owner=storage_bench.sh` and every delete is scoped to it.
+- Everything carries `bench.offgrid/owner=storage_bench.sh` and every delete is scoped to it.
 - Bench pods carry **no `priorityClassName`**, so they sit at priority 0, below `data-critical`.
   Node-pressure eviction reaches the benchmark before any database. Never give a bench pod a priority class.
 - Preflight hard-fails on a degraded cluster, an in-flight Longhorn rebuild (it saturates the exact path
@@ -233,7 +233,7 @@ replace them.
   scripts that wipe the cluster, and diluting it would make it useless.
 - Not an ArgoCD app: every app here is `automated` + `selfHeal` + `prune`, so Argo would recreate each
   bench object as teardown deleted it. Create-measure-destroy inside one invocation is the opposite of a
-  reconciled steady state. Applied imperatively, like `03c`'s probe pod.
+  reconciled steady state. Applied imperatively, like a one-shot probe pod.
 - The bench namespace takes the cluster default, `enforce: baseline` with `warn: restricted`, so
   `kubectl apply` prints restricted warnings and admits anyway. Nothing is privileged, host-networked or
   hostPath-mounted. The fio pod runs as root because `apk add fio` needs to, dropping all capabilities

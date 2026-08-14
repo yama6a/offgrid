@@ -117,7 +117,7 @@ resource "aws_s3_bucket_lifecycle_configuration" "backups" {
 resource "aws_iam_user" "backup_writer" {
   name = "${var.bucket}-writer"
   # IAM tag values allow only [\p{L}\p{Z}\p{N}_.:/=+\-@], so no parens and no commas.
-  tags = { purpose = "raspi-cluster backups - barman-cloud/longhorn/redis/vm" }
+  tags = { purpose = "offgrid backups - barman-cloud/longhorn/redis/vm" }
 }
 
 resource "aws_iam_access_key" "backup_writer" {

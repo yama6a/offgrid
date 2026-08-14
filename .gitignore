@@ -6,9 +6,8 @@
 .env.bak.*
 
 # This repo's own credentials: the sealed-secrets master key and the plaintext ArgoCD webhook secret, written
-# into `secrets/`, a symlink to an off-repo store (a synced drive). The OS repo has a SEPARATE store; no
-# talosconfig or kubeconfig lands here. kubectl comes from your active context, which the OS repo's
-# `make merge-kubeconfig` sets. Never commit the symlink or anything it points at.
+# into `secrets/`, a symlink to an off-repo store (a synced drive). No kubeconfig lands here: kubectl comes
+# from your active context, pinned by KUBE_CONTEXT in .env. Never commit the symlink or anything it points at.
 /secrets
 
 # Scratch: benchmark runs and other throwaway output.

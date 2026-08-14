@@ -4,7 +4,7 @@ groups:
   # and you are blind. The PVCs are also covered by pvc-nearly-full; these catch the VM/VL-specific modes.
   - orgId: 1
     name: monitoring-health
-    folder: raspi-cluster
+    folder: offgrid
     interval: 1m
     rules:
       # The ONE rule that reports its own query failing, hence the lone execErrState: Error in the whole set.

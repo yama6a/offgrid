@@ -6,7 +6,7 @@ groups:
   # A down CNPG pod is already caught by the generic target-down rule.
   - orgId: 1
     name: cnpg-health
-    folder: raspi-cluster
+    folder: offgrid
     interval: 1m
     rules:
       - uid: cnpg-high-connections-warning

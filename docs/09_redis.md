@@ -97,7 +97,7 @@ What `persistence` actually drives:
 
 | `persistence` | AOF | S3 RDB backup | For |
 |---|---|---|---|
-| `true` | on (`appendfsync everysec`, so ~1s worst-case loss on a hard crash) | enrolled daily, via the `redis-backup.raspi-cluster/enabled` label | durable data |
+| `true` | on (`appendfsync everysec`, so ~1s worst-case loss on a hard crash) | enrolled daily, via the `redis-backup.offgrid/enabled` label | durable data |
 | `false` | off, RDB snapshots only | not enrolled | disposable caches |
 
 Deletion protection is the real prune guard, not the reclaim policy. `deletionProtection` (REQUIRED bool, no
@@ -152,7 +152,7 @@ with CNPG; see [10_backups.md](10_backups.md) for the bucket, Terraform and cred
 
 How it works:
 
-- Discovery, not a list. The `redis-instance` chart stamps `redis-backup.raspi-cluster/enabled: "true"` on the
+- Discovery, not a list. The `redis-instance` chart stamps `redis-backup.offgrid/enabled: "true"` on the
   `Redis` CR of every durable instance. The job's `list` container (`kubectl get redis -A -l ...`, via a read-only
   cluster-wide ClusterRole) finds them all, so a durable instance added anywhere is picked up.
 - Dump. For each, `redis-cli --rdb` against the instance's Service on `:6379`. That is a replication full-sync, so

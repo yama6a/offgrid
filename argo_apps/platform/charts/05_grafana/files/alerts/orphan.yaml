@@ -6,7 +6,7 @@ groups:
   # vector 2 (owning app gone), the untracked guard, and the exporter deadman. Fed by 05_orphan_exporter.
   - orgId: 1
     name: orphan
-    folder: raspi-cluster
+    folder: offgrid
     interval: 1m
     rules:
       - uid: cnpg-cluster-orphaned

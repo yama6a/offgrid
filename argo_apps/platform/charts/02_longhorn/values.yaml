@@ -1,10 +1,13 @@
 longhorn:
   defaultSettings:
-    defaultDataPath: /var/mnt/storage # the dedicated XFS volume 03c creates and extraMounts for the kubelet
+    # Where replica data lives on each node. Written by 04_values.sh from LONGHORN_DATA_PATH in .env, so do
+    # not hand-edit. It must exist on every node and, with a containerized kubelet, be bind-mounted rshared
+    # so the per-replica sub-mounts propagate back to the host. Longhorn's own default is /var/lib/longhorn.
+    defaultDataPath: /var/mnt/storage
     # Survives the one node loss we design for AND leaves at least one spare node to rebuild onto. Raising this
     # to the node count would leave no spare, so a volume would stay degraded until the dead node came back.
     defaultReplicaCount: 2
-    storageMinimalAvailablePercentage: 15 # keep headroom on the Pi NVMes
+    storageMinimalAvailablePercentage: 15 # keep headroom on a small single disk per node
     # Force-delete StatefulSet pods bound to a downed node so they reschedule instead of hanging forever.
     # NICs on this cluster are flaky, so node loss is recurring, not theoretical.
     nodeDownPodDeletionPolicy: delete-statefulset-pod
@@ -17,7 +20,7 @@ longhorn:
     # cross-network rebuild.
     replicaReplenishmentWaitInterval: 1800
     orphanResourceAutoDeletion: "replica-data" # stale replica data from node flaps would silently eat the NVMe
-    # Trim the 12% default per-instance-manager CPU reservation to free scheduling headroom on a 4-core Pi.
+    # Trim the 12% default per-instance-manager CPU reservation to free scheduling headroom on a small node.
     guaranteedInstanceManagerCPU: '{"v1":"8","v2":"8"}'
   # 10d_longhorn_backup.sh fills these from .env/terraform; empty = backups off. Longhorn owns retention via the
   # RecurringJob retain counts, the S3 longhorn/ prefix has no lifecycle rule.

@@ -6,7 +6,7 @@ groups:
   # import-errors metric is not emitted here.
   - orgId: 1
     name: cilium-health
-    folder: raspi-cluster
+    folder: offgrid
     interval: 1m
     rules:
       - uid: cilium-agent-down

@@ -32,7 +32,7 @@ One DaemonSet reads four things off each node's filesystem, all into the same st
 | Source | Where | Query it by |
 |---|---|---|
 | container logs | `/var/log/pods` | `kubernetes.pod_namespace`, `kubernetes.pod_name`, `kubernetes.container_name` |
-| Talos node logs | `/var/log/*.log` | `source:talos`, `node`, `file` (e.g. `/var/log/kubelet.log`) |
+| Node system logs | `/var/log/*.log` | `source:node`, `node`, `file` (e.g. `/var/log/kubelet.log`) |
 | denied network flows | `/var/run/cilium/hubble/drops.log` | `source:hubble`, `node`, `verdict` |
 | kube-apiserver audit | `/var/log/audit/kube/kube-apiserver.log` | `source:kube-audit`, `node`, `verb`, `user.username` |
 
@@ -92,7 +92,7 @@ Two things to keep in mind:
 
 Talos turns audit logging on by DEFAULT and at `level: Metadata` for everything, which measured ~1GB a day per
 node here, and none of it was being read. The machine config narrows the policy instead of collecting it raw.
-The policy itself lives in the OS repo's `03c_talos_cluster_config.sh`, not here; this section explains what it
+The policy itself is set on the apiserver, which is a host-level change made outside this repo. This section explains what it
 does and how to change it, because the consequences land on this repo's log pipeline:
 
 - reads (`get`, `list`, `watch`) are dropped: the bulk of the volume,
@@ -114,11 +114,10 @@ audit events name theirs `stageTimestamp`. Note that Talos keeps up to 10 rotate
 node's EPHEMERAL volume whatever the policy says.
 
 The policy only takes effect once the machine config is pushed, and pushing it restarts the apiserver static
-pod on every node it touches. Both commands are the OS repo's, run from a checkout of
-[talos-raspberry-pi5-cluster](https://github.com/yama6a/talos-raspberry-pi5-cluster):
+pod on every node it touches. Both are node-level operations, run with whatever tooling manages your machines:
 
 ```bash
-# in the OS repo, NOT here
+# node-level, NOT from this repo
 make reapply-talos-config NODE=talos-cp1   # one node, dry-run + confirm
 kubectl get --raw /healthz                 # it came back? then do the rest
 make reapply-talos-config
@@ -128,7 +127,7 @@ Do it one node first, because an audit policy the apiserver REJECTS stops it fro
 walks every control-plane node in one loop. Better still, validate the policy before pushing anything:
 
 ```bash
-# policy.yaml = just the auditPolicy body from the OS repo's 03c. The key is only there because the apiserver checks it
+# policy.yaml = just the auditPolicy body your apiserver is configured with. The key is only there because the apiserver checks it
 # BEFORE the policy and any earlier error hides the one you are looking for.
 openssl genrsa -out /tmp/sa.key 2048
 docker run --rm -v /tmp:/x registry.k8s.io/kube-apiserver:v1.36.3 kube-apiserver \
@@ -285,7 +284,7 @@ and disaster recovery are in [10_backups.md](10_backups.md).
   `metric_relabel_configs` run, so at that point there is no `exported_cluster` to rename yet and the rule is a
   no-op. Confirmed by reading the target's own label set from vmagent's `/api/v1/targets`, which does not carry
   `cluster` at all. The price is per-scrape and worth knowing: those series get the CNPG cluster name in
-  `cluster` and NOT `raspi-cluster`, and any other label the exporter emits would also override the target's.
+  `cluster` and NOT `offgrid`, and any other label the exporter emits would also override the target's.
   For the CNPG pods `cluster` is the only collision.
 
 ### Keeping the stores lean
@@ -314,7 +313,7 @@ overflow. Exact drops and reasons live as comments where the config does.
   add ~1.5MB a day per node on top of that, once `auditd.log` is excluded; to cut another loud service, add its
   path to `excludeGlob` beside the `fileCollector` glob, which drops it by FILE, there is no per-line filter.
 - **The two file sources that can surprise you are the audit log and Hubble drops.** Both are filtered at the
-  SOURCE rather than in the collector: the audit policy in `03c`, the `includeFilters` in `00_cilium`. Widening
+  SOURCE rather than in the collector: the apiserver's audit policy, the `includeFilters` in `00_cilium`. Widening
   either is what would actually fill the store, so size it before you do.
 - **Envoy access logs show `_msg` as "missing _msg field"** and are fine. Envoy Gateway's default JSON access
   log has no key the collector maps to `_msg`; the structured fields are all queryable (`response_code:500`).
@@ -585,10 +584,10 @@ are node IPs and Talos hostnames are not in DNS. `--kubelet-certificate-authorit
 works if the kubelet cert is CA-signed, which Talos does not do by default.
 
 The security gain of the secure path is marginal here. It is a pod-to-kubelet hop on the cluster's own trusted,
-NIC-hardened L2 (see [https://github.com/yama6a/talos-raspberry-pi5-cluster/blob/main/docs/03_operating_system.md](https://github.com/yama6a/talos-raspberry-pi5-cluster/blob/main/docs/03_operating_system.md)), and the connection is encrypted either
+a wired L2 segment, and the connection is encrypted either
 way. Only the cert identity goes unchecked, so we take the one-flag, zero-OS-change route.
 
-The secure-path upgrade stays open. To drop the flag: add `rotate-server-certificates: true` to 03c's
+The secure-path upgrade stays open. To drop the flag: add `rotate-server-certificates: true` to your
 `cp-patch.yaml` and re-apply to all three nodes, add a CSR-approver platform app (Kubernetes never auto-approves
 `kubernetes.io/kubelet-serving` CSRs, and the Talos-documented `alex1989hu/...` ships raw kustomize which breaks
 the wrapper-chart convention, so the Helm-native `postfinance/kubelet-csr-approver` with SAN and IP-regex config
@@ -627,7 +626,7 @@ read the table, hand-edit the relevant chart `values.yaml`.
 
 It also matches the repo's tooling conventions. KRR runs dockerized, reaching the metrics store
 over the same documented break-glass port-forward that `05_victoria_metrics_k8s_stack` already advertises, and the
-kube API via the 03c kubeconfig. It reuses `MONITORING_NS` and adds no cluster workload, no ArgoCD app and no SSO
+kube API via the pinned kubeconfig. It reuses `MONITORING_NS` and adds no cluster workload, no ArgoCD app and no SSO
 host.
 
 ### The `conservative` strategy

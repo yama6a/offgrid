@@ -19,7 +19,7 @@ spec:
     server: https://kubernetes.default.svc
     namespace: longhorn-system
   syncPolicy:
-    managedNamespaceMetadata: # manager/driver pods need privileged; Talos would otherwise reject them, it defaults every namespace to the `baseline` pod-security level
+    managedNamespaceMetadata: # manager/driver pods need privileged; any cluster enforcing Pod Security at `baseline` or stricter rejects them without this
       labels:
         pod-security.kubernetes.io/enforce: privileged
         pod-security.kubernetes.io/warn: privileged

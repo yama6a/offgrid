@@ -1,9 +1,8 @@
 # offgrid
 
-**A 3x Raspberry Pi 5 Kubernetes cluster on [Talos Linux](https://www.talos.dev/), networked by
-[Cilium](https://cilium.io/), delivered by [Argo CD](https://argo-cd.readthedocs.io/).**
+**A complete self-hosted Kubernetes platform: networked by [Cilium](https://cilium.io/), delivered by
+[Argo CD](https://argo-cd.readthedocs.io/), on a cluster you already have.**
 
-![Talos](https://img.shields.io/badge/Talos-Linux-ff7300)
 ![Kubernetes](https://img.shields.io/badge/Kubernetes-326ce5?logo=kubernetes&logoColor=white)
 ![CNI: Cilium](https://img.shields.io/badge/CNI-Cilium-f8c517?logo=cilium&logoColor=white)
 ![GitOps: Argo CD](https://img.shields.io/badge/GitOps-Argo%20CD-ef7b4d?logo=argo&logoColor=white)
@@ -11,14 +10,16 @@
 ![Last commit](https://img.shields.io/github/last-commit/yama6a/offgrid)
 
 <p align="center">
-  <img src="docs/images/rackmount_0.jpeg" alt="The assembled 3-node Raspberry Pi 5 cluster in a 10-inch rack" width="600">
+  <img src="docs/images/rackmount_0.jpeg" alt="The 3-node cluster this platform was developed against" width="600">
 </p>
 
 > The platform: everything that runs *on* a Kubernetes cluster, delivered by Argo CD from this repo. Ingress,
 > TLS, SSO, storage, databases, messaging, monitoring, backups, and a sample workload on top.
 >
-> It starts from a cluster that already exists. Building that cluster (hardware, Talos, etcd, node lifecycle) is
-> [talos-raspberry-pi5-cluster](https://github.com/yama6a/talos-raspberry-pi5-cluster), which hands over an active kubectl context.
+> It starts from a cluster that already exists and does not build, upgrade or recover one. Bring your own,
+> from any tooling, so long as it meets **[What this expects of your cluster](#what-this-expects-of-your-cluster)**.
+> The defaults were developed against a small bare-metal [Talos Linux](https://www.talos.dev/) cluster, and
+> every host-level assumption that implies is a knob in `.env`.
 >
 > Every per-deployment value lives in `.env`, and `make configure-values` stamps it into the chart values Argo CD
 > renders, so a fork changes one gitignored file and nothing else.
@@ -28,7 +29,8 @@
 
 - [Overview](#overview)
 - [The stack](#the-stack)
-- [Hardware](#hardware)
+- [What this expects of your cluster](#what-this-expects-of-your-cluster)
+- [What this does not do](#what-this-does-not-do)
 - [Architecture](#architecture)
 - [Repository layout](#repository-layout)
 - [Getting started](#getting-started)
@@ -41,7 +43,8 @@
 
 ## Overview
 
-- Starts from a Kubernetes cluster that already exists. Building it is the OS repo's job.
+- Starts from a Kubernetes cluster that already exists. Building it is somebody else's job, see
+  [What this expects of your cluster](#what-this-expects-of-your-cluster).
 - `01_cilium.sh` and `02a_argocd.sh` are the only imperative steps: install the CNI, then install Argo CD.
 - Everything after that is GitOps. Argo CD reconciles `argo_apps/` and delivers the platform (ingress, TLS, SSO,
   storage, databases, messaging, monitoring) plus the workloads on top.
@@ -56,7 +59,6 @@ Everything after `01`/`02a` is an Argo CD-delivered wrapper chart, each pinning 
 
 | Layer             | Component                      | Role                                                                                                         |
 |-------------------|--------------------------------|--------------------------------------------------------------------------------------------------------------|
-| **OS**            | Talos Linux                    | Immutable, API-driven Kubernetes OS. Built and installed by the OS repo, not here.                           |
 | **Network**       | Cilium                         | CNI + kube-proxy replacement, LB-IPAM + L2 announcements (LoadBalancer IPs), node-to-node WireGuard, Hubble. |
 | **GitOps**        | Argo CD                        | Delivery engine; self-manages after bootstrap. Two-tree app-of-apps (platform and workloads).                |
 | **Ingress**       | Envoy Gateway                  | Gateway API data plane; one Envoy on a single pinned LoadBalancer IP.                                        |
@@ -82,12 +84,49 @@ Four shared charts under `lib/helm/` are consumed as `file://` dependencies, all
 - `redis-instance`: a curated standalone OpsTree Redis wrapper
 - `rabbitmq-topology`: a workload's messaging topology against the shared broker
 
-## Hardware
+## What this expects of your cluster
 
-Built and documented in the OS repo: 3x Raspberry Pi 5 (8 GB), all control-plane, NVMe-booted. Nothing here
-assumes that hardware, and nothing here is consumed from there: the OS repo hands over a kubeconfig and
-stops. Its own hardware mitigations, including the `nic-keeper` DaemonSet, are applied on its side. See
-[its docs](https://github.com/yama6a/talos-raspberry-pi5-cluster/blob/main/docs/01_hardware.md).
+Bring your own Kubernetes. This repo installs the CNI and everything above it, so the cluster underneath has to
+satisfy a short list. Each row says what to change when yours differs; the knobs live in `.env` and
+`make configure-values` stamps them into the chart values Argo CD renders.
+
+| Requirement | Why | If your cluster differs |
+|---|---|---|
+| The API reachable at `KUBE_API_HOST:KUBE_API_PORT` from every node | Cilium runs `kubeProxyReplacement`, so it needs the API *before* pod networking exists | set both in `.env`. The default `localhost:7445` is Talos KubePrism; elsewhere use your API endpoint, or a node-local proxy |
+| No CNI installed, kube-proxy disabled | Cilium provides both. Nodes stay `NotReady` until `01_cilium.sh` runs, which is expected | if your distribution ships a CNI, remove it first, or skip `01_cilium.sh` and adapt the Cilium values to coexist |
+| `iscsid` and `fstrim` on every node | Longhorn attaches volumes over iSCSI and trims them | install `open-iscsi` and `util-linux`; on an immutable OS add the equivalent extensions |
+| A filesystem at `LONGHORN_DATA_PATH`, bind-mounted into the kubelet with `rshared` | Longhorn creates one sub-mount per replica and the kubelet has to see them | any path works. Longhorn's own default is `/var/lib/longhorn`. With a containerized kubelet the mount propagation must be bidirectional |
+| A 4K-page kernel | Longhorn and XFS do not cope with 16K pages | almost every distribution already is. Only a concern on SBC kernels built with 16K |
+| Namespaces can carry `pod-security.kubernetes.io/enforce: privileged` | Longhorn, Cilium and the node agents need privileged pods | the app manifests set it themselves, so nothing to do unless a policy engine overrides them |
+| Kubelets with self-signed certs and no CSR approver | metrics-server cannot verify kubelet identity, so it is told not to try | set `KUBELET_TLS_INSECURE=false` if your kubelets carry certs signed by a CA the apiserver trusts |
+| Control-plane metrics reachable per node, etcd on `ETCD_METRICS_PORT` | the monitoring stack scrapes controller-manager, scheduler and etcd directly | exposing them is a host-level change. If yours cannot, set `enabled: false` on the three in `05_victoria_metrics_k8s_stack` |
+| 3 or more nodes | Longhorn runs 2 replicas with hard anti-affinity, so it needs a spare to rebuild onto | 2 nodes works but leaves no spare. 1 node needs the replica count and the anti-affinity relaxed |
+| An S3 bucket, optional | off-cluster backups | leave the `AWS_DEPLOY_*` keys empty and every backup step is skipped |
+
+Two more things are assumed rather than configured, because they are one-line edits when wrong:
+
+- **Node system logs as files under `/var/log`.** The log collector tails them. On a journald distribution
+  there are no such files, so drop that `fileCollector` entry in `05_victoria_logs/values.yaml` and collect
+  from journald instead.
+- **Node filesystems are `ext4` or `xfs`.** The disk-usage alerts filter on that to skip an immutable OS's
+  many tmpfs mounts. Edit the regex in `05_grafana/files/alerts/cluster-health.yaml` if yours differ.
+
+Architecture is not assumed. `make check-multiarch` verifies every running image has a manifest for every
+architecture in the cluster, and takes `ARCH=` to check before a node of a new architecture joins.
+
+## What this does not do
+
+It does not build, configure, upgrade or recover the machines. No node provisioning, no OS config, no etcd
+management, no kubelet upgrades. That belongs to whatever tooling you use, and this repo never talks to it.
+
+Two seams exist so the two sides can cooperate without knowing each other:
+
+| Seam | What it is for |
+|---|---|
+| `make check-replication-health` | Exits non-zero until Longhorn, CNPG and RabbitMQ are healthy and in sync. Point your node tooling's pre-drain gate at it, so a rolling reboot never takes a volume's last healthy replica |
+| `make reconcile-storage NODE=<host>` | Run after your tooling rejoins a replaced machine. Longhorn records a disk UUID that a reflash invalidates, and nothing else fixes it |
+
+Neither is required. Skip both and node maintenance still works; you just lose the interlock.
 
 ## Architecture
 
@@ -100,13 +139,12 @@ its own via unbounded retry.
 
 ```mermaid
 flowchart LR
-    subgraph os["OS repo - talos-raspberry-pi5-cluster"]
+    subgraph os["Your cluster - not this repo"]
         direction TB
-        HW["Hardware + EEPROM"] --> IMG["Flash the Talos Pi 5 image"]
-        IMG --> TAL["Talos machine config<br/>+ etcd + NIC hardening"]
-        TAL --> KC["make merge-kubeconfig"]
+        HW["Machines + OS"] --> TAL["Kubernetes, no CNI,<br/>kube-proxy disabled"]
+        TAL --> KC["a kubectl context"]
     end
-    KC -->|" hands over an active kubectl context "| CIL
+    KC -->|" KUBE_CONTEXT points here "| CIL
     subgraph imp["Shell bootstrap - make (this repo)"]
         direction TB
         CIL["Cilium CNI, 01"] --> ARGO["Argo CD, 02a"]
@@ -148,18 +186,13 @@ gate, so a later app that races ahead of a dependency just retries until it land
 
 ## Getting started
 
-**Prerequisite: a running Talos cluster, and a kubectl context pointing at it.** Build it first in
-[talos-raspberry-pi5-cluster](https://github.com/yama6a/talos-raspberry-pi5-cluster), which ends by printing the handoff:
+**Prerequisite: a running Kubernetes cluster meeting
+[What this expects of your cluster](#what-this-expects-of-your-cluster), and a kubectl context pointing at
+it.** Build it however you like; this repo never talks to that tooling. The only thing that crosses over is
+the context in your `~/.kube/config`.
 
-```bash
-# in the OS repo
-make bootstrap-cluster              # flashes, configures Talos, bootstraps etcd, writes its secrets/kubeconfig
-make merge-kubeconfig               # merges that into ~/.kube/config and makes it the active context
-```
-
-Each repo has its own off-repo `secrets/` store, so nothing is shared on disk: the OS repo keeps the Talos PKI,
-this one keeps the sealed-secrets key. The kubeconfig crosses over via `~/.kube/config`, which
-`make merge-kubeconfig` populates.
+Nothing else is shared on disk. The sealed-secrets key this repo mints lives in its own off-repo `secrets/`
+store and never leaves.
 
 Which cluster this repo may touch is then pinned by `KUBE_CONTEXT` in `.env`, and it is not the same thing as
 your currently-selected context. Your `~/.kube/config` probably holds work clusters too, and nothing here is
@@ -216,8 +249,8 @@ What to put in it:
 - Backups: off-cluster S3 needs the `AWS_DEPLOY_*` creds plus `S3_BACKUP_BUCKET`. See `docs/10_backups.md`.
 - Secrets: every secret is optional. Leaving one empty disables the feature it enables.
 
-The node topology, VIP and Talos version are NOT here. They belong to the OS repo,
-[talos-raspberry-pi5-cluster](https://github.com/yama6a/talos-raspberry-pi5-cluster).
+Node topology, machine addressing and the Kubernetes version itself are NOT here. They belong to whatever
+built the cluster.
 
 ## Day-2 operations
 
@@ -232,8 +265,9 @@ The node topology, VIP and Talos version are NOT here. They belong to the OS rep
 | Redeliver the whole platform| `make rebuild-cluster`                                                 |
 | Credentials + login URLs    | `make view-credentials`                                                |
 
-Anything about the nodes themselves (Talos or Kubernetes upgrades, adding or recovering a node, resetting the
-cluster) is in the OS repo: [talos-raspberry-pi5-cluster](https://github.com/yama6a/talos-raspberry-pi5-cluster).
+Anything about the nodes themselves (OS or Kubernetes upgrades, adding or recovering a node, resetting the
+cluster) belongs to whatever built them. The two seams where that tooling and this repo meet are in
+[What this does not do](#what-this-does-not-do).
 
 ## Troubleshooting
 
@@ -246,8 +280,8 @@ cluster) is in the OS repo: [talos-raspberry-pi5-cluster](https://github.com/yam
   avoiding the DHCP range and the VIP ([docs/01](docs/01_networking.md)).
 - **A gated host loops through Google forever**: its subdomain must sit under `BASE_DOMAIN`, because the SSO
   policy sets one cookie domain ([docs/04](docs/04_ingress.md)).
-- **`make bootstrap-cluster` refuses to start**: it found no reachable cluster. Build one first in the OS repo,
-  [talos-raspberry-pi5-cluster](https://github.com/yama6a/talos-raspberry-pi5-cluster).
+- **`make bootstrap-cluster` refuses to start**: it found no reachable cluster. Build one first, and point
+  `KUBE_CONTEXT` at it ([What this expects of your cluster](#what-this-expects-of-your-cluster)).
 
 ## Documentation
 
@@ -269,22 +303,17 @@ Each doc holds the why behind a step, with verification commands:
 | [12_storage_bench](docs/12_storage_bench.md)       | Measuring what Longhorn r2 costs CNPG and RabbitMQ in write latency.            |
 | [13_node_loss](docs/13_node_loss.md)               | What the workloads do when a machine dies, measured, and reconciling a replaced one. |
 
-Hardware, Talos bring-up and node recovery are documented in the OS repo,
-[talos-raspberry-pi5-cluster](https://github.com/yama6a/talos-raspberry-pi5-cluster).
-
 Repo-wide conventions (layout, where a value lives, chart and Argo CD rules) are in
 [CONTRIBUTING.md](CONTRIBUTING.md).
 
 
 ## Credits
 
-Built on the work of the Talos/[Sidero](https://www.talos.dev/), [Cilium](https://cilium.io/),
+Built on the work of the [Cilium](https://cilium.io/),
 [Argo CD](https://argo-cd.readthedocs.io/), [cert-manager](https://cert-manager.io/),
 [Envoy Gateway](https://gateway.envoyproxy.io/), [Sealed Secrets](https://github.com/bitnami-labs/sealed-secrets),
 [Longhorn](https://longhorn.io/), [CloudNativePG](https://cloudnative-pg.io/),
-[VictoriaMetrics](https://victoriametrics.com/) and [Grafana](https://grafana.com/) communities. The Pi 5 Talos
-image comes from [yama6a/talos-raspberry-pi5](https://github.com/yama6a/talos-raspberry-pi5), which credits its
-own upstreams.
+[VictoriaMetrics](https://victoriametrics.com/) and [Grafana](https://grafana.com/) communities.
 
 ## License
 

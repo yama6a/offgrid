@@ -2,7 +2,7 @@ apiVersion: 1
 groups:
   - orgId: 1
     name: cluster-health
-    folder: raspi-cluster
+    folder: offgrid
     interval: 1m
     rules:
       - uid: node-not-ready
@@ -15,7 +15,7 @@ groups:
           description: |
             - kubelet not reporting Ready: pods on {{ $labels.node }} may be evicted/unschedulable
             - kubectl describe node {{ $labels.node }} -> check Conditions + kubelet
-            - Talos node: talosctl -n <ip> dmesg / talosctl -n <ip> health
+            - the node's kernel log and overall health, however your OS exposes them
         noDataState: OK
         execErrState: KeepLast
         data:
@@ -186,8 +186,9 @@ groups:
                 - type: query
                   evaluator: {type: gt, params: [0]}
       # Node capacity and health, all warning: infra headroom, not a workload being down.
-      # Real disks only. Talos exposes roughly 19 tmpfs/rootfs mounts, so filter to the xfs ones: /var and
-      # /var/mnt/storage. `instance` is the node IP:9100, node-exporter has no `node`.
+      # Real disks only: an immutable OS can expose a dozen or more tmpfs/rootfs mounts, so filter by
+      # filesystem type. Edit the regex if your nodes use something other than ext4 or xfs.
+      # `instance` is the node IP:9100, node-exporter has no `node` label.
       - uid: node-disk-space
         title: Node disk almost full
         condition: C
@@ -197,7 +198,7 @@ groups:
           summary: 'Disk {{ $labels.mountpoint }} on {{ $labels.instance }} above 85% used'
           description: |
             - filesystem {{ $labels.mountpoint }} on {{ $labels.instance }} >85% full
-            - talosctl -n {{ $labels.instance }} df ; check /var/mnt/storage usage
+            - check disk usage on {{ $labels.instance }}, the Longhorn data path first
             - prune images/logs or expand the underlying disk
         noDataState: OK
         execErrState: KeepLast
@@ -234,7 +235,7 @@ groups:
           summary: 'Inodes on {{ $labels.mountpoint }} / {{ $labels.instance }} above 85% used'
           description: |
             - inodes on {{ $labels.mountpoint }} ({{ $labels.instance }}) >85%: many small files, bytes may still be free
-            - talosctl -n {{ $labels.instance }} df -i ; find the dir with the file explosion
+            - check inode usage on {{ $labels.instance }}, then find the directory that exploded
             - delete stale small files (caches, tmp, old logs)
         noDataState: OK
         execErrState: KeepLast
@@ -272,7 +273,7 @@ groups:
           summary: 'Disk {{ $labels.mountpoint }} on {{ $labels.instance }} will fill within 24h at current rate'
           description: |
             - predictive: {{ $labels.mountpoint }} on {{ $labels.instance }} trends to 0 free within 24h
-            - find the writer: talosctl -n {{ $labels.instance }} df ; du on the mount
+            - find the writer: disk usage on {{ $labels.instance }}, then du on the mount
             - act before full: prune/rotate data or expand the disk
         noDataState: OK
         execErrState: KeepLast

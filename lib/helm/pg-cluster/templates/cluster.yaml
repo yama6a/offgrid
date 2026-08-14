@@ -36,7 +36,7 @@ spec:
   priorityClassName: data-critical # Evicted after the platform control plane but before stateless apps, under node memory pressure
   primaryUpdateMethod: {{ if .Values.highAvailability }}switchover{{ else }}restart{{ end }} # single-node: short down-time
   primaryUpdateStrategy: unsupervised
-  enablePDB: {{ if .Values.highAvailability }}true{{ else }}false{{ end }} # PDB on single-node would block node-upgrades (e.g. talos-upgrades)
+  enablePDB: {{ if .Values.highAvailability }}true{{ else }}false{{ end }} # PDB on single-node would block a rolling node upgrade
   # Shutdown stage 1 refuses NEW connections but waits for existing ones, and an app holding an idle pooled
   # connection never closes it, so the 180s default stalls every planned switchover for the full 180s. At 15s
   # it escalates to terminating connections, which is what keeps a node drain quick.

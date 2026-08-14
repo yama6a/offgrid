@@ -1,8 +1,10 @@
 metrics-server:
-  # Talos kubelets serve a self-signed cert and this cluster runs no CSR approver, so metrics-server cannot
-  # verify the kubelet's identity. The scrape stays TLS-encrypted, only the identity is unverified. The secure
-  # path is rotate-server-certificates + a CSR approver + --kubelet-certificate-authority.
-  # `args` is APPENDED to the chart's defaultArgs, which already carry the rest of what Talos needs.
+  # Written by 04_values.sh from KUBELET_TLS_INSECURE in .env, so do not hand-edit.
+  # A kubelet serving a self-signed cert on a cluster with no CSR approver cannot be identity-verified by
+  # metrics-server. That is the Talos default and the default here. The scrape stays TLS-encrypted, only the
+  # identity is unverified. The secure path is rotate-server-certificates plus a CSR approver plus
+  # --kubelet-certificate-authority; set KUBELET_TLS_INSECURE=false once you have that.
+  # `args` is APPENDED to the chart's defaultArgs, which already carry the rest.
   args:
     - --kubelet-insecure-tls
 

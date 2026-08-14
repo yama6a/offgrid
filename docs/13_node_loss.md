@@ -1,8 +1,7 @@
 # Losing a node: what the platform does about it
 
-The machine half of this lives in the OS repo: what `make recover-node` fixes, how a reflashed node rejoins
-etcd, and the reset ordering. See
-[05_node_recovery.md](https://github.com/yama6a/talos-raspberry-pi5-cluster/blob/main/docs/05_node_recovery.md).
+The machine half of this belongs to whatever tooling built your cluster: dropping a reflashed node's stale
+etcd member, re-applying its config, getting the kubelet back. Nothing here does any of that.
 
 This is the other half. What the workloads do when a machine disappears, how long they actually take, and the
 one thing that needs hands afterwards.
@@ -15,7 +14,7 @@ delete, nothing to restore.
 
 What still needs hands is a machine coming BACK under the same name after being reflashed. Longhorn's node CR
 holds the old disk UUID and the fresh filesystem carries a new one, so it refuses the disk rather than risk
-using the wrong one. `make reconcile-storage NODE=<host>` does it, after the OS repo's `make recover-node`.
+using the wrong one. `make reconcile-storage NODE=<host>` does it, once your node tooling has the machine back.
 
 ## The dead-node watcher
 
@@ -32,27 +31,26 @@ as the evidence.
 Timeline for a machine that dies: ~40s for Kubernetes to mark it NotReady, then the watcher's 60s grace, so a
 displaced pod is running on a survivor in about two minutes instead of six-plus.
 
-**It deliberately does nothing for a reboot.** A Pi 5 Talos reboot is back inside ~90s, which is shorter than
+**It deliberately does nothing for a reboot.** A node reboot on this hardware is back inside ~90s, shorter than
 Kubernetes' own NotReady delay plus the 60s grace, so the node returns before the watcher would act and the
 volume never needed to move. Measured on a `talosctl reboot --mode force`: the watcher logged nothing at all.
 So it earns its keep only when a machine is down for good, or for many minutes.
 
 Three guards, each of which matters:
 
-- **It never touches a Ready node.** That is what protects an ordinary drain: `kubectl drain` and the OS repo's
-  `03e` cordon a machine that is still up, and a Ready node cannot reach the taint branch at all. A cordon on
-  its own is NOT a reason to skip, because `talosctl reset` cordons a machine that is never coming back, and
-  skipping that one measured 5.5 minutes of stuck volumes.
+- **It never touches a Ready node.** That is what protects an ordinary drain: `kubectl drain` and any rolling
+  upgrade cordon a machine that is still up, and a Ready node cannot reach the taint branch at all. A cordon on
+  its own is NOT a reason to skip, because a node being wiped is cordoned and never coming back, and skipping
+  that one measured 5.5 minutes of stuck volumes.
 - **It refuses when more than one node is NotReady.** That is a cluster event, not a machine failure: there is
   nowhere to reschedule to, and force-detaching everything at once is not what you want a loop deciding.
 - **It removes the taint when the node is Ready again.** Kubernetes requires that and nothing else does it; a
-  node that keeps the taint takes no pods back. The OS repo's `03e` and `recover_node.sh` also clear it next to
-  their own `uncordon`, so neither depends on this loop being alive to un-taint a machine they just brought
-  back.
+  node that keeps the taint takes no pods back. Node tooling worth the name clears it next to its own
+  `uncordon`, so it does not depend on this loop being alive to un-taint a machine it just brought back.
 
 Cost of dropping the cordon guard: a rolling upgrade now taints each machine during its reboot, which
 force-deletes the three Longhorn DaemonSet pods there (`longhorn-manager`, `longhorn-csi-plugin`,
-`engine-image`; cilium, nic-keeper, node-exporter and the log collector tolerate every taint). They are
+`engine-image`; cilium, node-exporter, the log collector and any host-network node agent tolerate every taint). They are
 recreated when the machine returns, and the drain already moved everything else, so there is nothing else on it
 to evict.
 
@@ -103,7 +101,7 @@ failed writes. Anything needing better than that needs a client that retries, no
 
 ### A planned drain: 64s of write outage down to 20s
 
-The OS repo's `03e` cordons and drains each machine before rebooting it, and CNPG is designed to switch the
+A rolling upgrade cordons and drains each machine before rebooting it, and CNPG is designed to switch the
 primary away first: it puts a second PDB on the primary alone with `disruptionsAllowed: 0`, so the eviction is
 REFUSED until the handover is done. Three separate things were defeating that. Measured on a graceful drain of
 the machine holding the primary, probed by an insert every 100ms:
@@ -115,10 +113,10 @@ the machine holding the primary, probed by an insert every 100ms:
 | after the operator went to 2 replicas | **19.6s** |
 
 1. **`smartShutdownTimeout`, default 180s.** Shutdown stage 1 refuses new connections but WAITS for existing
-   ones, and an app holding an idle pooled connection never closes it. So the drain blew through `03e`'s 120s
-   graceful window, `03e` force-deleted the primary, and CNPG got a hard failover instead of the switchover it
+   ones, and an app holding an idle pooled connection never closes it. So the drain blew through the 120s
+   graceful window, the straggler was force-deleted, and CNPG got a hard failover instead of the switchover it
    was trying to perform. At 15s the old primary is down in ~3s and the drain finishes in ~33s, well inside the
-   window, so the force-delete never fires and no change to `03e` was needed.
+   window, so the force-delete never fires and the drain itself needed no change.
 2. **A single-replica operator.** The `-rw` Service selects `cnpg.io/instanceRole=primary`, and only the
    operator moves that label, so while it is down there is no writable endpoint even though a promoted Postgres
    is up. The drain that needs a switchover was also evicting the only thing that can finish one: a 33s gap
@@ -133,7 +131,7 @@ paper over it, it just retries into a closed door for 20s.
 Still one replica, so still able to stall a switchover: the barman-cloud plugin. It holds a lease like the
 operator does, but it ships as a vendored upstream manifest with `replicas` hardcoded.
 
-**Do not shorten `03e`'s `GRACEFUL_DRAIN_TIMEOUT` below the ~33s a switchover needs.** Force-deleting the
+**Do not let your drain's graceful timeout fall below the ~33s a switchover needs.** Force-deleting the
 primary early turns a ~20s switchover into a ~60s failover.
 
 ### Force-detaching a machine that is still alive is safe, and here is why
@@ -157,11 +155,11 @@ that window stops writes. A 4th machine removes this.
 
 ## Reconciling a replaced node
 
-Run this AFTER the OS repo's `make recover-node NODE=<host>` reports the node Ready.
+Run this AFTER your node tooling reports the rejoined machine Ready.
 
 ```bash
 make reconcile-storage NODE=talos-cp3   # idempotent; re-run to get past a step that needed more time
-make rebalance-workloads                # in the OS repo, once everything is healthy
+# then re-spread the stateless Deployments with your node tooling, once everything is healthy
 ```
 
 `reconcile_storage_after_rejoin.sh` checks every volume still has a healthy replica elsewhere, drops the stale
@@ -310,7 +308,7 @@ A brief availability gap while it reschedules, which is the accepted trade-off i
 
 ## Retiring a node for good
 
-The etcd and Kubernetes side is the OS repo's. What it costs here, on a 3-node cluster:
+The etcd and Kubernetes side belongs to your node tooling. What it costs here, on a 3-node cluster:
 
 - Longhorn goes back to `healthy`: 2 replicas with hard anti-affinity fit exactly on 2 nodes, one each. What
   is gone is the spare. The next node failure leaves volumes `degraded` with nowhere to rebuild onto, which

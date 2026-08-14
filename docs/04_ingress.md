@@ -142,9 +142,9 @@ Cilium's app has no such guard; its gateway CRDs are instead kept safe by Envoy 
 them, as above. `ServerSideApply=true` because the CRDs are too big for client-side apply's manifest annotation.
 Runs in its own namespace (`CreateNamespace=true`).
 
-### Wave 2, with nic-keeper and sealed-secrets
+### Wave 2, with sealed-secrets
 
-cert-manager, nic-keeper ([https://github.com/yama6a/talos-raspberry-pi5-cluster/blob/main/docs/03_operating_system.md](https://github.com/yama6a/talos-raspberry-pi5-cluster/blob/main/docs/03_operating_system.md)) and sealed-secrets
+cert-manager and sealed-secrets
 ([03_secrets.md](03_secrets.md)) are independent leaves, so they share wave 2: the "after the CNI and ArgoCD are
 in place" slot.
 

@@ -1,7 +1,7 @@
 # Storage & database
 
 One storage layer and a database operator, all pure-GitOps wave-2 leaves with no imperative script. Each needs
-one Talos host prerequisite from [`https://github.com/yama6a/talos-raspberry-pi5-cluster/blob/main/docs/03_operating_system.md`](https://github.com/yama6a/talos-raspberry-pi5-cluster/blob/main/docs/03_operating_system.md).
+one host prerequisite the README states: a dedicated filesystem, bind-mounted into the kubelet with `rshared`.
 
 | Layer | Classes | Replicates at | Backs |
 |---|---|---|---|
@@ -9,8 +9,8 @@ one Talos host prerequisite from [`https://github.com/yama6a/talos-raspberry-pi5
 
 There is **no default StorageClass**. Every PVC names one, or it stays `Pending`.
 
-Per-node NVMe layout, carved by [`03c`](https://github.com/yama6a/talos-raspberry-pi5-cluster/blob/main/docs/03_operating_system.md): EPHEMERAL 64 GiB, then `longhorn` takes the
-whole remainder.
+Per-node disk layout on the cluster this was developed against, carved by its node tooling: 64 GiB for the OS,
+then a dedicated data volume taking the whole remainder.
 
 ## Why everything is on Longhorn, including the apps that replicate themselves
 
@@ -52,10 +52,11 @@ Chart: `argo_apps/platform/charts/02_longhorn/`.
 V2 (SPDK) has a known stuck-I/O bug on ARM64 + NVMe with 2+ cores, which is exactly the Pi 5. V1 is also lighter
 on low-power nodes. Revisit if upstream fixes it.
 
-### Talos prerequisites
+### Host prerequisites
 
-From step 03: the `iscsi-tools` and `util-linux-tools` extensions, 4K kernel pages (XFS will not mount on 16K),
-and the `/var/mnt/storage` XFS volume. Longhorn adds one thing, a kubelet bind-mount in `03c`'s `cp-patch.yaml`:
+Set up outside this repo, and listed in the README: `iscsid` and `fstrim` on every node, 4K kernel pages (XFS
+will not mount on 16K), and the dedicated data volume. Longhorn adds one thing, a kubelet bind-mount. On the
+Talos cluster this was developed against that looks like:
 
 ```yaml
 machine:
@@ -67,13 +68,12 @@ machine:
         options: [ bind, rshared, rw ]
 ```
 
-Talos runs the kubelet in a container and does not auto-propagate host mounts under `/var/mnt` into it, so
-without the bind Longhorn's pods see an empty directory. `rshared` is required so per-replica sub-mounts
-propagate back to the host, matching Longhorn's own Talos guidance.
+A containerized kubelet does not auto-propagate host mounts into itself, so without the bind Longhorn's pods
+see an empty directory. `rshared` is required so per-replica sub-mounts propagate back to the host. If your
+kubelet runs on the host rather than in a container, the mount just has to exist and be shared.
 
-`03c` is the source of truth, so any rebuild gets it. On a live cluster apply just this patch per node
-(`talosctl patch machineconfig ... --mode=auto`) BEFORE the Longhorn app syncs, or the manager pods come up with
-every node's disk unschedulable.
+Your node config is the source of truth, so any rebuild gets it. On a live cluster apply the equivalent per
+node BEFORE the Longhorn app syncs, or the manager pods come up with every node's disk unschedulable.
 
 ### Values worth calling out
 

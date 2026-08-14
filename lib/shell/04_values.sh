@@ -21,6 +21,9 @@ NTFY_VALUES="${PLATFORM_CHARTS}/05_ntfy/values.yaml"
 BB_VALUES="${PLATFORM_CHARTS}/05_blackbox_exporter/values.yaml"
 PI_VALUES="${PLATFORM_CHARTS}/06_platform_ingress/values.yaml"
 WL_VALUES="${WORKLOAD_CHARTS}/sample_user_manager/values.yaml"
+CILIUM_VALUES="${PLATFORM_CHARTS}/00_cilium/values.yaml"       # cluster-shape knobs below
+MS_VALUES="${PLATFORM_CHARTS}/02_metrics_server/values.yaml"
+LH_VALUES="${PLATFORM_CHARTS}/02_longhorn/values.yaml"
 ROOT_APP="${REPO_ROOT}/argo_apps/root.yaml"
 # Every file carrying a literal repoURL. The two apps charts hold it once for the Applications they render.
 REPO_URL_FILES=(
@@ -48,13 +51,13 @@ check_prerequisites() {
   local f
   say "prerequisites"
   require yq kubectl
-  # It does READ the cluster, for the control-plane node IPs. Safe here: this repo always runs against a
-  # cluster the OS repo already built, and 01_cilium has run by the time the orchestrator gets here.
+  # It does READ the cluster, for the control-plane node IPs. Safe here: the cluster already exists, and
+  # 01_cilium has run by the time the orchestrator gets here.
   use_kubeconfig
   assert_api
   [ -f "${GW_CHART}/Chart.yaml" ] || die "no chart at ${GW_CHART} (expected argo_apps/platform/charts/03_gateway)"
   for f in "$GW_VALUES" "$LIB_VALUES" "$SSO_VALUES" "$EG_VALUES" "$VM_VALUES" "$GRAFANA_VALUES" "$NTFY_VALUES" \
-           "$BB_VALUES" "$PI_VALUES" "$WL_VALUES" "${REPO_URL_FILES[@]}"; do
+           "$BB_VALUES" "$PI_VALUES" "$WL_VALUES" "$CILIUM_VALUES" "$MS_VALUES" "$LH_VALUES" "${REPO_URL_FILES[@]}"; do
     [ -f "$f" ] || die "missing ${f}"
   done
   [ -n "${LE_EMAIL}" ]      || die "LE_EMAIL is empty (set it in .env)"
@@ -62,6 +65,13 @@ check_prerequisites() {
   [ -n "${SSO_ALLOWLIST}" ] || die "SSO_ALLOWLIST is empty (set it in .env), an empty allowlist locks you out of every gated host"
   [ -n "${REPO_URL}" ]      || die "REPO_URL is empty (set it in .env), ArgoCD reconciles that remote"
   [ -n "${INGRESS_LB_IP}" ] || die "INGRESS_LB_IP is empty (set it in .env)"
+  # Cluster-shape knobs. Wrong here means Cilium never reaches the API, or Longhorn writes to the root disk,
+  # so they are checked rather than trusted.
+  [ -n "${KUBE_API_HOST}" ] || die "KUBE_API_HOST is empty (set it in .env); Cilium needs the API before pod networking exists"
+  case "$KUBE_API_PORT" in ""|*[!0-9]*) die "KUBE_API_PORT is '${KUBE_API_PORT}', which is not a port number" ;; esac
+  case "$ETCD_METRICS_PORT" in ""|*[!0-9]*) die "ETCD_METRICS_PORT is '${ETCD_METRICS_PORT}', which is not a port number" ;; esac
+  case "$KUBELET_TLS_INSECURE" in true|false) ;; *) die "KUBELET_TLS_INSECURE is '${KUBELET_TLS_INSECURE}', expected true or false" ;; esac
+  case "$LONGHORN_DATA_PATH" in /*) ;; *) die "LONGHORN_DATA_PATH is '${LONGHORN_DATA_PATH}', expected an absolute path" ;; esac
   ok "yq present, charts + values found, knobs set"
 }
 
@@ -87,6 +97,23 @@ assert_lb_ip_in_pool() {
     die "INGRESS_LB_IP ${INGRESS_LB_IP} is outside the Cilium pool [${LB_RANGE_START}, ${LB_RANGE_STOP}], so the Gateway would never get an address"
   fi
   ok "INGRESS_LB_IP ${INGRESS_LB_IP} sits inside [${LB_RANGE_START}, ${LB_RANGE_STOP}]"
+}
+
+# The handful of settings that describe the CLUSTER rather than this platform. Defaults are Talos's, and on a
+# Talos cluster this run is a no-op. See "What this expects of your cluster" in the README.
+write_cluster_shape() {
+  say ".env cluster shape -> cilium / metrics-server / longhorn / vm-stack"
+  ys_set "$CILIUM_VALUES" "$KUBE_API_HOST" cilium k8sServiceHost
+  ys_set "$CILIUM_VALUES" "$KUBE_API_PORT" cilium k8sServicePort
+  # A flat one-item list, or an empty one when the kubelet serves a cert metrics-server can verify.
+  if [ "$KUBELET_TLS_INSECURE" = "true" ]; then
+    ys_set_list "$MS_VALUES" "--kubelet-insecure-tls" metrics-server args
+  else
+    ys_set_list "$MS_VALUES" "" metrics-server args
+  fi
+  ys_set "$LH_VALUES" "$LONGHORN_DATA_PATH" longhorn defaultSettings defaultDataPath
+  ys_set "$VM_VALUES" "$ETCD_METRICS_PORT" victoria-metrics-k8s-stack kubeEtcd service port
+  ys_set "$VM_VALUES" "$ETCD_METRICS_PORT" victoria-metrics-k8s-stack kubeEtcd service targetPort
 }
 
 # Committing the rewritten values is what keeps ArgoCD's render in sync with .env. Values are passed WITH
@@ -149,7 +176,7 @@ build_probe_lists() {
   ys_set_list "$BB_VALUES" "${BB_OPEN_URLS# }"  probes open
 }
 
-# Talos binds these three to localhost and exposes them per-node, so they are scraped by static node IP, and
+# Many distributions bind these three to localhost and expose them per-node, so they are scraped by node IP, and
 # only control-plane nodes run them. Read from the live cluster rather than a config file, so adding a
 # control-plane node updates the scrape targets on the next run instead of silently leaving them stale.
 read_control_plane_ips() {
@@ -234,6 +261,7 @@ EOF
 
 check_prerequisites
 assert_lb_ip_in_pool
+write_cluster_shape
 write_repo_url
 write_acme_email
 resolve_cloudflare_zones

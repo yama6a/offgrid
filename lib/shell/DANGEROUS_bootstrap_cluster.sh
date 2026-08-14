@@ -1,5 +1,5 @@
 #!/usr/bin/env bash
-# DANGEROUS: one-shot first-time platform install onto a freshly built Talos cluster. One confirmation up
+# DANGEROUS: one-shot first-time platform install onto a freshly built cluster. One confirmation up
 # front, non-interactive after that. To re-deliver onto a RUNNING cluster use DANGEROUS_rebuild_cluster.sh.
 #
 # Why this re-seals AND backs up, where a rebuild does neither: a fresh controller mints a brand-new master
@@ -46,24 +46,22 @@ This will install the ENTIRE platform onto the cluster KUBE_CONTEXT names in .en
   flow    : 01 (CNI) -> 04_values -> commit/push -> 02a (ArgoCD) -> re-seal SSO/webhook/backup creds
             -> commit/push -> converge -> seed ntfy -> back up the new key -> verify ingress
 
-Requires a Talos cluster that already exists, built in the OS repo:
-  https://github.com/yama6a/talos-raspberry-pi5-cluster
-  there:  make bootstrap-cluster && make merge-kubeconfig
+Requires a Kubernetes cluster that already exists, with no CNI installed and kube-proxy disabled, and a
+kubectl context pointing at it. See the README, "What this expects of your cluster".
 To re-deliver onto a cluster that already has a platform, abort and use DANGEROUS_rebuild_cluster.sh.
 EOF
   confirm_word_always BOOTSTRAP || { echo "aborted (phew!)."; exit 0; }
 }
 
 # This repo does not build the cluster, so the only preflight is that one exists and we can reach it. An
-# unreachable API here means the OS repo has not run, and every step below would fail obscurely.
+# unreachable API here means there is nothing to install onto, and every step below would fail obscurely.
 assert_cluster_exists() {
   local node_count
   say "precondition: the cluster exists and is reachable"
   assert_api
   node_count="$(kubectl get nodes --no-headers 2>/dev/null | wc -l | tr -d ' ')"
   [ "${node_count:-0}" -gt 0 ] || die "no nodes found via context ${KUBE_CONTEXT} (${KUBECONFIG}).
-       Build the cluster first, in the OS repo:  https://github.com/yama6a/talos-raspberry-pi5-cluster
-       there:  make bootstrap-cluster && make merge-kubeconfig"
+       Build a cluster first and point KUBE_CONTEXT at it. See the README, \"What this expects of your cluster\"."
   ok "${node_count} node(s) reachable (NotReady is expected until step 1 installs the CNI)"
 }
 

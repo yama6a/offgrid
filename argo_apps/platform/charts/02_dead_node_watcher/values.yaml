@@ -1,7 +1,7 @@
 # Kubernetes waits ~6 minutes before it lets another node take over the disks of an unreachable one, in case
 # that node is still alive and writing. The out-of-service taint says "it is really dead, go now"; nothing in
 # Kubernetes applies it on its own, because only an operator can make that call. This watcher makes it, using
-# time-NotReady as the evidence. See https://github.com/yama6a/talos-raspberry-pi5-cluster/blob/main/docs/05_node_recovery.md.
+# time-NotReady as the evidence. See docs/13_node_loss.md.
 
 image: "alpine/k8s:1.36.2" # needs kubectl + jq; renovate-annotated in templates/deployment.yaml
 

@@ -3,10 +3,10 @@ groups:
   # apiserver and kubelet being DOWN is already covered by target-down; the value-add here is the apiserver
   # server-error RATE.
   # kube-scheduler and kube-controller-manager get NO alerts: they are not scraped on this cluster, because the
-  # Talos machine-config metrics bind is not landing, so there is no `up` series for them. Fix the scrape first.
+  # the control-plane metrics bind is not landing, so there is no `up` series for them. Fix the scrape first.
   - orgId: 1
     name: control-plane
-    folder: raspi-cluster
+    folder: offgrid
     interval: 1m
     rules:
       - uid: apiserver-error-rate-high
@@ -48,7 +48,7 @@ groups:
   # CoreDNS. DNS underpins nearly everything, so its failures look like widespread breakage.
   - orgId: 1
     name: dns
-    folder: raspi-cluster
+    folder: offgrid
     interval: 1m
     rules:
       - uid: coredns-down

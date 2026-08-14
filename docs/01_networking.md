@@ -1,7 +1,8 @@
 # Networking: Cilium
 
-The cluster from [step 03](https://github.com/yama6a/talos-raspberry-pi5-cluster/blob/main/docs/03_operating_system.md) comes up with no CNI (`cni: none`) and no kube-proxy
-(`proxy.disabled: true`), both set in [bring-up](https://github.com/yama6a/talos-raspberry-pi5-cluster/blob/main/docs/03_operating_system.md#cluster-bring-up). Cilium fills all of it
+The cluster arrives with no CNI and no kube-proxy, which is a prerequisite this repo states rather than
+arranges (see the README). On Talos that is `cni: none` plus `proxy.disabled: true` in the machine config;
+other distributions have their own switch. Cilium fills all of it
 from one install: CNI, load balancer, and node-to-node encryption. `01_cilium.sh` does it and flips the nodes to
 Ready.
 
@@ -42,8 +43,8 @@ Decisions:
 
 ## What `01_cilium.sh` does
 
-Native `helm` + `kubectl`, erroring out if either is missing, unlike the dockerized 03b-03d scripts. Talks to the
-cluster via `secrets/kubeconfig` (written by 03c). Idempotent.
+Native `helm` + `kubectl`, erroring out if either is missing. Talks to the cluster via the pinned kubeconfig
+derived from `KUBE_CONTEXT`. Idempotent.
 
 1. `helm dependency build argo_apps/platform/charts/00_cilium` pulls the pinned `cilium/cilium` subchart into
    `charts/`, falling back to `helm dependency update` to generate `Chart.lock` on a first run.
@@ -157,7 +158,8 @@ Deliberately NOT policed, listed so it reads as a decision rather than an omissi
 - The Envoy data plane (`mergeGateways` means egress fans out to every backend) and its Gateway controller (same
   namespace, on the ingress critical path).
 - `vmagent` and the VictoriaLogs collector, which scrape everything.
-- `metrics-server`, and `nic-keeper` (applied by the OS repo's 03d), which are kube-system or host-network.
+- `metrics-server`, and any host-network node agent your OS tooling applies, which sit in kube-system or on
+  the host network and so are not subject to these policies.
 - `longhorn`, which runs a node-to-node replication mesh.
 - `vm-operator`, a tiny apiserver-only surface.
 - `03_gateway` and `google-sso`, which have no or thin pods.
@@ -189,7 +191,8 @@ mechanism. The `CoreDNS replica down` alert is what catches the failure now.
 
 ## Caveats
 
-- Run order: 03d before 04. Harden the NIC ahead of Cilium's network-heavy rollout. The script's only
+- Run order: any node-level network hardening belongs BEFORE this, ahead of Cilium's network-heavy rollout.
+  The script's only
   cluster-side dependency is a reachable API, which works over the VIP even with no CNI.
 - All nodes are control-plane, so the L2 policy selects every Linux node. The `node-role.kubernetes.io/control-plane:
   DoesNotExist` selector from upstream examples would match zero nodes here and nothing would answer ARP.
@@ -221,6 +224,6 @@ mechanism. The `CoreDNS replica down` alert is what catches the failure now.
   but matches no device takes the lease and programs nothing. `interfaces` is therefore the ethernet CLASS
   (`^en`, matching `end0` on a Pi and `eno1`/`enp0s31f6` on x86) rather than one device name, which is what lets
   `nodeSelector` stay broad without that risk. Check who holds it with `kubectl get lease -n kube-system | grep
-  l2announce`, and `kubectl get ciliuml2announcementpolicy`. See [https://github.com/yama6a/talos-raspberry-pi5-cluster/blob/main/docs/04_worker_nodes.md](https://github.com/yama6a/talos-raspberry-pi5-cluster/blob/main/docs/04_worker_nodes.md).
+  l2announce`, and `kubectl get ciliuml2announcementpolicy`.
 - Gateway not programmed: that is Envoy Gateway now, not Cilium, whose `gatewayAPI` is disabled. The Gateway API
   CRDs and the `eg` GatewayClass come from the `01_envoy_gateway` app. See [04_ingress.md](04_ingress.md).

@@ -7,7 +7,7 @@ groups:
   # eviction rate. No replication alerts: instances are standalone by design.
   - orgId: 1
     name: redis-health
-    folder: raspi-cluster
+    folder: offgrid
     interval: 1m
     rules:
       - uid: redis-down
