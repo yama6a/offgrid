@@ -1,18 +1,6 @@
 #!/usr/bin/env bash
-#
 # Measures what a Longhorn replica being local or remote costs CNPG and RabbitMQ in write latency,
-# which is the choice between the two shipped -ephemeral classes. Creates a throwaway namespace, runs
-# fio + pgbench + rabbitmq-perf-test on both arms, prints p50/p95/p99, tears everything down.
-#
-# `--workload pgsync` answers a second, separate question on its own two arms: what SYNCHRONOUS
-# replication costs. Not in `all`, because it is another ~45 min.
-#
-# The node-local-storage arms this once carried are gone with the local-path class; their numbers are
-# recorded in docs/12_storage_bench.md and are not reproducible here any more.
-#
-# Subcommands: run (default) | teardown | report <dir> | corroborate <dir>
-# See docs/12_storage_bench.md.
-
+# which is the choice between the two shipped -ephemeral classes. See docs/12_storage_bench.md.
 set -uo pipefail
 
 # ---- knobs ----
@@ -126,7 +114,7 @@ EOF
   exit 1
 }
 
-# ---------------------------------------------------------------- helpers
+# ---- helpers ----
 
 kb()  { kubectl -n "$BENCH_NS" "$@"; }
 lh()  { kubectl -n longhorn-system "$@"; }
@@ -255,7 +243,7 @@ volume_settled() {
   esac
 }
 
-# ---------------------------------------------------------------- preflight
+# ---- preflight ----
 
 preflight() {
   say "preflight"
@@ -336,7 +324,7 @@ print(min((d["storageAvailable"]//2**30) for i in json.load(sys.stdin)["items"] 
   [ "$fails" -eq 0 ] || die "preflight failed, see above. Nothing was created."
 }
 
-# ---------------------------------------------------------------- setup / teardown
+# ---- setup / teardown ----
 
 setup_ns() {
   kubectl create ns "$BENCH_NS" >/dev/null 2>&1
@@ -467,7 +455,7 @@ teardown() {
   [ -z "$orphans" ] && ok "no orphaned Longhorn volumes" || bad "orphaned Longhorn volumes: ${orphans}"
 }
 
-# ---------------------------------------------------------------- bench node
+# ---- bench node ----
 
 # Every arm runs on ONE node, so storage is the only variable. Pick the node with the most free
 # memory: the bench adds ~1.5Gi and these are 8Gi boards, so this is the choice least likely to
@@ -489,7 +477,7 @@ pick_nodes() {
   ok "bench node ${BENCH_NODE} (${best}Mi free); clients on ${OFF_NODE}"
 }
 
-# ---------------------------------------------------------------- fio
+# ---- fio ----
 
 fio_arm() {
   local arm="$1" sc="$2" rep="$3" out="${RUN_DIR}/fio/${1}/r${3}"
@@ -550,7 +538,7 @@ YAML
   kb delete pvc "fio-${arm}" --wait=true --timeout=120s >/dev/null 2>&1
 }
 
-# ---------------------------------------------------------------- pgbench
+# ---- pgbench ----
 
 pg_arm_up() {
   local arm="$1" sc="$2" instances="${3:-1}" sync="${4:-off}"
@@ -702,7 +690,7 @@ pgbench_arm() {
     > "${out}/replication.after" 2>&1
 }
 
-# ---------------------------------------------------------------- rabbitmq
+# ---- rabbitmq ----
 
 mq_arm_up() {
   local arm="$1" sc="$2"
@@ -794,7 +782,7 @@ YAML
   done
 }
 
-# ---------------------------------------------------------------- cell driver
+# ---- cell driver ----
 
 # Records BACKGROUND load either side of a cell, to catch a neighbour (a CronJob, an ArgoCD sync, a
 # Longhorn rebuild) turning up mid-measurement. A cell that ran through a big swing measured the
@@ -834,7 +822,7 @@ cell() {
   return 0
 }
 
-# ---------------------------------------------------------------- run
+# ---- run ----
 
 do_run() {
   $SMOKE && apply_smoke_knobs
@@ -1007,7 +995,7 @@ do_run() {
   summary || exit 1
 }
 
-# ---------------------------------------------------------------- report
+# ---- report ----
 
 do_report() {
   local dir="${1:?usage: report <run-dir>}"
@@ -1107,7 +1095,7 @@ PY
   cat "$md"
 }
 
-# ---------------------------------------------------------------- corroborate
+# ---- corroborate ----
 
 # Deliberately a separate sub-command, never a hidden port-forward inside a run. At scrapeInterval 60s
 # and dedup.minScrapeInterval 60s a 150s cell yields two samples, so this can contradict the tools but
@@ -1142,7 +1130,7 @@ for r in json.load(sys.stdin)["data"]["result"]:
   done | tee "${dir}/corroborate.txt"
 }
 
-# ---------------------------------------------------------------- main
+# ---- main ----
 
 CMD="run"
 case "${1:-run}" in

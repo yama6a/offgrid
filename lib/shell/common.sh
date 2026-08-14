@@ -86,10 +86,9 @@ require() {
 }
 
 # Line-surgical edits, NOT `yq -i`: yq rewrites the whole document (collapses comment alignment, drops blank
-# lines, re-flows inline maps), which turns a two-line change into a huge diff on these hand-formatted values.
-# Worse, it drops the blank line before a comment block, so even a write that changes NOTHING leaves the file
-# modified: that alone aborted a rebuild at 02a_argocd's uncommitted-changes gate. yq stays fine for READS.
-# Each helper below writes back with `cat tmp > file`, not `mv`: mv would leave the file with mktemp's 0600.
+# lines, re-flows inline maps), so even a write that changes NOTHING leaves the file modified, which trips
+# 02a_argocd's uncommitted-changes gate. yq stays fine for READS.
+# Each helper writes back with `cat tmp > file`, not `mv`: mv would leave the file with mktemp's 0600.
 
 # ys_set <file> <value> <key...>: replace the value of one existing nested key, in place, touching that ONE
 # line and keeping its trailing comment. The value is written verbatim, so the caller quotes it when the CRD
@@ -265,13 +264,11 @@ $(printf '         %s\n' "${names[@]}")"
   ok "wrote KUBE_CONTEXT=\"${KUBE_CONTEXT}\" to .env (edit it there to change clusters)"
 }
 
-# The OS repo builds the cluster and keeps its kubeconfig in its OWN store, so nothing hands us a path to one.
-# We read the ambient kubectl config, which `make merge-kubeconfig` over there populates.
-#
-# But that config holds every cluster you use, so "whatever is currently selected" is not safe to apply a whole
-# platform to. So PIN: write a one-context, self-contained copy and point KUBECONFIG at THAT. Every kubectl,
-# helm and kubeseal below inherits it, and a `kubectl config use-context` elsewhere mid-run cannot retarget us.
-# Re-derived on every call (cheap) so an edited .env takes effect on the next step, not the next reboot.
+# Nothing hands us a kubeconfig path (the OS repo keeps its own in its own store), so we read the ambient
+# kubectl config. That holds every cluster you use, and "whatever is currently selected" is not safe to apply
+# a whole platform to, so PIN: write a one-context, self-contained copy and point KUBECONFIG at THAT. Every
+# kubectl, helm and kubeseal inherits it, and a `kubectl config use-context` elsewhere cannot retarget us.
+# Re-derived on every call (cheap) so an edited .env takes effect on the next step.
 use_kubeconfig() {
   local src="${KUBECONFIG_SOURCE:-${KUBECONFIG:-$HOME/.kube/config}}"
   [ -f "$src" ] || die "no kubeconfig at ${src}. Build the cluster in the OS repo
@@ -319,14 +316,11 @@ read_backup_creds() {
 
 # strict-scope SealedSecret manifest; pass `--raw --scope cluster-wide` for a bare ciphertext value. Every
 # sealing script goes through this.
-#
 # Feed it with `<<<` or `< <(...)`, never `producer | kubeseal_to`: the right side of a pipe is a subshell, so
 # the die below would kill only that subshell and the caller would sail on past a failed seal.
-#
-# Retried, because the controller is often still settling when a bootstrap reaches the sealing steps. And it
+# Retried, because the controller is often still settling when a bootstrap reaches the sealing steps, and it
 # DIES rather than returning non-zero: a failed seal leaves <outfile> holding the PREVIOUS cluster's
-# ciphertext, so a caller that carried on would commit a secret the new key cannot decrypt, and that surfaces
-# only much later as an app sitting there with no Secret.
+# ciphertext, which a caller that carried on would commit.
 SEAL_BACKOFF="4 8 16 32 64"   # seconds between tries; 5 retries, so 6 tries and ~2 min before giving up
 kubeseal_to() {
   local out="$1"; shift
@@ -400,10 +394,9 @@ run_step() {
 
 # _ingress_serves_ok <host> <lbip>: 0 only for a real, Let's-Encrypt-backed HTTPS response. Connects straight
 # to the load-balancer IP while still claiming the hostname, so nothing outside the cluster (your DNS, your
-# router looping traffic back to itself) is in the path: this proves the CLUSTER serves.
-# CA trust is ignored, LE staging is untrusted-but-fine; every other failure keeps the caller waiting.
-# --http2 lets HTTP/2 be used if offered, but the negotiated version is deliberately NOT checked: Envoy Gateway
-# negotiates HTTP/1.1 by default, and asserting HTTP/2 hangs every host here forever.
+# router hairpinning) is in the path: this proves the CLUSTER serves. CA trust is ignored, since LE staging is
+# untrusted-but-fine. --http2 offers HTTP/2 but the negotiated version is NOT asserted: Envoy Gateway
+# negotiates HTTP/1.1 by default, and requiring HTTP/2 hangs every host forever.
 _ingress_serves_ok() {
   local host="$1" ip="$2" issuer code
   issuer="$(printf '' | openssl s_client -connect "${ip}:443" -servername "$host" 2>/dev/null \
