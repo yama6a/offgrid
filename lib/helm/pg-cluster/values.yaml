@@ -6,7 +6,7 @@ resources: {}        # REQUIRED: Per-instance requests/limits.
 allowedClients: []   # REQUIRED: SAME-NS ONLY, e.g. [{matchLabels: {app: my-app}}]
 deletionProtection:  # REQUIRED: (bool) To delete: set to false in a first commit, delete the DB in a follow-up commit.
 
-postgresql: { parameters: { max_connections: "50", shared_buffers: "128MB", effective_cache_size: "256MB" } }
+postgresql: { parameters: { max_connections: "50", shared_buffers: "128MB", effective_cache_size: "256MB", pg_stat_statements.max: "10000", pg_stat_statements.track: all } }
 alertCritical: false # OPTIONAL: (bool); true = alert-severity = critical; false = alert-severity = warning
 backupsEnabled: true # OPTIONAL: (bool); Off-cluster S3 backups (daily base + 15min RPO WAL archiving).
 

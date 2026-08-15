@@ -82,6 +82,9 @@ spec:
     initdb:
       database: app
       owner: app
+      postInitSQL: # allow major upgrade via logical replication instead of offline pg_upgrade
+        - ALTER ROLE app WITH REPLICATION;
+        - GRANT pg_create_subscription TO app;
   {{- end }}
 
   {{- if .Values.restore.enabled }}
