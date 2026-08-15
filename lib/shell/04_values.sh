@@ -253,7 +253,8 @@ HINT
 fi)
   - watch:  kubectl -n gateway get certificate,secret | grep wildcard   # READY=True (DNS-01)
             kubectl -n cert-manager get challenges                       # dns-01 for CF names, http-01 for the rest
-  - once wildcard issuance works on staging, flip acme.cloudflare.wildcardIssuer -> letsencrypt-prod, push. See 04_ingress.md.
+  - once wildcard issuance works on staging, flip acme.cloudflare.wildcardIssuer -> letsencrypt-prod, push. To
+    stage ONE new zone while the others stay on prod, use acme.cloudflare.wildcardIssuerOverrides. See 04_ingress.md.
 EOF
 }
 

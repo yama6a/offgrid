@@ -20,4 +20,7 @@ acme:
     zones: []
     apiTokenSecretName: cloudflare-api-token # SealedSecret in the cert-manager namespace, sealed by 04_values.sh
     apiTokenSecretKey: api-token
-    wildcardIssuer: letsencrypt-prod # for ALL shared wildcard certs; wildcards need DNS-01, so staging first dodges prod limits
+    wildcardIssuer: letsencrypt-prod # default for every zone's wildcard cert; wildcards need DNS-01, so staging first dodges prod limits
+    # Per-zone override of the above, so a NEW zone proves itself on staging while the others stay on prod.
+    wildcardIssuerOverrides: {}
+    #   example.edu: letsencrypt-staging

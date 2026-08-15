@@ -15,19 +15,20 @@ oidc:
   # resets the stream (ERR_HTTP2_PROTOCOL_ERROR). Empty disables.
   denyRedirectSecFetchMode: "cors|no-cors|same-origin|websocket"
 
-# The registrable domain every gated host sits under. ONE domain, deliberately: the policy sets a single
-# cookieDomain and a single callback host, and a cookie only ever reaches that domain and its subdomains, so a
-# host outside it would never receive the id token and would loop through Google forever.
+# The platform's own registrable domain. Every host in `hosts` MUST sit under it: the policy sets one
+# cookieDomain, and a cookie only ever reaches that domain and its subdomains, so a host outside it never gets
+# the id token and loops through Google forever. Other domains go in `extraDomains`, one policy each.
 domain: example.com        # written by 04_values.sh from .env BASE_DOMAIN
 issuer: letsencrypt-prod   # callback cert issuer (letsencrypt-staging | letsencrypt-prod)
 
-# Who may log in, applied to every gated host below. Never leave this empty on a real deployment: an empty
-# allowlist denies everyone, including you.
+# Who may log in, the default for every gated host on every domain. Never leave this empty on a real
+# deployment: an empty allowlist denies everyone, including you.
 allowlist:                 # written by 04_values.sh from .env SSO_ALLOWLIST
   - you@example.com
 
 # Which hosts are SSO-gated. `subdomain` composes against `domain` into the FQDN its ingress renders, because
-# the policy attaches to routes by dashed-host name and both sides must agree.
+# the policy attaches to routes by dashed-host name and both sides must agree. A host may carry its own
+# `allowlist` to override the one above.
 # This list is policy, not config, so it is NOT stamped: sample-user-manager is deliberately absent (open)
 # while sample-user-manager-sso is listed, and that contrast is the demo.
 hosts:
@@ -39,3 +40,14 @@ hosts:
   - subdomain: longhorn.ops
   - subdomain: rabbitmq.ops   # edge SSO, then RabbitMQ's own login
   - subdomain: sample-user-manager-sso.app
+
+# Other registrable domains, hand-written: 04_values.sh stamps only `domain` above. Each gets its own policy,
+# cookie scope and google-sso.<domain> callback, so each needs its own redirect URI on the same Google client.
+# 04_google_sso.sh prints them. See docs/04_ingress.md.
+extraDomains: []
+# - domain: example.edu
+#   issuer: letsencrypt-staging       # OPTIONAL: defaults to `issuer` above
+#   hosts:
+#     - subdomain: www
+#     - subdomain: api
+#       allowlist: [ops@example.edu]  # OPTIONAL: defaults to `allowlist` above

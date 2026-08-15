@@ -238,8 +238,9 @@ What to put in it:
 
 - Git remote: `REPO_URL`, your fork. Nothing else references a repo URL by hand.
 - Domains: `BASE_DOMAIN` is a registrable domain you own. Platform UIs land on `*.ops.<base>` and workloads on
-  `*.app.<base>`; both tiers must stay under the base domain, because one SSO cookie covers them all.
-  `INGRESS_LB_IP` is the single IP every host resolves to, and must sit inside `LB_RANGE_START`/`LB_RANGE_STOP`.
+  `*.app.<base>`; both tiers must stay under the base domain, because one SSO cookie covers them all. A workload
+  on its own domain goes in `04_google_sso`'s `extraDomains` (`docs/04_ingress.md`). `INGRESS_LB_IP` is the
+  single IP every host resolves to, and must sit inside `LB_RANGE_START`/`LB_RANGE_STOP`.
 - TLS and login: `LE_EMAIL`, `SSO_ALLOWLIST`, plus your Google OAuth app (`GOOGLE_SSO_CLIENT_ID` +
   `GOOGLE_SSO_CLIENT_SECRET`). Which hosts are gated is policy, so that list lives in
   `argo_apps/platform/charts/04_google_sso`.
@@ -278,8 +279,8 @@ cluster) belongs to whatever built them. The two seams where that tooling and th
   stateful CR removed from a live app is kept, not pruned ([docs/10](docs/10_backups.md)).
 - **LoadBalancer IP stuck `<pending>`**: `INGRESS_LB_IP` must be inside the Cilium LB pool, on the nodes' L2,
   avoiding the DHCP range and the VIP ([docs/01](docs/01_networking.md)).
-- **A gated host loops through Google forever**: its subdomain must sit under `BASE_DOMAIN`, because the SSO
-  policy sets one cookie domain ([docs/04](docs/04_ingress.md)).
+- **A gated host loops through Google forever**: its subdomain must sit under the domain it is listed against,
+  because each SSO policy sets one cookie domain ([docs/04](docs/04_ingress.md)).
 - **`make bootstrap-cluster` refuses to start**: it found no reachable cluster. Build one first, and point
   `KUBE_CONTEXT` at it ([What this expects of your cluster](#what-this-expects-of-your-cluster)).
 
