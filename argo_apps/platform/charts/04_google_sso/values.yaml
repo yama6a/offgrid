@@ -3,7 +3,7 @@ callbackImage: "traefik/whoami:v1.12.0"  # Envoy intercepts /oauth2/callback bef
 
 # One Google client for everything. clientID written by 04_google_sso.sh, the secret is sealed.
 oidc:
-  clientID: ""
+  clientID: "000000000000-example.apps.googleusercontent.com"
   clientSecretName: google-oauth   # sealed Secret, key `client-secret`
   authSubdomain: google-sso        # callback host = <authSubdomain>.<domain>; register it as the redirect URI
   idTokenCookie: "google-id-token"
