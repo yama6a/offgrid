@@ -269,22 +269,37 @@ $(printf '         %s\n' "${names[@]}")"
   ok "wrote KUBE_CONTEXT=\"${KUBE_CONTEXT}\" to .env (edit it there to change clusters)"
 }
 
-# Nothing hands us a kubeconfig path, so we read the ambient kubectl config. That holds every cluster you use, and "whatever is currently selected" is not safe to apply
-# a whole platform to, so PIN: write a one-context, self-contained copy and point KUBECONFIG at THAT. Every
-# kubectl, helm and kubeseal inherits it, and a `kubectl config use-context` elsewhere cannot retarget us.
+# Nothing hands us a kubeconfig path, so we read the ambient kubectl config. That holds every cluster you use,
+# and "whatever is currently selected" is not safe to apply a whole platform to, so PIN: write a one-context,
+# self-contained copy and point KUBECONFIG at THAT. Every kubectl, helm and kubeseal inherits it, and a
+# `kubectl config use-context` elsewhere cannot retarget us.
 # Re-derived on every call (cheap) so an edited .env takes effect on the next step.
 use_kubeconfig() {
-  local src="${KUBECONFIG_SOURCE:-${KUBECONFIG:-$HOME/.kube/config}}"
+  # The source is sticky and EXPORTED, because this function also exports KUBECONFIG=$PINNED_KUBECONFIG. Read
+  # $KUBECONFIG naively and the second call (any child step sourcing this file, or a re-run in the same shell)
+  # derives the pinned config FROM ITSELF, so one bad write poisons every run after it with no way back.
+  local amb="${KUBECONFIG_SOURCE:-${KUBECONFIG:-$HOME/.kube/config}}"
+  [ "$amb" = "$PINNED_KUBECONFIG" ] && amb="$HOME/.kube/config"   # never our own output
+  export KUBECONFIG_SOURCE="$amb"
+  local src="$amb"
   [ -f "$src" ] || die "no kubeconfig at ${src}. This repo starts from a cluster that already exists:
        point kubectl at one, then set KUBE_CONTEXT in .env. See the README, 'What this expects of your cluster'."
+  [ -s "$src" ] || die "the kubeconfig at ${src} is empty. Point kubectl at a cluster first."
   [ -n "$KUBE_CONTEXT" ] || _pick_kube_context "$src"
   mkdir -p "$(dirname "$PINNED_KUBECONFIG")"
-  # Subshell so the umask does not leak into the caller. --minify keeps one context, --flatten inlines its
-  # certs, so the result stands alone and no other cluster is even reachable from it.
-  ( umask 077; KUBECONFIG="$src" kubectl config view --flatten --minify --context="$KUBE_CONTEXT" \
-      > "$PINNED_KUBECONFIG" 2>/dev/null ) \
-    || die "context \"${KUBE_CONTEXT}\" (from .env) is not in ${src}. Available:
-$(KUBECONFIG="$src" kubectl config get-contexts -o name | sed 's/^/         /')"
+  # Rendered to a temp file and moved into place, never redirected straight at the pinned path: a redirect
+  # truncates before kubectl runs, so a failure used to leave an EMPTY pinned config behind. mktemp is 0600 and
+  # mv preserves that. --minify keeps one context, --flatten inlines its certs, so the result stands alone and
+  # no other cluster is even reachable from it.
+  local tmp err
+  tmp="$(mktemp "${PINNED_KUBECONFIG}.XXXXXX")" || die "could not write next to ${PINNED_KUBECONFIG}"
+  if ! err="$(KUBECONFIG="$src" kubectl config view --flatten --minify --context="$KUBE_CONTEXT" 2>&1 >"$tmp")"; then
+    rm -f "$tmp"
+    die "context \"${KUBE_CONTEXT}\" (from .env) is not usable in ${src}: ${err}
+       available: $(KUBECONFIG="$src" kubectl config get-contexts -o name 2>/dev/null | tr '\n' ' ')"
+  fi
+  [ -s "$tmp" ] || { rm -f "$tmp"; die "rendering context \"${KUBE_CONTEXT}\" from ${src} produced nothing"; }
+  mv "$tmp" "$PINNED_KUBECONFIG"
   export KUBECONFIG="$PINNED_KUBECONFIG"
 }
 assert_api() { kubectl get nodes >/dev/null 2>&1 || die "kubectl can't reach the API via ${KUBECONFIG} (context: $(kubectl config current-context 2>/dev/null || echo none))"; }
