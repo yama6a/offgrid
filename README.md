@@ -61,6 +61,7 @@ Everything after `01`/`02a` is an Argo CD-delivered wrapper chart, each pinning 
 | **TLS**           | cert-manager                   | Let's Encrypt certificates via ClusterIssuers (HTTP-01, plus Cloudflare DNS-01 for wildcards).               |
 | **Auth**          | Google SSO                     | Central OIDC (one Envoy `SecurityPolicy`, one email allowlist, per-host gating).                                 |
 | **Secrets**       | Sealed Secrets                 | Encrypted secrets committed to git.                                                                          |
+| **Config reload** | Reloader                       | Restarts a workload when a ConfigMap or Secret it mounts changes, which Kubernetes never does on its own.    |
 | **Storage**       | Longhorn                       | Replicated block storage, for everything stateful, so a volume outlives the machine under it.                |
 | **Node health**   | dead-node-watcher              | Custom Deployment that taints a genuinely dead node, cutting volume handover from ~6 min to ~2.               |
 | **Database**      | CloudNativePG                  | Kubernetes-native PostgreSQL operator.                                                                       |
@@ -150,7 +151,7 @@ flowchart LR
         direction TB
         ROOT --> PLAT["platform tree, waves 0-8"]
         PLAT -->|" created ~5s later, no health gate "| WORK["workloads tree"]
-        PLAT --- PC["Envoy Gateway, cert-manager, Google SSO, Sealed Secrets<br/>Longhorn, CNPG, Redis, RabbitMQ<br/>metrics-server, dead-node-watcher, VictoriaMetrics/Logs, Grafana, ntfy"]
+        PLAT --- PC["Envoy Gateway, cert-manager, Google SSO, Sealed Secrets, Reloader<br/>Longhorn, CNPG, Redis, RabbitMQ<br/>metrics-server, dead-node-watcher, VictoriaMetrics/Logs, Grafana, ntfy"]
         WORK --- WC["sample-user-manager, sample-user-signup, sample-audit-logger"]
     end
 ```

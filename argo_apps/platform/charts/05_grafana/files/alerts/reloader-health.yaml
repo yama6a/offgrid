@@ -1,0 +1,46 @@
+apiVersion: 1
+groups:
+  # Reloader restarting a pod is what makes a rotated credential actually reach it. When Reloader fails, nothing
+  # else notices: the Secret is updated, the pod keeps the old value, and every dashboard stays green.
+  # A Reloader that is gone entirely is already caught by the generic `up == 0` rule in cluster-health.
+  - orgId: 1
+    name: reloader-health
+    folder: offgrid
+    interval: 1m
+    rules:
+      - uid: reloader-reloads-failing
+        title: Reloader cannot restart workloads
+        condition: C
+        for: 15m
+        labels: {severity: warning}
+        annotations:
+          summary: 'Reloader reloads are failing: pods are keeping stale config and credentials'
+          description: |
+            - a ConfigMap or Secret changed but Reloader could not roll the workload that mounts it
+            - check: kubectl -n reloader logs deploy/reloader
+            - usual cause is RBAC, or a workload the operator owning it keeps reverting
+        noDataState: OK
+        execErrState: KeepLast
+        data:
+          - refId: A
+            relativeTimeRange: {from: 900, to: 0}
+            datasourceUid: VictoriaMetrics
+            model:
+              refId: A
+              instant: true
+              expr: 'sum(increase(reloader_reload_executed_total{success="false"}[15m]))'
+          - refId: B
+            relativeTimeRange: {from: 900, to: 0}
+            datasourceUid: __expr__
+            model: {refId: B, type: reduce, expression: A, reducer: last, datasource: {type: __expr__, uid: __expr__}}
+          - refId: C
+            relativeTimeRange: {from: 900, to: 0}
+            datasourceUid: __expr__
+            model:
+              refId: C
+              type: threshold
+              expression: B
+              datasource: {type: __expr__, uid: __expr__}
+              conditions:
+                - type: query
+                  evaluator: {type: gt, params: [0]}

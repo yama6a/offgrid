@@ -21,6 +21,10 @@ cloudnative-pg:
   # pods run --leader-elect, so the survivor takes over instead of conflicting.
   replicaCount: 2
 
+  # Opt out of Reloader (02_reloader runs with auto-reload-all): the only Secret it mounts is a webhook cert the
+  # operator rotates itself, and the 33s above is what a restart at the wrong moment costs.
+  podAnnotations: {reloader.stakater.com/auto: "false"}
+
   priorityClassName: platform-critical
 
   resources:

@@ -11,6 +11,11 @@ metadata:
     argocd.argoproj.io/sync-options: Prune=false,Delete=false
   {{- end }}
 spec:
+  # Opt out of Reloader (02_reloader runs with auto-reload-all): this is the log store on a single RWO volume,
+  # so a restart loses ingest and forces a detach/reattach.
+  podMetadata:
+    annotations:
+      reloader.stakater.com/auto: "false"
   retentionPeriod: {{ .Values.vlsingle.retentionPeriod | quote }}
   storage:
     storageClassName: {{ .Values.vlsingle.storage.storageClassName }}

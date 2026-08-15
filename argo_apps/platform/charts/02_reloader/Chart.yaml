@@ -1,0 +1,10 @@
+apiVersion: v2
+name: reloader
+description: Restarts a workload when a ConfigMap or Secret it mounts changes, which Kubernetes never does on its own.
+type: application
+version: 0.1.0 # local chart, never bump version
+
+dependencies:
+  - name: reloader
+    version: "2.2.16"
+    repository: https://stakater.github.io/stakater-charts
