@@ -241,6 +241,27 @@ vy_protect_off() {
 }
 
 CLUSTER_DIR="${REPO_ROOT}/secrets"   # this repo's sealed-secrets key + webhook secret; a symlink to an off-repo store
+
+# Created on demand, because a missing gitignored dir must not be what stops a bootstrap. It holds the
+# sealed-secrets master key, which cannot be regenerated: lose it and every SealedSecret already committed stays
+# encrypted forever. So when we create it fresh we say so, because a plain directory here dies with the
+# checkout and a symlink to synced storage does not.
+ensure_cluster_dir() {
+  [ -d "$CLUSTER_DIR" ] && return 0
+  # A dangling symlink is not a missing dir: mkdir -p would fail with "File exists" and read as a bug.
+  if [ -L "$CLUSTER_DIR" ]; then
+    die "${CLUSTER_DIR} is a symlink to $(readlink "$CLUSTER_DIR"), which does not exist.
+       Mount or restore that store, or replace the link."
+  fi
+  [ -e "$CLUSTER_DIR" ] && die "${CLUSTER_DIR} exists but is not a directory"
+  mkdir -p "$CLUSTER_DIR" || die "could not create ${CLUSTER_DIR}"
+  chmod 700 "$CLUSTER_DIR"
+  warn "created ${CLUSTER_DIR} (gitignored) for the sealed-secrets master key."
+  warn "  It is a plain directory, so the key dies with this checkout. The key cannot be regenerated, and"
+  warn "  without it every SealedSecret already committed stays encrypted forever. Point it at storage that"
+  warn "  outlives the clone before you rely on this cluster:"
+  warn "    rmdir ${CLUSTER_DIR} && ln -s /path/to/your/synced/store ${CLUSTER_DIR}"
+}
 PINNED_KUBECONFIG="${REPO_ROOT}/.cache/kubeconfig"   # derived, gitignored; rewritten by every use_kubeconfig call
 
 # Offers the contexts in $1 and writes the pick back to .env, so this is asked once per checkout. Needs a TTY:
@@ -269,22 +290,37 @@ $(printf '         %s\n' "${names[@]}")"
   ok "wrote KUBE_CONTEXT=\"${KUBE_CONTEXT}\" to .env (edit it there to change clusters)"
 }
 
-# Nothing hands us a kubeconfig path, so we read the ambient kubectl config. That holds every cluster you use, and "whatever is currently selected" is not safe to apply
-# a whole platform to, so PIN: write a one-context, self-contained copy and point KUBECONFIG at THAT. Every
-# kubectl, helm and kubeseal inherits it, and a `kubectl config use-context` elsewhere cannot retarget us.
+# Nothing hands us a kubeconfig path, so we read the ambient kubectl config. That holds every cluster you use,
+# and "whatever is currently selected" is not safe to apply a whole platform to, so PIN: write a one-context,
+# self-contained copy and point KUBECONFIG at THAT. Every kubectl, helm and kubeseal inherits it, and a
+# `kubectl config use-context` elsewhere cannot retarget us.
 # Re-derived on every call (cheap) so an edited .env takes effect on the next step.
 use_kubeconfig() {
-  local src="${KUBECONFIG_SOURCE:-${KUBECONFIG:-$HOME/.kube/config}}"
+  # The source is sticky and EXPORTED, because this function also exports KUBECONFIG=$PINNED_KUBECONFIG. Read
+  # $KUBECONFIG naively and the second call (any child step sourcing this file, or a re-run in the same shell)
+  # derives the pinned config FROM ITSELF, so one bad write poisons every run after it with no way back.
+  local amb="${KUBECONFIG_SOURCE:-${KUBECONFIG:-$HOME/.kube/config}}"
+  [ "$amb" = "$PINNED_KUBECONFIG" ] && amb="$HOME/.kube/config"   # never our own output
+  export KUBECONFIG_SOURCE="$amb"
+  local src="$amb"
   [ -f "$src" ] || die "no kubeconfig at ${src}. This repo starts from a cluster that already exists:
        point kubectl at one, then set KUBE_CONTEXT in .env. See the README, 'What this expects of your cluster'."
+  [ -s "$src" ] || die "the kubeconfig at ${src} is empty. Point kubectl at a cluster first."
   [ -n "$KUBE_CONTEXT" ] || _pick_kube_context "$src"
   mkdir -p "$(dirname "$PINNED_KUBECONFIG")"
-  # Subshell so the umask does not leak into the caller. --minify keeps one context, --flatten inlines its
-  # certs, so the result stands alone and no other cluster is even reachable from it.
-  ( umask 077; KUBECONFIG="$src" kubectl config view --flatten --minify --context="$KUBE_CONTEXT" \
-      > "$PINNED_KUBECONFIG" 2>/dev/null ) \
-    || die "context \"${KUBE_CONTEXT}\" (from .env) is not in ${src}. Available:
-$(KUBECONFIG="$src" kubectl config get-contexts -o name | sed 's/^/         /')"
+  # Rendered to a temp file and moved into place, never redirected straight at the pinned path: a redirect
+  # truncates before kubectl runs, so a failure used to leave an EMPTY pinned config behind. mktemp is 0600 and
+  # mv preserves that. --minify keeps one context, --flatten inlines its certs, so the result stands alone and
+  # no other cluster is even reachable from it.
+  local tmp err
+  tmp="$(mktemp "${PINNED_KUBECONFIG}.XXXXXX")" || die "could not write next to ${PINNED_KUBECONFIG}"
+  if ! err="$(KUBECONFIG="$src" kubectl config view --flatten --minify --context="$KUBE_CONTEXT" 2>&1 >"$tmp")"; then
+    rm -f "$tmp"
+    die "context \"${KUBE_CONTEXT}\" (from .env) is not usable in ${src}: ${err}
+       available: $(KUBECONFIG="$src" kubectl config get-contexts -o name 2>/dev/null | tr '\n' ' ')"
+  fi
+  [ -s "$tmp" ] || { rm -f "$tmp"; die "rendering context \"${KUBE_CONTEXT}\" from ${src} produced nothing"; }
+  mv "$tmp" "$PINNED_KUBECONFIG"
   export KUBECONFIG="$PINNED_KUBECONFIG"
 }
 assert_api() { kubectl get nodes >/dev/null 2>&1 || die "kubectl can't reach the API via ${KUBECONFIG} (context: $(kubectl config current-context 2>/dev/null || echo none))"; }

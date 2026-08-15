@@ -9,10 +9,6 @@
 ![License: MIT](https://img.shields.io/badge/License-MIT-green.svg)
 ![Last commit](https://img.shields.io/github/last-commit/yama6a/offgrid)
 
-<p align="center">
-  <img src="docs/images/rackmount_0.jpeg" alt="The 3-node cluster this platform was developed against" width="600">
-</p>
-
 > The platform: everything that runs *on* a Kubernetes cluster, delivered by Argo CD from this repo. Ingress,
 > TLS, SSO, storage, databases, messaging, monitoring, backups, and a sample workload on top.
 >
@@ -208,10 +204,13 @@ POSIX-y environment. On your machine: `git`, `kubectl`, `helm`, `yq`, `kubeseal`
 # 1. Configure
 cp .env.example .env                # then edit: KUBE_CONTEXT, repo URL, domains, ingress IP, secrets. Go over everything.
 
-# 2. Install the platform
+# 2. Recommended: point `secrets/` at storage that outlives this checkout
+ln -s /path/to/your/synced/store secrets   # skip it and bootstrap creates a plain gitignored dir, warning you
+
+# 3. Install the platform
 make bootstrap-cluster              # CNI -> stamp values -> push -> Argo CD -> seal secrets -> converge
 
-# 3. Verify
+# 4. Verify
 kubectl get applications -n argocd  # watch Argo CD deliver the platform, then workloads
 make view-credentials               # login URLs + credentials
 ```
