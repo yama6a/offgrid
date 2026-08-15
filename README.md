@@ -204,10 +204,13 @@ POSIX-y environment. On your machine: `git`, `kubectl`, `helm`, `yq`, `kubeseal`
 # 1. Configure
 cp .env.example .env                # then edit: KUBE_CONTEXT, repo URL, domains, ingress IP, secrets. Go over everything.
 
-# 2. Install the platform
+# 2. Recommended: point `secrets/` at storage that outlives this checkout
+ln -s /path/to/your/synced/store secrets   # skip it and bootstrap creates a plain gitignored dir, warning you
+
+# 3. Install the platform
 make bootstrap-cluster              # CNI -> stamp values -> push -> Argo CD -> seal secrets -> converge
 
-# 3. Verify
+# 4. Verify
 kubectl get applications -n argocd  # watch Argo CD deliver the platform, then workloads
 make view-credentials               # login URLs + credentials
 ```

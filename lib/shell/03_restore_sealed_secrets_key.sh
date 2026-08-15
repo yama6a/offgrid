@@ -19,6 +19,7 @@ WAIT=900                                                 # secs to wait for the 
 check_prerequisites() {
   say "prerequisites"
   require kubectl
+  ensure_cluster_dir
   use_kubeconfig
   [ -f "$BACKUP_FILE" ] || die "no backup at ${BACKUP_FILE}, run 03_backup_sealed_secrets_key.sh first (while a cluster holding the key is up), or re-seal instead (04_google_sso, 06_ntfy_auth)"
   [ -s "$BACKUP_FILE" ] || die "backup ${BACKUP_FILE} is empty, do not trust it"
