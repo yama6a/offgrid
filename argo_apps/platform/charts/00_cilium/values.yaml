@@ -5,6 +5,10 @@ cilium:
   # Agents read config at startup. Without force-rolling pods like this, a GitOps config edit does nothing until a human
   # rolls the DaemonSet by hand.
   rollOutCiliumPods: true
+  # Opt out of Reloader (02_reloader runs with auto-reload-all). rollOutCiliumPods above already rolls the agents
+  # on a config edit, and the hubble cert CronJob rewrites hubble-server-certs every few months, which would
+  # otherwise restart the CNI on every node unattended.
+  podAnnotations: {reloader.stakater.com/auto: "false"}
   priorityClassName: system-node-critical
   ipam:
     mode: kubernetes
@@ -29,8 +33,11 @@ cilium:
     enabled: true
     serviceMonitor:
       enabled: true
+  envoy:
+    podAnnotations: {reloader.stakater.com/auto: "false"} # per-node L7 proxy: a restart drops proxied connections
   operator:
     rollOutPods: true
+    podAnnotations: {reloader.stakater.com/auto: "false"} # rollOutPods above already restarts it on a config edit
     priorityClassName: system-cluster-critical
     podDisruptionBudget:
       enabled: true # keeps the LB-IPAM/L2 leader through a node reboot

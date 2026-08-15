@@ -22,6 +22,11 @@ spec:
           # bad patch cannot wedge ALL ingress.
           labels:
             alert-criticality: critical
+          annotations:
+            # Opt out of Reloader (02_reloader runs with auto-reload-all). mergeGateways above puts ALL cluster
+            # ingress in this one pod, so nothing it mounts is worth dropping every live connection for. TLS
+            # certs are not mounted at all, they reach Envoy over xDS, so renewals never restart it either way.
+            reloader.stakater.com/auto: "false"
           {{- with .Values.envoyProxy.affinity }}
           affinity:
             {{- toYaml . | nindent 12 }}

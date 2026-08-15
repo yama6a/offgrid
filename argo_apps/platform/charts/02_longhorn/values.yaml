@@ -1,4 +1,9 @@
 longhorn:
+  # Pod annotations on the longhorn-manager DaemonSet. Opt out of Reloader (02_reloader runs with
+  # auto-reload-all): the managers sit in the volume data path, and a surprise roll during a replica rebuild is
+  # the worst possible timing. Nothing it mounts changes today, so this is pre-emptive.
+  annotations: {reloader.stakater.com/auto: "false"}
+
   defaultSettings:
     # Where replica data lives on each node. Written by 04_values.sh from LONGHORN_DATA_PATH in .env, so do
     # not hand-edit. It must exist on every node and, with a containerized kubelet, be bind-mounted rshared

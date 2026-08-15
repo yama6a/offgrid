@@ -1,0 +1,30 @@
+reloader:
+  fullnameOverride: reloader
+
+  reloader:
+    # Every Deployment/StatefulSet/DaemonSet is watched without needing an annotation. Opt a workload OUT with
+    # `reloader.stakater.com/auto: "false"` on its POD TEMPLATE; see docs/03_secrets.md for who is opted out and why.
+    autoReloadAll: true
+
+    # On a CronJob, reloader starts a job RUN rather than restarting anything, and both of ours are heavy
+    # (redis-backup dumps every durable Redis in the cluster). Each run is a fresh pod, so it reads the new
+    # credential anyway. Same for the Helm hook Jobs, which must not re-run.
+    ignoreJobs: true
+    ignoreCronJobs: true
+
+    # How the restart is forced: stamp a hash annotation on the pod template. The `default` strategy instead
+    # injects a STAKATER_* env var into every container, which ArgoCD selfHeal would fight.
+    reloadStrategy: annotations
+
+    logFormat: json
+    watchGlobally: true          # it has to see the platform namespaces, not just its own
+    readOnlyRootFileSystem: true # it only talks to the API server, it writes no files
+
+    podMonitor:
+      enabled: true # the chart's serviceMonitor is deprecated upstream
+
+    deployment:
+      priorityClassName: platform-critical # while it is gone, a rotated secret silently never reaches its pod
+      resources:
+        requests: {cpu: 10m, memory: 64Mi}
+        limits:   {memory: 128Mi}

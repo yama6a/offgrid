@@ -36,6 +36,17 @@ spec:
             matchLabels:
               app.kubernetes.io/name: {{ .Values.name }}
           topologyKey: kubernetes.io/hostname
+  # The only way to reach the generated StatefulSet's pod template.
+  override:
+    statefulSet:
+      spec:
+        template:
+          metadata:
+            annotations:
+              # Opt out of Reloader (02_reloader runs with auto-reload-all). Rolling 3 brokers costs a quorum
+              # leader election each plus ~2min catch-up per broker, and the operator already rolls them itself
+              # when the config below changes, so Reloader would only add a second uncoordinated trigger.
+              reloader.stakater.com/auto: "false"
   rabbitmq:
     additionalConfig: |
       # Also covers a queue an app declares directly rather than via a Queue CR.

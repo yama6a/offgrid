@@ -97,6 +97,56 @@ echo -n s3cr3t | kubeseal --controller-namespace sealed-secrets --controller-nam
 A `SealedSecret` is `strict`-scoped by default: it unseals only into the exact name and namespace it was sealed
 for. Use `--scope namespace-wide` or `cluster-wide` only when you deliberately need that.
 
+## Picking up a changed secret: Reloader
+
+Kubernetes never restarts a pod when a Secret or ConfigMap changes. Env vars are read once at startup, and a
+mounted file is refreshed on disk but almost nothing re-reads it. So the pod keeps the old value until someone
+rolls it by hand.
+
+`02_reloader` closes that. It runs with `--auto-reload-all`, so **every** Deployment, StatefulSet and DaemonSet
+is watched by default, and it restarts one when a Secret or ConfigMap that pod actually references changes.
+"References" means `envFrom`, `env[].valueFrom`, or a volume. A Secret the component looks up through the API
+instead is invisible to Reloader.
+
+That last point covers most of this repo's sealed secrets, so re-sealing them restarts nothing, and does not
+need to:
+
+| Secret | Read by | Why no restart |
+|---|---|---|
+| `cloudflare-api-token` | cert-manager, via `apiTokenSecretRef` | fetched per DNS-01 challenge |
+| `google-oauth` | Envoy Gateway, via `SecurityPolicy` | fetched by the controller |
+| `longhorn-backup-s3` | Longhorn, via a setting | fetched per backup |
+| `argocd-secret` | Argo CD | no Argo CD pod mounts it |
+| the wildcard TLS certs | Envoy | delivered over xDS, never a file |
+
+Where it does earn its keep: the workload pods reading operator-generated credentials (`*-db-app`,
+`*-user-credentials`). If CNPG or the RabbitMQ topology operator regenerates a password, the app picks it up on
+its own instead of holding a stale one forever.
+
+Reloader also hashes the **decrypted** data, so re-running a `make configure-*` target produces fresh ciphertext
+but no restart unless the underlying credential actually changed.
+
+### What is opted out, and why
+
+`reloader.stakater.com/auto: "false"` on the pod template. Two reasons ever: the component already reloads
+without a restart, or restarting it costs more than the stale config does.
+
+| Workload | Reason |
+|---|---|
+| `cilium`, `cilium-operator` | already roll themselves on a config edit (`rollOutCiliumPods`, `rollOutPods`); the hubble cert CronJob would otherwise restart the CNI on every node every few months |
+| `cilium-envoy` | per-node L7 proxy, a restart drops proxied connections |
+| `envoy-eg-*` | `mergeGateways` puts all cluster ingress in one pod |
+| `longhorn-manager` | volume data path; nothing it mounts changes today, so pre-emptive |
+| `cnpg-operator` | its one mounted Secret is a webhook cert it rotates itself, and a restart at the wrong moment adds ~33s to a switchover |
+| `vmagent` | the operator rewrites its scrape config on every target change anywhere, and vmagent reloads that without restarting |
+| `vmsingle`, `vlsingle` | the metrics and log stores, single RWO volume each |
+| `rabbitmq-server` | rolling 3 brokers is a quorum leader election each; the operator already rolls them itself |
+
+Jobs and CronJobs are excluded globally. Reloader would start a *run* rather than restart anything, and each run
+is a fresh pod that reads the current credential anyway.
+
+CNPG's Postgres pods are bare Pods, not a StatefulSet, so Reloader cannot act on them at all. Nothing to opt out.
+
 ## Caveats
 
 - No bootstrap script generates the lock here, unlike `01_argocd`. Run `helm dependency update
