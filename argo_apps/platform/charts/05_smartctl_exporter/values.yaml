@@ -14,7 +14,9 @@ prometheus-smartctl-exporter:
   # Instance 0 is the block below; each extraInstances entry is another DaemonSet and must repeat every key
   # it needs, since the chart reads them off the entry and not off the top level.
   config:
-    device_include: '^/dev/nvme' # REQUIRED: (regex) real disks on arm64 nodes
+    # Matches the scanner's device NAME (`nvme0`, `sda`), NOT a path: `^/dev/nvme` matches nothing and the
+    # exporter then finds zero devices and silently exports nothing.
+    device_include: '^nvme' # REQUIRED: (regex) real disks on arm64 nodes
   nodeSelector: {kubernetes.io/arch: arm64}
   tolerations: [{operator: Exists}] # node metrics are wanted whatever the node's role or taints
   resources:
