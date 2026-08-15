@@ -1,0 +1,10 @@
+apiVersion: v2
+name: smartctl-exporter
+description: Per-disk SMART health, wear and error counters, which node-exporter does not read at all.
+type: application
+version: 0.1.0 # local chart, never bump version
+
+dependencies:
+  - name: prometheus-smartctl-exporter
+    version: "0.17.1"
+    repository: https://prometheus-community.github.io/helm-charts

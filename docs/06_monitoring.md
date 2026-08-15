@@ -149,7 +149,8 @@ its VM equivalent with no rewrites. That is why the `monitoring.coreos.com` CRDs
 `00_prometheus_operator_crds` app is the converter's source and is not removable.
 
 Scrape sources across the platform (node-exporter, kube-state-metrics, cilium and hubble, argocd, cert-manager,
-longhorn, sealed-secrets, cnpg, metrics-server, ntfy, blackbox-exporter) all reach vmagent this way. The
+longhorn, sealed-secrets, cnpg, metrics-server, ntfy, blackbox-exporter, smartctl-exporter) all reach vmagent
+this way. The
 converter stamps ArgoCD-ignore annotations on its output
 (`operator.prometheus_converter_add_argocd_ignore_annotations: true`) so ArgoCD never fights or prunes
 operator-created objects.
@@ -211,6 +212,48 @@ Consequences worth knowing:
   `values.yaml` are hand-maintained, deliberately: the expected status code is a per-host decision, not
   something derivable from the ingress definition.
 
+### SMART, because node-exporter reads none of it
+
+`05_smartctl_exporter` (wave 5) runs `smartctl` against each node's real disk. node-exporter reports a drive's
+temperature and nothing else about it: no wear, no spare blocks, no media errors. Without this a disk dies with
+no warning, which on a cluster where every volume is replicated onto those same disks is the failure worth
+catching earliest. The rules are the `smart-health` group.
+
+Two things about it are not obvious:
+
+- **The image is `ghcr.io/yama6a/smartctl-exporter-multiarch`, not upstream's.** prometheus-community publishes
+  smartctl-exporter for amd64 only, so the stock image cannot run on the Pis at all. That repo repackages
+  their own release binary, unmodified, as a manifest list. Its tag is `<upstream version>-<build revision>`,
+  so `v0.14.0-2` is the second build of upstream's `v0.14.0`, usually after a base-image CVE fix. Renovate
+  needs the shape declared or it reads the suffix as a semver prerelease; see the packageRule in
+  `renovate.json5`.
+- **The device list is hand-maintained, per architecture, and has to be.** Longhorn attaches every replica as
+  an iSCSI `/dev/sd*`, the same namespace a real SATA disk lands in. Letting smartctl scan would make it probe
+  every attached volume, which has no SMART and whose set changes on every attach. So there is one DaemonSet
+  per architecture in the chart's `values.yaml`: the arm64 nodes match `^/dev/nvme`, the amd64 node names its
+  SATA disk outright. Adding a node with different disks means editing that file.
+
+### Mixed-architecture nodes, and what that does to hardware alerts
+
+The cluster is no longer uniform: three arm64 Pi 5s and one amd64 box. Three things follow, and all of them
+have already bitten:
+
+- **`node_hwmon_temp_celsius{chip="thermal_thermal_zone0"}` means different things per platform.** On the Pis
+  it is the SoC. On x86 it is `acpitz`, chassis ambient, which reads ~30C while the CPU is at 90C. So the
+  temperature rules read `node_thermal_zone_temp{type=...}` instead, where `type` is the driver's own name:
+  `cpu-thermal` on the Pis, `x86_pkg_temp` on Intel, `k10temp` on AMD. Adding a platform means adding its zone
+  type to the right allow list in `node-hardware.yaml`. `acpitz` is deliberately in neither.
+- **Never select raw hwmon temperatures without pinning the chip.** An unpopulated thermistor on a super-I/O
+  chip reports a constant 127.5C, so `node_hwmon_temp_celsius > 80` would fire on day one and never clear.
+- **Some signals only exist on one side, which is fine.** `node_hwmon_in_lcrit_alarm_volts` (undervoltage) is
+  the Pis only; `node_cpu_package_throttles_total` is x86 only. Both rules stay dormant where the metric is
+  absent, so neither needs an architecture selector.
+
+Fan RPM is deliberately unalerted. Only the x86 node exposes a fan at all, and a bare `node_hwmon_fan_rpm == 0`
+false-positives forever on unpopulated headers. Guarding it with "spun recently" fixes that but then misfires
+on boards with a zero-RPM idle mode, and self-clears once the lookback window is all zeros. `node-cpu-throttled`
+and the temperature rules catch a dead fan by its consequence, on any platform.
+
 ### Deleting a store is a two-commit dance
 
 Both CRs carry deletion protection, so a stray prune cannot reach them, and total loss is covered by the S3
@@ -225,9 +268,10 @@ and disaster recovery are in [10_backups.md](10_backups.md).
 
 ### Other decisions
 
-- node-exporter and the log collector are DaemonSets with `tolerations: [{operator: Exists}]`. This is an
-  all-control-plane cluster, so a `node-role.kubernetes.io/control-plane: DoesNotExist` selector would match ZERO
-  nodes.
+- node-exporter, smartctl-exporter and the log collector are DaemonSets with `tolerations: [{operator: Exists}]`.
+  Node metrics are wanted from EVERY node whatever its role or taints, so tolerate everything rather than trying
+  to enumerate. Role selectors are the wrong tool here in both directions: the three Pis are all control-plane,
+  so `control-plane: DoesNotExist` would have matched zero nodes before the worker joined, and one node now.
 - Each UI (vmui, vlogs) is exposed by the platform-ingress app at wave 6 behind Google SSO, not by its own chart.
   The Hubble UI rides the same app. See [04_ingress.md](04_ingress.md).
 - Dashboards come from two places. An upstream chart's own (`grafana_dashboard`-labelled ConfigMaps in ITS
@@ -471,7 +515,8 @@ One rule per problem, all cluster-wide. Each group is its own file under `05_gra
 | `redis-health` | `redis-down` dynamic, rest warning | `-memory-high` and `-memory-critical` (percent of maxmemory; noeviction, so writes fail near 100%), `-rejected-connections` and `-connections-high`, `-rdb-save-failing` and `-aof-write-failing`, `-fragmentation-high` |
 | `backups` | warning, 2 critical | redis, longhorn, CNPG and VM/VL backup failure plus staleness, and the two unrecoverable-catalog rules. See [10_backups.md](10_backups.md) |
 | `orphan` | warning | orphaned and untracked CNPG, Redis and VM/VL CRs, plus the exporter deadman. See [10_backups.md](10_backups.md) |
-| `node-hardware` | warning, `node-undervoltage` static critical | `node-undervoltage` (the Pi's own 5V alarm), `node-soc-temp-high` (>80C, where the SoC starts throttling), `node-nvme-temp-high` (>70C) |
+| `node-hardware` | warning, `node-undervoltage` static critical | `node-undervoltage` (the board's own low-rail alarm), `node-soc-temp-high` (>80C, where an ARM SoC throttles), `node-cpu-temp-high` (>90C, x86, under its ~100C shutdown), `node-cpu-throttled` (the CPU says it clocked itself down) |
+| `smart-health` | mixed | `smart-device-failing` (critical, the drive's own verdict), `smart-nvme-critical-warning` and `smart-spare-low` (critical), `smart-media-errors` (new errors in 24h), `smart-wear-high` (>80% of rated endurance), `smart-device-temp-high` (>70C), `smart-sata-reallocated` |
 | `probes` | warning | `ingress-probe-failing`, `ingress-cert-expiring` (<14d, on the cert actually SERVED). See "Synthetic probes" |
 | `alerting-path` | warning | `alert-delivery-failing`: Grafana's webhook to ntfy is erroring, so alerts fire and nobody is told |
 

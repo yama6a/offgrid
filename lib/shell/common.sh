@@ -28,6 +28,7 @@ source "$ENV_FILE"
 : "${LONGHORN_DATA_PATH:=/var/mnt/storage}"  # where Longhorn stores replica data on each node
 : "${KUBE_CONTEXT:=}"                     # the ONE kubectl context every script here may touch; empty = ask once and write it back to .env
 : "${GITHUB_GHCR_PULL_TOKEN_SECRET:=}"    # here it is only a docker login; node-level pull auth, if you need it, is configured on the nodes
+: "${GHCR_SERVER:=ghcr.io}"               # registry check_multiarch.sh logs in to when the token above is set
 : "${ARGOCD_GITHUB_PAT_SECRET:=}"         # 02a seeds ArgoCD's repo-creds Secret
 : "${NTFY_PHONE_PASSWORD_SECRET:=}"       # 06 seeds the ntfy 'phone' user (Grafana pushes alerts to ntfy, phone subscribes)
 : "${GOOGLE_SSO_CLIENT_ID:=}"      # 04_google_sso writes it into the google-sso values

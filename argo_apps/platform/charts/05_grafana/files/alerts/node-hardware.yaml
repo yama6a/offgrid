@@ -1,0 +1,167 @@
+# Node hardware health from node-exporter. Temperature is read off thermal ZONES, never off raw hwmon chips:
+# an unpopulated super-I/O thermistor reports a constant 127C, so a bare node_hwmon_temp_celsius selector
+# fires on day one and never clears. `instance` is the node IP:9100, node-exporter has no `node` label.
+# Drive temperature is not here, it is in smart-health.yaml, which covers NVMe and SATA with one metric.
+apiVersion: 1
+groups:
+  - orgId: 1
+    name: node-hardware
+    folder: offgrid
+    interval: 1m
+    rules:
+      # The board's firmware raises this when the supply rail sags, usually a weak PSU or a thin cable, and it
+      # is the one hardware fault here that corrupts data rather than just slowing things down. Only boards
+      # that publish a low-critical voltage alarm emit it at all, so it stays silent elsewhere.
+      - uid: node-undervoltage
+        title: Node undervoltage
+        condition: C
+        for: 5m
+        labels: {severity: critical}
+        annotations:
+          summary: 'Node {{ $labels.instance }} reports undervoltage'
+          description: |
+            - the supply rail dropped below spec: the CPU throttles hard and writes can corrupt
+            - on a Pi: swap to the official 27W PSU and use a short, thick USB-C cable
+            - unplug bus-powered peripherals; an NVMe HAT plus a spinning disk exceeds the budget
+            - talosctl -n {{ $labels.instance }} dmesg | grep -i voltage
+        noDataState: OK
+        execErrState: KeepLast
+        data:
+          - refId: A
+            relativeTimeRange: {from: 600, to: 0}
+            datasourceUid: VictoriaMetrics
+            model:
+              refId: A
+              instant: true
+              expr: 'max by (instance) (node_hwmon_in_lcrit_alarm_volts)'
+          - refId: B
+            relativeTimeRange: {from: 600, to: 0}
+            datasourceUid: __expr__
+            model: {refId: B, type: reduce, expression: A, reducer: last, datasource: {type: __expr__, uid: __expr__}}
+          - refId: C
+            relativeTimeRange: {from: 600, to: 0}
+            datasourceUid: __expr__
+            model:
+              refId: C
+              type: threshold
+              expression: B
+              datasource: {type: __expr__, uid: __expr__}
+              conditions:
+                - type: query
+                  evaluator: {type: gt, params: [0]}
+      # Split from node-cpu-temp-high ONLY because the thresholds differ: an ARM SoC throttles around 80C
+      # while an x86 part runs to 100C. Adding a platform means adding its zone type to one of the two lists.
+      # Never match `acpitz`, which is chassis ambient and reads ~30C on a box whose CPU is at 90C.
+      - uid: node-soc-temp-high
+        title: Node SoC temperature high
+        condition: C
+        for: 10m
+        labels: {severity: warning}
+        annotations:
+          summary: 'Node {{ $labels.instance }} SoC above 80C'
+          description: |
+            - an ARM SoC throttles from 80C: expect slow etcd and spurious leader elections next
+            - check the fan is spinning and the heatsink is seated; clear dust from the case
+            - a node in a stack runs hotter than the one on top, compare it against the others
+        noDataState: OK
+        execErrState: KeepLast
+        data:
+          - refId: A
+            relativeTimeRange: {from: 600, to: 0}
+            datasourceUid: VictoriaMetrics
+            model:
+              refId: A
+              instant: true
+              expr: 'max by (instance) (node_thermal_zone_temp{type=~"cpu-thermal|cpu_thermal|soc.*"})'
+          - refId: B
+            relativeTimeRange: {from: 600, to: 0}
+            datasourceUid: __expr__
+            model: {refId: B, type: reduce, expression: A, reducer: last, datasource: {type: __expr__, uid: __expr__}}
+          - refId: C
+            relativeTimeRange: {from: 600, to: 0}
+            datasourceUid: __expr__
+            model:
+              refId: C
+              type: threshold
+              expression: B
+              datasource: {type: __expr__, uid: __expr__}
+              conditions:
+                - type: query
+                  evaluator: {type: gt, params: [80]}
+      # 90C leaves headroom: x86 parts publish their own limit in node_hwmon_temp_max_celsius (~94) and shut
+      # down at the crit point (~100), so this fires while there is still time to act.
+      - uid: node-cpu-temp-high
+        title: Node CPU package temperature high
+        condition: C
+        for: 15m
+        labels: {severity: warning}
+        annotations:
+          summary: 'Node {{ $labels.instance }} CPU package above 90C'
+          description: |
+            - x86 package temperature near its ~100C shutdown point: throttling first, then a hard stop
+            - check the fan and that the heatsink is seated; a tiny chassis silts up with dust fast
+            - node-cpu-throttled firing alongside this confirms the CPU is already clocking down
+        noDataState: OK
+        execErrState: KeepLast
+        data:
+          - refId: A
+            relativeTimeRange: {from: 600, to: 0}
+            datasourceUid: VictoriaMetrics
+            model:
+              refId: A
+              instant: true
+              expr: 'max by (instance) (node_thermal_zone_temp{type=~"x86_pkg_temp|k10temp"})'
+          - refId: B
+            relativeTimeRange: {from: 600, to: 0}
+            datasourceUid: __expr__
+            model: {refId: B, type: reduce, expression: A, reducer: last, datasource: {type: __expr__, uid: __expr__}}
+          - refId: C
+            relativeTimeRange: {from: 600, to: 0}
+            datasourceUid: __expr__
+            model:
+              refId: C
+              type: threshold
+              expression: B
+              datasource: {type: __expr__, uid: __expr__}
+              conditions:
+                - type: query
+                  evaluator: {type: gt, params: [90]}
+      # The CPU saying it clocked itself down, rather than a temperature we guessed a threshold for. x86 only:
+      # ARM exposes no such counter, so this is silent there. No fan alert exists, and this is the closest
+      # thing to one, since a dead fan shows up here long before anything else notices.
+      - uid: node-cpu-throttled
+        title: Node CPU thermally throttling
+        condition: C
+        for: 15m
+        labels: {severity: warning}
+        annotations:
+          summary: 'Node {{ $labels.instance }} CPU package is throttling'
+          description: |
+            - the CPU is clocking itself down: everything on {{ $labels.instance }} runs slower than its requests assume
+            - with node-cpu-temp-high it is cooling: check the fan, the heatsink and the dust
+            - alone it is power delivery, not heat: an undersized PSU or a current limit
+        noDataState: OK
+        execErrState: KeepLast
+        data:
+          - refId: A
+            relativeTimeRange: {from: 600, to: 0}
+            datasourceUid: VictoriaMetrics
+            model:
+              refId: A
+              instant: true
+              expr: 'max by (instance) (rate(node_cpu_package_throttles_total[15m]))'
+          - refId: B
+            relativeTimeRange: {from: 600, to: 0}
+            datasourceUid: __expr__
+            model: {refId: B, type: reduce, expression: A, reducer: last, datasource: {type: __expr__, uid: __expr__}}
+          - refId: C
+            relativeTimeRange: {from: 600, to: 0}
+            datasourceUid: __expr__
+            model:
+              refId: C
+              type: threshold
+              expression: B
+              datasource: {type: __expr__, uid: __expr__}
+              conditions:
+                - type: query
+                  evaluator: {type: gt, params: [0]}

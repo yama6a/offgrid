@@ -1,0 +1,49 @@
+prometheus-smartctl-exporter:
+  fullnameOverride: smartctl-exporter
+
+  image:
+    # Upstream publishes amd64 ONLY, so the stock image cannot run on an arm64 node. This is the same release
+    # binary repackaged as a manifest list. Tag is <upstream version>-<our build revision>.
+    repository: ghcr.io/yama6a/smartctl-exporter-multiarch
+    tag: v0.14.0-1
+
+  # Which block devices to read SMART from. REQUIRED and NOT autodetectable: Longhorn attaches every replica
+  # as an iSCSI /dev/sd*, the same namespace a real SATA disk lands in, so letting smartctl scan would probe
+  # every attached volume (no SMART, and the set churns on every attach). One DaemonSet per architecture,
+  # because the answer differs: the Pis' only real disk is NVMe, the x86 box's is SATA.
+  # Instance 0 is the block below; each extraInstances entry is another DaemonSet and must repeat every key
+  # it needs, since the chart reads them off the entry and not off the top level.
+  config:
+    # Matches the scanner's device NAME (`nvme0`, `sda`), NOT a path: `^/dev/nvme` matches nothing and the
+    # exporter then finds zero devices and silently exports nothing.
+    device_include: '^nvme' # REQUIRED: (regex) real disks on arm64 nodes
+  nodeSelector: {kubernetes.io/arch: arm64}
+  tolerations: [{operator: Exists}] # node metrics are wanted whatever the node's role or taints
+  resources:
+    requests: {cpu: 10m, memory: 32Mi}
+    limits: {memory: 64Mi}
+
+  extraInstances:
+    - config:
+        # Named outright rather than matched: on THIS node /dev/sda is the SATA SSD, but a regex that says so
+        # would hit Longhorn's LUNs on every other node. If enumeration order ever shifts, swap it for the
+        # stable /hostdev/disk/by-path/<pci-path>; the chart mounts the host's /dev at /hostdev.
+        devices: ['/dev/sda'] # REQUIRED: (list) real disks on amd64 nodes
+      nodeSelector: {kubernetes.io/arch: amd64}
+      tolerations: [{operator: Exists}]
+      resources:
+        requests: {cpu: 10m, memory: 32Mi}
+        limits: {memory: 64Mi}
+
+  serviceMonitor:
+    enabled: true # the VM operator converts it to a VMServiceScrape, so a dead exporter trips `target-down`
+
+  # Alerting is Grafana-only here: vmalert is off, so these would render a PrometheusRule nothing evaluates.
+  # The equivalents live in 05_grafana/files/alerts/smart-health.yaml.
+  prometheusRules:
+    enabled: false
+
+  # Would bind to an `unrestricted-psp` Role that no longer exists (PodSecurityPolicy is gone). The exporter
+  # talks to no API, so it needs no permissions at all.
+  rbac:
+    create: false
