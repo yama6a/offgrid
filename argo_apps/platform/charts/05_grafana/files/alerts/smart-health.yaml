@@ -1,0 +1,280 @@
+# Disk health straight off the drive's own SMART data, from 05_smartctl_exporter. node-exporter reads none of
+# this: it reports a drive's temperature and nothing about wear, spare blocks or media errors, so without
+# these a disk dies with no warning at all. `device` is the kernel name (nvme0n1, sda) on that `instance`.
+apiVersion: 1
+groups:
+  - orgId: 1
+    name: smart-health
+    folder: offgrid
+    interval: 1m
+    rules:
+      # The drive's own overall verdict. It only flips once the firmware has decided the disk is failing, so
+      # it is late by design and never a false alarm.
+      - uid: smart-device-failing
+        title: Disk SMART status failing
+        condition: C
+        for: 5m
+        labels: {severity: critical}
+        annotations:
+          summary: 'Disk {{ $labels.device }} on {{ $labels.instance }} reports SMART FAILING'
+          description: |
+            - the drive itself says it is failing: replace it, do not wait for a reason
+            - move Longhorn replicas off this node FIRST, then drain it
+            - smartctl -a /dev/{{ $labels.device }} on {{ $labels.instance }} for the attribute that tripped
+        noDataState: OK
+        execErrState: KeepLast
+        data:
+          - refId: A
+            relativeTimeRange: {from: 600, to: 0}
+            datasourceUid: VictoriaMetrics
+            model:
+              refId: A
+              instant: true
+              expr: 'min by (instance, device) (smartctl_device_smart_status)'
+          - refId: B
+            relativeTimeRange: {from: 600, to: 0}
+            datasourceUid: __expr__
+            model: {refId: B, type: reduce, expression: A, reducer: last, datasource: {type: __expr__, uid: __expr__}}
+          - refId: C
+            relativeTimeRange: {from: 600, to: 0}
+            datasourceUid: __expr__
+            model:
+              refId: C
+              type: threshold
+              expression: B
+              datasource: {type: __expr__, uid: __expr__}
+              conditions:
+                - type: query
+                  evaluator: {type: lt, params: [1]}
+      # An NVMe controller's own alarm bitfield: spare exhausted, over temperature, degraded reliability,
+      # switched to read-only, or the volatile-memory backup failed. Any bit set is already an emergency.
+      - uid: smart-nvme-critical-warning
+        title: NVMe critical warning
+        condition: C
+        for: 5m
+        labels: {severity: critical}
+        annotations:
+          summary: 'NVMe {{ $labels.device }} on {{ $labels.instance }} raised a critical warning'
+          description: |
+            - the controller set a critical warning bit: read-only mode and data loss are both on the table
+            - smartctl -a /dev/{{ $labels.device }} on {{ $labels.instance }} names which bit
+            - if it went read-only, Longhorn replicas on this node are already failing writes
+        noDataState: OK
+        execErrState: KeepLast
+        data:
+          - refId: A
+            relativeTimeRange: {from: 600, to: 0}
+            datasourceUid: VictoriaMetrics
+            model:
+              refId: A
+              instant: true
+              expr: 'max by (instance, device) (smartctl_device_critical_warning)'
+          - refId: B
+            relativeTimeRange: {from: 600, to: 0}
+            datasourceUid: __expr__
+            model: {refId: B, type: reduce, expression: A, reducer: last, datasource: {type: __expr__, uid: __expr__}}
+          - refId: C
+            relativeTimeRange: {from: 600, to: 0}
+            datasourceUid: __expr__
+            model:
+              refId: C
+              type: threshold
+              expression: B
+              datasource: {type: __expr__, uid: __expr__}
+              conditions:
+                - type: query
+                  evaluator: {type: gt, params: [0]}
+      # Spare blocks are what a drive remaps failures onto. Below its own threshold it has nothing left to
+      # remap with, and the next bad block is data loss. Subtracted rather than compared so one series decides.
+      - uid: smart-spare-low
+        title: Disk spare blocks below threshold
+        condition: C
+        for: 15m
+        labels: {severity: critical}
+        annotations:
+          summary: 'Disk {{ $labels.device }} on {{ $labels.instance }} is out of spare blocks'
+          description: |
+            - available spare fell under the drive's own threshold: it can no longer remap bad blocks
+            - replace the disk; this one does not recover
+            - move Longhorn replicas off {{ $labels.instance }} before draining
+        noDataState: OK
+        execErrState: KeepLast
+        data:
+          - refId: A
+            relativeTimeRange: {from: 600, to: 0}
+            datasourceUid: VictoriaMetrics
+            model:
+              refId: A
+              instant: true
+              expr: 'max by (instance, device) (smartctl_device_available_spare_threshold - smartctl_device_available_spare)'
+          - refId: B
+            relativeTimeRange: {from: 600, to: 0}
+            datasourceUid: __expr__
+            model: {refId: B, type: reduce, expression: A, reducer: last, datasource: {type: __expr__, uid: __expr__}}
+          - refId: C
+            relativeTimeRange: {from: 600, to: 0}
+            datasourceUid: __expr__
+            model:
+              refId: C
+              type: threshold
+              expression: B
+              datasource: {type: __expr__, uid: __expr__}
+              conditions:
+                - type: query
+                  evaluator: {type: gt, params: [0]}
+      # increase() over 24h, NOT `!= 0`: the counter never resets, so a drive that logged one error years ago
+      # would alert forever. This asks whether it logged a NEW one, which is what changes the decision.
+      # Hence the 24h relativeTimeRange below, where every other rule in this repo uses 600.
+      - uid: smart-media-errors
+        title: Disk media errors increasing
+        condition: C
+        for: 15m
+        labels: {severity: warning}
+        annotations:
+          summary: 'Disk {{ $labels.device }} on {{ $labels.instance }} logged new media errors'
+          description: |
+            - unrecoverable read/write errors in the last 24h: the drive is starting to go
+            - it is not dead yet, so plan the swap rather than reacting to it
+            - check Longhorn for degraded volumes with a replica on {{ $labels.instance }}
+        noDataState: OK
+        execErrState: KeepLast
+        data:
+          - refId: A
+            relativeTimeRange: {from: 86400, to: 0}
+            datasourceUid: VictoriaMetrics
+            model:
+              refId: A
+              instant: true
+              expr: 'max by (instance, device) (increase(smartctl_device_media_errors[24h]))'
+          - refId: B
+            relativeTimeRange: {from: 86400, to: 0}
+            datasourceUid: __expr__
+            model: {refId: B, type: reduce, expression: A, reducer: last, datasource: {type: __expr__, uid: __expr__}}
+          - refId: C
+            relativeTimeRange: {from: 86400, to: 0}
+            datasourceUid: __expr__
+            model:
+              refId: C
+              type: threshold
+              expression: B
+              datasource: {type: __expr__, uid: __expr__}
+              conditions:
+                - type: query
+                  evaluator: {type: gt, params: [0]}
+      # The drive's own estimate of endurance consumed, where 100 means it has written its rated total. A
+      # replicated volume writes every block to every replica, so consumer drives get there sooner than the
+      # datasheet's number suggests. 80 leaves months to order a replacement, not hours.
+      - uid: smart-wear-high
+        title: Disk wear above 80%
+        condition: C
+        for: 1h
+        labels: {severity: warning}
+        annotations:
+          summary: 'Disk {{ $labels.device }} on {{ $labels.instance }} is 80% through its rated endurance'
+          description: |
+            - 100% means the rated write endurance is used up; this is the order-a-replacement warning
+            - replication multiplies writes, so the other nodes' disks are probably close behind
+            - shrink the biggest writers if you want to buy time (log volumes, metrics retention)
+        noDataState: OK
+        execErrState: KeepLast
+        data:
+          - refId: A
+            relativeTimeRange: {from: 600, to: 0}
+            datasourceUid: VictoriaMetrics
+            model:
+              refId: A
+              instant: true
+              expr: 'max by (instance, device) (smartctl_device_percentage_used)'
+          - refId: B
+            relativeTimeRange: {from: 600, to: 0}
+            datasourceUid: __expr__
+            model: {refId: B, type: reduce, expression: A, reducer: last, datasource: {type: __expr__, uid: __expr__}}
+          - refId: C
+            relativeTimeRange: {from: 600, to: 0}
+            datasourceUid: __expr__
+            model:
+              refId: C
+              type: threshold
+              expression: B
+              datasource: {type: __expr__, uid: __expr__}
+              conditions:
+                - type: query
+                  evaluator: {type: gt, params: [80]}
+      # One rule for every transport, where hwmon would need a separate chip regex per driver (nvme, drivetemp)
+      # and could not name the device. 70C is under a typical NVMe ~85C critical point and at a SATA SSD's
+      # spec limit, so it warns before the drive starts throttling writes.
+      - uid: smart-device-temp-high
+        title: Disk temperature high
+        condition: C
+        for: 15m
+        labels: {severity: warning}
+        annotations:
+          summary: 'Disk {{ $labels.device }} on {{ $labels.instance }} above 70C'
+          description: |
+            - the drive throttles writes well before its critical point: etcd and Longhorn both suffer
+            - add a heatsink to the drive or improve airflow over it
+            - compare with the CPU temperature: if both are high it is case airflow, not the drive
+        noDataState: OK
+        execErrState: KeepLast
+        data:
+          - refId: A
+            relativeTimeRange: {from: 600, to: 0}
+            datasourceUid: VictoriaMetrics
+            model:
+              refId: A
+              instant: true
+              expr: 'max by (instance, device) (smartctl_device_temperature{temperature_type="current"})'
+          - refId: B
+            relativeTimeRange: {from: 600, to: 0}
+            datasourceUid: __expr__
+            model: {refId: B, type: reduce, expression: A, reducer: last, datasource: {type: __expr__, uid: __expr__}}
+          - refId: C
+            relativeTimeRange: {from: 600, to: 0}
+            datasourceUid: __expr__
+            model:
+              refId: C
+              type: threshold
+              expression: B
+              datasource: {type: __expr__, uid: __expr__}
+              conditions:
+                - type: query
+                  evaluator: {type: gt, params: [70]}
+      # The SATA counterpart to media errors: NVMe drives have no such attribute, SATA ones have no
+      # media_errors, so both rules are needed to cover a mixed cluster. Raw value, not the normalised one,
+      # which starts at 100 and counts DOWN and would never cross a `> 0`.
+      - uid: smart-sata-reallocated
+        title: Disk has reallocated sectors
+        condition: C
+        for: 15m
+        labels: {severity: warning}
+        annotations:
+          summary: 'Disk {{ $labels.device }} on {{ $labels.instance }} has reallocated sectors'
+          description: |
+            - the drive remapped bad sectors onto spares: physical degradation, and it rarely stops at one
+            - watch whether the count grows; a stable count from years ago is not urgent
+            - smartctl -a /dev/{{ $labels.device }} on {{ $labels.instance }} for the full attribute table
+        noDataState: OK
+        execErrState: KeepLast
+        data:
+          - refId: A
+            relativeTimeRange: {from: 600, to: 0}
+            datasourceUid: VictoriaMetrics
+            model:
+              refId: A
+              instant: true
+              expr: 'max by (instance, device) (smartctl_device_attribute{attribute_name="Reallocated_Sector_Ct",attribute_value_type="raw"})'
+          - refId: B
+            relativeTimeRange: {from: 600, to: 0}
+            datasourceUid: __expr__
+            model: {refId: B, type: reduce, expression: A, reducer: last, datasource: {type: __expr__, uid: __expr__}}
+          - refId: C
+            relativeTimeRange: {from: 600, to: 0}
+            datasourceUid: __expr__
+            model:
+              refId: C
+              type: threshold
+              expression: B
+              datasource: {type: __expr__, uid: __expr__}
+              conditions:
+                - type: query
+                  evaluator: {type: gt, params: [0]}
