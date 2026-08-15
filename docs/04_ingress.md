@@ -7,7 +7,7 @@ The GitOps L7 ingress layer, delivered entirely by ArgoCD. Five pieces stack in 
 | 1 | `01_envoy_gateway` | the Gateway API data plane |
 | 2 | `02_cert_manager` | issues the X.509 certs |
 | 3 | `03_gateway` | the shared `:80` Gateway + the Let's Encrypt ClusterIssuers |
-| 4 | `04_google_sso` | the one SecurityPolicy: which hosts are gated, and by whom |
+| 4 | `04_google_sso` | one SecurityPolicy per domain: which hosts are gated, and by whom |
 | 6 | `06_platform_ingress` | the platform UIs' edges |
 
 Together they terminate TLS and route and authenticate every ingress host on one pinned LoadBalancer IP. Cilium
@@ -191,7 +191,8 @@ independent and none blocks the platform's `:80`.
 
 Both `letsencrypt-staging` and `letsencrypt-prod` ship, cluster-scoped. Always validate a new host against
 staging first, because prod's rate limits are tight, then flip that host's `Certificate` issuer to prod, or for
-the shared wildcards flip `acme.cloudflare.wildcardIssuer`.
+the shared wildcards flip `acme.cloudflare.wildcardIssuer`. To stage ONE new zone while the others keep their
+prod certs, name it in `acme.cloudflare.wildcardIssuerOverrides` instead and remove it once issuance works.
 
 Each issuer's HTTP-01 solver is `gatewayHTTPRoute` with `parentRefs` to `shared-gateway`. When Cloudflare zones
 are configured each issuer ALSO gets a `dns01.cloudflare` solver, and cert-manager picks per dnsName.
@@ -208,13 +209,20 @@ for everything. `04_values.sh` writes the zones into two places:
   Cloudflare zone including wildcards go DNS-01 and everything else falls to HTTP-01. No new issuer names, so the
   per-ingress `issuer:` values and the chart's issuer allowlist are untouched. `03_gateway` also mints ONE shared
   wildcard `Certificate` per zone (`*.<zone>` plus apex, into `wildcard-<zone-dashed>-tls`, at
-  `acme.cloudflare.wildcardIssuer`), reusable across every ingress on that tier.
+  `acme.cloudflare.wildcardIssuer`, or that zone's entry in `wildcardIssuerOverrides`), reusable across every
+  ingress on that tier. An entry need not sit under `BASE_DOMAIN`; the token just needs `Zone:DNS:Edit` and
+  `Zone:Read` on every zone in the list.
 - The ingress chart (`cloudflareZones`): an ingress whose `domain` is a Cloudflare zone points its listeners at
   the shared `wildcard-<domain>-tls` and SKIPS its own per-ingress `Certificate`. Any other domain keeps the
   per-host multi-SAN HTTP-01 cert. Automatic and per-domain, with no per-ingress flag.
 
 Wildcards match one label only, so we mint per tier (`*.ops.<base>`, `*.app.<base>`, `*.<base>`), not a single
 `*.<base>`.
+
+One Secret backs every listener on a zone, across every chart, so a wildcard that never issues takes the whole
+zone down at once, not one host. The usual cause is a zone in the list that the API token has no `Zone:DNS:Edit`
+on, and nothing in the Gateway or the Certificate names the token: `kubectl -n cert-manager get challenges` is
+where the Cloudflare error shows up.
 
 cert-manager runs a DNS self-check before validation. It is pointed at public resolvers
 (`dns01RecursiveNameservers` in `02_cert_manager`) so a split-horizon home DNS cannot wedge issuance, and its
@@ -264,7 +272,9 @@ Each ingress declares exactly one registrable `domain`, and every host gives a `
 is `<subdomain>.<domain>` and `subdomain: "@"` means the apex. The chart `fail`s the render, so ArgoCD reports it
 and nothing applies, if an ingress has no `domain`, a host has no `subdomain`, or a `subdomain` looks like a full
 hostname because it already ends with the domain. That last one is the classic copy-paste slip. Per-host resource
-names derive from the full host, with dots turned to dashes.
+names derive from the full host, with dots turned to dashes, so hosts never collide across domains. The ingress
+`name` can: it becomes `<name>-tls` in the shared `gateway` namespace, so on a non-Cloudflare domain it must be
+unique across ALL consumer charts, not just within one.
 
 Two tiers under the one base domain: platform UIs under `*.ops.<base>` and workloads under `*.app.<base>`. Each is
 still one registrable `domain` from the chart's point of view, so without Cloudflare they get separate
@@ -315,6 +325,7 @@ allowlist:                 # written by 04_values.sh from .env SSO_ALLOWLIST
 hosts:
   - subdomain: argocd.ops                    # a platform UI
   - subdomain: sample-user-manager-sso.app   # a workload host, gated centrally
+    allowlist: [ops@example.com]             # OPTIONAL: overrides the list above for this host only
 ```
 
 Each `subdomain` composes against `domain` into the FQDN its ingress renders. The policy `targetRefs` that host's
@@ -323,10 +334,54 @@ protect a host, add its subdomain here; its route exists wherever its ingress li
 open. `sample-user-manager.app.example.com` is the open control, not listed; `sample-user-manager-sso.app` is
 listed and therefore gated.
 
-ONE domain, deliberately. It gates hosts across both the `ops.` and `app.` tiers, because `cookieDomain` and the
+One entry gates hosts across both the `ops.` and `app.` tiers, because `cookieDomain` and the
 `google-sso.<domain>` callback are a parent of each, so no per-tier policy or redirect-URI split is needed. Every
-subdomain MUST sit under `domain`: the policy sets one cookieDomain, and a cookie only ever reaches that domain
-and its subdomains, so a host outside it never receives the id token and loops through Google forever.
+subdomain in `hosts` MUST sit under `domain`: the policy sets one cookieDomain, and a cookie only ever reaches
+that domain and its subdomains, so a host outside it never receives the id token and loops through Google
+forever. Hence a domain of its own gets a policy of its own, below.
+
+### Adding a registrable domain
+
+`extraDomains` in the same `04_google_sso/values.yaml`. Each entry gets its own `SecurityPolicy`,
+`google-sso.<domain>` callback and cookie scope. Hand-written, not stamped: `.env` keeps one `BASE_DOMAIN`.
+
+```yaml
+extraDomains:
+  - domain: example.edu
+    issuer: letsencrypt-staging   # OPTIONAL: defaults to the top-level issuer
+    hosts:
+      - subdomain: api
+        allowlist: [ops@example.edu]
+```
+
+Once per domain:
+
+1. The entry above. GATED subdomains only, so a public `www` is simply left out.
+2. An `ingresses[]` entry on the workload chart, `domain: example.edu`, every host gated or not. One
+   registrable domain per entry, so a chart on two domains carries two.
+3. Same Google client: `https://google-sso.example.edu/oauth2/callback` as a redirect URI, `example.edu` under
+   Authorized domains. `04_google_sso.sh` prints both, no cluster needed.
+4. DNS for each host plus `google-sso.example.edu` at `INGRESS_LB_IP`, `:80` forwarded for HTTP-01.
+5. Wildcard cert, optional: add `example.edu` to `.env` `CLOUDFLARE_WILDCARD_DOMAINS`, widen the token's zones
+   in Cloudflare, `make configure-values`. The token string does not change, so no re-seal. Skip it and each
+   host gets an HTTP-01 cert.
+6. Commit and push.
+7. Once the staging cert issues, flip the entry's `issuer` (and its `wildcardIssuerOverrides` line, if step 5)
+   to `letsencrypt-prod` and push again. A staging cert is untrusted, so browsers reject the host until you do.
+
+Not needed: a re-seal (one client, and the Secret is sealed to a name + namespace), `helm dependency update`
+(the ingress chart is untouched), or `make configure-values` unless step 5 edited `.env`.
+
+Renders `fail` on a duplicate domain, an entry with no `domain` or no `hosts`, or a `subdomain` that is already
+a full hostname.
+
+Still base-domain-only:
+
+- Do NOT put another domain in `06_platform_ingress` or `sample_user_manager` values. `04_values.sh` rewrites
+  `domain` on every `ingresses[]` item there, so the next `make configure-values` silently clobbers it. Other
+  charts are safe.
+- Blackbox probes cover the `ops.` and `app.` tiers only, so a second domain gets no synthetic monitoring, and
+  a hand-added URL fails `04_values.sh`'s verify.
 
 ### Bypassing SSO for a path (the ArgoCD webhook)
 
@@ -359,8 +414,9 @@ trusts `argocd.<domain>`. The `google-sso.<domain>` callback edge is separate an
 | You add | Google Console | Cluster |
 |---|---|---|
 | a subdomain to an existing ingress | nothing, if the domain is already gated | add `{ subdomain, targetService, targetPort }` to that ingress's `hosts:` |
-| protection for a host | nothing | add a `subdomain` to `04_google_sso` `hosts` |
-| change who may log in | nothing | set `SSO_ALLOWLIST` in `.env`, run `make configure-values` |
+| protection for a host | nothing | add a `subdomain` to that domain's `hosts` in `04_google_sso` |
+| change who may log in | nothing | set `SSO_ALLOWLIST` in `.env`, run `make configure-values`; or one host's own `allowlist` |
+| another registrable domain | one more redirect URI, plus its apex under "Authorized domains" | add an `extraDomains` entry, see "Adding a registrable domain" |
 | a different base domain | one redirect URI, plus the apex under "Authorized domains" | set `BASE_DOMAIN` in `.env`, run `make configure-values`, then `04_google_sso.sh` |
 
 Moving to a base domain `example.org`:

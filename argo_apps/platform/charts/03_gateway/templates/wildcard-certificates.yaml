@@ -3,9 +3,15 @@ ONE wildcard cert per Cloudflare zone, minted centrally rather than per ingress,
 points at the same Secret and no two ArgoCD apps fight over one Certificate. Wildcards cannot use HTTP-01,
 hence DNS-01. Empty zones renders none. The Secret name matches what the ingress chart expects.
 */}}
+{{- $issuerNames := list }}
+{{- range .Values.acme.issuers }}{{ $issuerNames = append $issuerNames .name }}{{ end }}
 {{- with .Values.acme.cloudflare }}
 {{- range $zone := .zones }}
 {{- $secret := printf "wildcard-%s-tls" ($zone | replace "." "-") }}
+{{- $issuer := pluck $zone ($.Values.acme.cloudflare.wildcardIssuerOverrides | default (dict)) | first | default $.Values.acme.cloudflare.wildcardIssuer }}
+{{- if not (has $issuer $issuerNames) }}
+{{- fail (printf "03_gateway: zone %q wants wildcard issuer %q, which no ClusterIssuer here provides (only %s), so its Certificate would sit pending forever" $zone $issuer (join " / " $issuerNames)) }}
+{{- end }}
 ---
 apiVersion: cert-manager.io/v1
 kind: Certificate
@@ -18,7 +24,7 @@ spec:
     - {{ printf "*.%s" $zone | quote }}
     - {{ $zone | quote }}
   issuerRef:
-    name: {{ $.Values.acme.cloudflare.wildcardIssuer | quote }}
+    name: {{ $issuer | quote }}
     kind: ClusterIssuer
 {{- end }}
 {{- end }}
