@@ -28,6 +28,18 @@ spec:
         - name: {{ .host.targetService }}
           namespace: {{ include "ingress.backendNs" . }}
           port: {{ .host.targetPort }}
+{{- with .host.requestHeaders }}
+      # Set on the way to the backend only; response headers are untouched. Envoy does not send
+      # x-forwarded-port, so a framework that builds absolute URLs from it needs it stated here.
+      filters:
+        - type: RequestHeaderModifier
+          requestHeaderModifier:
+            set:
+{{- range $name, $value := . }}
+              - name: {{ $name | quote }}
+                value: {{ $value | quote }}
+{{- end }}
+{{- end }}
 {{- with .host.requestTimeout }}
       timeouts:
         request: {{ . | quote }}          # "0s" = off; for backends that hold a response open (Envoy cuts at 15s -> 504)

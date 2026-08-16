@@ -51,6 +51,9 @@
 {{- if and $h.targetService (not $h.targetPort) }}
 {{- fail (printf "ingress: ingress %q host %q has a targetService but no targetPort" $ing.name $h.subdomain) }}
 {{- end }}
+{{- if and $h.redirectTo $h.requestHeaders }}
+{{- fail (printf "ingress: ingress %q host %q sets requestHeaders on a redirect host. Nothing is forwarded upstream, so they would go nowhere" $ing.name $h.subdomain) }}
+{{- end }}
 {{- end }}
 {{ include "ingress.renderIngress" (dict "ingress" $ing "release" $.Release "cloudflareZones" $zones) }}
 {{- end }}
