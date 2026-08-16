@@ -252,6 +252,7 @@ The per-host edge lives in ONE `type: application` chart, `lib/helm/ingress/`, i
 every app chart. For a list of `ingresses[]`, each a group of subdomains under one `domain`, it renders:
 
 - A Gateway, HTTPRoute and ReferenceGrant per host. ReferenceGrants only for cross-namespace backends.
+- For a host with `redirectTo`, a 301 at the edge instead of a backend. No ReferenceGrant either.
 - For a non-Cloudflare domain, ONE multi-SAN `Certificate` per ingress covering all its hosts, into one shared
   Secret every listener references.
 - For a Cloudflare domain, nothing: the listeners point at the shared `wildcard-<domain>-tls` minted by
@@ -275,6 +276,28 @@ hostname because it already ends with the domain. That last one is the classic c
 names derive from the full host, with dots turned to dashes, so hosts never collide across domains. The ingress
 `name` can: it becomes `<name>-tls` in the shared `gateway` namespace, so on a non-Cloudflare domain it must be
 unique across ALL consumer charts, not just within one.
+
+### Redirect hosts
+
+A host sets EITHER `targetService` + `targetPort`, or `redirectTo`. Setting both, or neither, `fail`s the render.
+
+`redirectTo` gives that host a `RequestRedirect` filter and no `backendRefs`, so Envoy answers a 301 itself and
+no pod is involved. Path and query survive, because `requestRedirect` rewrites only what it is told to. The
+apex-to-www case is what it exists for:
+
+```yaml
+hosts:
+  - subdomain: "@"
+    redirectTo: www.example.com
+  - subdomain: www
+    targetService: web
+    targetPort: 3000
+```
+
+301 and not 308, because the redirect targets are canonical hostnames that browsers and search engines should
+cache permanently, and 301 is what every existing apex redirect in the wild emits. It still gets its own Gateway,
+`:443` listener and cert SAN like any other host, so the TLS handshake completes before the redirect is sent.
+Skipping that would make the browser show a certificate error instead of following the redirect.
 
 Two tiers under the one base domain: platform UIs under `*.ops.<base>` and workloads under `*.app.<base>`. Each is
 still one registrable `domain` from the chart's point of view, so without Cloudflare they get separate
