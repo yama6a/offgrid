@@ -299,6 +299,33 @@ cache permanently, and 301 is what every existing apex redirect in the wild emit
 `:443` listener and cert SAN like any other host, so the TLS handshake completes before the redirect is sent.
 Skipping that would make the browser show a certificate error instead of following the redirect.
 
+### Request headers
+
+`requestHeaders` is a map of headers to `set` on the request before it leaves Envoy for the backend. Response
+headers are untouched. `set` replaces rather than appends, so a client cannot smuggle its own value through.
+
+```yaml
+hosts:
+  - subdomain: www
+    targetService: web
+    targetPort: 3000
+    requestHeaders:
+      X-Forwarded-Port: "443"
+```
+
+`X-Forwarded-Port` is the case this exists for. Envoy sends `x-forwarded-proto` and `x-forwarded-for` but not
+`x-forwarded-port`, and it passes `Host` through without a port. A framework that builds absolute URLs from the
+request then has no port to read and falls back to the port its own server listens on, so redirects come out
+pointing at something like `https://www.example.com:3000/`. That port is not publicly reachable, and behind
+Cloudflare it is not even a proxied port, so the redirect dead-ends.
+
+Next.js is the known case: `getHostname` strips the port from `Host`, but `NextURL` still carries the listen
+port, so every `NextResponse.redirect` built from `request.nextUrl` inherits it. Traefik set this header, which
+is why the problem only appears after moving a Next.js app behind Envoy.
+
+Setting it on a redirect host `fail`s the render: nothing is forwarded upstream there, so the headers would go
+nowhere.
+
 Two tiers under the one base domain: platform UIs under `*.ops.<base>` and workloads under `*.app.<base>`. Each is
 still one registrable `domain` from the chart's point of view, so without Cloudflare they get separate
 per-ingress multi-SAN certs, and with Cloudflare each tier gets one shared `*.<tier>` wildcard reused across its

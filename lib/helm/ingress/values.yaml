@@ -9,6 +9,9 @@
 #         targetPort: 80
 #         requestTimeout: "0s"         # OPTIONAL: unset = Envoy's 15s default, "0s" disables it. Streaming
 #                                      # backends only, else 15s truncates the response into a 504.
+#         requestHeaders:              # OPTIONAL: set on the request to the backend, not on the response
+#           X-Forwarded-Port: "443"    # Envoy omits this one; frameworks that build absolute URLs from it
+#                                      # otherwise fall back to the pod's listen port
 #       - subdomain: "@"               # a redirect host: 301s to redirectTo, keeping path and query
 #         redirectTo: www.example.com  # mutually exclusive with targetService; no pod serves this host
 ingresses: []
