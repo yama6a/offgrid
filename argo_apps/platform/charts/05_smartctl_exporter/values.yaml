@@ -5,7 +5,7 @@ prometheus-smartctl-exporter:
     # Upstream publishes amd64 ONLY, so the stock image cannot run on an arm64 node. This is the same release
     # binary repackaged as a manifest list. Tag is <upstream version>-<our build revision>.
     repository: ghcr.io/yama6a/smartctl-exporter-multiarch
-    tag: v0.14.0-1
+    tag: v0.14.0-2
 
   # Which block devices to read SMART from. REQUIRED and NOT autodetectable: Longhorn attaches every replica
   # as an iSCSI /dev/sd*, the same namespace a real SATA disk lands in, so letting smartctl scan would probe
