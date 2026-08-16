@@ -15,8 +15,8 @@
 {{ include "ingress.gateway" $ctx }}
 ---
 {{ include "ingress.httproute" $ctx }}
-{{- /* A ReferenceGrant is only needed for a cross-namespace backend. */}}
-{{- if ne (include "ingress.backendNs" $ctx) (include "ingress.gatewayNamespace" $ctx) }}
+{{- /* A ReferenceGrant is only needed for a cross-namespace backend, and a redirect has no backend. */}}
+{{- if and (not $h.redirectTo) (ne (include "ingress.backendNs" $ctx) (include "ingress.gatewayNamespace" $ctx)) }}
 ---
 {{ include "ingress.referencegrant" $ctx }}
 {{- end }}
@@ -41,6 +41,15 @@
 {{- end }}
 {{- if or (eq $h.subdomain $ing.domain) (hasSuffix (printf ".%s" $ing.domain) $h.subdomain) }}
 {{- fail (printf "ingress: ingress %q host subdomain %q looks like a full hostname. Give just the subdomain under %q (e.g. \"argocd\"), or \"@\" for the apex" $ing.name $h.subdomain $ing.domain) }}
+{{- end }}
+{{- if and $h.redirectTo $h.targetService }}
+{{- fail (printf "ingress: ingress %q host %q sets both redirectTo and targetService. A redirect host answers at the edge and has no backend, so pick one" $ing.name $h.subdomain) }}
+{{- end }}
+{{- if not (or $h.redirectTo $h.targetService) }}
+{{- fail (printf "ingress: ingress %q host %q sets neither targetService nor redirectTo, so nothing would answer it" $ing.name $h.subdomain) }}
+{{- end }}
+{{- if and $h.targetService (not $h.targetPort) }}
+{{- fail (printf "ingress: ingress %q host %q has a targetService but no targetPort" $ing.name $h.subdomain) }}
 {{- end }}
 {{- end }}
 {{ include "ingress.renderIngress" (dict "ingress" $ing "release" $.Release "cloudflareZones" $zones) }}
