@@ -28,7 +28,7 @@ metadata:
 spec:
   cron: "0 3 * * *"   # 03:00 UTC daily; offset from CNPG/Redis (02:00) to spread S3 upload load
   task: backup
-  groups: [backup]    # volumes join via the longhorn-r2-retained-with-backups class's recurringJobSelector
+  groups: [backup]    # volumes join via the two retained-with-backups classes' recurringJobSelector
   retain: 7           # ~1 week of daily restore points; Longhorn prunes older backups + their now-unused blocks
   concurrency: 1      # one volume at a time, 3 Pis, don't saturate the home uplink
 ---

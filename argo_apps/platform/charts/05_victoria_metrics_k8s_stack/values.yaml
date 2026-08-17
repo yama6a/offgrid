@@ -127,10 +127,6 @@ victoria-metrics-k8s-stack:
         - sourceLabels: [__name__, interface]
           action: drop
           regex: "container_network_.+;(lxc.*|cilium_.*|bond0|end0|dummy0|ip6tnl0|sit0|teql0|tunl0)"
-        # node-exporter NFS counters: no RWX or share-manager volumes exist here.
-        - sourceLabels: [__name__]
-          action: drop
-          regex: "node_nfs_requests_total"
         # One series per bucket per label combo and nothing charts API latency. Global, not on the kubeApiServer
         # scrape below: metrics-server and Grafana each embed an apiserver and re-emit the same families.
         # apiserver_request_duration_seconds_{count,sum} survive, the api-server dashboard uses them.
