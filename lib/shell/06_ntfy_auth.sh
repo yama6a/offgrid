@@ -107,7 +107,7 @@ Next:
   - git add -A && git commit && git push   # ArgoCD (wave 5) applies it; the controller unseals the token into
                                             # Secret ${SECRET_NAME} (ns ${NTFY_NS})
   - restart Grafana so it picks up GF_NTFY_TOKEN:  kubectl -n ${NTFY_NS} rollout restart deploy/grafana
-  - phone: install the ntfy app, add server https://ntfy.ops.example.com, log in as '${PHONE_USER}', subscribe '${TOPIC}'
+  - phone: install the ntfy app, add server https://ntfy.${OPS_DOMAIN}, log in as '${PHONE_USER}', subscribe '${TOPIC}'
   - test: Grafana UI -> Alerting -> Contact points -> ntfy -> "Test" (a push should hit your phone)
   - re-run this script to rotate the phone password / Grafana token, or (empty NTFY_PHONE_PASSWORD_SECRET) to disable.
 EOF
