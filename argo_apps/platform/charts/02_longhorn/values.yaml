@@ -27,10 +27,8 @@ longhorn:
     orphanResourceAutoDeletion: "replica-data" # stale replica data from node flaps would silently eat the NVMe
     # Trim the 12% default per-instance-manager CPU reservation to free scheduling headroom on a small node.
     guaranteedInstanceManagerCPU: '{"v1":"8","v2":"8"}'
-    # An RWX volume's share-manager pod is a single point of failure. This puts a lease on it so Longhorn moves
-    # it in tens of seconds instead of waiting out pod eviction, same reasoning as nodeDownPodDeletionPolicy
-    # above: node loss here is recurring, not theoretical. An RWX volume that already exists only picks this up
-    # after its workload is scaled to zero and back.
+    # Leases an RWX volume's share-manager pod, so its loss costs seconds instead of a pod-eviction timeout.
+    # An RWX volume created before this was on adopts it only after its workload is scaled to zero and back.
     rwxVolumeFastFailover: true
   # 10d_longhorn_backup.sh fills these from .env/terraform; empty = backups off. Longhorn owns retention via the
   # RecurringJob retain counts, the S3 longhorn/ prefix has no lifecycle rule.

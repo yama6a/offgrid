@@ -1,17 +1,9 @@
-# All five are 2-replica: survives the one node loss we design for AND leaves a spare to rebuild onto. They
-# differ in whether a replica is pinned to the consuming node, whether they are backed up off-cluster, and
-# whether they are RWO block devices or RWX over NFS.
-# There is no default class, so every PVC names one.
-# There is no Retain class: deletionProtection is what makes a prune non-destructive, so Retain would protect
-# nothing a deliberate deletion did not mean and would only leak orphaned Released PVs.
-# A volume's spec size is only a CEILING: Longhorn is thin, so real occupancy grows with what is written, and
+# All SCs are 2-replica to volumes survive tje loss of one node.
+# A volume's spec size is only a CEILING. Real occupancy grows with what is written (nothing is reserved).
 # templates/recurringjobs.yaml hands freed blocks back to the SSD weekly.
 # `parameters` is IMMUTABLE once a class exists, so adding a key here means deleting the class by hand first.
-# That is why the trim job reaches these volumes through Longhorn's `default` group rather than a
-# recurringJobSelector: any volume with no recurring job of its own lands there automatically.
+# SCs that don't have `recurringJobSelector` defined get the `trim` job through Longhorn's `default` group.
 
-# The general-purpose class. Prune safety comes from deletionProtection, total-loss coverage from each app's
-# own backup.
 ---
 apiVersion: storage.k8s.io/v1
 kind: StorageClass
@@ -27,9 +19,8 @@ parameters:
   fsType: "ext4"
   dataLocality: "disabled" # every read and write crosses the 1GbE net, even to a replica on this very node
 
-# Same, but Longhorn keeps one of the two replicas on whichever node the pod runs on, so reads and most of the
-# write path stay on the local SSD. Only for volumes small enough that dragging a full copy to a new node on
-# every reschedule is cheap: it buys ~30% off write latency there, and costs a big transfer on a big volume.
+# Longhorn moves one of the volumes to the same node where workload pod runs on, so reads have ~30% lower latency.
+# Only for small volumes that benefit from the lowest possible read-latency. Write latency stays the same regardless.
 ---
 apiVersion: storage.k8s.io/v1
 kind: StorageClass
@@ -45,11 +36,8 @@ parameters:
   fsType: "ext4"
   dataLocality: "best-effort" # best-effort, not strict: if no local room, schedule anyway rather than fail
 
-# For precious data with no app-level backup (sqlite, config). recurringJobSelector adds every volume to the
-# `backup` group, which the RecurringJobs in templates/recurringjobs.yaml act on once a target is set. Having
-# one at all also keeps these volumes OUT of the `default` group, so add `trim` here if this class ever gets a
-# consumer, which means deleting the class first: see the immutability note above.
-# No consumer yet.
+# For persistent data with no app-level backup (sqlite, config). recurringJobSelector adds every volume to the
+# `backup` group. since defining `recurringJobSelector` removes the SC from Longhorns `default` group, we add trim back manually.
 ---
 apiVersion: storage.k8s.io/v1
 kind: StorageClass
@@ -64,52 +52,4 @@ parameters:
   staleReplicaTimeout: "30"
   fsType: "ext4"
   dataLocality: "disabled"
-  recurringJobSelector: '[{"name":"backup","isGroup":true}]'
-
-# The two RWX classes below mirror the two above. `accessMode: rwx` is what makes Longhorn stand up a
-# share-manager pod running nfs-ganesha, export the volume over NFSv4 and have every consumer mount that,
-# instead of handing one node a block device. Consequences worth knowing before reaching for these:
-#  - one share-manager pod per volume, so it is a per-volume single point of failure. rwxVolumeFastFailover in
-#    values.yaml cuts how long its loss hurts, it does not remove it.
-#  - every IO crosses the 1GbE net twice: consumer to share-manager, share-manager to replicas.
-#  - `nfsOptions` is deliberately unset. Longhorn's default is NFSv4.1 with softerr,timeo=600,retrans=5, and
-#    naming ONE option means naming them all: the rest fall back to the NFS server's defaults, not Longhorn's.
-# dataLocality stays disabled on both: locality is relative to the share-manager pod, not the consumers, so
-# best-effort buys nothing when the whole point is many consumers on many nodes. Hence no -local RWX variant.
-
-# The general-purpose RWX class, the RWO longhorn-r2-ephemeral with an NFS export in front.
----
-apiVersion: storage.k8s.io/v1
-kind: StorageClass
-metadata:
-  name: longhorn-r2-rwx-ephemeral
-provisioner: driver.longhorn.io
-allowVolumeExpansion: true
-reclaimPolicy: Delete
-volumeBindingMode: Immediate
-parameters:
-  numberOfReplicas: "2"
-  staleReplicaTimeout: "30"
-  fsType: "ext4"
-  dataLocality: "disabled"
-  accessMode: "rwx"
-
-# Precious shared data with no app-level backup. Unlike longhorn-r2-retained-with-backups above this names
-# `trim` as well: a selector of any kind drops the volume out of Longhorn's `default` group, which is where
-# filesystem-trim-weekly finds everything else.
----
-apiVersion: storage.k8s.io/v1
-kind: StorageClass
-metadata:
-  name: longhorn-r2-rwx-retained-with-backups
-provisioner: driver.longhorn.io
-allowVolumeExpansion: true
-reclaimPolicy: Retain
-volumeBindingMode: Immediate
-parameters:
-  numberOfReplicas: "2"
-  staleReplicaTimeout: "30"
-  fsType: "ext4"
-  dataLocality: "disabled"
-  accessMode: "rwx"
   recurringJobSelector: '[{"name":"backup","isGroup":true},{"name":"trim","isGroup":true}]'

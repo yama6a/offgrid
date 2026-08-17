@@ -60,14 +60,11 @@ wait exists to prevent.
 ## RWX volumes fail over on their own path
 
 An RWX volume ([05_storage.md](05_storage.md)) does not wait on any of the above. Its consumers mount NFS from a
-share-manager pod, so losing the node that pod is on breaks every consumer at once no matter where they run, and
-recovery means Longhorn moving the share-manager rather than rescheduling the consumers. `rwxVolumeFastFailover`
-is on for exactly that: Longhorn holds a lease on the share-manager and acts on the lease expiring instead of
-waiting out pod eviction. Clients reclaim their locks through the NFS recovery backend during the grace period,
-which is why unique node hostnames are a hard requirement.
+share-manager pod, so losing that pod's node breaks every consumer at once wherever they run, and recovery means
+Longhorn moving the share-manager rather than rescheduling the consumers. `rwxVolumeFastFailover` leases it and
+acts on the lease expiring instead of waiting out pod eviction.
 
-Not yet measured on this cluster: no RWX volume has a consumer yet. Time it when the first one does, the same
-way as the numbers above.
+Unmeasured here: no RWX volume has a consumer yet. Time it when one does.
 
 ```bash
 kubectl -n dead-node-watcher logs deploy/dead-node-watcher   # one line per decision
