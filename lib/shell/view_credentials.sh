@@ -12,6 +12,7 @@ INGRESS_VALUES="${PLATFORM_CHARTS}/06_platform_ingress/values.yaml"  # URL sourc
 RABBITMQ_NS="rabbitmq"
 RABBITMQ_SECRET="rabbitmq-default-user"    # operator-generated admin creds
 RABBITMQ_SUBDOMAIN="rabbitmq"
+NTFY_SUBDOMAIN="ntfy"                      # a host under the platform ingress, not an ingress of its own
 NTFY_USER="phone"                          # Android subscriber (read-only)
 NTFY_TOPIC="cluster-alerts"                # matches 06_ntfy_auth.sh / 05_ntfy
 WEBHOOK_FILE="${CLUSTER_DIR}/argocd-github-webhook-secret.txt"   # plaintext webhook secret (02b mints it)
@@ -59,11 +60,8 @@ show_rabbitmq() {
 }
 
 show_ntfy() {
-  local domain sub
   say "ntfy (phone push)"
-  domain="$(ingress_domain ntfy)"
-  sub="$(yq -r '.ingress.ingresses[] | select(.name=="ntfy").hosts[0].subdomain' "$INGRESS_VALUES")"
-  echo "  URL:      https://${sub}.${domain}"
+  echo "  URL:      https://${NTFY_SUBDOMAIN}.${PLATFORM_DOMAIN}"
   echo "  Topic:    ${NTFY_TOPIC}"
   echo "  Username: ${NTFY_USER}"
   if [ -n "$NTFY_PHONE_PASSWORD_SECRET" ]; then
@@ -95,6 +93,7 @@ show_sso_only_hosts() {
   say "SSO-only (log in with your Google account, no separate login)"
   while read -r sub; do
     [ "$sub" = "$RABBITMQ_SUBDOMAIN" ] && continue                # rabbitmq has its own login, shown above
+    [ "$sub" = "$NTFY_SUBDOMAIN" ] && continue                    # ntfy's edge is open, shown above
     printf '  %-9s https://%s.%s\n' "${sub}:" "$sub" "$PLATFORM_DOMAIN"
   done < <(yq -r '.ingress.ingresses[] | select(.name=="platform").hosts[].subdomain' "$INGRESS_VALUES")
 }
