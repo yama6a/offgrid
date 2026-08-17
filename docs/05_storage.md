@@ -54,10 +54,11 @@ on low-power nodes. Revisit if upstream fixes it.
 
 ### Host prerequisites
 
-Set up outside this repo, and listed in the README: `iscsid` and `fstrim` on every node, an NFSv4 client for the
-RWX classes, 4K kernel pages (XFS will not mount on 16K), and the dedicated data volume. Talos covers the NFS
-client in-kernel, so that one needs no extension. Longhorn adds one thing, a kubelet bind-mount. On the Talos
-cluster this was developed against that looks like:
+Set up outside this repo, and listed in the README: `iscsid` and `fstrim` on every node, an NFSv4 client if you
+use RWX volumes, 4K kernel pages (XFS will not mount on 16K), and the dedicated data volume. Talos has the NFS
+client in-kernel, so that one needs no extension; Longhorn reports it as the `NFSClientInstalled` condition on
+each `nodes.longhorn.io`. Longhorn adds one thing, a kubelet bind-mount. On the Talos cluster this was developed
+against that looks like:
 
 ```yaml
 machine:
@@ -94,17 +95,15 @@ Adding a node does not move existing replicas. `replica-auto-balance` is at its 
 node stays empty of replicas until new volumes are created or something rebuilds. That is usually what you want;
 `replica-auto-balance: best-effort` spreads them over time if the concentration bothers you.
 
-### The five StorageClasses
+### The three StorageClasses
 
 Rendered by `templates/storageclasses.yaml`, all `numberOfReplicas: 2`.
 
-| Class | Access | reclaimPolicy | dataLocality | S3 backup | Use for |
-|---|---|---|---|---|---|
-| `longhorn-r2-ephemeral` | RWO | Delete | disabled | none | the general-purpose tier |
-| `longhorn-r2-ephemeral-local` | RWO | Delete | best-effort | none | small volumes where write latency matters: RabbitMQ |
-| `longhorn-r2-retained-with-backups` | RWO | Retain | disabled | daily + weekly | precious data with no app-level backup (sqlite, config). No consumer yet |
-| `longhorn-r2-rwx-ephemeral` | RWX | Delete | disabled | none | many pods writing one filesystem. No consumer yet |
-| `longhorn-r2-rwx-retained-with-backups` | RWX | Retain | disabled | daily + weekly | the same, when the data has no app-level backup. No consumer yet |
+| Class | reclaimPolicy | dataLocality | S3 backup | Use for |
+|---|---|---|---|---|
+| `longhorn-r2-ephemeral` | Delete | disabled | none | the general-purpose tier |
+| `longhorn-r2-ephemeral-local` | Delete | best-effort | none | small volumes where write latency matters: RabbitMQ |
+| `longhorn-r2-retained-with-backups` | Retain | disabled | daily + weekly | precious data with no app-level backup (sqlite, config). No consumer yet |
 
 The `-with-backups` class adds off-cluster S3 backups via `recurringJobSelector`; see
 [10_backups.md](10_backups.md).
@@ -134,35 +133,29 @@ class by hand first; ArgoCD will otherwise report the sync failure forever.
 case: a prune cannot delete the object, restoring the files brings it back with zero loss, and nothing is ever
 `Released`. Given that, `Retain` protects nothing a deliberate deletion did not mean and only leaks orphaned
 PVs. So everything uses a Delete class and accepts that regretting a deliberate delete costs that store's backup
-RPO. The exceptions are the two `-retained-with-backups` classes, for data with no app-level backup at all; the
-RWO one is also the restore target in `recover_longhorn_from_s3.sh`.
+RPO. The one exception is `longhorn-r2-retained-with-backups`, for data with no app-level backup at all, which is
+also the restore target in `recover_longhorn_from_s3.sh`.
 
-### RWX volumes
+### RWX is a PVC choice, not a class
 
-`accessMode: rwx` on the class makes Longhorn stand up a share-manager pod running nfs-ganesha, export the
-volume over NFSv4, and have every consumer mount that. The volume underneath is still an ordinary 2-replica
-Longhorn block device, attached to the share-manager's node.
+There is no RWX class and there should not be. The access mode of a dynamically provisioned volume comes from
+the PVC, so `accessModes: [ReadWriteMany]` against any class above gets an RWX volume, and `ReadWriteOnce`
+against the same class gets a plain block device. Pinning it at the class would force NFS on single-writer
+volumes too.
 
-What that costs:
+RWX means Longhorn stands up a share-manager pod running nfs-ganesha and every consumer mounts that instead of
+attaching a block device. Three things follow:
 
-- **One share-manager pod per volume, so a per-volume single point of failure.** `rwxVolumeFastFailover: true`
-  puts a lease on it, so its loss costs tens of seconds rather than a pod-eviction timeout. It shortens the
-  outage, it does not remove it. An RWX volume created before that setting was on needs its workload scaled to
-  zero and back to adopt it.
-- **Every IO crosses the 1GbE net twice**: consumer to share-manager, then share-manager to replicas. On these
-  nodes that is the reason to reach for RWX only when the sharing is the point, not for convenience.
-- **`dataLocality` is useless here**, which is why there is no `-local` RWX variant. Locality is relative to the
-  share-manager pod, not the consumers.
+- The share-manager is one pod per volume, so a per-volume single point of failure. `rwxVolumeFastFailover`
+  (values.yaml) leases it, which shortens the outage rather than removing it.
+- Every IO crosses the 1GbE net twice: consumer to share-manager, share-manager to replicas. Reach for RWX when
+  the sharing is the point, not for convenience.
+- Do not use `longhorn-r2-ephemeral-local` for an RWX PVC. `dataLocality` is relative to the share-manager pod,
+  not the consumers, so it buys nothing and still drags a copy around on reschedule.
 
-Mount options are Longhorn's defaults: NFSv4.1 with `softerr,timeo=600,retrans=5`. The classes leave
-`nfsOptions` unset on purpose, because naming one option means naming them all: the rest fall back to the NFS
-server's defaults rather than Longhorn's. If concurrent writers ever hang, Longhorn's KB pins that on NFSv4.1+
-state handling and the mitigation is `nfsOptions: "vers=4.0,noresvport,softerr,timeo=600,retrans=5"` on a new
-class, since `parameters` cannot be edited in place.
-
-Nodes need an NFSv4 client. Talos has it in-kernel, so nothing to install; Longhorn surfaces it as the
-`NFSClientInstalled` condition on each `nodes.longhorn.io`. Hostnames must also be unique cluster-wide, which
-Longhorn's NFS recovery backend relies on to let clients reclaim locks after a failover.
+Mount options are Longhorn's defaults, NFSv4.1 with `softerr,timeo=600,retrans=5`. If concurrent writers ever
+hang, Longhorn's KB blames NFSv4.1+ state handling; the fix is `nfsOptions: "vers=4.0,noresvport,softerr,timeo=600,retrans=5"`
+on a **new** class, since `parameters` cannot be edited in place.
 
 ### Operational notes
 
@@ -182,7 +175,7 @@ Longhorn's NFS recovery backend relies on to let clients reclaim locks after a f
 talosctl -n 192.168.10.201 read /proc/mounts | grep storage    # /var/mnt/storage present (after the patch)
 kubectl -n longhorn-system get pods                            # manager on all 3 nodes + CSI Running
 kubectl -n longhorn-system get nodes.longhorn.io -o wide       # each node's disk Schedulable
-kubectl get storageclass                                       # the five longhorn-r2-* classes, NO default
+kubectl get storageclass                                       # the three longhorn-r2-* classes, NO default
 kubectl -n longhorn-system get recurringjob                    # filesystem-trim-weekly (+ the backup jobs)
 ```
 
