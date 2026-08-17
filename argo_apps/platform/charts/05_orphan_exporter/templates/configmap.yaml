@@ -89,19 +89,22 @@ data:
         ]
         for store in items("/apis/barmancloud.cnpg.io/v1/objectstores"):
             ns = store["metadata"]["namespace"]
+            # res_cluster is the chart-stamped label, never the barman server: the server carries the Postgres
+            # major (mydb-pg18) and rotates on a major upgrade, which would rename the series out from under
+            # the alerts and break their `kubectl get objectstore <res_cluster>-backups` hint. The server goes
+            # in res_server, which also keeps two of them (mid-rotation) from colliding on one series.
+            cluster = (store["metadata"].get("labels") or {}).get("cnpg.io/cluster")
             window = ((store.get("status") or {}).get("serverRecoveryWindow") or {})
             if not window:
-                # Attribute it to the chart-stamped cluster label. Emit nothing and there is no series at
-                # all, which the alert cannot tell apart from a healthy one.
-                name = (store["metadata"].get("labels") or {}).get("cnpg.io/cluster")
-                if name:
-                    lb = labels([("res_namespace", ns), ("res_cluster", name)])
+                # Emit nothing and there is no series at all, which the alert cannot tell apart from healthy.
+                if cluster:
+                    lb = labels([("res_namespace", ns), ("res_cluster", cluster)])
                     out.append("cnpg_backup_recoverable{%s} 0" % lb)
                     out.append("cnpg_backup_last_success_seconds{%s} 0" % lb)
                     out.append("cnpg_backup_first_recoverability_seconds{%s} 0" % lb)
                 continue
-            for name, w in window.items():
-                lb = labels([("res_namespace", ns), ("res_cluster", name)])
+            for server, w in window.items():
+                lb = labels([("res_namespace", ns), ("res_cluster", cluster or server), ("res_server", server)])
                 frp = (w or {}).get("firstRecoverabilityPoint") or ""
                 out.append("cnpg_backup_recoverable{%s} %d" % (lb, 1 if frp else 0))
                 out.append("cnpg_backup_last_success_seconds{%s} %d"

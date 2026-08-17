@@ -11,9 +11,14 @@ source "${SCRIPT_DIR}/common.sh"
 usage() {
   cat <<EOF
 recover_cnpg_from_s3.sh [--mode in-place|side] [--namespace <ns>] [--source <cluster>]
-                        [--target latest|"YYYY-MM-DD HH:MM:SS+ZZ"] [--name <recovery-name>] [--yes]
+                        [--target latest|"YYYY-MM-DD HH:MM:SS+ZZ"] [--name <recovery-name>]
+                        [--server <serverName>] [--yes]
                                                                           (or: make restore-cnpg)
   every flag is optional; it prompts for anything missing
+
+  --server  the S3 catalog to read, default <cluster>-pg<major> as the chart writes it. Name a PREVIOUS
+            major's (e.g. mydb-pg17) to go back to before a major upgrade, or a bare <cluster> for a
+            catalog written before the prefix carried the major.
 
 Two modes:
   in-place  the DB is GONE or broken and you want it back AS ITSELF: same name, same -rw Service, still
@@ -41,6 +46,8 @@ RECOVERY_NAME=""
 TARGET="latest"
 ASSUME_YES="false"
 OBJECTSTORE=""     # set by prompt_for_database
+SERVER=""          # barman catalog prefix; --server, else resolved
+IMAGE=""           # side mode: operand image, resolved to the catalog's major
 DEST=""            # set by check_objectstore
 RECOVERABLE="unknown"
 FOUND=""           # set by resolve_owning_chart
@@ -68,6 +75,7 @@ parse_args() {
       --source)    SOURCE="$2"; shift 2 ;;
       --name)      RECOVERY_NAME="$2"; shift 2 ;;
       --target)    TARGET="$2"; shift 2 ;;
+      --server)    SERVER="$2"; shift 2 ;;
       --yes|--apply) ASSUME_YES="true"; shift ;;
       -h|--help)   usage; exit 0 ;;
       *) die "unknown arg: $1 (see --help)" ;;
@@ -155,6 +163,25 @@ prompt_for_database() {
   OBJECTSTORE="${SOURCE}-backups"   # the chart always names it <cluster>-backups
 }
 
+# The catalog sits under <cluster>-pg<major>, not <cluster>: a major upgrade rotates the prefix, so after one
+# the catalog you want is usually the PREVIOUS major's. Never assumed, always resolved.
+resolve_server() {
+  local values="" alias="" v=""
+  [ -n "$SERVER" ] && { ok "catalog serverName: ${SERVER} (--server)"; return 0; }
+  SERVER="$(kubectl -n "$NS" get cluster.postgresql.cnpg.io "$SOURCE" \
+            -o jsonpath="{.spec.plugins[?(@.name=='${PLUGIN}')].parameters.serverName}" 2>/dev/null)"
+  [ -n "$SERVER" ] && { ok "catalog serverName: ${SERVER} (from the live Cluster)"; return 0; }
+  IFS=$'\t' read -r values alias <<< "$(wl_find_alias "$SOURCE" postgresVersion || true)"
+  if [ -n "$values" ]; then
+    v="$(ALIAS="$alias" yq -r '.[strenv(ALIAS)].postgresVersion // ""' "$values" 2>/dev/null)"
+    [ -n "$v" ] && { SERVER="${SOURCE}-pg${v}"; ok "catalog serverName: ${SERVER} (from ${values#${REPO_ROOT}/})"; return 0; }
+  fi
+  SERVER="$SOURCE"
+  warn "no live Cluster and no chart values for ${SOURCE}, so falling back to the bare prefix ${SERVER}"
+  warn "pass --server if that is wrong; what is actually in S3:"
+  warn "  aws s3 ls s3://${S3_BACKUP_BUCKET:-<bucket>}/cnpg/${NS}/"
+}
+
 # A restore needs a COMPLETED BASE BACKUP; WAL alone has no recovery point and the recovery job hangs.
 check_objectstore() {
   local frp sec
@@ -164,7 +191,7 @@ check_objectstore() {
     return 0
   fi
   frp="$(kubectl -n "$NS" get objectstore.barmancloud.cnpg.io "$OBJECTSTORE" \
-         -o jsonpath="{.status.serverRecoveryWindow.${SOURCE}.firstRecoverabilityPoint}" 2>/dev/null)"
+         -o jsonpath="{.status.serverRecoveryWindow.${SERVER}.firstRecoverabilityPoint}" 2>/dev/null)"
   DEST="$(kubectl -n "$NS" get objectstore.barmancloud.cnpg.io "$OBJECTSTORE" \
           -o jsonpath='{.spec.configuration.destinationPath}' 2>/dev/null)"
   sec="$(kubectl -n "$NS" get objectstore.barmancloud.cnpg.io "$OBJECTSTORE" \
@@ -173,7 +200,7 @@ check_objectstore() {
     && ok "S3 creds secret ${sec} present" \
     || bad "S3 creds secret ${NS}/${sec} missing: restore the sealed-secrets key (make restore-secrets-key) or re-run 10b_cnpg_backup.sh"; }
   if [ -n "$frp" ]; then RECOVERABLE="yes"; ok "recovery point in the catalog: ${frp}"
-  else RECOVERABLE="no";  bad "ObjectStore reports NO recovery point (no completed base backup) for ${SOURCE}"; fi
+  else RECOVERABLE="no";  bad "ObjectStore reports NO recovery point (no completed base backup) for ${SERVER}"; fi
 }
 
 # Independent check straight against S3, using the .env deployer creds. Also the only check that catches a
@@ -185,7 +212,7 @@ check_s3_catalog() {
     return 0
   fi
   prefix="${DEST:-s3://${S3_BACKUP_BUCKET}/cnpg/${NS}/}"
-  prefix="${prefix%/}/${SOURCE}/base/"
+  prefix="${prefix%/}/${SERVER}/base/"
   say "Base backups in the catalog (${prefix})"
   export_deploy_aws_creds
   if aws s3 ls "$prefix" 2>/dev/null | grep -q .; then
@@ -194,8 +221,9 @@ check_s3_catalog() {
     RECOVERABLE="yes"
   else
     bad "NO base backup under ${prefix}"
-    warn "if the DB used to be backed up, the catalog may be at an OLD prefix (a destinationPath change orphans it):"
-    warn "  aws s3 ls s3://${S3_BACKUP_BUCKET}/cnpg/ --recursive | grep base/"
+    warn "if the DB used to be backed up, the catalog may be at an OLD prefix: a major upgrade rotates the"
+    warn "prefix (-pg17 to -pg18) and a destinationPath change orphans it entirely. What is there, and --server it:"
+    warn "  aws s3 ls s3://${S3_BACKUP_BUCKET}/cnpg/${NS}/"
     RECOVERABLE="no"
   fi
 }
@@ -207,9 +235,24 @@ gate_on_recoverability() {
   confirm "Continue anyway?" || { summary; exit 1; }
 }
 
+# Postgres cannot replay a catalog written by a different major, and an unset imageName means the operator's
+# own default, which moves with each operator release. So pin it: the major in the prefix wins, then whatever
+# the live cluster runs.
+resolve_operand_image() {
+  local major="" images="${REPO_ROOT}/lib/helm/pg-cluster/files/postgres-images.yaml"
+  case "$SERVER" in *-pg[0-9]*) major="${SERVER##*-pg}" ;; esac
+  if [ -n "$major" ] && [ -f "$images" ]; then
+    IMAGE="$(MAJOR="$major" yq -r '.[strenv(MAJOR)] // ""' "$images" 2>/dev/null)"
+  fi
+  [ -n "$IMAGE" ] || IMAGE="$(kubectl -n "$NS" get cluster.postgresql.cnpg.io "$SOURCE" \
+                              -o jsonpath='{.spec.imageName}' 2>/dev/null)"
+  if [ -n "$IMAGE" ]; then ok "operand image: ${IMAGE}"
+  else warn "could not resolve an image for this catalog; the clone gets the operator default, which fails the recovery if its major differs"; fi
+}
+
 # A separate, unmanaged cluster reading the same catalog. It does not archive WAL and is not a GitOps object.
 run_side_restore() {
-  local rt="" manifest
+  local rt="" img="" manifest
   [ -z "$RECOVERY_NAME" ] && RECOVERY_NAME="${SOURCE}-restore"
   kubectl -n "$NS" get cluster.postgresql.cnpg.io "$RECOVERY_NAME" >/dev/null 2>&1 \
     && die "Cluster ${NS}/${RECOVERY_NAME} already exists: pick another --name (this never overwrites a live cluster)"
@@ -217,6 +260,8 @@ run_side_restore() {
     || die "side mode reads the live ObjectStore ${NS}/${OBJECTSTORE}, which is absent; use --mode in-place, or restore the workload's files first"
 
   [ "$TARGET" = "latest" ] || rt="$(printf '\n      recoveryTarget:\n        targetTime: "%s"' "$TARGET")"
+  resolve_operand_image
+  [ -z "$IMAGE" ] || img="$(printf '\n  imageName: %s' "$IMAGE")"
   manifest="$(cat <<YAML
 apiVersion: postgresql.cnpg.io/v1
 kind: Cluster
@@ -224,7 +269,7 @@ metadata:
   name: ${RECOVERY_NAME}
   namespace: ${NS}
 spec:
-  instances: 1
+  instances: 1${img}
   storage:
     storageClass: ${STORAGE_CLASS}
     size: ${STORAGE_SIZE}
@@ -239,10 +284,10 @@ spec:
         name: ${PLUGIN}
         parameters:
           barmanObjectName: ${OBJECTSTORE}
-          serverName: ${SOURCE}
+          serverName: ${SERVER}
 YAML
 )"
-  say "Plan: read catalog ${OBJECTSTORE} (serverName ${SOURCE}), target ${TARGET}, into NEW cluster ${RECOVERY_NAME} (1 instance, no re-archiving)"
+  say "Plan: read catalog ${OBJECTSTORE} (serverName ${SERVER}), target ${TARGET}, into NEW cluster ${RECOVERY_NAME} (1 instance, no re-archiving)"
   echo "----- manifest -----"; echo "$manifest"; echo "--------------------"
   confirm "Apply it?" || { warn "not applied"; exit 0; }
   echo "$manifest" | kubectl apply -f - || die "apply failed"
@@ -427,7 +472,7 @@ run_restore_phase() {
 # The script cannot know your schema, so it reports every table with its live row count: that is the evidence
 # that the base backup AND the WAL replay landed.
 verify_restored_data() {
-  local tl frp
+  local tl frp now   # `now`: where the REBUILT cluster archives to, which is not $SERVER after a cross-major restore
   say "PHASE 3/3, verify and finish"
   PRIMARY="$(kubectl -n "$NS" get pods -l "cnpg.io/cluster=${SOURCE},cnpg.io/instanceRole=primary" \
              -o jsonpath='{.items[0].metadata.name}' 2>/dev/null)"
@@ -447,9 +492,12 @@ verify_restored_data() {
     [ -n "$tl" ] && ok "recovered onto timeline ${tl} (a restore always advances it)"
   fi
 
+  now="$(kubectl -n "$NS" get cluster.postgresql.cnpg.io "$SOURCE" \
+         -o jsonpath="{.spec.plugins[?(@.name=='${PLUGIN}')].parameters.serverName}" 2>/dev/null)"
+  [ -n "$now" ] || now="$SERVER"
   frp="$(kubectl -n "$NS" get objectstore.barmancloud.cnpg.io "$OBJECTSTORE" \
-         -o jsonpath="{.status.serverRecoveryWindow.${SOURCE}.firstRecoverabilityPoint}" 2>/dev/null)"
-  [ -n "$frp" ] && ok "the restored cluster is itself backed up again (recovery point ${frp})" \
+         -o jsonpath="{.status.serverRecoveryWindow.${now}.firstRecoverabilityPoint}" 2>/dev/null)"
+  [ -n "$frp" ] && ok "the restored cluster is itself backed up again (recovery point ${frp} under ${now})" \
                 || warn "no recovery point yet on the new timeline; a base backup runs on the ScheduledBackup's next tick (force one with a Backup CR if you want it now)"
   return 0
 }
@@ -512,6 +560,7 @@ assert_api
 prompt_for_mode
 list_catalogs
 prompt_for_database
+resolve_server
 check_objectstore
 check_s3_catalog
 gate_on_recoverability

@@ -378,6 +378,7 @@ groups:
             - no base backup in the catalog for {{ $labels.res_namespace }}/{{ $labels.res_cluster }}, so restore is IMPOSSIBLE
             - WAL archiving may still look OK; WAL alone has no recovery point
             - check the path actually written: kubectl -n {{ $labels.res_namespace }} get objectstore {{ $labels.res_cluster }}-backups -o jsonpath='{.spec.configuration.destinationPath}{"\n"}{.status.serverRecoveryWindow}'
+            - expected right after a MAJOR bump: the prefix rotates to <cluster>-pg<major> and the new one holds only WAL until the next base backup
             - force one: apply a Backup CR (method plugin) for this cluster, then re-check the recovery window
         noDataState: OK
         execErrState: KeepLast

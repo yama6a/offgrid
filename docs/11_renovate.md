@@ -105,9 +105,12 @@ bumps bake before they are eligible, or drop `automerge` from the specific deps 
   upgrade surfaces for review. The actual image (flavour, OS, patch, digest) lives once in
   `lib/helm/pg-cluster/files/postgres-images.yaml`, one pinned `tag@digest` per supported major, tracked
   DIGEST-only because patches move the rolling `<major>-minimal-trixie` tag and the tag string never changes. A
-  new major is added to the map by hand, because it is a `pg_upgrade` and not a swap. Until it is, a workload
-  bumped to that major fails to render (the chart's `pg-cluster.image` helper fails on an unlisted key), which
-  blocks the major PR.
+  new major is added to the map by hand. Until it is, a workload bumped to that major fails to render (the chart's
+  `pg-cluster.image` helper fails on an unlisted key), which blocks the major PR.
+- Merging a `postgresVersion` major PR performs the upgrade: the operator runs an offline `pg_upgrade` and the
+  database is down for it, so read the runbook in [05_storage.md](05_storage.md) before merging one. Nothing else
+  is needed, though: the backup catalog rotates with the major on its own. Majors are never automerged, which is
+  what makes that reading possible.
 - The barman-cloud vendored manifest is in `ignorePaths`. Bumping it re-vendors an upstream release verbatim per
   that chart's README, not a line edit.
 - VictoriaMetrics charts are grouped. The CRD chart's app version must match its operator, which is a human

@@ -4,14 +4,14 @@ metadata:
   name: {{ include "pg-cluster.name" . }}
   namespace: {{ .Release.Namespace }}
   {{- $protect := include "pg-cluster.protectAnnotations" . }}
-  {{- $sameCatalog := and .Values.restore.enabled (or (not .Values.restore.serverName) (eq .Values.restore.serverName (include "pg-cluster.name" .))) }}
+  {{- $sameCatalog := and .Values.restore.enabled (or (not .Values.restore.serverName) (eq .Values.restore.serverName (include "pg-cluster.serverName" .))) }}
   {{- if or $protect $sameCatalog }}
   annotations:
     {{- with $protect }}
     {{- . | nindent 4 }}
     {{- end }}
     {{- if $sameCatalog }}
-    cnpg.io/skipEmptyWalArchiveCheck: enabled # MANDATORY for an in-place restore
+    cnpg.io/skipEmptyWalArchiveCheck: enabled # MANDATORY when restoring from the prefix we then archive into
     {{- end }}
   {{- end }}
   labels:
@@ -94,7 +94,7 @@ spec:
         name: barman-cloud.cloudnative-pg.io
         parameters:
           barmanObjectName: {{ include "pg-cluster.name" . }}-backups
-          serverName: {{ .Values.restore.serverName | default (include "pg-cluster.name" .) }}
+          serverName: {{ .Values.restore.serverName | default (include "pg-cluster.serverName" .) }}
   {{- end }}
 
   {{- if eq (include "pg-cluster.backupsEnabled" .) "true" }}
@@ -104,4 +104,5 @@ spec:
       isWALArchiver: true
       parameters:
         barmanObjectName: {{ include "pg-cluster.name" . }}-backups
+        serverName: {{ include "pg-cluster.serverName" . }} # rotates with the major; see the helper
   {{- end }}

@@ -15,6 +15,16 @@ Resolve postgresVersion (a major, e.g. "18") to the pinned image (tag@digest) fr
 {{- $img -}}
 {{- end -}}
 
+{{/*
+The barman archive prefix, under the ObjectStore's destinationPath. Carries the MAJOR because pg_upgrade resets
+the timeline to 1 and mints a new system ID: one prefix per major keeps the new WAL from overwriting the old
+segments of the same name, which would leave every pre-upgrade base backup unrestorable. So a version bump
+rotates the catalog on its own, and the old one stays readable via restore.serverName.
+*/}}
+{{- define "pg-cluster.serverName" -}}
+{{- printf "%s-pg%s" (include "pg-cluster.name" .) (.Values.postgresVersion | toString) -}}
+{{- end -}}
+
 {{- define "pg-cluster.labels" -}}
 app.kubernetes.io/name: pg-cluster
 app.kubernetes.io/instance: {{ .Release.Name }}
