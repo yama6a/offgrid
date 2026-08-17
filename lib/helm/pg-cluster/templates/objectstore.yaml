@@ -25,7 +25,7 @@ spec:
       encryption: AES256
       jobs: 2
     endpointURL: "https://s3.{{ required "pg-cluster: files/backup.yaml region missing but backups on; run 10b_cnpg_backup.sh" $b.region }}.amazonaws.com"
-    destinationPath: "s3://{{ $b.bucket }}/cnpg/{{ .Release.Namespace }}/" # s3://<bucket>/cnpg/<ns>/<name>/{wals,base}
+    destinationPath: "s3://{{ $b.bucket }}/cnpg/{{ .Release.Namespace }}/" # s3://<bucket>/cnpg/<ns>/<name>-pg<major>/{wals,base}
     s3Credentials:
       accessKeyId:
         name: {{ include "pg-cluster.backupSecretName" . }}

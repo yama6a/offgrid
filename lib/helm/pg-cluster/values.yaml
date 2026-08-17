@@ -13,5 +13,5 @@ backupsEnabled: true # OPTIONAL: (bool); Off-cluster S3 backups (daily base + 15
 #  Restore from S3 backup catalog (base + WAL replay) instead of initdb. See `make restore-cnpg` and docs/10_backups.md.
 restore:
   enabled: false  # SET TO FALSE AFTER RESTORE WAS COMPLETED!!
-  serverName: ""  # catalog to read; empty = our own name (in-place).
+  serverName: ""  # catalog to read; empty = our own, `<name>-pg<postgresVersion>`. Name it to read a PREVIOUS major's.
   targetTime: ""  # PITR target, RFC3339 (e.g. "2026-07-13 14:30:00+00"); empty = replay everything

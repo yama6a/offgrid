@@ -217,7 +217,7 @@ Most of the tree is pre-baked in the `pg-cluster` wrapper. A workload sets only 
 | Knob | Required | Notes |
 |---|---|---|
 | `name` | yes | used verbatim: the Cluster, its `<name>-rw`/`-ro`/`-r` Services, the `<name>-app` Secret |
-| `postgresVersion` | yes | a MAJOR, and a key into the wrapper's pinned image map |
+| `postgresVersion` | yes | a MAJOR, and a key into the wrapper's pinned image map; changing it is an upgrade, see below |
 | `highAvailability` | yes | one bool: true = 3 instances + synchronous `any 1` + PDB + switchover, false = 1 instance, no sync, PDB off, in-place restart |
 | `size` | yes | per-instance disk CEILING; thin, so it reserves nothing, but it does spend Longhorn's scheduling budget |
 | `resources` | yes | per-instance, no default; forced choice on a Pi |
@@ -245,6 +245,55 @@ Wrapper-baked, worth knowing:
   `<name>-app` Secret, so no sealed secret is needed.
 - The chart's own CNPG alert rules are disabled: `vmalert` is off, so a VMRule would never fire. The CNPG backup
   and operational alerts are Grafana rules instead. See [10_backups.md](10_backups.md).
+
+### Major version upgrade
+
+Bump `postgresVersion` to the next major and merge. That is the whole change: the operator sees a higher major in
+`imageName` and runs an offline in-place `pg_upgrade --link` itself, and the chart rotates the backup catalog to
+`<name>-pg<major>` in the same render, which is what keeps the old one restorable.
+
+What it costs, before you start:
+
+- Full downtime for the database, replicas included, for as long as `pg_upgrade` takes. A few minutes for a small
+  DB; re-cloning replicas afterwards is the slow part on a large one.
+- No PITR across the boundary. The pre-upgrade catalog can only restore to a pre-upgrade point, forever.
+- Extensions are yours to check. The operator does not touch them.
+- Only between images on the same OS distribution, so trixie to trixie. `files/postgres-images.yaml` only ever
+  holds one distribution, so this is a constraint on editing that file, not on a bump.
+
+```bash
+# 1. rehearse on a throwaway clone first, which reads the catalog and archives nothing
+make restore-cnpg   # --mode side --source <cluster>, then patch its imageName to the new major by hand
+
+# 2. real thing: merge the postgresVersion bump, then watch
+kubectl -n <ns> get job -l cnpg.io/cluster=<cluster> -w      # <primary>-major-upgrade
+kubectl -n <ns> get cluster <cluster> -o jsonpath='{.status.pgDataImageInfo}{"\n"}'   # majorVersion is the proof
+
+# 3. extensions, if pg_upgrade wrote a script for them
+kubectl -n <ns> exec <primary> -c postgres -- ls /var/lib/postgresql/data/pgdata/update_extensions.sql
+kubectl -n <ns> exec -i <primary> -c postgres -- psql -U postgres -d app -f <that path>
+
+# 4. statistics: pg_upgrade carries none over, so the first queries plan on nothing
+kubectl -n <ns> exec <primary> -c postgres -- psql -U postgres -d app -c 'ANALYZE'
+
+# 5. base backup into the NEW prefix, before the 1h grace on cnpg-no-recoverable-backup runs out
+kubectl -n <ns> apply -f - <<'EOF'
+apiVersion: postgresql.cnpg.io/v1
+kind: Backup
+metadata: {name: <cluster>-postupgrade, namespace: <ns>}
+spec:
+  cluster: {name: <cluster>}
+  method: plugin
+  pluginConfiguration: {name: barman-cloud.cloudnative-pg.io}
+EOF
+```
+
+Rollback splits on whether it worked:
+
+- Job still failing: put `postgresVersion` back. The operator deletes the job and starts on the old major again,
+  the catalog follows it back to the old prefix, and the data was never modified.
+- Already succeeded: `--link` left the old directory sharing inodes with the new one, so it is not safe to run
+  again. Go back by restore instead, `restore.enabled: true` with `restore.serverName: <cluster>-pg<old major>`.
 
 ### Reclaim & durability
 

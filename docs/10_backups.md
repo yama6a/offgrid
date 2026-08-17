@@ -64,9 +64,14 @@ the primary goes read-only or crashes. That is why the WAL-archive alert is `cri
   and seals it into the cluster. The powerful deployer creds that run Terraform never enter the cluster. On
   bare-metal Talos there is no instance role, so it is static keys, sealed and never in `.env` or git.
 - One bucket, namespace plus cluster prefix. `destinationPath: s3://<bucket>/cnpg/<namespace>/`, and Barman appends
-  each cluster's `serverName`, so clusters land in their own `cnpg/<namespace>/<clusterName>/{wals,base}/`. The
-  namespace in the path makes it collision-proof on per-namespace name uniqueness alone, which `validate.yaml`
-  enforces, so there is no global-uniqueness requirement.
+  the cluster's `serverName`, which `pg-cluster` sets to `<clusterName>-pg<major>`, so a database lands in
+  `cnpg/<namespace>/<clusterName>-pg<major>/{wals,base}/`. The namespace in the path makes it collision-proof on
+  per-namespace name uniqueness alone, which `validate.yaml` enforces, so there is no global-uniqueness requirement.
+- The major is in the prefix because a major upgrade has to leave the old catalog alone. `pg_upgrade` resets the
+  timeline to 1 and mints a new system ID, so sharing one prefix would have the new cluster overwrite WAL segments
+  the old base backups need, and PITR does not cross a major boundary anyway. Bumping `postgresVersion` therefore
+  rotates the catalog on its own; the previous one stays readable via `restore.serverName` and is expired by the
+  `cnpg/` lifecycle rule like anything else. See [05_storage.md](05_storage.md) for the upgrade runbook.
 - The plugin is network-policed. Its Deployment in `cnpg-system` carries a pod-scoped `CiliumNetworkPolicy`:
   ingress on `:9090` for the CNPG-I gRPC from the operator, plus the kubelet TCP probe; egress to DNS, the API
   server, and S3 on `world:443` for backup-catalog and recovery-window reads. The instance SIDECAR does its own S3
@@ -545,7 +550,7 @@ catalog.
 Empty just that server's prefix, not the whole bucket:
 
 ```bash
-aws s3 rm --recursive "s3://<bucket>/cnpg/<namespace>/<cluster>/"
+aws s3 rm --recursive "s3://<bucket>/cnpg/<namespace>/<cluster>-pg<major>/"
 kubectl -n <ns> delete backups.postgresql.cnpg.io --all   # they point at objects that are now gone
 kubectl -n <ns> exec <primary> -c postgres -- psql -U postgres -tAc 'select pg_switch_wal()'
 ```
@@ -574,7 +579,7 @@ nothing about S3: it wipes node state only.
 2. Plugin synced: platform Healthy, `kubectl get crd objectstores.barmancloud.cnpg.io`, and the `barman-cloud`
    Deployment Ready in `cnpg-system`.
 3. WAL archiving live, the check that matters most: the Cluster's `ContinuousArchiving` condition is `True` and
-   objects appear under `s3://<bucket>/cnpg/<ns>/<cluster>/wals/`. The daily base backup runs on a standby pod.
+   objects appear under `s3://<bucket>/cnpg/<ns>/<cluster>-pg<major>/wals/`. The daily base backup runs on a standby pod.
    Read the recovery point off the OBJECTSTORE, not the Cluster: under the plugin
    `Cluster.status.firstRecoverabilityPoint` stays permanently empty even with a completed base backup in S3.
    Everything downstream follows from that. `05_orphan_exporter` reads the ObjectStore and publishes
