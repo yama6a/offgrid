@@ -1,23 +1,25 @@
-# Probed hosts, by what the edge is expected to answer an anonymous GET with. Every URL is the PUBLIC name, so
-# a probe covers DNS, the router's hairpin, the LoadBalancer, the TLS cert and the route in one request.
+# Probed hosts, grouped by what the edge is expected to answer an anonymous GET with, and the module that
+# asserts exactly that. Every URL is the PUBLIC name, so a probe covers DNS, the router's hairpin, the
+# LoadBalancer, the TLS cert and the route in one request. A group takes any FQDN and any path: 04_values.sh
+# fills in the targets of `sso` and `open` and nothing else, so a host off the ops./app. tiers goes in a group
+# of its own, written by hand. A group key becomes the VMProbe name and its job name, so keep it kebab-case.
 probes:
-  # Behind google-sso. The SecurityPolicy answers 302 to accounts.google.com before the request ever reaches
-  # the backend, so this asserts the edge and that SSO is still attached, and NOTHING about the app behind it.
-  # There is no way to check the backend from here without a Google login. Cover those with their own alerts.
   sso:
-    - https://argocd.ops.example.com/
-    - https://grafana.ops.example.com/
-    - https://vmui.ops.example.com/
-    - https://vlogs.ops.example.com/
-    - https://hubble.ops.example.com/
-    - https://longhorn.ops.example.com/
-    - https://rabbitmq.ops.example.com/
-    - https://sample-user-manager-sso.app.example.com/
-  # No SSO in front, so the app itself answers and the probe is end-to-end. Pick a path that returns 200:
-  # both of these serve 404 at `/`, which would look identical to a broken route.
+    module: http_sso_302
+    targets:
+      - https://argocd.ops.example.com/
+      - https://grafana.ops.example.com/
+      - https://vmui.ops.example.com/
+      - https://vlogs.ops.example.com/
+      - https://hubble.ops.example.com/
+      - https://longhorn.ops.example.com/
+      - https://rabbitmq.ops.example.com/
+      - https://sample-user-manager-sso.app.example.com/
   open:
-    - https://ntfy.ops.example.com/v1/health
-    - https://sample-user-manager.app.example.com/users
+    module: http_open_200
+    targets:
+      - https://ntfy.ops.example.com/v1/health
+      - https://sample-user-manager.app.example.com/users
 
 interval: 60s # a probe is a real request against a real backend, so this is a rate as much as a resolution
 
@@ -28,6 +30,10 @@ prometheus-blackbox-exporter:
     modules:
       # follow_redirects is OFF in both: following the SSO redirect would leave us grading Google's login page,
       # and on an open host it would hide a wrong redirect behind whatever it lands on.
+
+      # For a host behind google-sso. The SecurityPolicy answers before the request ever reaches the backend,
+      # so a pass asserts the edge and that SSO is still attached, and NOTHING about the app behind it. There
+      # is no way to check that backend from here without a Google login; cover those with their own alerts.
       http_sso_302:
         prober: http
         timeout: 5s
@@ -41,6 +47,8 @@ prometheus-blackbox-exporter:
           fail_if_header_not_matches:
             - header: Location
               regexp: '^https://accounts\.google\.com/'
+      # For a host with no SSO in front, so the app itself answers and the probe is end-to-end. Point it at a
+      # path that returns 200: a host serving 404 at `/` looks identical to a broken route.
       http_open_200:
         prober: http
         timeout: 5s

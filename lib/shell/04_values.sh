@@ -172,8 +172,8 @@ build_probe_lists() {
     case "$sub" in *.OPS) sub="${sub%.OPS}.${OPS_DOMAIN}" ;; *.APP) sub="${sub%.APP}.${APP_DOMAIN}" ;; esac
     BB_OPEN_URLS="${BB_OPEN_URLS} https://${sub}${path}"
   done
-  ys_set_list "$BB_VALUES" "$BB_SSO"            probes sso
-  ys_set_list "$BB_VALUES" "${BB_OPEN_URLS# }"  probes open
+  ys_set_list "$BB_VALUES" "$BB_SSO"            probes sso  targets
+  ys_set_list "$BB_VALUES" "${BB_OPEN_URLS# }"  probes open targets
 }
 
 # Many distributions bind these three to localhost and expose them per-node, so they are scraped by node IP, and
@@ -213,8 +213,8 @@ verify_writes() {
   _eq "ntfy baseUrl"        "https://ntfy.${OPS_DOMAIN}" "$(yq -r '.baseUrl' "$NTFY_VALUES")"
   _eq "platform-ingress domains" "$OPS_DOMAIN" "$(yq -r '[.ingress.ingresses[].domain] | unique | join(" ")' "$PI_VALUES")"
   _eq "workload domains"    "$APP_DOMAIN"      "$(yq -r '[.ingress.ingresses[].domain] | unique | join(" ")' "$WL_VALUES")"
-  _eq "blackbox sso"        "$BB_SSO"          "$(yq -r '.probes.sso | join(" ")' "$BB_VALUES")"
-  _eq "blackbox open"       "${BB_OPEN_URLS# }" "$(yq -r '.probes.open | join(" ")' "$BB_VALUES")"
+  _eq "blackbox sso"        "$BB_SSO"          "$(yq -r '.probes.sso.targets | join(" ")' "$BB_VALUES")"
+  _eq "blackbox open"       "${BB_OPEN_URLS# }" "$(yq -r '.probes.open.targets | join(" ")' "$BB_VALUES")"
   _eq "envoy loadBalancerIP" "$INGRESS_LB_IP"  "$(yq -r '.envoyProxy.loadBalancerIP' "$EG_VALUES")"
   for k in kubeControllerManager kubeScheduler kubeEtcd; do
     _eq "vm ${k} endpoints" "$CP_IPS" "$(yq -r ".\"victoria-metrics-k8s-stack\".${k}.endpoints | join(\" \")" "$VM_VALUES")"
