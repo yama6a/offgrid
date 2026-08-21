@@ -1,10 +1,9 @@
 {{- /*
-One VMProbe per expected answer. vmagent picks these up and asks the exporter to fetch each target, so the
+One VMProbe per probes group. vmagent picks these up and asks the exporter to fetch each target, so the
 resulting `probe_*` series carry the URL in the `instance` label. See docs/06_monitoring.md.
 */ -}}
-{{- range $name, $module := dict "sso" "http_sso_302" "open" "http_open_200" }}
-{{- $targets := index $.Values.probes $name }}
-{{- if $targets }}
+{{- range $name, $group := $.Values.probes }}
+{{- if $group.targets }}
 ---
 apiVersion: operator.victoriametrics.com/v1beta1
 kind: VMProbe
@@ -13,13 +12,13 @@ metadata:
   namespace: {{ $.Release.Namespace }}
 spec:
   jobName: blackbox-ingress-{{ $name }}
-  module: {{ $module }}
+  module: {{ required (printf "probes.%s needs a module" $name) $group.module }}
   interval: {{ $.Values.interval }}
   vmProberSpec:
     url: blackbox-exporter.{{ $.Release.Namespace }}.svc:9115
     path: /probe
   targets:
     staticConfig:
-      targets: {{ $targets | toYaml | nindent 8 }}
+      targets: {{ $group.targets | toYaml | nindent 8 }}
 {{- end }}
 {{- end }}

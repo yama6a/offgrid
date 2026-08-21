@@ -187,11 +187,12 @@ apiserver and etcd histograms are dropped via `metricRelabelConfigs`.
 ### Synthetic probes, so an unvisited host still reports
 
 `05_blackbox_exporter` (wave 5) fetches every ingress host once a minute over its PUBLIC name, and vmagent
-scrapes the result via two `VMProbe` CRs. This exists because the `ingress-http` alerts read Envoy's own
+scrapes the result via one `VMProbe` CR per group. This exists because the `ingress-http` alerts read Envoy's own
 counters: they need real traffic, so a host with a dead backend and no visitors stays green until someone tries
 it. One probe covers DNS, the router's hairpin back to the LoadBalancer, the served certificate and the route.
 
-Targets are split by what an anonymous GET should get back, and the module asserts exactly that:
+Targets sit in groups, each naming the module that grades it, and the module asserts exactly what an
+anonymous GET should get back:
 
 | Module | Expects | Covers |
 |---|---|---|
@@ -211,6 +212,9 @@ Consequences worth knowing:
 - **Adding a host to `06_platform_ingress` does NOT add a probe.** The target lists in the blackbox chart's
   `values.yaml` are hand-maintained, deliberately: the expected status code is a per-host decision, not
   something derivable from the ingress definition.
+- **A group can hold any FQDN**, not just the `ops.` and `app.` tiers. `04_values.sh` composes the targets of
+  `sso` and `open` from those two domains and touches nothing else, so a host on another domain goes in a
+  group you add by hand, naming its module and listing full URLs.
 
 ### SMART, because node-exporter reads none of it
 
