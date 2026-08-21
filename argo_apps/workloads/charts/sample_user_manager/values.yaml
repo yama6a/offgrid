@@ -82,7 +82,7 @@ analyticsdb:
 redis-cache:
   name: sample-user-manager-redis-cache
   # renovate: datasource=docker depName=quay.io/opstree/redis
-  redisVersion: "v8.6.2"
+  redisVersion: "v8.10.1"
   alertCritical: true
   persistence: false          # 1h-TTL and regenerable, so the demo treats it as ephemeral
   deletionProtection: true
@@ -97,7 +97,7 @@ redis-cache:
 redis-sessions:
   name: sample-user-manager-redis-sessions
   # renovate: datasource=docker depName=quay.io/opstree/redis
-  redisVersion: "v8.6.2"
+  redisVersion: "v8.10.1"
   persistence: true           # durable, so it is labelled for the central 07_redis_backup job
   deletionProtection: true
   initialFixedDiskSize: 1Gi   # create-time ONLY, changing this does NOT resize a live instance

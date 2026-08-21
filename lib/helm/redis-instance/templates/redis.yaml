@@ -33,7 +33,7 @@ spec:
   redisExporter:
     enabled: true
     # renovate: datasource=docker
-    image: "quay.io/opstree/redis-exporter:v1.84.0"
+    image: "quay.io/opstree/redis-exporter:v1.89.0"
     imagePullPolicy: IfNotPresent
   redisConfig:
     # Extra redis.conf overlay from templates/configmap.yaml. The ConfigMap always exists, so this is
