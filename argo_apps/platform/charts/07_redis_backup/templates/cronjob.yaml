@@ -61,7 +61,7 @@ spec:
                 - { name: work, mountPath: /work }
             - name: dump
               # renovate: datasource=docker
-              image: "quay.io/opstree/redis:v8.6.2"
+              image: "quay.io/opstree/redis:v8.10.1"
               command: ["/bin/sh", "-c"]
               args:
                 - |
