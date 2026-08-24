@@ -10,7 +10,7 @@ source "${SCRIPT_DIR}/common.sh"
 SVC="vmsingle-victoria-metrics-k8s-stack"   # the VMSingle PromQL API service in $MONITORING_NS
 PORT=8428                                   # vmsingle's port; same on both sides of the forward
 # renovate: datasource=docker
-KRR_IMAGE="us-central1-docker.pkg.dev/genuine-flight-317411/devel/krr:v1.29.0"
+KRR_IMAGE="us-central1-docker.pkg.dev/genuine-flight-317411/devel/krr:v1.30.0"
 
 # ---- state ----
 TMP_KUBECONFIG=""   # set by copy_kubeconfig, removed by cleanup
