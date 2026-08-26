@@ -108,15 +108,6 @@
       pinDigests: true,
     },
     {
-      // Tags are <upstream version>-<our build revision>, e.g. v0.14.0-2, because upstream ships no arm64
-      // image and we rebuild their release ourselves. Default semver reads that `-2` as a PRERELEASE of
-      // v0.14.0 and would never offer it, so state the shape outright. A revision bump is usually a
-      // base-image CVE fix, which is exactly the update worth taking.
-      description: "smartctl-exporter image revisions",
-      matchDepNames: ["ghcr.io/yama6a/smartctl-exporter-multiarch"],
-      versioning: "regex:^v(?<major>\\d+)\\.(?<minor>\\d+)\\.(?<patch>\\d+)-(?<build>\\d+)$",
-    },
-    {
       // postgresVersion is a MAJOR selector only, a key into pg-cluster's image map, where the actual patch
       // and digest are pinned. Disabling patch/minor/digest here keeps the workload scalar from churning, so
       // only a MAJOR bump surfaces, as its own reviewed PR. That PR fails CI until the matching major is

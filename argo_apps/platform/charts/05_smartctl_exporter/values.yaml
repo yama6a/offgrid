@@ -2,10 +2,11 @@ prometheus-smartctl-exporter:
   fullnameOverride: smartctl-exporter
 
   image:
-    # Upstream publishes amd64 ONLY, so the stock image cannot run on an arm64 node. This is the same release
-    # binary repackaged as a manifest list. Tag is <upstream version>-<our build revision>.
-    repository: ghcr.io/yama6a/smartctl-exporter-multiarch
-    tag: v0.14.0-2
+    # Every TAGGED release upstream is amd64-only, so none of them run on the Pis at all. `master` is the only
+    # multi-arch tag they publish, hence a branch build here. Renovate refreshes the digest below and nothing
+    # else: moving to a version tag, once upstream tags one with arm64, is a hand edit.
+    repository: quay.io/prometheuscommunity/smartctl-exporter
+    tag: master@sha256:aa8838d7620d9415015a798b6a680492770324c24e7dd73aedf99841f7d3fd94
 
   # Which block devices to read SMART from. REQUIRED and NOT autodetectable: Longhorn attaches every replica
   # as an iSCSI /dev/sd*, the same namespace a real SATA disk lands in, so letting smartctl scan would probe
