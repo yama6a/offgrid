@@ -1,13 +1,16 @@
 # Storage & database
 
-One storage layer and a database operator, all pure-GitOps wave-2 leaves with no imperative script. Each needs
+One storage layer and a database operator, both pure-GitOps wave-2 leaves with no imperative script. Each needs
 one host prerequisite the README states: a dedicated filesystem, bind-mounted into the kubelet with `rshared`.
+Then a shared chart for storage this cluster does not own at all.
 
 | Layer | Classes | Replicates at | Backs |
 |---|---|---|---|
 | [Longhorn](#longhorn) | `longhorn-r2-ephemeral`, `longhorn-r2-ephemeral-local`, `longhorn-r2-retained-with-backups` | the volume | everything: Postgres, RabbitMQ, Redis, the monitoring stores, ntfy |
+| [External NFS](#external-nfs) | none, static PVs | nothing, the server does | storage that already exists off-cluster: a NAS share, a media library |
 
-There is **no default StorageClass**. Every PVC names one, or it stays `Pending`.
+There is **no default StorageClass**. Every PVC names one, or it stays `Pending`. The one exception is a
+static PV, which names `storageClassName: ""` and binds to a PV by name.
 
 Per-node disk layout on the cluster this was developed against, carved by its node tooling: 64 GiB for the OS,
 then a dedicated data volume taking the whole remainder.
@@ -86,6 +89,7 @@ node BEFORE the Longhorn app syncs, or the manager pods come up with every node'
 | `persistence.defaultClass: false` | no cluster-default class; a PVC that omits one stays `Pending` |
 | `storageMinimalAvailablePercentage: 15` | headroom on the Pi NVMes; do not schedule onto a disk under 15% free |
 | `preUpgradeChecker.jobEnabled: false` | that Helm pre-upgrade hook Job can stall an ArgoCD sync waiting on completion |
+| `networkPolicies.restrictInternalTraffic: false` | chart 1.12.1 defaults it ON, and the internal policies it gates ignore `networkPolicies.enabled`. See [below](#the-1121-network-policy-regression) |
 
 Why 2 replicas and not one per node: 2 survives the single node loss we design for AND leaves at least one spare
 node to rebuild the lost replica onto. Raising it to the node count leaves no spare under hard anti-affinity, so
@@ -94,6 +98,30 @@ a volume stays degraded until the dead node returns.
 Adding a node does not move existing replicas. `replica-auto-balance` is at its default `disabled`, so a new
 node stays empty of replicas until new volumes are created or something rebuilds. That is usually what you want;
 `replica-auto-balance: best-effort` spreads them over time if the concentration bothers you.
+
+### The 1.12.1 network policy regression
+
+Chart `1.12.1` added `networkPolicies.restrictInternalTraffic`, defaulted it to **true**, and gated its six
+internal NetworkPolicy templates on that value alone. They ignore `networkPolicies.enabled`, so leaving that at
+its `false` default does not stop them. A patch bump from 1.12.0 therefore applies policies nobody asked for,
+and two things break on a CNI that actually enforces them:
+
+- `longhorn-manager:9500` stops accepting vmagent, so every `longhorn_*` series and every longhorn-health alert
+  goes dark. Including the alerts that would have told you.
+- the external CSI sidecars (`csi-attacher`, `csi-provisioner`, `csi-resizer`, `csi-snapshotter`) are separate
+  Deployments and are not on the manager's allow-list, so volume attach and detach fail.
+
+Both are priority/0 upstream, both backported to 1.12.2: [longhorn#13740](https://github.com/longhorn/longhorn/issues/13740)
+and [longhorn#13802](https://github.com/longhorn/longhorn/issues/13802). Until then the values set
+`restrictInternalTraffic: false`, which is what 1.12.0 behaved like. Drop the line on 1.12.2 and adopt the
+policies deliberately, with the metrics scraper and the CSI sidecars written into them.
+
+Separately, the chart tarball for 1.12.1 is **gone**: the GitHub release it was attached to was deleted, while
+`charts.longhorn.io/index.yaml` still advertises the version and points at the dead URL. The git tag survives,
+so the source is recoverable, but `helm dependency build` on a cold cache cannot resolve 1.12.1 at all. Nothing
+here fixes that; a repo-server with the chart already cached keeps working, and one without it cannot render
+this app. Pinning back to 1.12.0 would fix the fetch but Longhorn does not support downgrades, so the plan is
+to sit on 1.12.1 and take 1.12.2 when it lands.
 
 ### The three StorageClasses
 
@@ -181,6 +209,98 @@ kubectl -n longhorn-system get recurringjob                    # filesystem-trim
 
 Smoke test: apply a 1Gi PVC with `storageClassName: longhorn-r2-ephemeral` plus a pod, confirm it goes `Bound`
 and the volume shows 2 healthy replicas on two distinct nodes.
+
+## External NFS
+
+For storage that already exists on an NFS server and that this cluster does not own: a NAS share, a media
+library, an archive somebody else fills. Longhorn is for data the cluster creates; this is for data it visits.
+
+Chart: `lib/helm/nfs-volume/`, a shared chart consumed as a `file://` dependency like the other four. It has no
+Argo Application of its own and installs nothing, so it stays completely inert until a workload declares it and
+fills in `volumes[]`.
+
+Each entry renders two objects:
+
+- a **PersistentVolume** with an in-tree `nfs:` source, `storageClassName: ""`, and a `claimRef` pre-binding it
+  to one namespace and one claim name
+- the **PersistentVolumeClaim** that names it back with `volumeName`
+
+The `claimRef` is not decoration. Without it, any PVC anywhere whose request the PV satisfies can win the bind
+first, and the intended claim then sits `Pending` behind a stranger. Naming both ends makes the pairing the only
+one possible.
+
+Nothing else is involved: no StorageClass, no CSI driver, no dynamic provisioning. The kubelet mounts it with
+the node's kernel NFS client, the same client Longhorn's RWX volumes already use.
+
+### Why the in-tree plugin and not csi-driver-nfs
+
+`csi-driver-nfs` is the maintained driver and it does more: dynamic provisioning, snapshots, class-level mount
+options. None of that applies here. Dynamic provisioning creates a fresh `pvc-<uuid>` directory per claim, which
+is exactly wrong when the point is to mount a directory that already exists under a name a human chose. Using
+the driver for static PVs instead works, and costs a DaemonSet plus a controller on every node for a result the
+kubelet already produces for free.
+
+The in-tree NFS plugin is frozen, not deprecated. No CSI migration is planned for it and nothing removes it.
+Switching later means rewriting the PV and restarting the pods, not moving data.
+
+### Capacity is a fiction
+
+`capacity` is required and enforced by nothing. NFS reports no size to the kubelet, no quota is applied, and a
+pod can fill the server's disk with a 1Gi PV. The field exists because the API demands a number and because the
+PVC's request has to match it for the bind to happen. Put something plausible in it and do not treat it as a
+limit.
+
+`reclaimPolicy` defaults to `Retain`, and `Delete` is offered mostly so nobody has to wonder. `Delete` on an NFS
+PV deletes the PV object and leaves every byte on the server, so what it reclaims is the illusion of having
+reclaimed something.
+
+### hard or softerr, and why there is no right default
+
+`mountOptions` defaults to `nfsvers=4.1, hard, noatime`. That default is a position, not a neutral choice:
+
+| | `hard` | `softerr,timeo=600,retrans=5` |
+|---|---|---|
+| Server goes away | IO blocks until it returns | IO returns EIO after a few minutes |
+| On its return | resumes exactly where it stopped, nothing lost | the app already saw an error |
+| Cost | the pod blocks in uninterruptible sleep, SIGKILL does not land, and the kubelet can fail to tear it down | a write in flight when the server dropped can be torn |
+
+`hard` is the default because silent corruption is worse than a stuck pod, and it is what NFS itself defaults to.
+A consumer that would rather take the error than the wedge sets the other set explicitly; Longhorn makes that
+same call for its own RWX volumes.
+
+### Permissions
+
+The pod's uid crosses the wire as-is under AUTH_SYS, so the export has to be writable by whatever uid the pods
+run as, or the server has to squash it to something that is. A mount that succeeds and then refuses every write
+is the normal symptom of getting this wrong, and no amount of Kubernetes YAML fixes it.
+
+One trap specific to NFS. Longhorn's CSIDriver declares `fsGroupPolicy: ReadWriteOnceWithFSType`, so the kubelet
+skips `fsGroup` on its RWX volumes entirely. An in-tree NFS volume has no CSIDriver object to declare anything,
+so the kubelet applies `fsGroup` itself and recursively chowns the mount. On a large export that is a pod start
+that never finishes. Either set no `fsGroup` on pods mounting these volumes, or keep
+`fsGroupChangePolicy: OnRootMismatch` and make sure the export root already has the right ownership, which makes
+the kubelet skip the walk.
+
+### No policy rule, and no metrics
+
+The kubelet performs the mount in the **host** network namespace and bind-mounts the result into the pod. The
+NFS traffic is therefore never the pod's, and no `CiliumNetworkPolicy` sees it or needs a rule for it.
+
+The flip side: nothing in the monitoring stack knows this volume exists. No Longhorn metrics, no replica health,
+no capacity series, so no alert fires when the server disappears. A blackbox TCP probe against the server on
+2049 is the cheapest way to get that back; `05_blackbox_exporter` takes an arbitrary target in a probe group.
+
+### Verify
+
+```bash
+kubectl get pv                                # Bound, with the right CLAIM and RECLAIM POLICY
+kubectl -n <ns> get pvc                       # Bound, not Pending
+kubectl -n <ns> exec <pod> -- sh -c 'mount | grep nfs; id; ls -lan <mountPath>'
+```
+
+The `mount` line proves the negotiated NFS version and the options that actually took effect, which is not
+always what the PV asked for. Files listing as `nobody` or `65534` rather than a real numeric uid means the
+server is translating identities instead of passing them through; reads still work, writes will not.
 
 ## CloudNativePG
 

@@ -1,0 +1,23 @@
+{{- /* Validation only, renders to empty. Enforces the REQUIRED fields. */ -}}
+{{- $seen := dict }}
+{{- range $i, $v := .Values.volumes }}
+{{- if not $v.name }}
+{{- fail (printf "nfs-volume: volumes[%d] needs a name (the PVC name, what a consuming pod's claimName says)" $i) }}
+{{- end }}
+{{- if hasKey $seen $v.name }}
+{{- fail (printf "nfs-volume: two volumes are both named %q; the name is the PVC name and has to be unique in the namespace" $v.name) }}
+{{- end }}
+{{- $_ := set $seen $v.name true }}
+{{- if not $v.server }}
+{{- fail (printf "nfs-volume: volume %q needs a server (the NFS server, IP or resolvable name)" $v.name) }}
+{{- end }}
+{{- if not $v.path }}
+{{- fail (printf "nfs-volume: volume %q needs a path (the export path on that server)" $v.name) }}
+{{- end }}
+{{- if not $v.capacity }}
+{{- fail (printf "nfs-volume: volume %q needs a capacity; it is bookkeeping only, since NFS reports no size and nothing enforces it, but the API demands a number and the PVC request has to match it to bind" $v.name) }}
+{{- end }}
+{{- if and $v.reclaimPolicy (not (has $v.reclaimPolicy (list "Retain" "Delete"))) }}
+{{- fail (printf "nfs-volume: volume %q reclaimPolicy is %q, expected Retain or Delete" $v.name $v.reclaimPolicy) }}
+{{- end }}
+{{- end }}

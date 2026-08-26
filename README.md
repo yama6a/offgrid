@@ -74,12 +74,13 @@ Everything after `01`/`02a` is an Argo CD-delivered wrapper chart, each pinning 
 | **Observability** | blackbox-exporter              | Probes every ingress host over its public name, so a broken edge is caught without traffic.                  |
 | **Workloads**     | sample-user-manager + 2 more   | Demo app + Postgres + Redis + messaging + open/SSO ingress: the template for real workloads.                 |
 
-Four shared charts under `lib/helm/` are consumed as `file://` dependencies, all `type: application`:
+Five shared charts under `lib/helm/` are consumed as `file://` dependencies, all `type: application`:
 
 - `ingress`: the ingress edge (Gateway, HTTPRoute, ReferenceGrant, Certificate) from an `ingresses[]` list
 - `pg-cluster`: a curated CloudNativePG Postgres wrapper
 - `redis-instance`: a curated standalone OpsTree Redis wrapper
 - `rabbitmq-topology`: a workload's messaging topology against the shared broker
+- `nfs-volume`: static PVs + PVCs for NFS exports that already exist off-cluster, from a `volumes[]` list
 
 ## What this expects of your cluster
 
@@ -91,7 +92,7 @@ satisfy a short list. Each row says what to change when yours differs; the knobs
 |---|---|---|
 | The API reachable at `KUBE_API_HOST:KUBE_API_PORT` from every node | Cilium runs `kubeProxyReplacement`, so it needs the API *before* pod networking exists | set both in `.env`. The default `localhost:7445` is Talos KubePrism; elsewhere use your API endpoint, or a node-local proxy |
 | No CNI installed, kube-proxy disabled | Cilium provides both. Nodes stay `NotReady` until `01_cilium.sh` runs, which is expected | if your distribution ships a CNI, remove it first, or skip `01_cilium.sh` and adapt the Cilium values to coexist |
-| `iscsid`, `fstrim` and an NFSv4 client on every node | Longhorn attaches volumes over iSCSI and trims them, and an RWX volume is mounted over NFS | install `open-iscsi`, `util-linux` and `nfs-common` (`nfs-utils` / `nfs-client` elsewhere); on an immutable OS add the equivalent extensions. Talos has the NFS client in-kernel. `kubectl get nodes.longhorn.io -n longhorn-system` reports all three as conditions |
+| `iscsid`, `fstrim` and an NFSv4 client on every node | Longhorn attaches volumes over iSCSI and trims them, an RWX volume is mounted over NFS, and `lib/helm/nfs-volume` mounts off-cluster exports the same way | install `open-iscsi`, `util-linux` and `nfs-common` (`nfs-utils` / `nfs-client` elsewhere); on an immutable OS add the equivalent extensions. Talos has the NFS client in-kernel. `kubectl get nodes.longhorn.io -n longhorn-system` reports all three as conditions |
 | A filesystem at `LONGHORN_DATA_PATH`, bind-mounted into the kubelet with `rshared` | Longhorn creates one sub-mount per replica and the kubelet has to see them | any path works. Longhorn's own default is `/var/lib/longhorn`. With a containerized kubelet the mount propagation must be bidirectional |
 | A 4K-page kernel | Longhorn and XFS do not cope with 16K pages | almost every distribution already is. Only a concern on SBC kernels built with 16K |
 | Namespaces can carry `pod-security.kubernetes.io/enforce: privileged` | Longhorn, Cilium and the node agents need privileged pods | the app manifests set it themselves, so nothing to do unless a policy engine overrides them |
