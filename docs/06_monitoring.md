@@ -225,12 +225,9 @@ catching earliest. The rules are the `smart-health` group.
 
 Two things about it are not obvious:
 
-- **The image is `ghcr.io/yama6a/smartctl-exporter-multiarch`, not upstream's.** prometheus-community publishes
-  smartctl-exporter for amd64 only, so the stock image cannot run on the Pis at all. That repo repackages
-  their own release binary, unmodified, as a manifest list. Its tag is `<upstream version>-<build revision>`,
-  so `v0.14.0-2` is the second build of upstream's `v0.14.0`, usually after a base-image CVE fix. Renovate
-  needs the shape declared or it reads the suffix as a semver prerelease; see the packageRule in
-  `renovate.json5`.
+- **The image is upstream's `master` tag, not a release.** Every tagged release of smartctl-exporter is
+  amd64-only, so none of them run on the Pis at all. `master` is the only multi-arch tag prometheus-community
+  publishes, so the chart's `values.yaml` pins it by digest and Renovate refreshes that digest.
 - **The device list is hand-maintained, per architecture, and has to be.** Longhorn attaches every replica as
   an iSCSI `/dev/sd*`, the same namespace a real SATA disk lands in. Letting smartctl scan would make it probe
   every attached volume, which has no SMART and whose set changes on every attach. So there is one DaemonSet
