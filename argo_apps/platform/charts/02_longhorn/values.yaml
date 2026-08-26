@@ -42,6 +42,13 @@ longhorn:
     defaultClass: false
   preUpgradeChecker:
     jobEnabled: false # a Helm pre-upgrade hook Job, which can stall an ArgoCD sync waiting on completion
+  networkPolicies:
+    # Chart 1.12.1 turned this on by default and the six internal policy templates gate on it ALONE, ignoring
+    # networkPolicies.enabled. So a patch bump silently walls off longhorn-manager:9500 from vmagent (metrics
+    # and every longhorn-health alert go dark) and leaves the external CSI sidecars off the allow-list, which
+    # fails volume attach/detach. Both are priority/0 upstream, both backported to 1.12.2: longhorn#13740 and
+    # longhorn#13802. Drop this line once we are on 1.12.2 and can adopt the policies properly.
+    restrictInternalTraffic: false
   metrics:
     serviceMonitor:
       enabled: true

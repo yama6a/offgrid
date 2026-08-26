@@ -89,6 +89,7 @@ node BEFORE the Longhorn app syncs, or the manager pods come up with every node'
 | `persistence.defaultClass: false` | no cluster-default class; a PVC that omits one stays `Pending` |
 | `storageMinimalAvailablePercentage: 15` | headroom on the Pi NVMes; do not schedule onto a disk under 15% free |
 | `preUpgradeChecker.jobEnabled: false` | that Helm pre-upgrade hook Job can stall an ArgoCD sync waiting on completion |
+| `networkPolicies.restrictInternalTraffic: false` | chart 1.12.1 defaults it ON, and the internal policies it gates ignore `networkPolicies.enabled`. See [below](#the-1121-network-policy-regression) |
 
 Why 2 replicas and not one per node: 2 survives the single node loss we design for AND leaves at least one spare
 node to rebuild the lost replica onto. Raising it to the node count leaves no spare under hard anti-affinity, so
@@ -97,6 +98,30 @@ a volume stays degraded until the dead node returns.
 Adding a node does not move existing replicas. `replica-auto-balance` is at its default `disabled`, so a new
 node stays empty of replicas until new volumes are created or something rebuilds. That is usually what you want;
 `replica-auto-balance: best-effort` spreads them over time if the concentration bothers you.
+
+### The 1.12.1 network policy regression
+
+Chart `1.12.1` added `networkPolicies.restrictInternalTraffic`, defaulted it to **true**, and gated its six
+internal NetworkPolicy templates on that value alone. They ignore `networkPolicies.enabled`, so leaving that at
+its `false` default does not stop them. A patch bump from 1.12.0 therefore applies policies nobody asked for,
+and two things break on a CNI that actually enforces them:
+
+- `longhorn-manager:9500` stops accepting vmagent, so every `longhorn_*` series and every longhorn-health alert
+  goes dark. Including the alerts that would have told you.
+- the external CSI sidecars (`csi-attacher`, `csi-provisioner`, `csi-resizer`, `csi-snapshotter`) are separate
+  Deployments and are not on the manager's allow-list, so volume attach and detach fail.
+
+Both are priority/0 upstream, both backported to 1.12.2: [longhorn#13740](https://github.com/longhorn/longhorn/issues/13740)
+and [longhorn#13802](https://github.com/longhorn/longhorn/issues/13802). Until then the values set
+`restrictInternalTraffic: false`, which is what 1.12.0 behaved like. Drop the line on 1.12.2 and adopt the
+policies deliberately, with the metrics scraper and the CSI sidecars written into them.
+
+Separately, the chart tarball for 1.12.1 is **gone**: the GitHub release it was attached to was deleted, while
+`charts.longhorn.io/index.yaml` still advertises the version and points at the dead URL. The git tag survives,
+so the source is recoverable, but `helm dependency build` on a cold cache cannot resolve 1.12.1 at all. Nothing
+here fixes that; a repo-server with the chart already cached keeps working, and one without it cannot render
+this app. Pinning back to 1.12.0 would fix the fetch but Longhorn does not support downgrades, so the plan is
+to sit on 1.12.1 and take 1.12.2 when it lands.
 
 ### The three StorageClasses
 
