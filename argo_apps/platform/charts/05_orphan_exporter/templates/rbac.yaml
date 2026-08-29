@@ -20,6 +20,15 @@ rules:
   - apiGroups: ["argoproj.io"]
     resources: ["applications"]
     verbs: ["get", "list"]
+  # PVs are cluster-scoped, so there is no narrower grant than this. Read only: the exporter reports an
+  # abandoned PV, `make cleanup-abandoned-pvs` is what deletes one.
+  - apiGroups: [""]
+    resources: ["persistentvolumes"]
+    verbs: ["get", "list"]
+  # Both, because an orphaned backupvolume is only visible by diffing the two.
+  - apiGroups: ["longhorn.io"]
+    resources: ["volumes", "backupvolumes"]
+    verbs: ["get", "list"]
 # ConfigMap access is deliberately not cluster-wide: see the namespaced Role below.
 ---
 apiVersion: rbac.authorization.k8s.io/v1

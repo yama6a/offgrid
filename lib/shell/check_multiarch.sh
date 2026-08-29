@@ -14,11 +14,20 @@ check_multiarch.sh                      (or: make check-multiarch [ARCH=amd64])
 
 Reads the LIVE pods, not values.yaml: most images come from upstream charts and never appear in this repo.
 Run it before a node of a new architecture takes workloads, and after a chart bump.
+
+SKIP_IMAGES at the top of this script exempts images that are single-arch on purpose. A stale entry there is
+how a genuinely broken image gets missed, so prune it when the pod that justified it goes.
 EOF
 }
 
 # ---- knobs ----
 ERR_FILE="/tmp/.ma_err"   # docker manifest inspect's stderr, so a failed read can be told apart from a miss
+
+# Single-architecture ON PURPOSE. An entry only belongs here if the chart also pins the pod off every other
+# architecture, so add the pin FIRST: skipping an unpinned image just hides the CrashLoopBackOff until deploy.
+SKIP_IMAGES=(
+  "intel/intel-gpu-plugin"   # amd64-only upstream; nodeAffinity on extensions.talos.dev/i915
+)
 
 # ---- state ----
 ARCHES=()    # set by resolve_required_arches
@@ -91,7 +100,10 @@ read_image_arches() {
 # problem that is not there: the pod is running this image, so the cluster can pull it, and a failure here is
 # local (rate limit, no login). Reported separately so it is visible without failing the run.
 check_image() {
-  local img="$1" missing="" a
+  local img="$1" missing="" a skip
+  for skip in "${SKIP_IMAGES[@]}"; do
+    case "$img" in "${skip}"*) say "${img}: skipped, pinned single-arch on purpose"; return 0 ;; esac
+  done
   read_image_arches "$img"
   if [ -z "$HAVE" ]; then
     UNREAD=$((UNREAD+1))

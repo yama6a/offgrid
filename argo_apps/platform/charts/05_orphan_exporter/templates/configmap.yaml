@@ -149,6 +149,53 @@ data:
             out.append("redis_backup_last_size_bytes{%s} %d" % (lb, size))
         return out
 
+    # A PV nothing will bind again: Released (its PVC is gone and the class Retains), or Available with no
+    # claimRef (nothing ever claimed it). Available WITH a claimRef is a static PV waiting for its own PVC,
+    # which lib/helm/nfs-volume creates on purpose, so that one is not abandoned.
+    # Deliberately NOT kube_persistentvolume_status_phase: measured here, kube-state-metrics stopped exporting
+    # three PVs the moment they went Released and reported no Released phase for the 37h they existed.
+    def collect_abandoned_pvs():
+        out = [
+            "# HELP abandoned_pv PV no PVC will bind again: Released, or Available and never claimed",
+            "# TYPE abandoned_pv gauge",
+        ]
+        for pv in items("/api/v1/persistentvolumes"):
+            spec = pv.get("spec") or {}
+            phase = (pv.get("status") or {}).get("phase") or ""
+            ref = spec.get("claimRef") or {}
+            if phase not in ("Released", "Available") or (phase == "Available" and ref):
+                continue
+            out.append("abandoned_pv{%s} 1" % labels([
+                ("res_pv", pv["metadata"]["name"]),
+                ("res_phase", phase),
+                ("res_storageclass", spec.get("storageClassName") or ""),
+                ("res_reclaim", spec.get("persistentVolumeReclaimPolicy") or ""),
+                # ns/name of the claim that is gone. The cleanup target reads it back to name what this was.
+                ("res_claim", "%s/%s" % (ref.get("namespace", ""), ref.get("name", "")) if ref else ""),
+            ]))
+        return out
+
+    # A BackupVolume whose Longhorn Volume is gone: the S3 backup outlived the thing it backed up. Nothing
+    # prunes it, because a recurring job's `retain` only counts volumes that still exist and the bucket
+    # lifecycle deliberately expires nothing under longhorn/ (terraform/main.tf says why). lastBackupAt is the
+    # age anchor: with no volume there is no new backup, so it freezes and only gets older. That is slightly
+    # EARLIER than the volume's deletion, which nothing records anywhere.
+    def collect_orphaned_backupvolumes():
+        out = [
+            "# HELP orphaned_backupvolume_last_backup_seconds unix ts of the last backup of a volume that no longer exists",
+            "# TYPE orphaned_backupvolume_last_backup_seconds gauge",
+        ]
+        live = {v["metadata"]["name"] for v in items("/apis/longhorn.io/v1beta2/volumes")}
+        for bv in items("/apis/longhorn.io/v1beta2/backupvolumes"):
+            vol = (bv.get("spec") or {}).get("volumeName") or ""
+            if not vol or vol in live:
+                continue
+            out.append("orphaned_backupvolume_last_backup_seconds{%s} %d" % (
+                labels([("res_backupvolume", bv["metadata"]["name"]), ("res_volume", vol)]),
+                rfc3339((bv.get("status") or {}).get("lastBackupAt")),
+            ))
+        return out
+
     def collect():
         apps = items("/apis/argoproj.io/v1alpha1/namespaces/%s/applications" % ARGOCD_NS)
         names = {a["metadata"]["name"] for a in apps}
@@ -183,6 +230,8 @@ data:
                     continue
                 if app not in names:
                     out.append("%s{%s} 1" % (orphaned_metric, labels(base + [("res_app", app)])))
+        out += collect_abandoned_pvs()
+        out += collect_orphaned_backupvolumes()
         out += collect_recoverability()
         out += collect_redis_recoverability()
         out.append("orphan_exporter_up 1")

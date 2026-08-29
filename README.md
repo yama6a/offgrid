@@ -304,6 +304,7 @@ Each doc holds the why behind a step, with verification commands:
 | [11_renovate](docs/11_renovate.md)                 | Automated dependency updates and when Renovate is allowed to self-merge.        |
 | [12_storage_bench](docs/12_storage_bench.md)       | Measuring what Longhorn r2 costs CNPG and RabbitMQ in write latency.            |
 | [13_node_loss](docs/13_node_loss.md)               | What the workloads do when a machine dies, measured, and reconciling a replaced one. |
+| [14_igpu](docs/14_igpu.md)                         | The Intel iGPU: what the driver needs, how a pod claims it, and why no NFD.        |
 
 Repo-wide conventions (layout, where a value lives, chart and Argo CD rules) are in
 [CONTRIBUTING.md](CONTRIBUTING.md).

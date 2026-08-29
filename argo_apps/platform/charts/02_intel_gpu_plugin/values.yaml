@@ -1,0 +1,14 @@
+# Kubernetes cannot schedule on hardware it does not know about. This DaemonSet is the kubelet device plugin
+# that discovers /dev/dri render nodes and reports them as an allocatable resource, so a pod asking for
+# gpu.intel.com/i915 is placed on the box that has the iGPU instead of anywhere. The driver itself is not here:
+# it comes from the siderolabs/i915 Talos extension. See docs/14_igpu.md.
+
+# renovate: datasource=docker depName=docker.io/intel/intel-gpu-plugin
+image: "intel/intel-gpu-plugin:0.36.0"
+
+sharedDevNum: 2 # pods that may hold the iGPU at once. Slots are time-sliced with NO isolation, so this is a
+                # contention cap, not a partition: 2 lets plex and one other consumer run, a third goes Pending
+
+resources:
+  requests: {cpu: 40m, memory: 45Mi}
+  limits: {memory: 115Mi}

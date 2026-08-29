@@ -1,0 +1,61 @@
+apiVersion: apps/v1
+kind: DaemonSet
+metadata:
+  name: intel-gpu-plugin
+  namespace: {{ .Release.Namespace }}
+  labels:
+    app.kubernetes.io/name: intel-gpu-plugin
+spec:
+  selector:
+    matchLabels:
+      app.kubernetes.io/name: intel-gpu-plugin
+  updateStrategy:
+    type: RollingUpdate
+    rollingUpdate: {maxSurge: 0, maxUnavailable: 1}
+  template:
+    metadata:
+      labels:
+        app.kubernetes.io/name: intel-gpu-plugin
+    spec:
+      # Talos labels a node for every extension it booted with, so this lands only where the i915 driver
+      # actually is. Better than `kubernetes.io/arch: amd64`, which would also match an x86 box with no iGPU.
+      # Has to be nodeAffinity: nodeSelector cannot say "has this key", and the label's value is a firmware
+      # date that changes on every extension bump.
+      affinity:
+        nodeAffinity:
+          requiredDuringSchedulingIgnoredDuringExecution:
+            nodeSelectorTerms:
+              - matchExpressions:
+                  - {key: extensions.talos.dev/i915, operator: Exists}
+      tolerations: [{operator: Exists}] # the GPU is wanted whatever the node's role or taints
+      automountServiceAccountToken: false # talks to the kubelet over a unix socket, never to the kube API
+      containers:
+        - name: intel-gpu-plugin
+          image: {{ .Values.image | quote }}
+          args:
+            - -shared-dev-num={{ .Values.sharedDevNum }}
+          env:
+            - name: NODE_NAME
+              valueFrom: {fieldRef: {fieldPath: spec.nodeName}}
+          securityContext:
+            readOnlyRootFilesystem: true
+            allowPrivilegeEscalation: false
+            capabilities: {drop: ["ALL"]}
+            seccompProfile: {type: RuntimeDefault}
+          resources: {{- toYaml .Values.resources | nindent 12 }}
+          volumeMounts:
+            - {name: devfs, mountPath: /dev/dri, readOnly: true}
+            - {name: sysfsdrm, mountPath: /sys/class/drm, readOnly: true}
+            - {name: kubeletsockets, mountPath: /var/lib/kubelet/device-plugins}
+            - {name: cdipath, mountPath: /var/run/cdi}
+      volumes:
+        - name: devfs
+          hostPath: {path: /dev/dri}
+        - name: sysfsdrm
+          hostPath: {path: /sys/class/drm}
+        - name: kubeletsockets
+          hostPath: {path: /var/lib/kubelet/device-plugins}
+        # Where the plugin writes the device spec containerd reads to inject /dev/dri into a consumer, keeping
+        # the host's 0666 mode so the pod needs no supplementalGroups. Talos 1.13 has CDI on by default.
+        - name: cdipath
+          hostPath: {path: /var/run/cdi, type: DirectoryOrCreate}
