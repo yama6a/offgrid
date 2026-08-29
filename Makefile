@@ -119,6 +119,11 @@ restore-vm: ## Restore VictoriaMetrics/Logs from an S3 export: stream it into th
 fix-chart-locks: ## Regenerate any stale Chart.lock (out of sync with Chart.yaml) across all charts; no git.
 	bash lib/shell/fix_chart_locks.sh
 
+##@ Storage cleanup  (DESTRUCTIVE: deletes volume data)
+.PHONY: cleanup-abandoned-pvs
+cleanup-abandoned-pvs: ## List PVs nothing will bind again (Released, or never claimed) and delete the ones you pick, WITH their Longhorn volume; asks separately about the S3 backup.
+	bash lib/shell/cleanup_abandoned_pvs.sh
+
 ##@ Health & inspection  (read-only)
 .PHONY: view-credentials
 view-credentials: ## Print login URLs + credentials (RabbitMQ, ntfy phone, GitHub webhook) and the SSO-only UI URLs.

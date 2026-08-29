@@ -1,6 +1,7 @@
 # Emits orphaned_<kind> when a CR's owning ArgoCD Application is gone, and <kind>_untracked when a CR in an
 # Argo-managed namespace has no tracking metadata. Reads the k8s API directly, so it survives a pruned
 # PodMonitor. Add a kind by appending to KINDS in templates/configmap.yaml.
+# Also emits abandoned_pv, which is not a KIND and has its own collector: a PV nothing will bind again.
 image:
   repository: python
   tag: "3.14-slim" # renovate: datasource=docker depName=python

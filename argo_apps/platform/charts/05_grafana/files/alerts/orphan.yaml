@@ -271,3 +271,86 @@ groups:
               conditions:
                 - type: query
                   evaluator: {type: gt, params: [0]}
+      # 24h, not minutes: a chart that renames a PVC leaves the old PV Released for the length of the rollout,
+      # and paging through a normal migration would train you to ignore this. A Grafana restart resets the
+      # pending timer, so a PV abandoned right before one takes another 24h to surface.
+      - uid: pv-abandoned
+        title: PersistentVolume abandoned
+        condition: C
+        for: 24h
+        labels: {severity: warning}
+        annotations:
+          summary: 'PV {{ $labels.res_pv }} is {{ $labels.res_phase }} and nothing will bind it ({{ $labels.res_claim }})'
+          description: |
+            - its claim {{ $labels.res_claim }} is gone and the class reclaims {{ $labels.res_reclaim }}, so the PV and its data are still on disk
+            - a Longhorn PV also leaves the volume behind, which keeps failing its recurring backup: longhorn-backup-stale is the second symptom
+            - list and clean up: make cleanup-abandoned-pvs
+            - inspect first: kubectl describe pv {{ $labels.res_pv }}
+        noDataState: OK
+        execErrState: KeepLast
+        data:
+          - refId: A
+            relativeTimeRange: {from: 600, to: 0}
+            datasourceUid: VictoriaMetrics
+            model:
+              refId: A
+              instant: true
+              expr: 'max by (res_pv, res_phase, res_storageclass, res_reclaim, res_claim) (abandoned_pv)'
+          - refId: B
+            relativeTimeRange: {from: 600, to: 0}
+            datasourceUid: __expr__
+            model: {refId: B, type: reduce, expression: A, reducer: last, datasource: {type: __expr__, uid: __expr__}}
+          - refId: C
+            relativeTimeRange: {from: 600, to: 0}
+            datasourceUid: __expr__
+            model:
+              refId: C
+              type: threshold
+              expression: B
+              datasource: {type: __expr__, uid: __expr__}
+              conditions:
+                - type: query
+                  evaluator: {type: gt, params: [0]}
+      # The S3 backup of a volume that no longer exists. Nothing deletes it on its own: a recurring job's
+      # `retain` only prunes volumes that still exist, and the bucket lifecycle expires nothing under
+      # longhorn/ on purpose (terraform/main.tf). So this is the only thing that will ever tell you.
+      # 30d because keeping a dead volume's backup for a month is the point; keeping it for a year is not.
+      # `> 0` so a backupvolume that never completed a backup stays quiet rather than reading as ancient.
+      - uid: backupvolume-orphaned
+        title: Backup of a deleted volume kept
+        condition: C
+        for: 1h
+        labels: {severity: warning}
+        annotations:
+          summary: 'S3 backup {{ $labels.res_backupvolume }} has outlived its volume by >30d'
+          description: |
+            - volume {{ $labels.res_volume }} is gone, its backup is still in the bucket and still being paid for
+            - nothing will prune it: the recurring job retains per volume, and the longhorn/ prefix has no lifecycle expiry
+            - deleting the BackupVolume also deletes the S3 data, and it is the only correct way to remove it:
+            - kubectl -n longhorn-system delete backupvolume {{ $labels.res_backupvolume }}
+            - to keep the data instead, move its folder out of longhorn/backupstore/volumes/ in the bucket
+        noDataState: OK
+        execErrState: KeepLast
+        data:
+          - refId: A
+            relativeTimeRange: {from: 600, to: 0}
+            datasourceUid: VictoriaMetrics
+            model:
+              refId: A
+              instant: true
+              expr: 'time() - max by (res_backupvolume, res_volume) (orphaned_backupvolume_last_backup_seconds > 0)'
+          - refId: B
+            relativeTimeRange: {from: 600, to: 0}
+            datasourceUid: __expr__
+            model: {refId: B, type: reduce, expression: A, reducer: last, datasource: {type: __expr__, uid: __expr__}}
+          - refId: C
+            relativeTimeRange: {from: 600, to: 0}
+            datasourceUid: __expr__
+            model:
+              refId: C
+              type: threshold
+              expression: B
+              datasource: {type: __expr__, uid: __expr__}
+              conditions:
+                - type: query
+                  evaluator: {type: gt, params: [2592000]}

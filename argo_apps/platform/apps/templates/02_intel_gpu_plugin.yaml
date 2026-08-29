@@ -1,0 +1,39 @@
+# Intel GPU device plugin: turns the amd64 node's iGPU into a schedulable gpu.intel.com/i915 resource.
+apiVersion: argoproj.io/v1alpha1
+kind: Application
+metadata:
+  name: intel-gpu-plugin
+  namespace: argocd
+  finalizers:
+    - resources-finalizer.argocd.argoproj.io
+  annotations:
+    argocd.argoproj.io/sync-wave: "2"
+spec:
+  project: default
+  revisionHistoryLimit: 0
+  source:
+    repoURL: {{ .Values.repoURL }}
+    targetRevision: HEAD
+    path: argo_apps/platform/charts/02_intel_gpu_plugin
+  destination:
+    server: https://kubernetes.default.svc
+    namespace: inteldeviceplugins-system
+  syncPolicy:
+    managedNamespaceMetadata: # the plugin mounts /dev/dri and the kubelet socket dir, and Pod Security forbids hostPath from `baseline` up
+      labels:
+        pod-security.kubernetes.io/enforce: privileged
+        pod-security.kubernetes.io/warn: privileged
+        pod-security.kubernetes.io/audit: privileged
+    automated:
+      prune: true
+      selfHeal: true
+    retry:
+      limit: -1
+      refresh: true
+      backoff:
+        duration: 5s
+        factor: 2
+        maxDuration: 1m
+    syncOptions:
+      - CreateNamespace=true
+      - ServerSideApply=true

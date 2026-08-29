@@ -1,0 +1,15 @@
+{{- /*
+Default-deny both ways, with nothing allowed back. The plugin reaches the kubelet over a unix socket and reads
+sysfs; it has no network peers at all, not even DNS.
+*/ -}}
+apiVersion: cilium.io/v2
+kind: CiliumNetworkPolicy
+metadata:
+  name: intel-gpu-plugin
+  namespace: {{ .Release.Namespace }}
+spec:
+  endpointSelector:
+    matchLabels:
+      app.kubernetes.io/name: intel-gpu-plugin
+  ingress: []
+  egress: []

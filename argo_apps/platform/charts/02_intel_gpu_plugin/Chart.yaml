@@ -1,0 +1,5 @@
+apiVersion: v2
+name: intel-gpu-plugin
+description: Advertises the amd64 node's Intel iGPU as gpu.intel.com/i915, so transcoding pods can be scheduled onto it.
+type: application
+version: 0.1.0 # local chart, never bump version
