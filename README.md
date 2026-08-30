@@ -122,6 +122,7 @@ Two seams exist so the two sides can cooperate without knowing each other:
 | Seam | What it is for |
 |---|---|
 | `make check-replication-health` | Exits non-zero until Longhorn, CNPG and RabbitMQ are healthy and in sync. Point your node tooling's pre-drain gate at it, so a rolling reboot never takes a volume's last healthy replica |
+| `make evacuate-node NODE=<host>` | Switches any Postgres primary off that node first. Point your tooling's pre-drain evacuate hook at it: a primary force-killed mid-drain can fail to `pg_rewind` afterwards and never rejoin |
 | `make reconcile-storage NODE=<host>` | Run after your tooling rejoins a replaced machine. Longhorn records a disk UUID that a reflash invalidates, and nothing else fixes it |
 
 Neither is required. Skip both and node maintenance still works; you just lose the interlock.

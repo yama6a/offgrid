@@ -98,6 +98,11 @@ reconcile-storage: ## After your node tooling has rejoined a replaced machine: d
 check-replication-health: ## Are Longhorn, CNPG and RabbitMQ all healthy + in sync? Exits non-zero if not. Point your node tooling's pre-drain gate at this.
 	bash lib/shell/check_replication_health.sh
 
+.PHONY: evacuate-node
+evacuate-node: ## Switch any CNPG primary off a node before it is drained, so no primary is force-killed. NODE=<hostname>. Point your node tooling's pre-drain evacuate hook at this.
+	@test -n "$(NODE)" || { echo "usage: make evacuate-node NODE=<hostname>"; exit 1; }
+	NODE=$(NODE) bash lib/shell/evacuate_node.sh
+
 ##@ Data recovery  (restore from S3: CNPG + Redis + Longhorn + VM/VL. A GitOps-pruned CNPG cluster is not deleted; just restore its files.)
 .PHONY: restore-cnpg
 restore-cnpg: ## Restore a CNPG database from S3, latest or PITR: in-place under its own name, or into a throwaway side cluster (interactive, resumable).
