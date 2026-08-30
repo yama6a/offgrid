@@ -63,7 +63,7 @@ longhorn:
   # fiddly JSON, storage-critical, and it only ADDS reservations.)
   longhornManager:
     resources:
-      requests: {cpu: 20m, memory: 190Mi}
-      limits: {memory: 384Mi}   # it routinely runs above the request, so a limit close to it just OOMKills
+      requests: {cpu: 20m, memory: 224Mi}   # p90 of the steady working set; below this the scheduler under-counts it
+      limits: {memory: 384Mi}   # it bursts well past the request, so a limit close to it just OOMKills
   longhornUI:
     replicas: 1 # a read-mostly dashboard; the chart's default 2 is wasted footprint here
