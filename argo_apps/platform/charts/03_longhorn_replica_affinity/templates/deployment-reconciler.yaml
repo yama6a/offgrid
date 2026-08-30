@@ -1,0 +1,48 @@
+{{- if .Values.reconciler.enabled }}
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: longhorn-replica-affinity-reconciler
+  namespace: {{ .Release.Namespace }}
+  labels:
+    app.kubernetes.io/name: longhorn-replica-affinity-reconciler
+spec:
+  replicas: 1 # the dwell timers are in memory, so a second replica would keep its own and act early
+  revisionHistoryLimit: 0
+  strategy:
+    type: Recreate # never two of them patching the same volume during a roll
+  selector:
+    matchLabels:
+      app.kubernetes.io/name: longhorn-replica-affinity-reconciler
+  template:
+    metadata:
+      labels:
+        app.kubernetes.io/name: longhorn-replica-affinity-reconciler
+    spec:
+      serviceAccountName: longhorn-replica-affinity-reconciler
+      securityContext:
+        runAsNonRoot: true
+        runAsUser: 65532
+        seccompProfile:
+          type: RuntimeDefault
+      containers:
+        - name: reconciler
+          image: "{{ .Values.image.repository }}:{{ .Values.image.tag }}"
+          args: ["reconcile"]
+          env:
+            - {name: LRA_LABEL_KEY, value: {{ .Values.labelKey | quote }}}
+            - {name: LRA_LABEL_VALUE, value: {{ .Values.labelValue | quote }}}
+            - {name: LRA_METRICS_LISTEN, value: ":{{ .Values.metricsPort }}"}
+            - {name: LRA_RECONCILE_INTERVAL, value: "{{ .Values.reconciler.intervalSeconds }}s"}
+            - {name: LRA_DWELL, value: {{ .Values.reconciler.dwell | quote }}}
+            - {name: LRA_MAX_MOVE_BYTES, value: {{ .Values.reconciler.maxMoveBytes | quote }}}
+            - {name: LRA_LOG_LEVEL, value: {{ .Values.logLevel | quote }}}
+          ports:
+            - {name: metrics, containerPort: {{ .Values.metricsPort }}}
+          securityContext:
+            allowPrivilegeEscalation: false
+            readOnlyRootFilesystem: true
+            capabilities:
+              drop: ["ALL"]
+          resources: {{ .Values.resources | toYaml | nindent 12 }}
+{{- end }}

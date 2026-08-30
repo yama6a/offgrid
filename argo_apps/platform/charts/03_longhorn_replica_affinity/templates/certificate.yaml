@@ -1,0 +1,24 @@
+# A self-signed Issuer, not one of the ACME ClusterIssuers: this name is only ever resolved inside the cluster,
+# Let's Encrypt cannot issue for a .svc, and the apiserver trusts it from the caBundle cainjector writes into
+# the webhook configuration, not from a public root.
+apiVersion: cert-manager.io/v1
+kind: Issuer
+metadata:
+  name: longhorn-replica-affinity-selfsigned
+  namespace: {{ .Release.Namespace }}
+spec:
+  selfSigned: {}
+---
+apiVersion: cert-manager.io/v1
+kind: Certificate
+metadata:
+  name: longhorn-replica-affinity-webhook
+  namespace: {{ .Release.Namespace }}
+spec:
+  secretName: longhorn-replica-affinity-webhook-tls
+  issuerRef:
+    name: longhorn-replica-affinity-selfsigned
+    kind: Issuer
+  dnsNames:
+    - longhorn-replica-affinity-webhook.{{ .Release.Namespace }}.svc
+    - longhorn-replica-affinity-webhook.{{ .Release.Namespace }}.svc.cluster.local

@@ -1,0 +1,5 @@
+apiVersion: v2
+name: longhorn-replica-affinity
+description: Schedules pods onto nodes that already hold a Longhorn replica of their data, so their IO stays off the network.
+type: application
+version: 0.1.0 # local chart, never bump version

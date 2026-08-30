@@ -1,0 +1,47 @@
+# Longhorn replicates each volume to 2 of the 4 nodes and the scheduler cannot see where, because a Longhorn PV
+# is network-attachable and carries no nodeAffinity. So pods land anywhere and roughly half of them read and
+# write across the 1GbE for the life of the pod. This nudges them onto a node that already has the bytes.
+#
+# Source: github.com/yama6a/longhorn-replica-affinity. Opt in per workload with the pod label in `labelKey`;
+# nothing is mutated without it, because the webhook's objectSelector gates on it.
+
+image:
+  repository: ghcr.io/yama6a/longhorn-replica-affinity
+  tag: "v0.1.1" # renovate: datasource=docker depName=ghcr.io/yama6a/longhorn-replica-affinity
+
+labelKey: longhorn-replica-affinity/enabled
+labelValue: "true"
+
+# Weight added per volume a node holds, multiplied by that count and capped at 100. Under 100 on purpose:
+# plex's own weight-100 preference for the amd64 box must keep outranking this.
+weight: 30
+
+# The share-manager's node, not the replica nodes, is what saves an RWX consumer a hop. Leave RWX in scope so
+# qbittorrent lands on the node serving media-downloads.
+skipRWX: false
+
+reconciler:
+  # For a pod pinned by a hard constraint that can never move to its data (plex, via the gpu.intel.com/i915
+  # limit that only exists on tc-w1). Borrows the volume's dataLocality to pull a replica local, then puts it
+  # back, so this is a ONE-TIME copy and not permanent volume-follows-pod.
+  enabled: true
+  intervalSeconds: 60
+  # Long enough that a rolling update or a drain never triggers a copy.
+  dwell: 30m
+  # Actual (thin) size, not the provisioned ceiling. Every volume here is under 3Gi except media-downloads at
+  # ~10Gi, so this moves everything that matters and never touches the big RWX share.
+  maxMoveBytes: 5368709120 # 5Gi
+
+webhook:
+  replicas: 2 # failurePolicy is Ignore, so a lost pod costs preferences, not scheduling; 2 keeps that rare
+  port: 8443
+  timeoutSeconds: 5
+  # Never mutate what has to come up before this does, or its own pods.
+  excludedNamespaces: [kube-system, longhorn-system]
+
+metricsPort: 9100
+logLevel: info
+
+resources:
+  requests: {cpu: 10m, memory: 48Mi}
+  limits: {memory: 128Mi}

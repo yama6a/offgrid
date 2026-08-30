@@ -64,6 +64,7 @@ Everything after `01`/`02a` is an Argo CD-delivered wrapper chart, each pinning 
 | **Config reload** | Reloader                       | Restarts a workload when a ConfigMap or Secret it mounts changes, which Kubernetes never does on its own.    |
 | **Storage**       | Longhorn                       | Replicated block storage, for everything stateful, so a volume outlives the machine under it.                |
 | **Node health**   | dead-node-watcher              | Custom Deployment that taints a genuinely dead node, cutting volume handover from ~6 min to ~2.               |
+| **Data locality** | longhorn-replica-affinity      | Mutating webhook that schedules a pod onto a node already holding its Longhorn replica, keeping its IO off the net. |
 | **Database**      | CloudNativePG                  | Kubernetes-native PostgreSQL operator.                                                                       |
 | **Cache**         | OpsTree Redis operator         | Standalone Redis instances, one per workload alias.                                                          |
 | **Messaging**     | RabbitMQ                       | One shared broker; workloads declare their own topology.                                                     |
@@ -153,7 +154,7 @@ flowchart LR
         direction TB
         ROOT --> PLAT["platform tree, waves 0-8"]
         PLAT -->|" created ~5s later, no health gate "| WORK["workloads tree"]
-        PLAT --- PC["Envoy Gateway, cert-manager, Google SSO, Sealed Secrets, Reloader<br/>Longhorn, CNPG, Redis, RabbitMQ<br/>metrics-server, dead-node-watcher, VictoriaMetrics/Logs, Grafana, ntfy"]
+        PLAT --- PC["Envoy Gateway, cert-manager, Google SSO, Sealed Secrets, Reloader<br/>Longhorn, longhorn-replica-affinity, CNPG, Redis, RabbitMQ<br/>metrics-server, dead-node-watcher, VictoriaMetrics/Logs, Grafana, ntfy"]
         WORK --- WC["sample-user-manager, sample-user-signup, sample-audit-logger"]
     end
 ```
@@ -306,6 +307,7 @@ Each doc holds the why behind a step, with verification commands:
 | [12_storage_bench](docs/12_storage_bench.md)       | Measuring what Longhorn r2 costs CNPG and RabbitMQ in write latency.            |
 | [13_node_loss](docs/13_node_loss.md)               | What the workloads do when a machine dies, measured, and reconciling a replaced one. |
 | [14_igpu](docs/14_igpu.md)                         | The Intel iGPU: what the driver needs, how a pod claims it, and why no NFD.        |
+| [15_replica_affinity](docs/15_replica_affinity.md) | Scheduling pods onto the node that already holds their Longhorn replica.           |
 
 Repo-wide conventions (layout, where a value lives, chart and Argo CD rules) are in
 [CONTRIBUTING.md](CONTRIBUTING.md).

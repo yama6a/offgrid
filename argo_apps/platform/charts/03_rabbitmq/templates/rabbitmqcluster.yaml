@@ -42,6 +42,9 @@ spec:
       spec:
         template:
           metadata:
+            labels:
+              # Prefer a node already holding this volume's Longhorn replica. See docs/15_replica_affinity.md.
+              longhorn-replica-affinity/enabled: "true"
             annotations:
               # Opt out of Reloader (02_reloader runs with auto-reload-all). Rolling 3 brokers costs a quorum
               # leader election each plus ~2min catch-up per broker, and the operator already rolls them itself

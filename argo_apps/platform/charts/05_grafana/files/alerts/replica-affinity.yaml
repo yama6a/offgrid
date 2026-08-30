@@ -1,0 +1,116 @@
+apiVersion: 1
+groups:
+  # longhorn-replica-affinity: pods scheduled onto a node that already holds their Longhorn replica.
+  # All warning: nothing here is an outage, it is IO crossing the network that did not have to.
+  - orgId: 1
+    name: replica-affinity
+    folder: offgrid
+    interval: 5m
+    rules:
+      # Dead-man's switch. Without it, a dead webhook is invisible: failurePolicy is Ignore, so pods keep
+      # scheduling and only the locality silently stops improving.
+      - uid: lra-down
+        title: Replica-affinity webhook not reporting
+        condition: C
+        for: 15m
+        labels: {severity: warning}
+        annotations:
+          summary: 'longhorn-replica-affinity is not reporting: new pods get no locality preference'
+          description: |
+            - failurePolicy is Ignore, so nothing is broken; placement has just gone back to random
+            - kubectl -n longhorn-replica-affinity get pods
+            - kubectl -n longhorn-replica-affinity logs deploy/longhorn-replica-affinity-webhook
+        noDataState: OK
+        execErrState: KeepLast
+        data:
+          - refId: A
+            relativeTimeRange: {from: 1800, to: 0}
+            datasourceUid: VictoriaMetrics
+            model: {refId: A, instant: true, expr: 'absent(lra_build_info)'}
+          - refId: B
+            relativeTimeRange: {from: 1800, to: 0}
+            datasourceUid: __expr__
+            model: {refId: B, type: reduce, expression: A, reducer: last, datasource: {type: __expr__, uid: __expr__}}
+          - refId: C
+            relativeTimeRange: {from: 1800, to: 0}
+            datasourceUid: __expr__
+            model:
+              refId: C
+              type: threshold
+              expression: B
+              datasource: {type: __expr__, uid: __expr__}
+              conditions:
+                - type: query
+                  evaluator: {type: gt, params: [0]}
+      # The scoreboard. Fires slowly and on purpose: pods only move on restart, so this is a trend, not an event.
+      - uid: lra-locality-low
+        title: Most Longhorn volumes are not local to their pod
+        condition: C
+        for: 6h
+        labels: {severity: warning}
+        annotations:
+          summary: 'Only {{ printf "%.0f" $values.B.Value }}% of attached volumes have a replica on their own node'
+          description: |
+            - every miss is reads AND writes crossing the 1GbE for the life of that pod
+            - a labelled workload converges on its next restart; an unlabelled one never does
+            - which ones: sum by (namespace, pvc) (lra_volume_local == 0)
+            - opt a workload in with the pod label longhorn-replica-affinity/enabled=true
+        noDataState: OK
+        execErrState: KeepLast
+        data:
+          - refId: A
+            relativeTimeRange: {from: 3600, to: 0}
+            datasourceUid: VictoriaMetrics
+            model:
+              refId: A
+              instant: true
+              expr: '100 * sum(lra_volume_local) / count(lra_volume_local)'
+          - refId: B
+            relativeTimeRange: {from: 3600, to: 0}
+            datasourceUid: __expr__
+            model: {refId: B, type: reduce, expression: A, reducer: last, datasource: {type: __expr__, uid: __expr__}}
+          - refId: C
+            relativeTimeRange: {from: 3600, to: 0}
+            datasourceUid: __expr__
+            model:
+              refId: C
+              type: threshold
+              expression: B
+              datasource: {type: __expr__, uid: __expr__}
+              conditions:
+                - type: query
+                  evaluator: {type: lt, params: [60]}
+      # A volume the reconciler has looked at and decided it will not move, so it needs a human decision.
+      - uid: lra-unfixable
+        title: Longhorn volume stuck off its data
+        condition: C
+        for: 2h
+        labels: {severity: warning}
+        annotations:
+          summary: '{{ $labels.namespace }}/{{ $labels.pvc }} cannot be made local ({{ $labels.reason }})'
+          description: |
+            - too-large: over maxMoveBytes, so moving it would be a big copy; decide by hand
+            - longhorn-managed: dataLocality is already best-effort or strict-local, Longhorn owns the outcome
+            - the pod is pinned by something hard, so it will not move to the data on its own
+        noDataState: OK
+        execErrState: KeepLast
+        data:
+          - refId: A
+            relativeTimeRange: {from: 3600, to: 0}
+            datasourceUid: VictoriaMetrics
+            model: {refId: A, instant: true, expr: 'lra_volume_unfixable == 1'}
+          - refId: B
+            relativeTimeRange: {from: 3600, to: 0}
+            datasourceUid: __expr__
+            model: {refId: B, type: reduce, expression: A, reducer: last, datasource: {type: __expr__, uid: __expr__}}
+          - refId: C
+            relativeTimeRange: {from: 3600, to: 0}
+            datasourceUid: __expr__
+            model:
+              refId: C
+              type: threshold
+              expression: B
+              datasource: {type: __expr__, uid: __expr__}
+              conditions:
+                - type: query
+                  evaluator: {type: gt, params: [0]}
