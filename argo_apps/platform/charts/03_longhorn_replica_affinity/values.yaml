@@ -2,7 +2,7 @@
 # Only values that differ from upstream, or that something else here depends on, belong below.
 
 longhorn-replica-affinity:
-  weight: 30 # must stay under plex's own weight-100 nodeAffinity in the media chart
+  weight: 30 # stays under a hand-written weight-100 nodeAffinity, so a workload's own placement still wins
 
   # Pinned, not defaulted: the Application's ignoreDifferences for caBundle is only correct in this mode.
   tls:

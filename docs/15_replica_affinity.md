@@ -4,8 +4,8 @@ A Longhorn PV is network-attachable and carries no `nodeAffinity`, so the schedu
 nodes hold a volume's replicas. Pods land anywhere; their IO crosses the 1GbE for the life of the pod.
 
 Measured before deploying this: **16 of 31 attached volumes (52%) had no replica on their pod's node**, 12 of
-them on `tc-w1`. That node joined after the Pis and `replica-auto-balance` is `disabled`, so replicas never
-followed it while the scheduler kept placing pods there for its 6 CPUs and 16 GiB.
+them on the amd64 worker. That node joined after the Pis and `replica-auto-balance` is `disabled`, so replicas
+never followed it while the scheduler kept placing pods there for its larger CPU and memory.
 
 A mutating webhook adds a soft `nodeAffinity` toward nodes that already hold the data, so the pod moves instead
 of the volume. `dataLocality: best-effort` is the other direction and costs a full volume transfer per pod
@@ -27,7 +27,7 @@ Everything else is an upstream default.
 
 | Value | Why |
 |---|---|
-| `weight: 30` | must stay under plex's weight-100 nodeAffinity in `workloads/charts/media/templates/plex.yaml` |
+| `weight: 30` | stays under a hand-written weight-100 `nodeAffinity`, so a workload's own placement still wins |
 | `tls.mode: self-signed` | no cert-manager ordering constraint at wave 3; see below |
 | `priorityClassName: platform-critical` | an evicted webhook drops the preference with no error anywhere |
 | `podMonitor.enabled: true` | feeds `lra_*` to VictoriaMetrics |
@@ -65,8 +65,9 @@ and where that lives depends on who creates it:
 place on ordinary churn. No descheduler evicts them, deliberately: it would decide on its own to restart
 Postgres primaries.
 
-Plex is labelled even though it can never move, since the `gpu.intel.com/i915` limit exists only on `tc-w1`.
-The label is what tells the reconciler to bring a replica of `plex-config` to it instead: a 0.7Gi copy, once.
+Label a workload even when it can never move, for example one pinned to a single node by a device-plugin
+resource. The label is what tells the reconciler to bring a replica to it instead, a one-time copy bounded by
+`maxMoveBytes`.
 
 ## Verify
 
@@ -75,7 +76,7 @@ kubectl -n longhorn-replica-affinity get pods
 kubectl get mutatingwebhookconfiguration longhorn-replica-affinity \
   -o jsonpath='{.webhooks[0].clientConfig.caBundle}' | head -c 40   # the webhook wrote this itself
 
-kubectl -n media get pod <pod> \
+kubectl -n <ns> get pod <pod> \
   -o jsonpath='{.spec.affinity.nodeAffinity.preferredDuringSchedulingIgnoredDuringExecution}' | jq
 ```
 
@@ -86,7 +87,7 @@ Fail-open, the one thing that must not be wrong:
 
 ```bash
 kubectl -n longhorn-replica-affinity scale deploy longhorn-replica-affinity-webhook --replicas=0
-kubectl -n media rollout restart deploy/sonarr-yama    # must still schedule, just without the preference
+kubectl -n sample-user-manager rollout restart deploy/sample-user-manager   # must still schedule
 kubectl -n longhorn-replica-affinity scale deploy longhorn-replica-affinity-webhook --replicas=2
 ```
 
