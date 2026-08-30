@@ -67,8 +67,10 @@ spec:
 
                   # export/native honours start/end; LogsQL scopes with a _time filter. One file per UTC day,
                   # so a re-run just overwrites that day's slice.
+                  # timeout= overrides vlsingle's -search.maxQueryDuration (30s by default), which is far too
+                  # short for a day's export and hangs up mid-stream: curl's --max-time never sees it.
                   stream "${VMSINGLE}/api/v1/export/native" "--data-urlencode match[]={__name__!=\"\"} --data-urlencode start=${start} --data-urlencode end=${end}" "${PREFIX}metrics/${day}.native.gz"
-                  stream "${VLSINGLE}/select/logsql/query"  "--data-urlencode query=_time:[${start},${end})"                                                        "${PREFIX}logs/${day}.jsonl.gz"
+                  stream "${VLSINGLE}/select/logsql/query"  "--data-urlencode query=_time:[${start},${end}) --data-urlencode timeout=1800s"                         "${PREFIX}logs/${day}.jsonl.gz"
 
                   if [ -n "$failed" ]; then echo "FAILURES:${failed}"; exit 1; fi
                   echo "all backups ok"
