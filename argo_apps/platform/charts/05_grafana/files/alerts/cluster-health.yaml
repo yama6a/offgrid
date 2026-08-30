@@ -302,6 +302,8 @@ groups:
                   evaluator: {type: lt, params: [0]}
       # COMMITTED, not used: sum of pod requests over allocatable. High commit means the scheduler cannot place
       # more, and eviction risk if actual use spikes.
+      # kube_pod_container_resource_requests keeps emitting for Completed/Failed pods until the Pod object is
+      # GC'd, and the scheduler counts none of those, so join on phase or finished CronJob pods inflate this.
       - uid: node-memory-committed
         title: Node memory requests committed >80%
         condition: C
@@ -322,7 +324,7 @@ groups:
             model:
               refId: A
               instant: true
-              expr: '100 * sum by (node) (kube_pod_container_resource_requests{resource="memory"}) / sum by (node) (kube_node_status_allocatable{resource="memory"})'
+              expr: '100 * sum by (node) (kube_pod_container_resource_requests{resource="memory"} * on (namespace,pod) group_left() (max by (namespace,pod) (kube_pod_status_phase{phase=~"Running|Pending"}) == 1)) / sum by (node) (kube_node_status_allocatable{resource="memory"})'
           - refId: B
             relativeTimeRange: {from: 600, to: 0}
             datasourceUid: __expr__
@@ -398,7 +400,7 @@ groups:
             model:
               refId: A
               instant: true
-              expr: 'sum(kube_pod_container_resource_requests{resource="memory"}) > (sum(kube_node_status_allocatable{resource="memory"}) - max(kube_node_status_allocatable{resource="memory"}))'
+              expr: 'sum(kube_pod_container_resource_requests{resource="memory"} * on (namespace,pod) group_left() (max by (namespace,pod) (kube_pod_status_phase{phase=~"Running|Pending"}) == 1)) > (sum(kube_node_status_allocatable{resource="memory"}) - max(kube_node_status_allocatable{resource="memory"}))'
           - refId: B
             relativeTimeRange: {from: 600, to: 0}
             datasourceUid: __expr__
