@@ -85,18 +85,23 @@ kubectl get node <amd64 node> -o jsonpath='{.status.allocatable}' | jq   # expec
 kubectl -n inteldeviceplugins-system get pods -o wide                    # exactly one, on that node
 ```
 
-Then prove a pod gets a working device, not just a scheduling slot. `linuxserver/ffmpeg` carries the iHD driver
-and `vainfo`:
+Then prove a pod gets a working device, not just a scheduling slot. Ask for the resource and NOTHING else: no
+nodeSelector, no `/dev/dri` mount. If the pod lands on the right box and finds the device, both halves work.
 
 ```
-kubectl run vainfo --rm -it --restart=Never --image=linuxserver/ffmpeg:latest \
-  --overrides='{"spec":{"containers":[{"name":"vainfo","image":"linuxserver/ffmpeg:latest",
-    "command":["sh","-c","ls -l /dev/dri && vainfo --display drm --device /dev/dri/renderD128"],
+kubectl run vaenc --rm -it --restart=Never --image=linuxserver/ffmpeg:latest \
+  --overrides='{"spec":{"containers":[{"name":"vaenc","image":"linuxserver/ffmpeg:latest",
+    "command":["sh","-c","ls -l /dev/dri && ffmpeg -hide_banner -init_hw_device vaapi=va:/dev/dri/renderD128 -filter_hw_device va -f lavfi -i testsrc=size=1920x1080:rate=30:duration=10 -vf format=nv12,hwupload -c:v h264_vaapi -f null -"],
     "resources":{"limits":{"gpu.intel.com/i915":"1"}}}]}}'
 ```
 
-Want `VAProfileH264*` and `VAProfileHEVCMain10` with both `VAEntrypointVLD` (decode) and `VAEntrypointEncSlice`
-(encode). No `VAProfileAV1*`: expected, not a fault.
+Want `renderD128` listed `crw-rw-rw-` and `speed=` well above `1x`. At or under `1x` it fell back to software.
+
+`vainfo` is NOT in that image, despite what most write-ups assume; it ships `ffmpeg` and `ffprobe` only. Doing
+a real encode is the better test anyway, because a VAAPI device can initialise and still fail at the codec.
+
+To check the concurrency cap rather than the device, start `sharedDevNum + 1` pods that each claim one and
+confirm the last reports `Insufficient gpu.intel.com/i915`.
 
 ## The gotcha for whoever adds the first consumer
 

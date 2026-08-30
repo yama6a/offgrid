@@ -11,5 +11,10 @@ spec:
   endpointSelector:
     matchLabels:
       app.kubernetes.io/name: intel-gpu-plugin
-  ingress: []
-  egress: []
+  # An empty rule is how Cilium spells "deny everything in this direction": it enables enforcement and permits
+  # nothing. `ingress: []` reads the same but is REJECTED ("rule must have at least one of Ingress, ...") and a
+  # rejected CNP is not enforced at all, so the pod would silently end up unpoliced.
+  ingress:
+    - {}
+  egress:
+    - {}
