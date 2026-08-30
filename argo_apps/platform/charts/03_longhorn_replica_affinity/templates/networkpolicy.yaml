@@ -1,4 +1,9 @@
-{{- /* Default-deny both ways. The webhook is the only thing here that is talked TO, and only by the apiserver. */ -}}
+{{- /*
+Default-deny both ways, which is why this wrapper exists at all: the upstream chart ships no NetworkPolicy
+because it cannot know which engine enforces it. Cilium is ours.
+The pod labels come from the upstream chart's _helpers.tpl.
+*/ -}}
+{{- $lra := index .Values "longhorn-replica-affinity" -}}
 apiVersion: cilium.io/v2
 kind: CiliumNetworkPolicy
 metadata:
@@ -7,19 +12,22 @@ metadata:
 spec:
   endpointSelector:
     matchLabels:
-      app.kubernetes.io/name: longhorn-replica-affinity-webhook
+      app.kubernetes.io/name: longhorn-replica-affinity
+      app.kubernetes.io/component: webhook
   ingress:
+    # The apiserver calls the admission endpoint. Without this every mutation times out and, because
+    # failurePolicy is Ignore, does so silently.
     - fromEntities: [kube-apiserver]
       toPorts:
         - ports:
-            - {port: "{{ .Values.webhook.port }}", protocol: TCP}
+            - {port: "8443", protocol: TCP}
     - fromEndpoints:
         - matchLabels:
             k8s:io.kubernetes.pod.namespace: monitoring
             app.kubernetes.io/name: vmagent
       toPorts:
         - ports:
-            - {port: "{{ .Values.metricsPort }}", protocol: TCP}
+            - {port: "9100", protocol: TCP}
   egress:
     - toEndpoints:
         - matchLabels:
@@ -30,7 +38,7 @@ spec:
             - {port: "53", protocol: UDP}
             - {port: "53", protocol: TCP}
     - toEntities: [kube-apiserver]
-{{- if .Values.reconciler.enabled }}
+{{- if $lra.reconciler.enabled }}
 ---
 apiVersion: cilium.io/v2
 kind: CiliumNetworkPolicy
@@ -40,7 +48,8 @@ metadata:
 spec:
   endpointSelector:
     matchLabels:
-      app.kubernetes.io/name: longhorn-replica-affinity-reconciler
+      app.kubernetes.io/name: longhorn-replica-affinity
+      app.kubernetes.io/component: reconciler
   ingress:
     - fromEndpoints:
         - matchLabels:
@@ -48,7 +57,7 @@ spec:
             app.kubernetes.io/name: vmagent
       toPorts:
         - ports:
-            - {port: "{{ .Values.metricsPort }}", protocol: TCP}
+            - {port: "9100", protocol: TCP}
   egress:
     - toEndpoints:
         - matchLabels:
