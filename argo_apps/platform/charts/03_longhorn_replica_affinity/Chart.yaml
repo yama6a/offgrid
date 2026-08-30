@@ -6,5 +6,5 @@ version: 0.1.0 # local chart, never bump version
 
 dependencies:
   - name: longhorn-replica-affinity
-    version: "0.3.1"
+    version: "0.3.2"
     repository: "oci://ghcr.io/yama6a/charts"
