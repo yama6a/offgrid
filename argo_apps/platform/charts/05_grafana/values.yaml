@@ -114,7 +114,7 @@ grafana:
       cpu: 250m
       memory: 256Mi
     limits:
-      memory: 384Mi
+      memory: 512Mi
 
   # Pre-staged placement only. Actually running replicas>1 first needs unified-alerting HA (grafana.ini
   # unified_alerting.ha_*), else each replica evaluates rules independently and double-sends; and with
