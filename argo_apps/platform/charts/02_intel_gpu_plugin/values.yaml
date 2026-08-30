@@ -7,7 +7,7 @@
 image: "intel/intel-gpu-plugin:0.36.0"
 
 sharedDevNum: 2 # pods that may hold the iGPU at once. Slots are time-sliced with NO isolation, so this is a
-                # contention cap, not a partition: 2 lets plex and one other consumer run, a third goes Pending
+                # contention cap, not a partition: 2 lets two consumers run at once, a third goes Pending
 
 resources:
   requests: {cpu: 40m, memory: 45Mi}

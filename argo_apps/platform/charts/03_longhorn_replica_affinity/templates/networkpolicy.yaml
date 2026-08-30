@@ -1,0 +1,66 @@
+{{- /* The only reason this wrapper exists: upstream ships no NetworkPolicy, since it cannot know the engine. */ -}}
+{{- $lra := index .Values "longhorn-replica-affinity" -}}
+apiVersion: cilium.io/v2
+kind: CiliumNetworkPolicy
+metadata:
+  name: longhorn-replica-affinity-webhook
+  namespace: {{ .Release.Namespace }}
+spec:
+  endpointSelector:
+    matchLabels:
+      app.kubernetes.io/name: longhorn-replica-affinity
+      app.kubernetes.io/component: webhook
+  ingress:
+    # Without this every mutation times out, and failurePolicy Ignore makes that silent.
+    - fromEntities: [kube-apiserver]
+      toPorts:
+        - ports:
+            - {port: "8443", protocol: TCP}
+    - fromEndpoints:
+        - matchLabels:
+            k8s:io.kubernetes.pod.namespace: monitoring
+            app.kubernetes.io/name: vmagent
+      toPorts:
+        - ports:
+            - {port: "9100", protocol: TCP}
+  egress:
+    - toEndpoints:
+        - matchLabels:
+            k8s:io.kubernetes.pod.namespace: kube-system
+            k8s-app: kube-dns
+      toPorts:
+        - ports:
+            - {port: "53", protocol: UDP}
+            - {port: "53", protocol: TCP}
+    - toEntities: [kube-apiserver]
+{{- if $lra.reconciler.enabled }}
+---
+apiVersion: cilium.io/v2
+kind: CiliumNetworkPolicy
+metadata:
+  name: longhorn-replica-affinity-reconciler
+  namespace: {{ .Release.Namespace }}
+spec:
+  endpointSelector:
+    matchLabels:
+      app.kubernetes.io/name: longhorn-replica-affinity
+      app.kubernetes.io/component: reconciler
+  ingress:
+    - fromEndpoints:
+        - matchLabels:
+            k8s:io.kubernetes.pod.namespace: monitoring
+            app.kubernetes.io/name: vmagent
+      toPorts:
+        - ports:
+            - {port: "9100", protocol: TCP}
+  egress:
+    - toEndpoints:
+        - matchLabels:
+            k8s:io.kubernetes.pod.namespace: kube-system
+            k8s-app: kube-dns
+      toPorts:
+        - ports:
+            - {port: "53", protocol: UDP}
+            - {port: "53", protocol: TCP}
+    - toEntities: [kube-apiserver]
+{{- end }}

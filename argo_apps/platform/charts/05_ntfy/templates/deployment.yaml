@@ -24,6 +24,7 @@ spec:
     metadata:
       labels:
         app.kubernetes.io/name: ntfy
+        longhorn-replica-affinity/enabled: "true"
       annotations:
         # Roll the pod whenever server.yml changes.
         checksum/config: {{ include (print $.Template.BasePath "/configmap.yaml") . | sha256sum | quote }}

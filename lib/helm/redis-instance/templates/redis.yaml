@@ -15,6 +15,7 @@ metadata:
   {{- end }}
   labels:
     {{- include "redis-instance.labels" . | nindent 4 }}
+    longhorn-replica-affinity/enabled: "true"
     {{- if .Values.persistence }}
     redis-backup.offgrid/enabled: "true"   # discovered by the central 07_redis_backup job (durable only)
     {{- end }}

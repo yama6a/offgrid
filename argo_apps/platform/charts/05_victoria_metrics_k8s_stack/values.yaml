@@ -17,7 +17,7 @@ victoria-metrics-k8s-stack:
     spec:
       # Opt out of Reloader (02_reloader runs with auto-reload-all): this is the metrics store on a single RWO
       # volume, so a restart is a gap in the data plus a detach/reattach.
-      podMetadata: {annotations: {reloader.stakater.com/auto: "false"}}
+      podMetadata: {labels: {longhorn-replica-affinity/enabled: "true"}, annotations: {reloader.stakater.com/auto: "false"}}
       revisionHistoryLimitCount: 0
       retentionPeriod: "180d" # bump together with the PVC size below
       replicaCount: 1
@@ -54,7 +54,7 @@ victoria-metrics-k8s-stack:
       # Opt out of Reloader (02_reloader runs with auto-reload-all). The operator rewrites vmagent's scrape-config
       # Secret every time a scrape target anywhere changes, and vmagent already reloads that without restarting,
       # so leaving it on would restart vmagent during ordinary platform syncs.
-      podMetadata: {annotations: {reloader.stakater.com/auto: "false"}}
+      podMetadata: {labels: {longhorn-replica-affinity/enabled: "true"}, annotations: {reloader.stakater.com/auto: "false"}}
       revisionHistoryLimitCount: 0
       # Discover ALL VMServiceScrape/VMPodScrape/VMProbe in every namespace regardless of labels, so the
       # per-component scrapes and the operator-converted ServiceMonitors are all picked up.

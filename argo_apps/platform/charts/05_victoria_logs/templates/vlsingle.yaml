@@ -14,6 +14,8 @@ spec:
   # Opt out of Reloader (02_reloader runs with auto-reload-all): this is the log store on a single RWO volume,
   # so a restart loses ingest and forces a detach/reattach.
   podMetadata:
+    labels:
+      longhorn-replica-affinity/enabled: "true"
     annotations:
       reloader.stakater.com/auto: "false"
   retentionPeriod: {{ .Values.vlsingle.retentionPeriod | quote }}
