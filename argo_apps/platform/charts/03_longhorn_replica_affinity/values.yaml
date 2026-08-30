@@ -1,54 +1,17 @@
-# Longhorn replicates each volume to 2 of the 4 nodes and the scheduler cannot see where, because a Longhorn PV
-# is network-attachable and carries no nodeAffinity. So pods land anywhere and roughly half of them read and
-# write across the 1GbE for the life of the pod. This nudges them onto a node that already has the bytes.
-#
-# Upstream: github.com/yama6a/longhorn-replica-affinity. Everything below is that chart's values; this wrapper
-# adds only the CiliumNetworkPolicy, which upstream deliberately does not ship.
-#
-# Opt a workload in with the pod label in `labelKey`. Nothing is mutated without it. See
-# docs/15_replica_affinity.md for where that label goes per operator.
+# Wrapper for the upstream chart. See docs/15_replica_affinity.md.
+# Only values that differ from upstream, or that something else here depends on, belong below.
 
 longhorn-replica-affinity:
-  # Weight added per volume a node holds, multiplied by that count and capped at 100. Under 100 on purpose:
-  # plex's own weight-100 preference for the amd64 box must keep outranking this.
-  weight: 30
+  weight: 30 # must stay under plex's own weight-100 nodeAffinity in the media chart
 
-  # The share-manager's node, not the replica nodes, is what saves an RWX consumer a hop. Left in scope so
-  # qbittorrent lands on the node serving media-downloads.
-  skipRWX: false
-
-  shareManager:
-    # Also place Longhorn's share-manager itself onto a node holding a replica, which removes the second RWX
-    # hop for every consumer at once. Moves one pod; copies nothing.
-    enabled: true
-
+  # Pinned, not defaulted: the Application's ignoreDifferences for caBundle is only correct in this mode.
   tls:
-    # No cert-manager dependency: the webhook mints its own CA and leaf, parks them in a Secret so both
-    # replicas agree, and patches its own caBundle. That last write is why the Application carries an
-    # ignoreDifferences for caBundle, or selfHeal would revert it every sync.
     mode: self-signed
 
-  webhook:
-    replicas: 2
-    # failurePolicy is Ignore upstream, so a lost pod costs preferences, not scheduling.
-    excludedNamespaces: [kube-system, longhorn-system]
-
-  reconciler:
-    # For a pod pinned by a hard constraint that can never move to its data (plex, via the gpu.intel.com/i915
-    # limit that only exists on tc-w1). Borrows the volume's dataLocality to pull a replica local, then puts
-    # it back, so this is a ONE-TIME copy and not permanent volume-follows-pod. Never touches RWX.
-    enabled: true
-    dwell: 30m
-    # Actual (thin) size, not the provisioned ceiling. Every RWO volume here is under 3Gi, so this moves
-    # everything that matters.
-    maxMoveBytes: 5368709120 # 5Gi
-
-  # An evicted webhook silently drops the preference for every pod created until it is back, which is invisible.
-  priorityClassName: platform-critical
+  priorityClassName: platform-critical # an evicted webhook drops the preference silently, with no error
 
   podMonitor:
     enabled: true
-    interval: 60s
 
   resources:
     requests: {cpu: 10m, memory: 48Mi}

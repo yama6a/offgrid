@@ -17,9 +17,9 @@ metadata:
   labels:
     {{- include "pg-cluster.labels" . | nindent 4 }}
 spec:
+  # inheritedMetadata, not metadata.labels: only this reaches the instance pods and their PVCs.
   inheritedMetadata:
     labels:
-      # Schedule onto a node that already holds a Longhorn replica of this volume. See docs/15_replica_affinity.md.
       longhorn-replica-affinity/enabled: "true"
   instances: {{ if .Values.highAvailability }}3{{ else }}1{{ end }}
   imageName: {{ include "pg-cluster.image" . }}

@@ -80,7 +80,7 @@ groups:
               conditions:
                 - type: query
                   evaluator: {type: lt, params: [60]}
-      # A volume the reconciler has looked at and decided it will not move, so it needs a human decision.
+      # A volume the reconciler looked at and will not move, so it needs a human decision.
       - uid: lra-unfixable
         title: Longhorn volume stuck off its data
         condition: C
@@ -91,7 +91,9 @@ groups:
           description: |
             - too-large: over maxMoveBytes, so moving it would be a big copy; decide by hand
             - longhorn-managed: dataLocality is already best-effort or strict-local, Longhorn owns the outcome
-            - the pod is pinned by something hard, so it will not move to the data on its own
+            - rwx-share-manager-moves: the share-manager moves to the data, never the reverse; clears when
+              Longhorn next recreates it, so only act if it persists
+            - otherwise the pod is pinned by something hard and will not move to the data on its own
         noDataState: OK
         execErrState: KeepLast
         data:

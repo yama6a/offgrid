@@ -1,8 +1,4 @@
-{{- /*
-Default-deny both ways, which is why this wrapper exists at all: the upstream chart ships no NetworkPolicy
-because it cannot know which engine enforces it. Cilium is ours.
-The pod labels come from the upstream chart's _helpers.tpl.
-*/ -}}
+{{- /* The only reason this wrapper exists: upstream ships no NetworkPolicy, since it cannot know the engine. */ -}}
 {{- $lra := index .Values "longhorn-replica-affinity" -}}
 apiVersion: cilium.io/v2
 kind: CiliumNetworkPolicy
@@ -15,8 +11,7 @@ spec:
       app.kubernetes.io/name: longhorn-replica-affinity
       app.kubernetes.io/component: webhook
   ingress:
-    # The apiserver calls the admission endpoint. Without this every mutation times out and, because
-    # failurePolicy is Ignore, does so silently.
+    # Without this every mutation times out, and failurePolicy Ignore makes that silent.
     - fromEntities: [kube-apiserver]
       toPorts:
         - ports:

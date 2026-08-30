@@ -18,8 +18,7 @@ spec:
   destination:
     server: https://kubernetes.default.svc
     namespace: longhorn-replica-affinity
-  # The webhook writes its own caBundle in self-signed tls mode, so selfHeal would revert it to the empty
-  # string on every sync and the apiserver would stop trusting the endpoint.
+  # The webhook writes its own caBundle; selfHeal would blank it and the apiserver would stop trusting it.
   ignoreDifferences:
     - group: admissionregistration.k8s.io
       kind: MutatingWebhookConfiguration

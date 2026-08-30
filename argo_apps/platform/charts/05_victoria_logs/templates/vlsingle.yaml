@@ -15,7 +15,6 @@ spec:
   # so a restart loses ingest and forces a detach/reattach.
   podMetadata:
     labels:
-      # Prefer a node already holding this volume's Longhorn replica. See docs/15_replica_affinity.md.
       longhorn-replica-affinity/enabled: "true"
     annotations:
       reloader.stakater.com/auto: "false"
