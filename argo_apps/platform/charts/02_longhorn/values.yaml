@@ -64,6 +64,6 @@ longhorn:
   longhornManager:
     resources:
       requests: {cpu: 20m, memory: 190Mi}
-      limits: {memory: 256Mi}
+      limits: {memory: 384Mi}   # it routinely runs above the request, so a limit close to it just OOMKills
   longhornUI:
     replicas: 1 # a read-mostly dashboard; the chart's default 2 is wasted footprint here
