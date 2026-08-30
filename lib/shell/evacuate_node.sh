@@ -23,7 +23,7 @@ check_prerequisites() {
   require kubectl
   use_kubeconfig
   assert_api
-  [ -n "${NODE:-}" ] || die "NODE is unset: pass the node to evacuate, e.g. NODE=pi-cp1 $0"
+  [ -n "${NODE:-}" ] || die "NODE is unset: pass the node to evacuate, e.g. NODE=talos-cp1 $0"
   kubectl get node "$NODE" >/dev/null 2>&1 || die "no such node: ${NODE}"
 }
 
