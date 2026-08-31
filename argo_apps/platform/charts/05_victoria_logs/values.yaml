@@ -56,13 +56,19 @@ victoria-logs-collector:
       # collector above already reads. Rotation renames to <service>.log.1, which the glob skips and the
       # collector follows to the end before switching, so a rotation neither duplicates nor drops lines.
     - glob: /var/log/*.log
-      # The Linux audit subsystem, one record per syscall it watches: ~340MB a DAY per node against 4.4MB for
-      # every container log combined, and it would fill the 30Gi store well inside the 60d retention. Nothing
-      # here reads it and the node's own log tooling still does. Taking it in anyway needs a bigger PVC AND a way to
-      # trim the records, not just deleting this line.
-      excludeGlob: /var/log/auditd.log
-      # controller-runtime and dns-resolve-cache colour their level, so without this the escape sequences land
-      # in `_msg` as literal text and every search has to work around them.
+      # Two files pulled out by VOLUME, not by relevance. Both are all-or-nothing: vlagent has no content
+      # filter for file collectors, only -kubernetesCollector.excludeFilter, so a rare non-DEBUG line in either
+      # is dropped along with the rest.
+      #   auditd:            the Linux audit subsystem, one record per syscall it watches, ~340MB a DAY per node
+      #                      against 4.4MB for every container log combined. Taking it in needs a bigger PVC AND
+      #                      a way to trim the records, not just deleting this line.
+      #   dns-resolve-cache: Talos host DNS, ~107MB a day and 47% of all log bytes, every line a DEBUG dump of a
+      #                      query and its response in wire format. 40281 of 40281 lines over 6h were DEBUG.
+      #                      Talos has no way to turn this down: machine.logging only sets remote destinations,
+      #                      and `debug: true` ADDS console output rather than gating the service log.
+      excludeGlob: /var/log/auditd.log,/var/log/dns-resolve-cache.log
+      # controller-runtime colours its level, so without this the escape sequences land in `_msg` as literal
+      # text and every search has to work around them.
       decolorizeFields: _msg
       # The node goes in `node`, NOT in `hostname`: the collector always injects its own `hostname` field, and a
       # second one from here makes VictoriaLogs reject the whole line ("stream tags must be sorted in
