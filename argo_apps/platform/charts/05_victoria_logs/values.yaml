@@ -8,13 +8,18 @@ vlsingle:
   name: victoria-logs
   namespace: monitoring
   retentionPeriod: "60d" # logs are bulkier than metrics, which get 180d
+  extraArgs:
+    # The hard ceiling on a single query, 30s by default, and the `timeout=` URL arg does NOT raise it.
+    # vm-backup's hourly log slices take ~1-2s of it each; the headroom is for a slow gzip/S3 leg holding
+    # the response open, because the clock runs until the CLIENT has consumed the stream.
+    search.maxQueryDuration: 5m
   storage:
     storageClassName: longhorn-r2-ephemeral # deletionProtection is the prune guard, so Retain would only leak PVs
     size: 30Gi
   resources:
     requests: {cpu: 10m, memory: 96Mi}
-    # Sized for the daily vm-backup export, not steady state: a full-day logsql dump spikes memory and OOMs
-    # mid-response, which fails the backup's logs leg.
+    # Sized for the vm-backup export, not steady state. It now pulls the day in HOURLY slices, so peak is
+    # ~60MB of response per request instead of a ~1.4GB full-day dump that OOM'd mid-response.
     limits: {memory: 512Mi}
 
 victoria-logs-collector:

@@ -1,9 +1,11 @@
 {{- /*
-The central VM/VL backup CronJob, rendered only when a bucket is configured. One container streams two dumps
+The central VM/VL backup CronJob, rendered only when a bucket is configured. One container streams every dump
 straight through gzip into `aws s3 cp -`, so a 50Gi store needs no matching emptyDir.
-Each run backs up ONLY the previous full UTC day: a bounded slice, because a growing full-store dump OOM'd the
-source stores. A full DR replays every daily slice, which recover_vm_from_s3.sh's `all` target does.
-`set -o pipefail` makes a failed curl OR upload fail the stage; a partial S3 object is deleted.
+Each run backs up ONLY the previous full UTC day, because a growing full-store dump OOM'd the source stores:
+metrics as one object, logs as 24 hourly ones. A full DR replays every slice in key order, which
+recover_vm_from_s3.sh's `all` target does.
+`set -o pipefail` makes a failed curl OR upload fail the stage; a partial S3 object is deleted, the rest of the
+run continues, and any failure at all fails the Job so the alert fires.
 */ -}}
 {{- if .Values.bucket }}
 apiVersion: batch/v1
@@ -46,10 +48,20 @@ spec:
               args:
                 - |
                   set -u
-                  now="$(date -u +%s)"
-                  end=$(( now - now % 86400 ))   # today 00:00 UTC
-                  start=$(( end - 86400 ))       # yesterday 00:00 UTC
-                  day="$(date -u -d "@${start}" +%Y%m%d)"
+                  # Default window is yesterday. DAY=YYYYMMDD on a one-off Job backfills THAT day instead,
+                  # which is how a gap from a failed run gets filled; see docs/10_backups.md.
+                  day="${DAY:-}"
+                  if [ -n "$day" ]; then
+                    start="$(date -u -D %Y%m%d -d "$day" +%s)"
+                    # busybox date does not fail on a malformed -d, it guesses, so round-trip it instead.
+                    [ "$(date -u -d "@${start}" +%Y%m%d)" = "$day" ] || { echo "DAY must be YYYYMMDD, got '${day}'"; exit 2; }
+                  else
+                    now="$(date -u +%s)"
+                    start=$(( now - now % 86400 - 86400 ))   # yesterday 00:00 UTC
+                    day="$(date -u -d "@${start}" +%Y%m%d)"
+                  fi
+                  end=$(( start + 86400 ))
+                  echo "window ${day}: ${start} -> ${end}"
                   failed=""
 
                   # stream <url> <curl-data-arg> <s3-key>: export, gzip, upload; delete a partial on failure.
@@ -65,12 +77,21 @@ spec:
                     fi
                   }
 
-                  # export/native honours start/end; LogsQL scopes with a _time filter. One file per UTC day,
+                  # export/native honours start/end, and the whole day fits one request. One file per UTC day,
                   # so a re-run just overwrites that day's slice.
-                  # timeout= overrides vlsingle's -search.maxQueryDuration (30s by default), which is far too
-                  # short for a day's export and hangs up mid-stream: curl's --max-time never sees it.
                   stream "${VMSINGLE}/api/v1/export/native" "--data-urlencode match[]={__name__!=\"\"} --data-urlencode start=${start} --data-urlencode end=${end}" "${PREFIX}metrics/${day}.native.gz"
-                  stream "${VLSINGLE}/select/logsql/query"  "--data-urlencode query=_time:[${start},${end}) --data-urlencode timeout=1800s"                         "${PREFIX}logs/${day}.jsonl.gz"
+
+                  # Logs go HOURLY, 24 objects a day, because a whole day is ~1.4GB and gzip on an arm64 node
+                  # is slower than vlsingle streams: the response stays open past -search.maxQueryDuration and
+                  # vlsingle hangs up mid-stream with a 200 already sent. The `timeout=` URL arg does NOT raise
+                  # that ceiling, whatever it looks like. An hour is ~60MB and ~1-2s, nowhere near it.
+                  # Keys stay FLAT and lexically sortable, which is what recover_vm_from_s3.sh lists and orders.
+                  h=0
+                  while [ "$h" -lt 24 ]; do
+                    hs=$(( start + h * 3600 ))
+                    stream "${VLSINGLE}/select/logsql/query" "--data-urlencode query=_time:[${hs},$(( hs + 3600 )))" "${PREFIX}logs/${day}T$(printf '%02d' "$h").jsonl.gz"
+                    h=$(( h + 1 ))
+                  done
 
                   if [ -n "$failed" ]; then echo "FAILURES:${failed}"; exit 1; fi
                   echo "all backups ok"

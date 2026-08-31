@@ -98,21 +98,24 @@ resolve_kind() {
     || die "sealed creds ${RESTORE_NS}/${SECRET_NAME} missing: enable backups first (make configure-vm-backup)"
 }
 
-# OBJECTS is a newline list of full s3:// urls. Slices are date-named, so a plain sort is chronological.
+# OBJECTS is a newline list of full s3:// urls. Every key starts with its YYYYMMDD, so a plain sort is
+# chronological and the first 8 chars name the day. Metrics are one object per day, logs are 24 (one per
+# hour), so `latest` takes the whole day rather than the last key, and means the same thing for both kinds.
 resolve_objects() {
-  local keys key
+  local keys day
   DEST="s3://${BUCKET}/${PREFIX}${SUBPREFIX}"
   case "$TARGET" in
     all)
-      say "resolving ALL ${KIND} daily slices under ${DEST}"
+      say "resolving ALL ${KIND} slices under ${DEST}"
       keys="$(aws s3 ls "$DEST" | awk '{print $4}' | grep -E "${EXT}\$" | sort)"
       [ -n "$keys" ] || die "no ${EXT} objects under ${DEST}, nothing to restore"
       OBJECTS="$(printf '%s\n' "$keys" | sed "s#^#${DEST}#")" ;;
     latest)
       say "resolving latest ${KIND} daily slice under ${DEST}"
-      key="$(aws s3 ls "$DEST" | awk '{print $4}' | grep -E "${EXT}\$" | sort | tail -1)"
-      [ -n "$key" ] || die "no ${EXT} objects under ${DEST}, nothing to restore"
-      OBJECTS="${DEST}${key}" ;;
+      keys="$(aws s3 ls "$DEST" | awk '{print $4}' | grep -E "${EXT}\$" | sort)"
+      [ -n "$keys" ] || die "no ${EXT} objects under ${DEST}, nothing to restore"
+      day="$(printf '%s\n' "$keys" | tail -1 | cut -c1-8)"
+      OBJECTS="$(printf '%s\n' "$keys" | grep "^${day}" | sed "s#^#${DEST}#")" ;;
     *)
       OBJECTS="s3://${BUCKET}/${TARGET#/}"   # caller passed a full key relative to the bucket
       aws s3 ls "$OBJECTS" >/dev/null 2>&1 || die "object not found: ${OBJECTS}" ;;

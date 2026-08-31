@@ -382,11 +382,20 @@ The operator's `VMSingle`/`VLSingle` spec has no supported general sidecar field
 itself documents for migration and backup, the HTTP export/import API, which needs no volume access and mirrors the
 Redis central-CronJob shape.
 
-Each 01:00 run backs up only the PREVIOUS full UTC day, a bounded daily slice, one file per day:
+Each 01:00 run backs up only the PREVIOUS full UTC day, a bounded daily slice:
 
-- metrics: `GET /api/v1/export/native?match[]={__name__!=""}&start&end`, gzipped to
+- metrics: `GET /api/v1/export/native?match[]={__name__!=""}&start&end`, one request, gzipped to
   `s3://<bucket>/vm/metrics/<YYYYMMDD>.native.gz`
-- logs: `GET /select/logsql/query?query=_time:[start,end)`, gzipped to `s3://<bucket>/vm/logs/<YYYYMMDD>.jsonl.gz`
+- logs: `GET /select/logsql/query?query=_time:[start,end)`, **24 requests, one per UTC hour**, gzipped to
+  `s3://<bucket>/vm/logs/<YYYYMMDD>T<HH>.jsonl.gz`
+
+Why the logs leg is hourly and the metrics leg is not: a day of logs is ~1.4GB raw against ~60MB for an hour,
+and gzip on an arm64 node is slower than vlsingle streams it. The response then stays open past vlsingle's
+`-search.maxQueryDuration`, which is the hard per-query ceiling, and it hangs up mid-stream with a 200 already
+sent, so the S3 object is a truncated day. The `timeout=` URL arg does NOT raise that ceiling despite looking
+like it should; only the flag does, and `05_victoria_logs` sets it to `5m` for headroom. An hour is ~1-2s.
+Keys stay flat rather than nested under a per-day folder, so they still sort chronologically in one
+`aws s3 ls`, which is what the restore script relies on.
 
 Pieces, all under `argo_apps/platform/charts/08_vm_backup/` plus two netpol edits on the stores:
 
@@ -407,8 +416,18 @@ Why daily slices rather than one full dump: a full-store export's peak memory gr
 OOMs the store, which it did. A fixed one-day window keeps peak memory flat forever. Trade-off: a full recovery
 replays EVERY slice, not one file.
 
-Two caveats. A gap day from a failed run leaves a hole unless you re-run for that day. And the VictoriaLogs JSONL
-round-trip is best-effort on stream-field fidelity, because stream labels are re-derived on import.
+A gap day from a failed run leaves a hole. Fill it by re-running the job with `DAY` set, any time while the day
+is still inside the store's retention:
+
+```sh
+kubectl -n monitoring create job --from=cronjob/vm-backup backfill-20260829 --dry-run=client -o json \
+  | jq '.spec.template.spec.containers[0].env += [{"name":"DAY","value":"20260829"}]' \
+  | kubectl apply -f -
+kubectl -n monitoring logs job/backfill-20260829 -f
+```
+
+One caveat left: the VictoriaLogs JSONL round-trip is best-effort on stream-field fidelity, because stream labels
+are re-derived on import.
 
 ### Turning VM/VL backups on
 
@@ -419,7 +438,7 @@ git add -A && git commit && git push   # ArgoCD applies the app (wave 8) + the s
 # verify:
 kubectl -n monitoring create job --from=cronjob/vm-backup vm-backup-manual
 kubectl -n monitoring logs job/vm-backup-manual -f
-aws s3 ls s3://$S3_BACKUP_BUCKET/vm/ --recursive     # vm/metrics/*.native.gz + vm/logs/*.jsonl.gz
+aws s3 ls s3://$S3_BACKUP_BUCKET/vm/ --recursive     # 1x vm/metrics/<day>.native.gz + 24x vm/logs/<day>T<hh>.jsonl.gz
 ```
 
 ### Restore
