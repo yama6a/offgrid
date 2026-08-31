@@ -62,6 +62,12 @@ prometheus-blackbox-exporter:
     selfMonitor:
       enabled: true # so a dead exporter trips `target-down`, instead of silently ending every probe alert
 
+  # A passing SSO probe logs TWO WARN lines, "Received redirect" and "Not following redirect", because
+  # follow_redirects is off and a 302 is the expected answer. That success path is 99.8% of this exporter's
+  # output (15118 of 15152 lines in 6h) and ~25MB a day. A real failure logs at ERROR, so it still surfaces.
+  extraArgs:
+    - --log.level=error
+
   resources:
     requests: {cpu: 10m, memory: 32Mi}
     limits: {memory: 64Mi}
