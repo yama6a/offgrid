@@ -19,6 +19,9 @@ spec:
     annotations:
       reloader.stakater.com/auto: "false"
   retentionPeriod: {{ .Values.vlsingle.retentionPeriod | quote }}
+  {{- with .Values.vlsingle.extraArgs }}
+  extraArgs: {{ toYaml . | nindent 4 }}
+  {{- end }}
   storage:
     storageClassName: {{ .Values.vlsingle.storage.storageClassName }}
     accessModes:
