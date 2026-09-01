@@ -56,9 +56,14 @@ victoria-logs-collector:
       # collector above already reads. Rotation renames to <service>.log.1, which the glob skips and the
       # collector follows to the end before switching, so a rotation neither duplicates nor drops lines.
     - glob: /var/log/*.log
-      # Two files pulled out by VOLUME, not by relevance. Both are all-or-nothing: vlagent has no content
-      # filter for file collectors, only -kubernetesCollector.excludeFilter, so a rare non-DEBUG line in either
-      # is dropped along with the rest.
+      # BRACES, not a comma-separated list. -fileCollector.excludeGlob is a positional array paired with the
+      # glob entries below, and a bare comma starts a NEW array item: `a.log,b.log` silently excludes a.log
+      # from THIS glob and b.log from the hubble one, which matches nothing. Braces keep it one item, and the
+      # glob engine expands them. Verified: with `{auditd,dns-resolve-cache}` only kubelet.log and cri.log
+      # were collected out of a seeded set of four.
+      # Both files are pulled out by VOLUME, not relevance, and it is all-or-nothing: vlagent has no content
+      # filter for file collectors, only -kubernetesCollector.excludeFilter, so a rare non-DEBUG line in
+      # either is dropped along with the rest.
       #   auditd:            the Linux audit subsystem, one record per syscall it watches, ~340MB a DAY per node
       #                      against 4.4MB for every container log combined. Taking it in needs a bigger PVC AND
       #                      a way to trim the records, not just deleting this line.
@@ -66,7 +71,7 @@ victoria-logs-collector:
       #                      query and its response in wire format. 40281 of 40281 lines over 6h were DEBUG.
       #                      Talos has no way to turn this down: machine.logging only sets remote destinations,
       #                      and `debug: true` ADDS console output rather than gating the service log.
-      excludeGlob: /var/log/auditd.log,/var/log/dns-resolve-cache.log
+      excludeGlob: /var/log/{auditd,dns-resolve-cache}.log
       # controller-runtime colours its level, so without this the escape sequences land in `_msg` as literal
       # text and every search has to work around them.
       decolorizeFields: _msg
