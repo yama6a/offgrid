@@ -30,6 +30,9 @@ argo-cd:
       limits: {memory: 128Mi}
     exporter:
       enabled: true
+      resources:
+        requests: {cpu: 10m, memory: 20Mi} # unset upstream, same eviction-class problem as the redis container above
+        limits: {memory: 32Mi}
     metrics:
       enabled: true
       serviceMonitor:
