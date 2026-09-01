@@ -33,7 +33,7 @@ victoria-metrics-k8s-stack:
         requests: {cpu: 50m, memory: 512Mi}
         # Sized for the daily vm-backup full-series export, not steady state: a tighter limit OOMs mid-export.
         # No CPU limit, so merges and queries are never throttled.
-        limits: {memory: 1Gi}
+        limits: {memory: 2Gi}
       # Reschedule fast on node loss. Longhorn is set to force-delete a StatefulSet pod on a down node
       # (nodeDownPodDeletionPolicy), which is what frees the volume for the replacement pod to mount.
       tolerations:
