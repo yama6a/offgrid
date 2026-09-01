@@ -36,6 +36,11 @@ spec:
     # renovate: datasource=docker
     image: "quay.io/opstree/redis-exporter:v1.89.0"
     imagePullPolicy: IfNotPresent
+    # Not exposed as a value: the sidecar's footprint belongs to the exporter, not to the instance it scrapes,
+    # so it does not scale with the Redis size. Left unset the container counts as free to the scheduler.
+    resources:
+      requests: {cpu: 10m, memory: 16Mi}
+      limits: {memory: 32Mi}
   redisConfig:
     # Extra redis.conf overlay from templates/configmap.yaml. The ConfigMap always exists, so this is
     # unconditional; the AOF lines inside it are what varies by mode.

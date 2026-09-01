@@ -17,10 +17,12 @@ vlsingle:
     storageClassName: longhorn-r2-ephemeral # deletionProtection is the prune guard, so Retain would only leak PVs
     size: 30Gi
   resources:
-    requests: {cpu: 10m, memory: 96Mi}
+    # 96Mi was well under the real working set (~266Mi observed) and it still OOMKilled at the 512Mi limit
+    # after the hourly-slice change, so both move up together.
+    requests: {cpu: 10m, memory: 288Mi}
     # Sized for the vm-backup export, not steady state. It now pulls the day in HOURLY slices, so peak is
     # ~60MB of response per request instead of a ~1.4GB full-day dump that OOM'd mid-response.
-    limits: {memory: 512Mi}
+    limits: {memory: 640Mi}
 
 victoria-logs-collector:
   remoteWrite:
