@@ -3,7 +3,7 @@
 # Kubernetes applies it on its own, because only an operator can make that call. This watcher makes it, using
 # time-NotReady as the evidence. See docs/13_node_loss.md.
 
-image: "alpine/k8s:1.36.2" # needs kubectl + jq; renovate-annotated in templates/deployment.yaml
+image: "alpine/k8s:1.37.0" # needs kubectl + jq; renovate-annotated in templates/deployment.yaml
 
 gracePeriodSeconds: 60 # how long a node must be continuously NotReady before it is declared dead
 intervalSeconds: 10    # poll cadence, so the real worst case is gracePeriod + interval

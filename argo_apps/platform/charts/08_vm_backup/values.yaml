@@ -5,4 +5,4 @@ prefix: "vm/" # metrics land under vm/metrics/<UTC>.native.gz, logs under vm/log
 secretName: "vm-backup-s3" # sealed S3 writer creds in ns monitoring; keys AWS_ACCESS_KEY_ID / AWS_SECRET_ACCESS_KEY
 vmsingle: "http://vmsingle-victoria-metrics-k8s-stack.monitoring.svc:8428"
 vlsingle: "http://vlsingle-victoria-logs.monitoring.svc:9428"
-image: "alpine/k8s:1.36.2" # needs curl + aws-cli + gzip; renovate-annotated in templates/cronjob.yaml
+image: "alpine/k8s:1.37.0" # needs curl + aws-cli + gzip; renovate-annotated in templates/cronjob.yaml
