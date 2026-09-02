@@ -42,7 +42,7 @@ spec:
           initContainers:
             - name: list
               # renovate: datasource=docker
-              image: "alpine/k8s:1.36.2"
+              image: "alpine/k8s:1.37.0"
               command: ["/bin/sh", "-c"]
               args:
                 - |
@@ -88,7 +88,7 @@ spec:
           containers:
             - name: upload
               # renovate: datasource=docker
-              image: "alpine/k8s:1.36.2"
+              image: "alpine/k8s:1.37.0"
               command: ["/bin/sh", "-c"]
               args:
                 - |

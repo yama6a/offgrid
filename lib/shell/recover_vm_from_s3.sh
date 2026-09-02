@@ -26,7 +26,7 @@ VB_VALUES="${PLATFORM_CHARTS}/08_vm_backup/values.yaml"  # single source for buc
 RESTORE_NS="monitoring"          # the restore pod runs where the sealed creds + stores live
 SECRET_NAME="vm-backup-s3"       # the sealed writer creds in RESTORE_NS
 # renovate: datasource=docker
-RUNNER_IMAGE="alpine/k8s:1.36.2" # curl + aws-cli + gzip, same as the backup CronJob
+RUNNER_IMAGE="alpine/k8s:1.37.0" # curl + aws-cli + gzip, same as the backup CronJob
 
 # ---- state ----
 KIND=""             # set by parse_args / resolve_kind
