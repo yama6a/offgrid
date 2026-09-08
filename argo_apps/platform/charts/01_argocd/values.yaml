@@ -85,8 +85,8 @@ argo-cd:
       serviceMonitor:
         enabled: true
     resources:
-      requests: {cpu: 200m, memory: 512Mi}
-      limits: {memory: 3Gi}
+      requests: {cpu: 200m, memory: 646Mi}
+      limits: {memory: 1963Mi}
   repoServer:
     replicas: 2
     metrics:
@@ -97,10 +97,10 @@ argo-cd:
       enabled: true
       minAvailable: 1
     resources:
-      requests: {cpu: 250m, memory: 128Mi}
+      requests: {cpu: 150m, memory: 125Mi}
       # Headroom above the parallelism cap, not a substitute for it: the spikes come from concurrent renders
       # of the CRD-heavy charts.
-      limits: {memory: 768Mi}
+      limits: {memory: 735Mi}
   server:
     replicas: 2
     metrics:
@@ -111,8 +111,8 @@ argo-cd:
       enabled: true
       minAvailable: 1
     resources:
-      requests: {cpu: 50m, memory: 128Mi}
-      limits: {memory: 256Mi}
+      requests: {cpu: 10m, memory: 128Mi}
+      limits: {memory: 215Mi}
   applicationSet:
     replicas: 2 # leader-elected, so the second is just fast failover; drop to 1 if RAM gets tight
     metrics:
@@ -120,5 +120,5 @@ argo-cd:
       serviceMonitor:
         enabled: true
     resources:
-      requests: {cpu: 50m, memory: 128Mi}
-      limits: {memory: 256Mi}
+      requests: {cpu: 10m, memory: 104Mi}
+      limits: {memory: 179Mi}

@@ -10,5 +10,5 @@ storage:
   size: 1Gi # auth + cache SQLite DBs only
 
 resources:
-  requests: {cpu: 10m, memory: 32Mi}
-  limits: {memory: 96Mi}
+  requests: {cpu: 10m, memory: 30Mi}
+  limits: {memory: 85Mi}

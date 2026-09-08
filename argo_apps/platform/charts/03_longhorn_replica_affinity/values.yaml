@@ -13,6 +13,8 @@ longhorn-replica-affinity:
   podMonitor:
     enabled: true
 
+  # One resources knob shared by both the reconciler and webhook containers; sized to the webhook's higher
+  # need (23Mi req/45Mi lim), which leaves the reconciler comfortably over its own smaller ask.
   resources:
-    requests: {cpu: 10m, memory: 48Mi}
-    limits: {memory: 128Mi}
+    requests: {cpu: 10m, memory: 24Mi}
+    limits: {memory: 48Mi}

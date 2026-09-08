@@ -22,14 +22,14 @@ victoria-metrics-operator:
     enabled: false
 
   resources:
-    requests: {cpu: 10m, memory: 64Mi}
-    limits: {memory: 144Mi}
+    requests: {cpu: 73m, memory: 103Mi}
+    limits: {memory: 176Mi}
 
   # The Go runtime is blind to the cgroup cap and only GCs on heap growth, so a spike during bulk
   # prometheus-to-VM conversion can OOMKill the very component driving it. Keep this under the limit above.
   env:
     - name: GOMEMLIMIT
-      value: "90MiB"
+      value: "110MiB"
 
   priorityClassName: platform-critical
 
