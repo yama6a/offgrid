@@ -6,7 +6,7 @@ prometheus-smartctl-exporter:
     # multi-arch tag they publish, hence a branch build here. Renovate refreshes the digest below and nothing
     # else: moving to a version tag, once upstream tags one with arm64, is a hand edit.
     repository: quay.io/prometheuscommunity/smartctl-exporter
-    tag: master@sha256:40c4f3305271941605d2092abb7a8486bc3ba44e2dda3e5824c78078ec1d8f7d
+    tag: master@sha256:b71695a28f644477abf4b9f82898aec1ee4aa5fe152b1af1ce3958929fce923c
 
   # Which block devices to read SMART from. REQUIRED and NOT autodetectable: Longhorn attaches every replica
   # as an iSCSI /dev/sd*, the same namespace a real SATA disk lands in, so letting smartctl scan would probe
