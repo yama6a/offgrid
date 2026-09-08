@@ -31,8 +31,8 @@
   // /charts/, so that would disable the whole repo.
   postUpdateOptions: ["helmUpdateSubChartArchives"],
 
-  // Every `helm dependency update` stamps Chart.lock's `generated:` with the wall clock, and this repo and
-  // offgrid-private both run Renovate independently against the same charts, so the SAME version bump lands
+  // Every `helm dependency update` stamps Chart.lock's `generated:` with the wall clock, and offgrid and
+  // offgrid-private each run Renovate independently against the same charts, so the SAME version bump lands
   // with a DIFFERENT generated: timestamp in each repo, and the next upstream-sync conflicts on a line with
   // no semantic meaning (Helm keys staleness off `digest`, never `generated`). Pin it to a constant so two
   // independent regenerations of the same resolved deps produce a byte-identical Chart.lock. Command must
