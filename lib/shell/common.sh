@@ -91,6 +91,20 @@ require() {
   done
 }
 
+# `helm dependency build/update` stamps Chart.lock's `generated:` with the wall clock, which offgrid and
+# offgrid-private both regenerate independently off the same Renovate bump, so the value never matches
+# across the two repos and every upstream-sync hits a conflict on a line with no semantic meaning (Helm
+# keys staleness off `digest`, never `generated`, confirmed against a build with this pinned). Pin it to a
+# constant right after every regenerate, so two independent runs against the same resolved deps produce a
+# byte-identical Chart.lock and there is nothing left to conflict on.
+pin_chart_lock_timestamp() {
+  local lock="${1}/Chart.lock"
+  [ -f "$lock" ] || return 0
+  local tmp; tmp="$(mktemp)"
+  sed 's/^generated:.*/generated: "1970-01-01T00:00:00Z"/' "$lock" > "$tmp" && cat "$tmp" > "$lock"
+  rm -f "$tmp"
+}
+
 # Line-surgical edits, NOT `yq -i`: yq rewrites the whole document (collapses comment alignment, drops blank
 # lines, re-flows inline maps), so even a write that changes NOTHING leaves the file modified, which trips
 # 02a_argocd's uncommitted-changes gate. yq stays fine for READS.

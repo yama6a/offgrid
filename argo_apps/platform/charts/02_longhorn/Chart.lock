@@ -3,4 +3,4 @@ dependencies:
   repository: https://charts.longhorn.io
   version: 1.12.1
 digest: sha256:c6a6ac4349746ecae639553d1d69a401e1e0e89e79340b3c50e8428de773c5fc
-generated: "2026-08-15T10:03:56.047198149Z"
+generated: "1970-01-01T00:00:00Z"

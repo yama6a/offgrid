@@ -57,6 +57,11 @@ jobs:
           RENOVATE_REPOSITORIES: ${{ github.repository }} # this repo only, no org-wide autodiscover
           LOG_LEVEL: ${{ inputs.logLevel || 'info' }}
           RENOVATE_DRY_RUN: ${{ inputs.dryRun && 'full' || '' }}
+          # Admin-only allowlist for renovate.json5's postUpgradeTasks: this env var is what actually
+          # authorizes running that command, not the repo config alone. Kept here, not in renovate.json5, so a
+          # routine config PR cannot smuggle in an arbitrary command for this job to execute. Exact match to
+          # the Chart.lock generated: normalizer only.
+          RENOVATE_ALLOWED_COMMANDS: '["^find \\. -name Chart\\.lock -exec sed -i "]'
           # Without a restored cache Renovate cannot tell an open branch is still current, so it rebuilds and
           # force-pushes it every run, which restarts CI and starves automerge.
           RENOVATE_REPOSITORY_CACHE: enabled
