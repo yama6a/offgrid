@@ -3,4 +3,4 @@ dependencies:
   repository: https://ot-container-kit.github.io/helm-charts/
   version: 0.26.1
 digest: sha256:939e9f541fa53f75b64bec3a5cafa33258e9867d1747d26253c470f5d6057c07
-generated: "2026-08-20T13:14:40.283685526Z"
+generated: "1970-01-01T00:00:00Z"

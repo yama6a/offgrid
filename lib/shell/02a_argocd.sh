@@ -36,6 +36,7 @@ vendor_argocd_subchart() {
   helm repo update argo >/dev/null 2>&1 || helm repo update >/dev/null
   # build wants an existing Chart.lock; update generates one. Try build, fall back to update.
   if helm dependency build "$CHART_DIR" >/dev/null 2>&1 || helm dependency update "$CHART_DIR" >/dev/null 2>&1; then
+    pin_chart_lock_timestamp "$CHART_DIR"
     ok "argo-cd subchart vendored under charts/"
   else
     bad "helm dependency build/update failed (see: helm dependency build ${CHART_DIR})"

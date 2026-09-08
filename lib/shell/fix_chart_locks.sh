@@ -49,6 +49,7 @@ add_missing_helm_repos() {
 make_scratch_dir() {
   TMPD="$(mktemp -d)"; trap 'rm -rf "$TMPD"' EXIT
   export REPO_ROOT TMPD
+  export -f pin_chart_lock_timestamp   # each worker below runs in its own `bash -c`, not this shell
 }
 
 # One worker per chart, capped at JOBS concurrent. Detection is `helm dependency build`, which fast-fails on
@@ -64,6 +65,7 @@ build_charts_in_parallel() {
   if helm dependency build "$dir" --skip-refresh >/dev/null 2>&1; then
     printf "ok\t%s (in sync)\n" "$rel" > "$out"
   elif helm dependency update "$dir" --skip-refresh >/dev/null 2>&1 || helm dependency update "$dir" >/dev/null 2>&1; then
+    pin_chart_lock_timestamp "$dir"
     printf "fixed\t%s (Chart.lock regenerated)\n" "$rel" > "$out"
   else
     printf "bad\t%s (run by hand: helm dependency update %s)\n" "$rel" "$rel" > "$out"

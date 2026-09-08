@@ -3,4 +3,4 @@ dependencies:
   repository: oci://ghcr.io/yama6a/charts
   version: 0.3.10
 digest: sha256:942f9e3a807c74dd702edd3d2c0dd8ec3c6166e0762addbaaea0f3d9886fe70d
-generated: "2026-09-07T19:13:08.944517583Z"
+generated: "1970-01-01T00:00:00Z"

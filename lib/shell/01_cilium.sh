@@ -69,6 +69,7 @@ install_monitoring_crds() {
     bad "helm dependency build/update failed for ${CRDS_CHART_DIR}"
     return 0
   fi
+  pin_chart_lock_timestamp "$CRDS_CHART_DIR"
   if ! helm template prometheus-operator-crds "$CRDS_CHART_DIR" | kubectl apply --server-side --force-conflicts -f - >/dev/null 2>&1; then
     bad "failed to apply prometheus-operator CRDs (kubectl apply --server-side)"
     return 0
@@ -87,6 +88,7 @@ vendor_cilium_subchart() {
   helm repo update cilium >/dev/null 2>&1 || helm repo update >/dev/null
   # build wants an existing Chart.lock; update generates one. Try build, fall back to update.
   if helm dependency build "$CHART_DIR" >/dev/null 2>&1 || helm dependency update "$CHART_DIR" >/dev/null 2>&1; then
+    pin_chart_lock_timestamp "$CHART_DIR"
     ok "cilium subchart vendored under charts/"
   else
     bad "helm dependency build/update failed (see: helm dependency build ${CHART_DIR})"
