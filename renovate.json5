@@ -31,6 +31,21 @@
   // /charts/, so that would disable the whole repo.
   postUpdateOptions: ["helmUpdateSubChartArchives"],
 
+  // Every `helm dependency update` stamps Chart.lock's `generated:` with the wall clock, and this repo and
+  // offgrid-private both run Renovate independently against the same charts, so the SAME version bump lands
+  // with a DIFFERENT generated: timestamp in each repo, and the next upstream-sync conflicts on a line with
+  // no semantic meaning (Helm keys staleness off `digest`, never `generated`). Pin it to a constant so two
+  // independent regenerations of the same resolved deps produce a byte-identical Chart.lock. Command must
+  // match RENOVATE_ALLOWED_COMMANDS in .github/workflows/renovate.yaml, that allowlist is what actually
+  // authorizes running this, not this file alone.
+  postUpgradeTasks: {
+    commands: [
+      'find . -name Chart.lock -exec sed -i \'s/^generated:.*/generated: "1970-01-01T00:00:00Z"/\' {} +',
+    ],
+    fileFilters: ["**/Chart.lock"],
+    executionMode: "branch",
+  },
+
   // Bumping this file re-vendors an upstream release manifest verbatim, per its README curl recipe. Never
   // let a bot patch the image tag inside it.
   ignorePaths: ["argo_apps/platform/charts/03_barman_cloud_plugin/templates/**"],
