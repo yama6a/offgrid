@@ -26,5 +26,5 @@ reloader:
     deployment:
       priorityClassName: platform-critical # while it is gone, a rotated secret silently never reaches its pod
       resources:
-        requests: {cpu: 10m, memory: 64Mi}
-        limits:   {memory: 128Mi}
+        requests: {cpu: 10m, memory: 56Mi}
+        limits:   {memory: 86Mi}

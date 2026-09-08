@@ -125,5 +125,5 @@ victoria-logs-collector:
     vm: true
 
   resources:
-    requests: {cpu: 10m, memory: 48Mi}
-    limits: {memory: 96Mi}
+    requests: {cpu: 10m, memory: 64Mi}
+    limits: {memory: 140Mi}

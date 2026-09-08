@@ -69,5 +69,5 @@ prometheus-blackbox-exporter:
     - --log.level=error
 
   resources:
-    requests: {cpu: 10m, memory: 32Mi}
-    limits: {memory: 64Mi}
+    requests: {cpu: 10m, memory: 38Mi}
+    limits: {memory: 62Mi}

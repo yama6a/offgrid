@@ -11,5 +11,5 @@ maxUnreadyNodes: 1     # act on 1 dead node, refuse if more are down at once: th
                        # node failure, there is nowhere to reschedule to, and a human should look
 
 resources:
-  requests: {cpu: 10m, memory: 32Mi}
-  limits: {memory: 64Mi}
+  requests: {cpu: 25m, memory: 46Mi}
+  limits: {memory: 90Mi}

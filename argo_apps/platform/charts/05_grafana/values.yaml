@@ -85,9 +85,10 @@ grafana:
 
   sidecar:
     logLevel: WARN # at INFO both sidecars log "Loading incluster config" every 30s, 4% of cluster log volume
+    # One knob shared by the dashboards and alerts sidecars; sized to the higher of the two (dashboards).
     resources:
-      requests: {cpu: 10m, memory: 96Mi}
-      limits: {memory: 128Mi}
+      requests: {cpu: 10m, memory: 84Mi}
+      limits: {memory: 127Mi}
     dashboards:
       enabled: true # ingests the k8s-stack's emitted grafana_dashboard ConfigMaps
       label: grafana_dashboard
@@ -111,10 +112,10 @@ grafana:
 
   resources:
     requests:
-      cpu: 250m
-      memory: 256Mi
+      cpu: 207m
+      memory: 370Mi
     limits:
-      memory: 512Mi
+      memory: 567Mi
 
   # Pre-staged placement only. Actually running replicas>1 first needs unified-alerting HA (grafana.ini
   # unified_alerting.ha_*), else each replica evaluates rules independently and double-sends; and with

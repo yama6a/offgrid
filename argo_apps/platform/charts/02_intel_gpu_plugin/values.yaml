@@ -10,5 +10,5 @@ sharedDevNum: 2 # pods that may hold the iGPU at once. Slots are time-sliced wit
                 # contention cap, not a partition: 2 lets two consumers run at once, a third goes Pending
 
 resources:
-  requests: {cpu: 40m, memory: 45Mi}
-  limits: {memory: 115Mi}
+  requests: {cpu: 10m, memory: 18Mi}
+  limits: {memory: 32Mi}

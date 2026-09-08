@@ -29,10 +29,10 @@ cloudnative-pg:
 
   resources:
     requests:
-      cpu: 10m
-      memory: 64Mi
+      cpu: 31m
+      memory: 91Mi
     limits:
-      memory: 96Mi
+      memory: 142Mi
 
   # Soft + hostname: bare Pi nodes have no zone label, and soft keeps the 2nd replica schedulable on 3 nodes
   # rather than Pending. It only PREFERS a different node, so a drain can still land both on one.

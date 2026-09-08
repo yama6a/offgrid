@@ -231,8 +231,8 @@ victoria-metrics-k8s-stack:
     tolerations:
       - operator: Exists
     resources:
-      requests: {cpu: 10m, memory: 32Mi}
-      limits: {memory: 48Mi}
+      requests: {cpu: 10m, memory: 26Mi}
+      limits: {memory: 44Mi}
 
   kube-state-metrics:
     enabled: true
@@ -248,8 +248,8 @@ victoria-metrics-k8s-stack:
       - pods=[alert-criticality]
       - horizontalpodautoscalers=[alert-criticality]
     resources:
-      requests: {cpu: 10m, memory: 32Mi}
-      limits: {memory: 96Mi}
+      requests: {cpu: 13m, memory: 73Mi}
+      limits: {memory: 112Mi}
     # Soft + hostname, as elsewhere. Real scale-out also needs autosharding.enabled: true, which splits the
     # watched objects across replicas; without it every replica watches everything and emits duplicate series.
     affinity:

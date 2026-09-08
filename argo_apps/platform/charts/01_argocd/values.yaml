@@ -85,7 +85,9 @@ argo-cd:
       serviceMonitor:
         enabled: true
     resources:
-      requests: {cpu: 200m, memory: 512Mi}
+      requests: {cpu: 200m, memory: 646Mi}
+      # Kept at 3Gi, well above KRR's 1963Mi: this is the one component that reconciles everything else, so
+      # if it OOMs nothing here can fix itself. Headroom over density here on purpose.
       limits: {memory: 3Gi}
   repoServer:
     replicas: 2
@@ -97,10 +99,10 @@ argo-cd:
       enabled: true
       minAvailable: 1
     resources:
-      requests: {cpu: 250m, memory: 128Mi}
+      requests: {cpu: 150m, memory: 125Mi}
       # Headroom above the parallelism cap, not a substitute for it: the spikes come from concurrent renders
       # of the CRD-heavy charts.
-      limits: {memory: 768Mi}
+      limits: {memory: 735Mi}
   server:
     replicas: 2
     metrics:
@@ -111,8 +113,8 @@ argo-cd:
       enabled: true
       minAvailable: 1
     resources:
-      requests: {cpu: 50m, memory: 128Mi}
-      limits: {memory: 256Mi}
+      requests: {cpu: 10m, memory: 128Mi}
+      limits: {memory: 215Mi}
   applicationSet:
     replicas: 2 # leader-elected, so the second is just fast failover; drop to 1 if RAM gets tight
     metrics:
@@ -120,5 +122,5 @@ argo-cd:
       serviceMonitor:
         enabled: true
     resources:
-      requests: {cpu: 50m, memory: 128Mi}
-      limits: {memory: 256Mi}
+      requests: {cpu: 10m, memory: 104Mi}
+      limits: {memory: 179Mi}

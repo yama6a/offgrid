@@ -9,7 +9,7 @@ intervalSeconds: 60 # detection is not latency-sensitive, the alerts hold for mi
 port: 9100
 resources:
   requests:
-    cpu: 5m
-    memory: 32Mi
+    cpu: 10m
+    memory: 37Mi
   limits:
-    memory: 64Mi
+    memory: 55Mi

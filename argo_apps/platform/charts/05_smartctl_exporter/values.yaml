@@ -21,8 +21,8 @@ prometheus-smartctl-exporter:
   nodeSelector: {kubernetes.io/arch: arm64}
   tolerations: [{operator: Exists}] # node metrics are wanted whatever the node's role or taints
   resources:
-    requests: {cpu: 10m, memory: 32Mi}
-    limits: {memory: 64Mi}
+    requests: {cpu: 10m, memory: 16Mi}
+    limits: {memory: 35Mi}
 
   extraInstances:
     - config:
@@ -33,8 +33,8 @@ prometheus-smartctl-exporter:
       nodeSelector: {kubernetes.io/arch: amd64}
       tolerations: [{operator: Exists}]
       resources:
-        requests: {cpu: 10m, memory: 32Mi}
-        limits: {memory: 64Mi}
+        requests: {cpu: 10m, memory: 23Mi}
+        limits: {memory: 38Mi}
 
   serviceMonitor:
     enabled: true # the VM operator converts it to a VMServiceScrape, so a dead exporter trips `target-down`

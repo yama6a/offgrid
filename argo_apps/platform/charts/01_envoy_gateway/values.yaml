@@ -7,9 +7,11 @@ envoyProxy:
   loadBalancerIP: "" # MUST sit inside the Cilium LB-IPAM pool (00_cilium loadBalancer.ipPool)
   # This is the cluster's SINGLE merged ingress proxy, so keep a generous memory limit: a too-tight one
   # OOM-kills all ingress at once.
+  # The shutdown-manager sidecar Envoy Gateway injects into this pod has no separate resources knob here,
+  # it inherits nothing from this block; leave it ungoverned until the chart exposes one.
   resources:
-    requests: { cpu: 10m, memory: 48Mi }
-    limits:   { memory: 128Mi }
+    requests: { cpu: 18m, memory: 91Mi }
+    limits:   { memory: 158Mi }
 
   # Soft + hostname: bare Pi nodes have no zone label, and soft means raising replicas never wedges a pod
   # Pending on 3 nodes. The selector is Envoy Gateway's own EnvoyAppLabelSelector; verify against a live pod
@@ -42,8 +44,8 @@ gateway-helm:
   deployment:
     envoyGateway:
       resources:
-        requests: { cpu: 10m, memory: 48Mi }
-        limits:   { memory: 96Mi }
+        requests: { cpu: 65m, memory: 78Mi }
+        limits:   { memory: 144Mi }
     replicas: 1
     priorityClassName: platform-critical # the single ingress control plane
     # Controller only; the data-plane proxy spreads via the EnvoyProxy CR above. Soft + hostname for the same
