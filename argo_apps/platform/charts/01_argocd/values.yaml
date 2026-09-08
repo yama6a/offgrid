@@ -86,7 +86,9 @@ argo-cd:
         enabled: true
     resources:
       requests: {cpu: 200m, memory: 646Mi}
-      limits: {memory: 1963Mi}
+      # Kept at 3Gi, well above KRR's 1963Mi: this is the one component that reconciles everything else, so
+      # if it OOMs nothing here can fix itself. Headroom over density here on purpose.
+      limits: {memory: 3Gi}
   repoServer:
     replicas: 2
     metrics:
