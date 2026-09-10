@@ -2,6 +2,6 @@
 # Minor and patch bumps incur none-to-minimal downtime and are rolled out to all instances automatically.
 
 # 16 is the floor: `pg_create_subscription`, granted to `app` in the cluster template, only exists from 16.
-"16": "ghcr.io/cloudnative-pg/postgresql:16-minimal-trixie@sha256:cde2d1b10f5b497fbecd548578df5548025a1b1e42a709741c4af7c4533b658e"
-"17": "ghcr.io/cloudnative-pg/postgresql:17-minimal-trixie@sha256:c3c572b1cae6404fb508516456b0288d1c35feda39d4ef59857af2c9abe9282d"
-"18": "ghcr.io/cloudnative-pg/postgresql:18-minimal-trixie@sha256:5c389b0268d9e637ca55efa41a7fafa3996332b5ea3c6099d0861c5f31acb00e"
+"16": "ghcr.io/cloudnative-pg/postgresql:16-minimal-trixie@sha256:92f7c8bc5b482f71be8014e218799aaba952d1ae96951f72b06b1d719cd89be7"
+"17": "ghcr.io/cloudnative-pg/postgresql:17-minimal-trixie@sha256:3c8907d7725e93568134c32799bf235f75a9fd509cdcadb25bca706d94249327"
+"18": "ghcr.io/cloudnative-pg/postgresql:18-minimal-trixie@sha256:d67f21ed2110b1f59349217760e389f1bded54cd0b6dee485ed152b4c8a8b9e2"
