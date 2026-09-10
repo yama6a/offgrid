@@ -7,21 +7,14 @@
   //   customManagers  images in chart templates + shell scripts
   // Cadence is the cron in .github/workflows/renovate.yaml, not an internal `schedule`, so a manual
   // workflow_dispatch works too. Docs: docs/14_renovate.md.
+  //
+  // The shared preset carries the grouping, automerge and digest-pinning rules. Only what is specific
+  // to this repo lives below.
+  // WARNING: the combined non-major PR automerges, and a merged bump reaches the LIVE cluster unattended
+  // via ArgoCD self-heal, including Cilium, which can cut the cluster off its own network. Accepted for a
+  // hands-off homelab; add minimumReleaseAge, or drop automerge from the deps you want to gate.
   $schema: "https://docs.renovatebot.com/renovate-schema.json",
-  extends: [
-    "config:recommended",
-    ":dependencyDashboard", // one issue listing every pending/failed update (needs repo Issues enabled)
-    "helpers:pinGitHubActionDigestsToSemver", // action pins carry a readable version alongside the digest
-  ],
-  prConcurrentLimit: 12,
-  prHourlyLimit: 0, // no hourly throttle
-  dependencyDashboardTitle: "Renovate dependency dashboard",
-
-  // Automerge through Renovate's own API call, not GitHub's native auto-merge. Renovate waits for a PR's
-  // required CI checks by default, and branch protection enforces them on the merge call too, so the combined
-  // PR lands on a LATER run once CI is green (~2h+ after it was opened). That is why the cron runs every 3h
-  // rather than weekly. platformAutomerge stays false to keep the merge on Renovate's side.
-  platformAutomerge: false,
+  extends: ["github>yama6a/gha:default.json5"],
 
   // helmv3 auto-discovers every Chart.yaml and refreshes each wrapper's Chart.lock on a bump. file:// deps
   // have no datasource, so Renovate skips them.
@@ -96,31 +89,13 @@
   ],
 
   packageRules: [
-    {
-      // ONE combined, auto-merged PR for every NON-major update, gated on the required CI checks.
-      // WARNING: a merged bump reaches the LIVE cluster unattended via ArgoCD self-heal, including Cilium,
-      // which can cut the cluster off its own network. Accepted for a hands-off homelab; to de-risk, add
-      // minimumReleaseAge or drop automerge from the deps you want to gate.
-      description: "combine all non-major updates into one auto-merged PR",
-      matchUpdateTypes: ["minor", "patch", "digest", "pin", "lockFileMaintenance"],
-      groupName: "all non-major dependencies",
-      automerge: true,
-    },
-    // MAJOR updates get their own PR each, which is Renovate's default, so no rule below does it. That keeps a
-    // breaking bump reviewed in isolation. The VictoriaMetrics charts are the exception: their CRDs must match
-    // the operator, so their majors stay in one PR.
+    // MAJOR updates get their own PR each, which is Renovate's default. The VictoriaMetrics charts are the
+    // exception: their CRDs must match the operator, so their majors stay in one PR.
     {
       description: "keep VictoriaMetrics majors together (CRDs must match the operator)",
       matchPackageNames: ["victoria-metrics-operator", "victoria-metrics-operator-crds", "victoria-metrics-k8s-stack", "victoria-logs-collector"],
       matchUpdateTypes: ["major"],
       groupName: "victoriametrics stack (major)",
-    },
-    {
-      // Pin action refs to commit digests, so a moving tag cannot swap the action's code under us. The
-      // semver-comment helper above keeps a readable version beside each digest.
-      description: "pin github action refs to digests",
-      matchManagers: ["github-actions"],
-      pinDigests: true,
     },
     {
       // postgresVersion is a MAJOR selector only, a key into pg-cluster's image map, where the actual patch
