@@ -37,6 +37,9 @@ spec:
     # Component mesh within the argocd namespace (repo-server :8081, redis :6379, ...).
     - fromEndpoints:
         - {}
+    # Watch replies from the apiserver land on ephemeral ports. Conntrack covers them while the entry
+    # lives; once it ages out mid-stream the retransmit arrives as a new flow with no rule to match.
+    - fromEntities: [kube-apiserver]
   egress:
     # DNS.
     - toEndpoints:
