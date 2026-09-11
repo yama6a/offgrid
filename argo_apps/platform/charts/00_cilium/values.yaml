@@ -22,6 +22,13 @@ cilium:
   # which already handles service routing the same way.
   bpf:
     masquerade: true
+    # An explicit size opts this map out of mapDynamicSizeRatio, which floors at 131072 on the 8GB control planes.
+    # The qbittorrent torrent LoadBalancer alone holds ~112k entries on whichever node announces its IP.
+    ctTcpMax: 262144
+  extraConfig:
+    # Service CT entries idle out after 2h13m20s by default, so every short-lived BitTorrent peer keeps a slot for
+    # hours. Regular pod-to-pod CT keeps the long default: idle Postgres and AMQP connections depend on it.
+    bpf-ct-timeout-service-tcp: "15m"
   encryption:
     enabled: true
     type: wireguard # transparent node-to-node encryption (within-same-node traffic is unencrypted, but that's fine)
