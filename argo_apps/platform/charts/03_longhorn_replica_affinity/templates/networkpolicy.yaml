@@ -11,11 +11,16 @@ spec:
       app.kubernetes.io/name: longhorn-replica-affinity
       app.kubernetes.io/component: webhook
   ingress:
-    # Without this every mutation times out, and failurePolicy Ignore makes that silent.
-    - fromEntities: [kube-apiserver]
+    # Without this every mutation times out, and failurePolicy Ignore makes that silent. The call arrives
+    # SNATed to the node that hosts the apiserver, so the identity is remote-node and kube-apiserver alone
+    # never matches the SYN.
+    - fromEntities: [kube-apiserver, remote-node]
       toPorts:
         - ports:
             - {port: "8443", protocol: TCP}
+    # Apiserver replies on ephemeral ports, for the egress below. Conntrack covers them until the entry
+    # ages out mid-stream, and the retransmit then arrives as a new flow with no rule to match.
+    - fromEntities: [kube-apiserver]
     - fromEndpoints:
         - matchLabels:
             k8s:io.kubernetes.pod.namespace: monitoring
@@ -53,6 +58,9 @@ spec:
       toPorts:
         - ports:
             - {port: "9100", protocol: TCP}
+    # Apiserver replies on ephemeral ports, for the egress below. Conntrack covers them until the entry
+    # ages out mid-stream, and the retransmit then arrives as a new flow with no rule to match.
+    - fromEntities: [kube-apiserver]
   egress:
     - toEndpoints:
         - matchLabels:
