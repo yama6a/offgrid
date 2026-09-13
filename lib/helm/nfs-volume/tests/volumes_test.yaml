@@ -1,0 +1,46 @@
+suite: PV defaults and PVC binding
+templates:
+  - templates/volumes.yaml
+release:
+  namespace: ci-ns
+tests:
+  - it: an entry that sets neither gets hard NFSv4.1 mount options and Retain
+    values:
+      - ../ci/values.yaml
+    asserts:
+      - documentSelector:
+          path: kind
+          value: PersistentVolume
+        equal:
+          path: spec.mountOptions
+          value: [nfsvers=4.1, hard, noatime]
+      - documentSelector:
+          path: kind
+          value: PersistentVolume
+        equal:
+          path: spec.persistentVolumeReclaimPolicy
+          value: Retain
+
+  # A PVC whose request differs from the PV capacity never binds, and nothing reports why.
+  - it: the PVC requests exactly what the PV declares
+    values:
+      - ../ci/values.yaml
+    asserts:
+      - documentSelector:
+          path: kind
+          value: PersistentVolume
+        equal:
+          path: spec.capacity.storage
+          value: 50Ti
+      - documentSelector:
+          path: kind
+          value: PersistentVolumeClaim
+        equal:
+          path: spec.resources.requests.storage
+          value: 50Ti
+      - documentSelector:
+          path: kind
+          value: PersistentVolumeClaim
+        equal:
+          path: spec.volumeName
+          value: ci-ns-ci-media

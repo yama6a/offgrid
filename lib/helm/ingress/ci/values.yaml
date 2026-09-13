@@ -1,0 +1,12 @@
+# CI fixture, not a deployment. The minimal set this chart needs to render anything at all: with the default
+# empty ingresses[] it emits no manifest, so lint and kubeconform would see nothing.
+ingresses:
+  - name: ci
+    domain: example.com
+    issuer: letsencrypt-prod
+    hosts:
+      - subdomain: app
+        targetService: ci-app
+        targetPort: 8080
+      - subdomain: "@"
+        redirectTo: app.example.com

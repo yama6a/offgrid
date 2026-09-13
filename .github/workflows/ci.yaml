@@ -115,3 +115,25 @@ jobs:
           find "$render" -name '*.yaml' -print0 \
             | xargs -0 -r kubeconform $KUBECONFORM_ARGS || fail=1
           exit $fail
+
+  # The shared charts, which the helm job above only reaches as a wrapper's dependency. Each one `fail`s the
+  # render on a missing required value, so it needs a fixture to be linted or templated at all.
+  chart-tests:
+    name: chart-tests
+    runs-on: ubuntu-24.04-arm
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+      - uses: yama6a/gha/.github/actions/helm-chart-checks@v2
+        with:
+          charts: |
+            lib/helm/ingress
+            lib/helm/nfs-volume
+            lib/helm/pg-cluster
+            lib/helm/rabbitmq-topology
+            lib/helm/redis-instance
+          values: |
+            lib/helm/ingress=lib/helm/ingress/ci/values.yaml
+            lib/helm/nfs-volume=lib/helm/nfs-volume/ci/values.yaml
+            lib/helm/pg-cluster=lib/helm/pg-cluster/ci/values.yaml
+            lib/helm/rabbitmq-topology=lib/helm/rabbitmq-topology/ci/values.yaml
+            lib/helm/redis-instance=lib/helm/redis-instance/ci/values.yaml

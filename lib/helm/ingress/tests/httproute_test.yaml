@@ -1,0 +1,58 @@
+suite: httproute backend vs redirect
+templates:
+  - templates/edge.yaml
+tests:
+  - it: a redirectTo host answers at the edge, so it gets a RequestRedirect filter and no backend
+    set:
+      ingresses:
+        - name: ci
+          domain: example.com
+          hosts:
+            - subdomain: "@"
+              redirectTo: www.example.com
+    asserts:
+      - documentSelector:
+          path: kind
+          value: HTTPRoute
+        equal:
+          path: spec.rules[0].filters[0].type
+          value: RequestRedirect
+      - documentSelector:
+          path: kind
+          value: HTTPRoute
+        equal:
+          path: spec.rules[0].filters[0].requestRedirect.hostname
+          value: www.example.com
+      - documentSelector:
+          path: kind
+          value: HTTPRoute
+        notExists:
+          path: spec.rules[0].backendRefs
+
+  - it: a targetService host routes to that Service and gets no redirect filter
+    set:
+      ingresses:
+        - name: ci
+          domain: example.com
+          hosts:
+            - subdomain: app
+              targetService: ci-app
+              targetPort: 8080
+    asserts:
+      - documentSelector:
+          path: kind
+          value: HTTPRoute
+        equal:
+          path: spec.rules[0].backendRefs[0].name
+          value: ci-app
+      - documentSelector:
+          path: kind
+          value: HTTPRoute
+        equal:
+          path: spec.rules[0].backendRefs[0].port
+          value: 8080
+      - documentSelector:
+          path: kind
+          value: HTTPRoute
+        notExists:
+          path: spec.rules[0].filters

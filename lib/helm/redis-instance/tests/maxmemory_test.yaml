@@ -1,0 +1,20 @@
+suite: maxmemory inputs
+templates:
+  - templates/redis.yaml
+tests:
+  # The chart does not compute a byte value: the operator multiplies the pod's memory LIMIT by
+  # maxMemoryPercentOfLimit at reconcile, so both halves of that product have to reach the CR.
+  - it: hands the operator a 96Mi limit and the fixed 80 percent, i.e. maxmemory 76.8Mi
+    values:
+      - ../ci/values.yaml
+    set:
+      resources:
+        requests: { cpu: 25m, memory: 64Mi }
+        limits: { memory: 96Mi }
+    asserts:
+      - equal:
+          path: spec.kubernetesConfig.resources.limits.memory
+          value: 96Mi
+      - equal:
+          path: spec.redisConfig.maxMemoryPercentOfLimit
+          value: 80

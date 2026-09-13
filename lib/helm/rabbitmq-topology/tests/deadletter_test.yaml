@@ -1,0 +1,45 @@
+suite: dead-letter companions
+templates:
+  - templates/queues.yaml
+release:
+  name: ci
+  namespace: ci-ns
+tests:
+  - it: one subscription with deadLetter on renders its queue and binding plus exactly one dlx/dlq pair
+    set:
+      user: ci
+      deadLetter: true
+      subscribeEvents:
+        - exchange: other-events
+    asserts:
+      - hasDocuments:
+          count: 5
+      - documentIndex: 0
+        equal:
+          path: metadata.name
+          value: ci.other-events
+      - documentIndex: 0
+        equal:
+          path: spec.arguments.x-dead-letter-exchange
+          value: ci.other-events.dlx
+      # The only Exchange: a subscriber declares no exchange of its own, so the dlx is the whole set.
+      - documentSelector:
+          path: kind
+          value: Exchange
+        equal:
+          path: metadata.name
+          value: ci.other-events.dlx
+      - documentSelector:
+          path: kind
+          value: Exchange
+        equal:
+          path: spec.type
+          value: fanout
+      - documentIndex: 3
+        equal:
+          path: kind
+          value: Queue
+      - documentIndex: 3
+        equal:
+          path: metadata.name
+          value: ci.other-events.dlq

@@ -1,0 +1,7 @@
+# CI fixture, not a deployment. The minimal set this chart needs to render anything at all: with the default
+# empty volumes[] it emits no manifest, so lint and kubeconform would see nothing.
+volumes:
+  - name: ci-media
+    server: 192.168.10.220
+    path: /mnt/pool/media
+    capacity: 50Ti
