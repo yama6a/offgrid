@@ -21,33 +21,29 @@ jobs:
     runs-on: ubuntu-24.04-arm
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
-      - name: shellcheck
-        # -S warning: only report warnings and errors. CI would otherwise fail on info-level noise.
-        # -e SC2034 is a "X appears unused" warning, so -S warning does not hide it. It fires on common.sh's shared
-        # constants (API_PORT, ...) which ARE used, by the scripts that source common.sh, but shellcheck reads one file
-        # at a time so it never sees the use and calls them dead.
-        run: shellcheck -S warning -e SC2034 lib/shell/*.sh
+      # -e SC2034 is "X appears unused", which fires on common.sh's shared constants. They ARE used,
+      # by the scripts that source it, but shellcheck reads one file at a time so it never sees the use.
+      - uses: yama6a/gha/.github/actions/shellcheck@v1
+        with:
+          glob: lib/shell/*.sh
+          exclude: SC2034
 
   yaml:
     name: yaml
     runs-on: ubuntu-24.04-arm
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
-      - name: yamllint
-        run: pipx run yamllint -c .yamllint.yml .
-      - name: actionlint # lints these workflow files, and shellchecks their run: blocks
-        run: |
-          curl -fsSL "https://github.com/rhysd/actionlint/releases/download/v1.7.7/actionlint_1.7.7_linux_$(dpkg --print-architecture).tar.gz" \
-            | tar xz actionlint
-          ./actionlint -color
+      - uses: yama6a/gha/.github/actions/yaml-checks@v1
 
   renovate-config:
     name: renovate-config
     runs-on: ubuntu-24.04-arm
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
-      - name: validate renovate.json5 # a broken config silently halts ALL dependency updates
-        run: npx --yes --package renovate -- renovate-config-validator --strict renovate.json5
+      # A broken config silently halts ALL dependency updates.
+      - uses: yama6a/gha/.github/actions/validate-renovate-config@v1
+        with:
+          config-file: renovate.json5
 
   helm:
     name: helm
@@ -59,10 +55,11 @@ jobs:
       - uses: azure/setup-helm@9bc31f4ebc9c6b171d7bfbaa5d006ae7abdb4310 # v5.0.1
         with:
           version: v4.3.0 # pinned so the gate matches the maintainer's local helm
-      - name: install kubeconform
-        run: |
-          curl -fsSL "https://github.com/yannh/kubeconform/releases/download/v0.6.7/kubeconform-linux-$(dpkg --print-architecture).tar.gz" \
-            | tar xz kubeconform && sudo mv kubeconform /usr/local/bin/
+      # Install only; the render pass below feeds it a file list and needs the flags, not a run.
+      - uses: yama6a/gha/.github/actions/kubeconform@v1
+        with:
+          strict: 'false'
+          parallelism: ${{ env.JOBS }}
       - name: add upstream helm repos
         # helm dependency build needs classic (https) repos registered locally, exactly as ArgoCD's repo-server
         # does. OCI deps need none. Derive them from every Chart.yaml so this never needs a hardcoded list.
@@ -120,8 +117,8 @@ jobs:
             echo "::group::$d"; cat "$f" "$f.fail" 2>/dev/null || true; echo "::endgroup::"
             if [ -e "$f.fail" ]; then echo "::error::helm lint/template failed: $d"; fail=1; fi
           done < "$out/dirs"
-          schema='https://raw.githubusercontent.com/datreeio/CRDs-catalog/main/{{.Group}}/{{.ResourceKind}}_{{.ResourceAPIVersion}}.json'
+          # KUBECONFORM_ARGS is meant to split into words here
+          # shellcheck disable=SC2086
           find "$render" -name '*.yaml' -print0 \
-            | xargs -0 -r kubeconform -ignore-missing-schemas -summary -n "$JOBS" \
-                -schema-location default -schema-location "$schema" || fail=1
+            | xargs -0 -r kubeconform $KUBECONFORM_ARGS || fail=1
           exit $fail
