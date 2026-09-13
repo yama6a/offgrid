@@ -27,7 +27,7 @@ cleanup() {
 # may not expose for bind-mounts. A plain copy suffices because use_kubeconfig already pinned it to one
 # context with the certs inlined, so it stands alone inside the container.
 copy_kubeconfig() {
-  TMP_KUBECONFIG="$(mktemp -t krr-kubeconfig.XXXXXX)"
+  TMP_KUBECONFIG="$(mktemp -p "${REPO_ROOT}/.cache" krr-kubeconfig.XXXXXX)"
   cp "$KUBECONFIG" "$TMP_KUBECONFIG"
 }
 
