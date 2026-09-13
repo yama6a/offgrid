@@ -1,0 +1,11 @@
+# CI fixture, not a deployment. One entry of each kind, so every template renders: an owned event exchange, an
+# owned command exchange with its queue, a subscription with its private queue, and the dead-letter pair.
+user: ci
+publishEvents:
+  - { name: ci-events, type: topic }
+consumeCommands:
+  - { name: ci-commands }
+subscribeEvents:
+  - { exchange: other-events }
+sendCommands:
+  - other-commands

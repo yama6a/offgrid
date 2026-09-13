@@ -7,19 +7,19 @@ SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 source "${SCRIPT_DIR}/common.sh"
 
 # ---- knobs ----
-SVC="vmsingle-victoria-metrics-k8s-stack"   # the VMSingle PromQL API service in $MONITORING_NS
-PORT=8428                                   # vmsingle's port; same on both sides of the forward
+SVC="vmsingle-victoria-metrics-k8s-stack" # the VMSingle PromQL API service in $MONITORING_NS
+PORT=8428                                 # vmsingle's port; same on both sides of the forward
 # renovate: datasource=docker
 KRR_IMAGE="us-central1-docker.pkg.dev/genuine-flight-317411/devel/krr:v1.30.0"
 
 # ---- state ----
-TMP_KUBECONFIG=""   # set by copy_kubeconfig, removed by cleanup
-PF_PID=""           # set by start_port_forward, killed by cleanup
+TMP_KUBECONFIG="" # set by copy_kubeconfig, removed by cleanup
+PF_PID=""         # set by start_port_forward, killed by cleanup
 
 # ---- functions ----
 
 cleanup() {
-  [ -n "$PF_PID" ] && kill "$PF_PID" 2>/dev/null || true
+  [ -n "$PF_PID" ] && kill "$PF_PID" 2> /dev/null || true
   rm -f "$TMP_KUBECONFIG"
 }
 
@@ -35,7 +35,7 @@ copy_kubeconfig() {
 # so we reach it over the documented break-glass port-forward.
 start_port_forward() {
   say "port-forwarding svc/${SVC} (${MONITORING_NS}) -> 127.0.0.1:${PORT}"
-  kubectl -n "$MONITORING_NS" port-forward "svc/${SVC}" "${PORT}:${PORT}" >/dev/null 2>&1 &
+  kubectl -n "$MONITORING_NS" port-forward "svc/${SVC}" "${PORT}:${PORT}" > /dev/null 2>&1 &
   PF_PID=$!
 }
 
@@ -43,11 +43,14 @@ start_port_forward() {
 wait_for_port_forward() {
   local _
   for _ in $(seq 1 30); do
-    (exec 3<>"/dev/tcp/127.0.0.1/${PORT}") 2>/dev/null && { exec 3>&- 3<&-; break; }
-    kill -0 "$PF_PID" 2>/dev/null || die "port-forward to ${SVC} died (is the monitoring stack up?)"
+    (exec 3<> "/dev/tcp/127.0.0.1/${PORT}") 2> /dev/null && {
+      exec 3>&- 3<&-
+      break
+    }
+    kill -0 "$PF_PID" 2> /dev/null || die "port-forward to ${SVC} died (is the monitoring stack up?)"
     sleep 1
   done
-  (exec 3<>"/dev/tcp/127.0.0.1/${PORT}") 2>/dev/null \
+  (exec 3<> "/dev/tcp/127.0.0.1/${PORT}") 2> /dev/null \
     || die "port-forward to ${SVC} never became ready on 127.0.0.1:${PORT}"
   exec 3>&- 3<&-
 }

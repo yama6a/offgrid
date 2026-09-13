@@ -11,16 +11,16 @@ source "${SCRIPT_DIR}/common.sh"
 
 # ---- knobs ----
 SSO_CHART="${PLATFORM_CHARTS}/04_google_sso"
-SSO_VALUES="${SSO_CHART}/values.yaml"                               # oidc config + domains; clientID written here
-SEALED_OUT="${SSO_CHART}/templates/google-oauth-sealedsecret.yaml"  # sealed client secret (committed)
-CLIENT_SECRET_KEY="client-secret"   # the data key Envoy Gateway's OIDC clientSecret reads; not ours to choose
+SSO_VALUES="${SSO_CHART}/values.yaml"                              # oidc config + domains; clientID written here
+SEALED_OUT="${SSO_CHART}/templates/google-oauth-sealedsecret.yaml" # sealed client secret (committed)
+CLIENT_SECRET_KEY="client-secret"                                  # the data key Envoy Gateway's OIDC clientSecret reads; not ours to choose
 
 # ---- state ----
-AUTH_SUBDOMAIN=""   # set by read_chart_config
+AUTH_SUBDOMAIN="" # set by read_chart_config
 SEAL_NAME=""
 SEAL_NAMESPACE=""
-DOMAINS=""          # space-separated: the base domain plus every extraDomains entry
-CLIENT_ID=""        # set by read_client_credentials
+DOMAINS=""   # space-separated: the base domain plus every extraDomains entry
+CLIENT_ID="" # set by read_client_credentials
 CLIENT_SECRET=""
 
 # ---- functions ----
@@ -43,10 +43,10 @@ check_prerequisites() {
 read_chart_config() {
   local v d
   say "reading OIDC config + domains from ${SSO_VALUES}"
-  AUTH_SUBDOMAIN="$(yq -r '.oidc.authSubdomain' "$SSO_VALUES" 2>/dev/null)"
-  SEAL_NAME="$(yq -r '.oidc.clientSecretName' "$SSO_VALUES" 2>/dev/null)"
-  SEAL_NAMESPACE="$(yq -r '.namespace' "$SSO_VALUES" 2>/dev/null)"
-  DOMAINS="$(yq -r '[.domain] + [(.extraDomains // [])[].domain] | join(" ")' "$SSO_VALUES" 2>/dev/null)"
+  AUTH_SUBDOMAIN="$(yq -r '.oidc.authSubdomain' "$SSO_VALUES" 2> /dev/null)"
+  SEAL_NAME="$(yq -r '.oidc.clientSecretName' "$SSO_VALUES" 2> /dev/null)"
+  SEAL_NAMESPACE="$(yq -r '.namespace' "$SSO_VALUES" 2> /dev/null)"
+  DOMAINS="$(yq -r '[.domain] + [(.extraDomains // [])[].domain] | join(" ")' "$SSO_VALUES" 2> /dev/null)"
   for v in AUTH_SUBDOMAIN:"$AUTH_SUBDOMAIN" SEAL_NAME:"$SEAL_NAME" SEAL_NAMESPACE:"$SEAL_NAMESPACE" DOMAINS:"$DOMAINS"; do
     [ -n "${v#*:}" ] && [ "${v#*:}" != "null" ] || die "couldn't read ${v%%:*} from ${SSO_VALUES}"
   done
@@ -72,10 +72,11 @@ read_client_credentials() {
   say "reading the shared Google OAuth client credentials from .env"
   CLIENT_ID="$GOOGLE_SSO_CLIENT_ID"
   CLIENT_SECRET="$GOOGLE_SSO_CLIENT_SECRET"
-  [ -n "$CLIENT_ID" ]     || die "GOOGLE_SSO_CLIENT_ID is empty in .env"
+  [ -n "$CLIENT_ID" ] || die "GOOGLE_SSO_CLIENT_ID is empty in .env"
   [ -n "$CLIENT_SECRET" ] || die "GOOGLE_SSO_CLIENT_SECRET is empty in .env"
   case "$CLIENT_ID" in *.apps.googleusercontent.com) ;; *)
-    warn "client id does not end in .apps.googleusercontent.com, double-check it" ;;
+    warn "client id does not end in .apps.googleusercontent.com, double-check it"
+    ;;
   esac
 }
 
@@ -99,7 +100,7 @@ print_result() {
     return 0
   fi
   base="${DOMAINS%% *}"
-cat <<EOF
+  cat << EOF
 Google SSO client wired for: ${DOMAINS}. Register one redirect URI per domain on the OAuth client:
 $(for d in $DOMAINS; do echo "  https://${AUTH_SUBDOMAIN}.${d}/oauth2/callback"; done)
 

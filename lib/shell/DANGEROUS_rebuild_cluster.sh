@@ -16,19 +16,20 @@ set -uo pipefail
 
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 source "${SCRIPT_DIR}/common.sh"
-cd "$REPO_ROOT" || exit 1           # git ops below; set -e is off, so guard the cd
+cd "$REPO_ROOT" || exit 1 # git ops below; set -e is off, so guard the cd
 
 # ---- knobs ----
-STEP=0; STEP_TOTAL=9                # common.sh step/run_step; bump TOTAL if you add or remove a step
-STEP_DIR="$SCRIPT_DIR"              # every step script is a sibling of this orchestrator
+STEP=0
+STEP_TOTAL=9           # common.sh step/run_step; bump TOTAL if you add or remove a step
+STEP_DIR="$SCRIPT_DIR" # every step script is a sibling of this orchestrator
 RESTORE="${STEP_DIR}/03_restore_sealed_secrets_key.sh"
-INGRESS_GW_NS="gateway"             # namespace of the shared Gateway
+INGRESS_GW_NS="gateway" # namespace of the shared Gateway
 COMMIT_MSG="rebuild: sync working tree before cluster rebuild"
 COMMIT_MSG_SYNC="rebuild: sync LB range written by 01_cilium"
-INGRESS_WAIT=900                    # secs to wait for the ingress to actually serve (HTTP-01 is slow)
-INGRESS_HOSTS=""                    # space-separated hosts to check; empty = derive from the Gateway's listeners
-CONVERGE_SETTLE=120                 # secs to let ArgoCD create its apps + roll the early waves first
-CONVERGE_WAIT=900                   # secs for the converge backstop to drive every app to Synced+Healthy
+INGRESS_WAIT=900    # secs to wait for the ingress to actually serve (HTTP-01 is slow)
+INGRESS_HOSTS=""    # space-separated hosts to check; empty = derive from the Gateway's listeners
+CONVERGE_SETTLE=120 # secs to let ArgoCD create its apps + roll the early waves first
+CONVERGE_WAIT=900   # secs for the converge backstop to drive every app to Synced+Healthy
 
 # ---- functions ----
 
@@ -43,7 +44,7 @@ check_prerequisites() {
 }
 
 confirm_rebuild() {
-cat <<EOF
+  cat << EOF
 
 This will REDELIVER the entire platform onto the cluster KUBE_CONTEXT names in .env:
   context : ${KUBE_CONTEXT}
@@ -59,7 +60,10 @@ This will REDELIVER the entire platform onto the cluster KUBE_CONTEXT names in .
 Have a CURRENT sealed-secrets key backup (03_backup_sealed_secrets_key.sh), else SSO won't decrypt
 until you re-seal (04_google_sso). ntfy alerting is seeded post-boot via 06_ntfy_auth regardless.
 EOF
-  confirm_word_always REBUILD || { echo "aborted (phew!)."; exit 0; }
+  confirm_word_always REBUILD || {
+    echo "aborted (phew!)."
+    exit 0
+  }
 }
 
 commit_and_push_working_tree() {
@@ -68,7 +72,7 @@ commit_and_push_working_tree() {
   if git diff --cached --quiet; then
     ok "nothing new to commit"
   else
-    git commit -m "$COMMIT_MSG" >/dev/null && ok "committed local changes" || die "git commit failed"
+    git commit -m "$COMMIT_MSG" > /dev/null && ok "committed local changes" || die "git commit failed"
   fi
   git push || die "git push failed, ArgoCD deploys the REMOTE; push manually then re-run"
   ok "remote up to date"
@@ -79,7 +83,7 @@ assert_cluster_exists() {
   local node_count
   say "precondition: the cluster exists and is reachable"
   assert_api
-  node_count="$(kubectl get nodes --no-headers 2>/dev/null | wc -l | tr -d ' ')"
+  node_count="$(kubectl get nodes --no-headers 2> /dev/null | wc -l | tr -d ' ')"
   [ "${node_count:-0}" -gt 0 ] || die "no nodes found via context ${KUBE_CONTEXT} (${KUBECONFIG}).
        Rebuild the cluster first with whatever tooling built it, then point KUBE_CONTEXT at it."
   ok "${node_count} node(s) reachable"
@@ -94,7 +98,7 @@ commit_and_push_lb_range() {
   if git diff --cached --quiet; then
     ok "nothing new to commit"
   else
-    git commit -m "$COMMIT_MSG_SYNC" >/dev/null && ok "committed the LB range" || die "git commit failed"
+    git commit -m "$COMMIT_MSG_SYNC" > /dev/null && ok "committed the LB range" || die "git commit failed"
   fi
   git push || die "git push failed, ArgoCD deploys the REMOTE; push manually then resume from 02a_argocd.sh by hand"
   ok "remote up to date"
@@ -118,7 +122,7 @@ wipe_s3_backups() {
     return 0
   fi
   step "wipe the S3 backups (rebuild = fresh start; bucket + IAM kept)"
-  if ASSUME_YES=1 bash "${STEP_DIR}/10a_s3_backup_bucket.sh" wipe </dev/null; then
+  if ASSUME_YES=1 bash "${STEP_DIR}/10a_s3_backup_bucket.sh" wipe < /dev/null; then
     ok "S3 backups wiped"
   else
     warn "S3 wipe didn't complete; empty it by hand ('make s3-backup-wipe') before the new clusters archive"
@@ -132,7 +136,7 @@ wipe_s3_backups() {
 # and the poll is 300s), then nudges stragglers. Settles first so the platform has created its apps.
 # Best-effort; never fails the rebuild.
 converge_apps() {
-  use_kubeconfig                                 # needed by converge_argocd_apps
+  use_kubeconfig # needed by converge_argocd_apps
   step "let ArgoCD settle ${CONVERGE_SETTLE}s, then converge all apps to Synced+Healthy (backstop, up to ${CONVERGE_WAIT}s)"
   sleep "$CONVERGE_SETTLE"
   converge_argocd_apps "$CONVERGE_WAIT" || true
@@ -151,11 +155,11 @@ seed_ntfy_and_push_token() {
     "06_ntfy_auth didn't complete; re-run 'make configure-ntfy-auth' + commit/push once ntfy is up" || return 0
   git add -A
   if git diff --cached --quiet; then ok "no ntfy token change to commit"; else
-    git commit -m "rebuild: re-seal Grafana ntfy token" >/dev/null && ok "committed sealed ntfy token" || warn "commit failed; commit by hand"
+    git commit -m "rebuild: re-seal Grafana ntfy token" > /dev/null && ok "committed sealed ntfy token" || warn "commit failed; commit by hand"
   fi
   git push || warn "push failed; push the sealed grafana-ntfy token by hand"
-  converge_argocd_apps "$CONVERGE_WAIT" || true                                   # apply the pushed SealedSecret
-  kubectl -n "$MONITORING_NS" rollout restart deploy/grafana >/dev/null 2>&1 \
+  converge_argocd_apps "$CONVERGE_WAIT" || true # apply the pushed SealedSecret
+  kubectl -n "$MONITORING_NS" rollout restart deploy/grafana > /dev/null 2>&1 \
     && ok "grafana restarted (picks up GF_NTFY_TOKEN)" || warn "restart grafana by hand to pick up GF_NTFY_TOKEN"
 }
 
@@ -164,11 +168,11 @@ seed_ntfy_and_push_token() {
 # Best-effort: warns rather than failing the rebuild if it cannot confirm within INGRESS_WAIT.
 verify_ingress_serving() {
   step "verify ingress serving (LE cert + HTTPS response), up to ${INGRESS_WAIT}s"
-  verify_ingress "$INGRESS_GW_NS" "$INGRESS_WAIT" $INGRESS_HOSTS || true
+  verify_ingress "$INGRESS_GW_NS" "$INGRESS_WAIT" "$INGRESS_HOSTS" || true
 }
 
 print_handoff() {
-cat <<EOF
+  cat << EOF
 
 =============== cluster rebuilt ===============
 ArgoCD is bootstrapped and reconciling every app from git (cilium adopt, cert-manager, longhorn,

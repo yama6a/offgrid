@@ -1,0 +1,25 @@
+suite: required-value guards
+templates:
+  - templates/validate.yaml
+release:
+  namespace: ci-ns
+tests:
+  - it: rejects a highAvailability that is not a bool, so there is no silent default instance count
+    values:
+      - ../ci/values.yaml
+    set:
+      highAvailability: ""
+    asserts:
+      - failedTemplate:
+          errorMessage: "pg-cluster: highAvailability is required and must be explicitly true (3 instances, synchronous `any 1`, PDB, switchover) or false (single instance, no PDB, in-place restart); there is no default, and 2 or more than 3 instances are not offered"
+
+  - it: rejects a namespace key on an allowedClients entry, which the same-namespace policy cannot honour
+    values:
+      - ../ci/values.yaml
+    set:
+      allowedClients:
+        - matchLabels: { app: ci }
+          namespace: other-ns
+    asserts:
+      - failedTemplate:
+          errorMessage: "pg-cluster: allowedClients entries take no `namespace` (it is always the release namespace \"ci-ns\"; a cross-ns client needs the clusterwide-CNP variant), drop the key"

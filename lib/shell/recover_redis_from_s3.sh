@@ -7,7 +7,7 @@ SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 source "${SCRIPT_DIR}/common.sh"
 
 usage() {
-  cat <<EOF
+  cat << EOF
 recover_redis_from_s3.sh [--namespace <ns>] [--instance <name>] [--target latest|<N>|<s3-key>] [--apply]
                                                                           (or: make restore-redis)
   every flag is optional; it prompts for anything missing
@@ -27,55 +27,70 @@ EOF
 }
 
 # ---- knobs ----
-RB_VALUES="${PLATFORM_CHARTS}/07_redis_backup/values.yaml"  # single source for bucket/prefix
-SEED_NS="redis-backup"            # the seed runs where the sealed creds live
-SECRET_NAME="redis-backup-s3"     # the sealed writer creds in SEED_NS
+RB_VALUES="${PLATFORM_CHARTS}/07_redis_backup/values.yaml" # single source for bucket/prefix
+SEED_NS="redis-backup"                                     # the seed runs where the sealed creds live
+SECRET_NAME="redis-backup-s3"                              # the sealed writer creds in SEED_NS
 # renovate: datasource=docker
-AWSCLI_IMAGE="public.ecr.aws/aws-cli/aws-cli:2.36.44"   # the seed's S3-download initContainer
-REBUILD_WAIT=600                  # secs to wait for Argo + the operator to rebuild a deleted instance
+AWSCLI_IMAGE="public.ecr.aws/aws-cli/aws-cli:2.36.44" # the seed's S3-download initContainer
+REBUILD_WAIT=600                                      # secs to wait for Argo + the operator to rebuild a deleted instance
 POLL=10
-EMPTY_RDB_BYTES=250   # an empty RDB is ~90-200 bytes (header + metadata, no keys); under this it holds no data
+EMPTY_RDB_BYTES=250 # an empty RDB is ~90-200 bytes (header + metadata, no keys); under this it holds no data
 
 # ---- state ----
-NS=""              # set by parse_args / prompt_for_instance
+NS="" # set by parse_args / prompt_for_instance
 INSTANCE=""
 TARGET="latest"
 DO_APPLY="false"
-BUCKET=""          # set by read_backup_values
+BUCKET="" # set by read_backup_values
 PREFIX=""
-FOUND=""           # set by resolve_git_state
+FOUND="" # set by resolve_git_state
 VALUES=""
 ALIAS=""
 GIT_PROTECT="no"
 DIRTY="no"
 CR_EXISTS="no"
-TARGET_POD=""      # set by wait_for_target_pod
-TARGET_CTR=""      # set by resolve_target_container
-SEED_IMAGE=""      # set by read_seed_image
-DEST=""            # set by list_dumps
+TARGET_POD="" # set by wait_for_target_pod
+TARGET_CTR="" # set by resolve_target_container
+SEED_IMAGE="" # set by read_seed_image
+DEST=""       # set by list_dumps
 KEYS=""
 N=0
-OBJECT=""          # set by resolve_dump
+OBJECT="" # set by resolve_dump
 SIZE=""
 EMPTY_OK="false"
-SEED_POD=""        # set by resolve_dump
+SEED_POD="" # set by resolve_dump
 BG_NETPOL=""
-SEED_IP=""         # set by start_seed_pod
+SEED_IP="" # set by start_seed_pod
 SEED_DBSIZE=0
-BEFORE_DBSIZE=0    # set by resync_from_seed
+BEFORE_DBSIZE=0 # set by resync_from_seed
 TGT_DBSIZE=0
-PROMOTED="no"      # the EXIT trap reads it
+PROMOTED="no" # the EXIT trap reads it
 
 # ---- functions ----
 
 parse_args() {
   while [ $# -gt 0 ]; do
     case "$1" in
-      --namespace) NS="$2"; shift 2 ;;
-      --instance)  INSTANCE="$2"; shift 2 ;;
-      --target)    TARGET="$2"; shift 2 ;;
-      --apply)     DO_APPLY="true"; shift ;;
-      -h|--help)   usage; exit 0 ;;
+      --namespace)
+        NS="$2"
+        shift 2
+        ;;
+      --instance)
+        INSTANCE="$2"
+        shift 2
+        ;;
+      --target)
+        TARGET="$2"
+        shift 2
+        ;;
+      --apply)
+        DO_APPLY="true"
+        shift
+        ;;
+      -h | --help)
+        usage
+        exit 0
+        ;;
       *) die "unknown arg: $1 (see --help)" ;;
     esac
   done
@@ -98,16 +113,16 @@ read_backup_values() {
 # Total keys across ALL databases. DBSIZE counts only the currently selected db, but FLUSHALL clears every db
 # and the seed loads every db the RDB contains, so a dump using db1+ would be under-counted on BOTH sides and
 # the equality check would still "match". Sums the keys=N fields of INFO keyspace; prints 0 when empty.
-redis_keycount() {  # redis_keycount <namespace> <pod> <container>
-  kubectl -n "$1" exec "$2" -c "$3" -- redis-cli INFO keyspace 2>/dev/null \
+redis_keycount() { # redis_keycount <namespace> <pod> <container>
+  kubectl -n "$1" exec "$2" -c "$3" -- redis-cli INFO keyspace 2> /dev/null \
     | tr -d '\r' | sed -n 's/^db[0-9][0-9]*:keys=\([0-9][0-9]*\),.*/\1/p' | awk '{s+=$1} END {print s+0}'
 }
 
 prompt_for_instance() {
-  [ -n "$NS" ]       || read -rp "Namespace: " NS
+  [ -n "$NS" ] || read -rp "Namespace: " NS
   [ -n "$INSTANCE" ] || read -rp "Redis instance name (the CR / Service name): " INSTANCE
   [ -n "$NS" ] && [ -n "$INSTANCE" ] || die "namespace and instance are required"
-  kubectl -n "$SEED_NS" get secret "$SECRET_NAME" >/dev/null 2>&1 \
+  kubectl -n "$SEED_NS" get secret "$SECRET_NAME" > /dev/null 2>&1 \
     || die "sealed creds ${SEED_NS}/${SECRET_NAME} missing: enable backups first (make configure-redis-backup)"
 }
 
@@ -115,17 +130,17 @@ prompt_for_instance() {
 # redisVersion is the kind discriminator, so this can never bind to a pg-cluster alias of the same name.
 resolve_git_state() {
   FOUND="$(wl_find_alias "$INSTANCE" redisVersion || true)"
-  IFS=$'\t' read -r VALUES ALIAS <<< "$FOUND" || true   # tab-separated, split explicitly
+  IFS=$'\t' read -r VALUES ALIAS <<< "$FOUND" || true # tab-separated, split explicitly
   if [ -n "$FOUND" ]; then
     [ "$(vy_read "$VALUES" "$ALIAS" deletionProtection)" = "true" ] && GIT_PROTECT="yes"
-    git -C "$REPO_ROOT" diff --quiet -- "$VALUES" 2>/dev/null || DIRTY="yes"
+    git -C "$REPO_ROOT" diff --quiet -- "$VALUES" 2> /dev/null || DIRTY="yes"
   fi
-  kubectl -n "$NS" get redis "$INSTANCE" >/dev/null 2>&1 && CR_EXISTS="yes"
+  kubectl -n "$NS" get redis "$INSTANCE" > /dev/null 2>&1 && CR_EXISTS="yes"
   say "State"
   echo "    instance            : ${NS}/${INSTANCE}"
   echo "    live Redis CR       : ${CR_EXISTS}"
   if [ -n "$FOUND" ]; then
-    echo "    owning chart        : ${VALUES#${REPO_ROOT}/} (alias '${ALIAS}')"
+    echo "    owning chart        : ${VALUES#"${REPO_ROOT}"/} (alias '${ALIAS}')"
     echo "    git deletionProtection: ${GIT_PROTECT}"
     echo "    uncommitted edits to that values.yaml: ${DIRTY}"
   else
@@ -147,32 +162,38 @@ Restore it in git FIRST, then re-run this and it will wait for Argo to build it:
 It comes back EMPTY on a fresh PVC; this script then loads the dump into it. See docs/09_redis.md."
   fi
   if [ "$DIRTY" = "yes" ]; then
-    warn "${VALUES#${REPO_ROOT}/} has uncommitted changes: ArgoCD syncs the pushed remote, not your working tree."
+    warn "${VALUES#"${REPO_ROOT}"/} has uncommitted changes: ArgoCD syncs the pushed remote, not your working tree."
     die "commit + push first, then re-run."
   fi
   [ "$CR_EXISTS" = "no" ] || return 0
   say "alias '${ALIAS}' is in git but the instance is not up yet; waiting up to ${REBUILD_WAIT}s for Argo"
-  deadline=$(( $(date +%s) + REBUILD_WAIT ))
+  deadline=$(($(date +%s) + REBUILD_WAIT))
   while :; do
-    kubectl -n "$NS" get redis "$INSTANCE" >/dev/null 2>&1 && { ok "Redis CR ${INSTANCE} exists"; break; }
+    kubectl -n "$NS" get redis "$INSTANCE" > /dev/null 2>&1 && {
+      ok "Redis CR ${INSTANCE} exists"
+      break
+    }
     [ "$(date +%s)" -ge "$deadline" ] && die "no Redis CR ${NS}/${INSTANCE} after ${REBUILD_WAIT}s. Did the commit get pushed? Check: kubectl -n argocd get app"
-    printf '    waiting for the CR...\n'; sleep "$POLL"
+    printf '    waiting for the CR...\n'
+    sleep "$POLL"
   done
 }
 
 # The pod is what we exec into, and it lags the CR by the time the operator needs to build the StatefulSet.
 wait_for_target_pod() {
   local deadline
-  deadline=$(( $(date +%s) + REBUILD_WAIT ))
+  deadline=$(($(date +%s) + REBUILD_WAIT))
   while :; do
     TARGET_POD="$(kubectl -n "$NS" get pod -l "app=${INSTANCE}" \
-      --field-selector=status.phase=Running -o jsonpath='{.items[0].metadata.name}' 2>/dev/null || true)"
+      --field-selector=status.phase=Running -o jsonpath='{.items[0].metadata.name}' 2> /dev/null || true)"
     if [ -n "$TARGET_POD" ] \
-       && [ "$(kubectl -n "$NS" get pod "$TARGET_POD" -o jsonpath='{.status.conditions[?(@.type=="Ready")].status}' 2>/dev/null)" = "True" ]; then
-      ok "pod ${TARGET_POD} is Ready"; break
+      && [ "$(kubectl -n "$NS" get pod "$TARGET_POD" -o jsonpath='{.status.conditions[?(@.type=="Ready")].status}' 2> /dev/null)" = "True" ]; then
+      ok "pod ${TARGET_POD} is Ready"
+      break
     fi
     [ "$(date +%s)" -ge "$deadline" ] && die "no Ready pod with label app=${INSTANCE} in ${NS} after ${REBUILD_WAIT}s; inspect: kubectl -n ${NS} get pods -l app=${INSTANCE}"
-    printf '    waiting for a Ready pod...\n'; sleep "$POLL"
+    printf '    waiting for a Ready pod...\n'
+    sleep "$POLL"
   done
 }
 
@@ -192,7 +213,7 @@ list_dumps() {
   say "dumps available under ${DEST}"
   # `|| true`: no matching objects makes grep exit 1, and under `set -e` a failing command substitution kills
   # the script silently, before the die below can explain what is wrong.
-  listing="$(aws s3 ls "$DEST" 2>/dev/null | grep -E '\.rdb$' | sort -k1,2 || true)"
+  listing="$(aws s3 ls "$DEST" 2> /dev/null | grep -E '\.rdb$' | sort -k1,2 || true)"
   [ -n "$listing" ] || die "$(printf 'no .rdb objects under %s: nothing to restore.\n' "$DEST")
 Either this instance was never backed up (is it persistence:true, so the central job discovers it?), or the
 dumps are under a different prefix. Check:  aws s3 ls s3://${BUCKET}/${PREFIX} --recursive"
@@ -201,12 +222,14 @@ dumps are under a different prefix. Check:  aws s3 ls s3://${BUCKET}/${PREFIX} -
   printf '    %-3s %-24s %10s  %s\n' "#" "KEY" "BYTES" "AGE"
   while read -r d t sz k; do
     [ -n "$k" ] || continue
-    N=$((N+1)); KEYS="${KEYS}${k}"$'\n'
+    N=$((N + 1))
+    KEYS="${KEYS}${k}"$'\n'
     # GNU date first, then BSD: a mac with homebrew coreutils on PATH has GNU, a stock one has BSD. `aws s3 ls`
     # prints LastModified in LOCAL time, so neither call passes -u. Age just prints "?" if both fail.
-    epoch="$(date -d "${d} ${t}" +%s 2>/dev/null || date -j -f '%Y-%m-%d %H:%M:%S' "${d} ${t}" +%s 2>/dev/null || echo 0)"
-    if [ "$epoch" != "0" ]; then age="$(( (now - epoch) / 3600 ))h"; else age="?"; fi
-    flag=""; [ "$sz" -lt "$EMPTY_RDB_BYTES" ] 2>/dev/null && flag="  <-- looks EMPTY"
+    epoch="$(date -d "${d} ${t}" +%s 2> /dev/null || date -j -f '%Y-%m-%d %H:%M:%S' "${d} ${t}" +%s 2> /dev/null || echo 0)"
+    if [ "$epoch" != "0" ]; then age="$(((now - epoch) / 3600))h"; else age="?"; fi
+    flag=""
+    [ "$sz" -lt "$EMPTY_RDB_BYTES" ] 2> /dev/null && flag="  <-- looks EMPTY"
     printf '    %-3s %-24s %10s  %s%s\n' "$N" "$k" "$sz" "$age" "$flag"
   done <<< "$listing"
 }
@@ -220,14 +243,19 @@ resolve_dump() {
     [ -n "$pick" ] && TARGET="$pick"
   fi
   case "$TARGET" in
-    latest) key="$(printf '%s' "$KEYS" | tail -1)"; OBJECT="${DEST}${key}" ;;
-    ''|*[!0-9]*) OBJECT="s3://${BUCKET}/${TARGET#/}" ;;   # a full key relative to the bucket
-    *) [ "$TARGET" -ge 1 ] && [ "$TARGET" -le "$N" ] || die "pick 1-${N}, got ${TARGET}"
-       key="$(printf '%s' "$KEYS" | sed -n "${TARGET}p")"
-       OBJECT="${DEST}${key}" ;;
+    latest)
+      key="$(printf '%s' "$KEYS" | tail -1)"
+      OBJECT="${DEST}${key}"
+      ;;
+    '' | *[!0-9]*) OBJECT="s3://${BUCKET}/${TARGET#/}" ;; # a full key relative to the bucket
+    *)
+      [ "$TARGET" -ge 1 ] && [ "$TARGET" -le "$N" ] || die "pick 1-${N}, got ${TARGET}"
+      key="$(printf '%s' "$KEYS" | sed -n "${TARGET}p")"
+      OBJECT="${DEST}${key}"
+      ;;
   esac
-  obj_key="${OBJECT#s3://${BUCKET}/}"
-  head="$(aws s3api head-object --bucket "$BUCKET" --key "$obj_key" 2>/dev/null || true)"
+  obj_key="${OBJECT#s3://"${BUCKET}"/}"
+  head="$(aws s3api head-object --bucket "$BUCKET" --key "$obj_key" 2> /dev/null || true)"
   [ -n "$head" ] || die "no such object: ${OBJECT} (exact key match; pick one from the list above)"
   SIZE="$(printf '%s' "$head" | sed -n 's/.*"ContentLength"[[:space:]]*:[[:space:]]*\([0-9][0-9]*\).*/\1/p' | head -1)"
   ok "restoring from: ${OBJECT} (${SIZE:-?} bytes)"
@@ -239,14 +267,17 @@ resolve_dump() {
 # dressed up as a successful restore, so it takes an explicit yes.
 guard_empty_dump() {
   local answer
-  [ -n "${SIZE:-}" ] && [ "$SIZE" -lt "$EMPTY_RDB_BYTES" ] 2>/dev/null || return 0
+  [ -n "${SIZE:-}" ] && [ "$SIZE" -lt "$EMPTY_RDB_BYTES" ] 2> /dev/null || return 0
   warn "that dump is only ${SIZE} bytes, which is an EMPTY redis dump (no keys)."
   warn "Restoring it FLUSHALLs the instance and puts nothing back: the data is gone, and the run would look fine."
   if [ "$DO_APPLY" = "true" ]; then
     die "refusing to restore an empty dump non-interactively; pick another with --target, or re-run without --apply to confirm"
   fi
   read -rp "Wipe the instance with an EMPTY dump anyway? [y/N]: " answer
-  [[ "$answer" =~ ^[Yy]$ ]] || { warn "Aborted."; exit 0; }
+  [[ "$answer" =~ ^[Yy]$ ]] || {
+    warn "Aborted."
+    exit 0
+  }
   EMPTY_OK="true"
 }
 
@@ -254,7 +285,7 @@ guard_empty_dump() {
 # annotation, so a bare `exec` silently depends on container ordering. Name it: anything but the exporter.
 resolve_target_container() {
   TARGET_CTR="$(kubectl -n "$NS" get pod "$TARGET_POD" \
-    -o jsonpath='{range .spec.containers[*]}{.name}{"\n"}{end}' 2>/dev/null | grep -v '^redis-exporter$' | head -1)"
+    -o jsonpath='{range .spec.containers[*]}{.name}{"\n"}{end}' 2> /dev/null | grep -v '^redis-exporter$' | head -1)"
   [ -n "$TARGET_CTR" ] || die "could not find the redis container in pod ${NS}/${TARGET_POD}"
 }
 
@@ -270,7 +301,10 @@ confirm_restore() {
   warn "This ERASES the target's current data and replaces it with the dump. This is destructive."
   [ "$DO_APPLY" = "true" ] && return 0
   read -rp "Proceed? [y/N]: " answer
-  [[ "$answer" =~ ^[Yy]$ ]] || { warn "Aborted."; exit 0; }
+  [[ "$answer" =~ ^[Yy]$ ]] || {
+    warn "Aborted."
+    exit 0
+  }
 }
 
 # PROMOTE FIRST, then tear down. A replica whose master is gone keeps serving reads but refuses writes, so
@@ -279,18 +313,18 @@ confirm_restore() {
 cleanup() {
   if [ "$PROMOTED" != "yes" ] && [ -n "${TARGET_POD:-}" ]; then
     warn "promoting ${TARGET_POD} back to a standalone master (bailing out mid-restore)"
-    kubectl -n "$NS" exec "$TARGET_POD" -c "$TARGET_CTR" -- redis-cli REPLICAOF NO ONE >/dev/null 2>&1 \
+    kubectl -n "$NS" exec "$TARGET_POD" -c "$TARGET_CTR" -- redis-cli REPLICAOF NO ONE > /dev/null 2>&1 \
       || warn "could not promote ${TARGET_POD}: it may still be a read-only replica, fix with: kubectl -n ${NS} exec ${TARGET_POD} -c ${TARGET_CTR} -- redis-cli REPLICAOF NO ONE"
   fi
   warn "cleaning up seed pod + break-glass netpols"
-  kubectl -n "$SEED_NS" delete pod "$SEED_POD" --ignore-not-found --wait=false >/dev/null 2>&1 || true
-  kubectl -n "$SEED_NS" delete ciliumnetworkpolicy "${BG_NETPOL}-seed" --ignore-not-found >/dev/null 2>&1 || true
-  kubectl -n "$NS" delete ciliumnetworkpolicy "${BG_NETPOL}-target" --ignore-not-found >/dev/null 2>&1 || true
+  kubectl -n "$SEED_NS" delete pod "$SEED_POD" --ignore-not-found --wait=false > /dev/null 2>&1 || true
+  kubectl -n "$SEED_NS" delete ciliumnetworkpolicy "${BG_NETPOL}-seed" --ignore-not-found > /dev/null 2>&1 || true
+  kubectl -n "$NS" delete ciliumnetworkpolicy "${BG_NETPOL}-target" --ignore-not-found > /dev/null 2>&1 || true
 }
 
 apply_breakglass_netpols() {
   say "applying break-glass network policies"
-kubectl apply -f - >/dev/null <<YAML
+  kubectl apply -f - > /dev/null << YAML
 apiVersion: cilium.io/v2
 kind: CiliumNetworkPolicy
 metadata:
@@ -345,8 +379,8 @@ YAML
 
 start_seed_pod() {
   say "creating seed pod (downloads the RDB, serves it as a master)"
-  kubectl -n "$SEED_NS" delete pod "$SEED_POD" --ignore-not-found >/dev/null 2>&1 || true
-kubectl apply -f - >/dev/null <<YAML
+  kubectl -n "$SEED_NS" delete pod "$SEED_POD" --ignore-not-found > /dev/null 2>&1 || true
+  kubectl apply -f - > /dev/null << YAML
 apiVersion: v1
 kind: Pod
 metadata:
@@ -402,12 +436,12 @@ resync_from_seed() {
   local link="" _
   BEFORE_DBSIZE="$(redis_keycount "$NS" "$TARGET_POD" "$TARGET_CTR")"
   say "FLUSHALL + REPLICAOF on the target (${TARGET_POD}); it currently holds ${BEFORE_DBSIZE} keys"
-  kubectl -n "$NS" exec "$TARGET_POD" -c "$TARGET_CTR" -- redis-cli FLUSHALL >/dev/null
-  kubectl -n "$NS" exec "$TARGET_POD" -c "$TARGET_CTR" -- redis-cli REPLICAOF "$SEED_IP" 6379 >/dev/null
+  kubectl -n "$NS" exec "$TARGET_POD" -c "$TARGET_CTR" -- redis-cli FLUSHALL > /dev/null
+  kubectl -n "$NS" exec "$TARGET_POD" -c "$TARGET_CTR" -- redis-cli REPLICAOF "$SEED_IP" 6379 > /dev/null
 
   say "waiting for the full resync to complete"
   for _ in $(seq 1 60); do
-    link="$(kubectl -n "$NS" exec "$TARGET_POD" -c "$TARGET_CTR" -- redis-cli INFO replication 2>/dev/null | tr -d '\r')"
+    link="$(kubectl -n "$NS" exec "$TARGET_POD" -c "$TARGET_CTR" -- redis-cli INFO replication 2> /dev/null | tr -d '\r')"
     echo "$link" | grep -q 'master_link_status:up' \
       && echo "$link" | grep -q 'master_sync_in_progress:0' && break
     sleep 2
@@ -420,8 +454,8 @@ resync_from_seed() {
 # report success. Judge the outcome, not just the arithmetic.
 promote_and_verify() {
   say "promoting the target back to a standalone master (REPLICAOF NO ONE)"
-  kubectl -n "$NS" exec "$TARGET_POD" -c "$TARGET_CTR" -- redis-cli REPLICAOF NO ONE >/dev/null
-  PROMOTED="yes"   # past here the trap no longer needs to rescue the target
+  kubectl -n "$NS" exec "$TARGET_POD" -c "$TARGET_CTR" -- redis-cli REPLICAOF NO ONE > /dev/null
+  PROMOTED="yes" # past here the trap no longer needs to rescue the target
   TGT_DBSIZE="$(redis_keycount "$NS" "$TARGET_POD" "$TARGET_CTR")"
   if [ "$TGT_DBSIZE" != "$SEED_DBSIZE" ]; then
     bad "target has ${TGT_DBSIZE} keys but the dump had ${SEED_DBSIZE}, investigate"
@@ -442,7 +476,7 @@ sample_fidelity() {
   [ "$TGT_DBSIZE" != "0" ] || return 0
   say "fidelity sample (key, type, ttl)"
   kubectl -n "$NS" exec "$TARGET_POD" -c "$TARGET_CTR" -- sh -c \
-    'for k in $(redis-cli --scan --count 5 | head -5); do printf "    %-44s %-10s ttl=%s\n" "$k" "$(redis-cli TYPE "$k")" "$(redis-cli TTL "$k")"; done' 2>/dev/null \
+    'for k in $(redis-cli --scan --count 5 | head -5); do printf "    %-44s %-10s ttl=%s\n" "$k" "$(redis-cli TYPE "$k")" "$(redis-cli TTL "$k")"; done' 2> /dev/null \
     || warn "could not sample keys"
 }
 
@@ -464,14 +498,14 @@ reprotect() {
   fi
   vy_protect_on "$VALUES" "$ALIAS" || die "edit failed"
   [ "$(vy_read "$VALUES" "$ALIAS" deletionProtection)" = "true" ] \
-    && ok "set ${ALIAS}.deletionProtection=true in ${VALUES#${REPO_ROOT}/} (it was false; never leave an instance unprotected)" \
+    && ok "set ${ALIAS}.deletionProtection=true in ${VALUES#"${REPO_ROOT}"/} (it was false; never leave an instance unprotected)" \
     || die "post-edit check failed: ${ALIAS}.deletionProtection is not true"
   git -C "$REPO_ROOT" --no-pager diff --stat -- "$VALUES" | sed 's/^/    /'
-cat <<NEXT
+  cat << NEXT
 
 Last step, commit and push:
 
-    git add ${VALUES#${REPO_ROOT}/}
+    git add ${VALUES#"${REPO_ROOT}"/}
     git commit -m "${INSTANCE}: restore done, re-protect"
     git push
 

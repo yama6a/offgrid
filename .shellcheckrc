@@ -1,0 +1,4 @@
+disable=SC2034   # lib/shell/common.sh constants and the STEP/STEP_TOTAL progress counters are read by the scripts that source it
+disable=SC1091   # common.sh is sourced via "${SCRIPT_DIR}/common.sh"; shellcheck cannot follow it and -x does not help
+disable=SC2015   # `cond && ok || err` is this repo's reporting idiom throughout
+disable=SC2016   # single-quoted bodies are passed to sh -c and kubectl exec and must not expand locally

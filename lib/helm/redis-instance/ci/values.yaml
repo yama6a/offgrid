@@ -1,0 +1,12 @@
+# CI fixture, not a deployment. Every REQUIRED value, since templates/validate.yaml fails the render without
+# them and the chart would never get linted at all.
+name: ci-redis
+redisVersion: "v8.10.1"
+persistence: true
+deletionProtection: true
+initialFixedDiskSize: 1Gi
+resources:
+  requests: { cpu: 25m, memory: 64Mi }
+  limits: { memory: 96Mi }
+allowedClients:
+  - matchLabels: { app: ci }

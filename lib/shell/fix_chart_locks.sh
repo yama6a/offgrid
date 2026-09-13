@@ -7,12 +7,12 @@ SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 source "${SCRIPT_DIR}/common.sh"
 
 # ---- knobs ----
-JOBS=12   # parallel `helm dependency build`s; network-bound, so more than cores is fine
+JOBS=12 # parallel `helm dependency build`s; network-bound, so more than cores is fine
 
 # ---- state ----
-CHARTS=()   # set by find_charts_with_remote_deps
-TMPD=""     # set by make_scratch_dir, removed by its trap
-FIXED=0     # tallied by report_results
+CHARTS=() # set by find_charts_with_remote_deps
+TMPD=""   # set by make_scratch_dir, removed by its trap
+FIXED=0   # tallied by report_results
 
 # ---- functions ----
 
@@ -20,12 +20,15 @@ FIXED=0     # tallied by report_results
 # and there is nothing here to check or fix.
 find_charts_with_remote_deps() {
   mapfile -t CHARTS < <(
-    grep -rl --include=Chart.yaml '^dependencies:' "${REPO_ROOT}/argo_apps" "${REPO_ROOT}/lib/helm" 2>/dev/null \
-    | while read -r f; do
+    grep -rl --include=Chart.yaml '^dependencies:' "${REPO_ROOT}/argo_apps" "${REPO_ROOT}/lib/helm" 2> /dev/null \
+      | while read -r f; do
         grep -qE '^[[:space:]]*repository:[[:space:]]*"?(https|oci)://' "$f" && dirname "$f"
       done | sort -u
   )
-  [[ ${#CHARTS[@]} -gt 0 ]] || { say "no charts pin dependencies"; exit 0; }
+  [[ ${#CHARTS[@]} -gt 0 ]] || {
+    say "no charts pin dependencies"
+    exit 0
+  }
 }
 
 # Serial and up front, so the parallel workers below only READ the repo cache (--skip-refresh) and never race
@@ -33,23 +36,24 @@ find_charts_with_remote_deps() {
 # cryptic duplicates.
 add_missing_helm_repos() {
   local existing url
-  existing="$(helm repo list 2>/dev/null || true)"
+  existing="$(helm repo list 2> /dev/null || true)"
   while read -r url; do
     [ -n "$url" ] || continue
     printf '%s' "$existing" | grep -qF "$url" && continue
-    helm repo add "dep-$(printf '%s' "$url" | shasum | cut -c1-8)" "$url" >/dev/null 2>&1 \
+    helm repo add "dep-$(printf '%s' "$url" | shasum | cut -c1-8)" "$url" > /dev/null 2>&1 \
       || warn "could not add helm repo ${url} (that chart may fail below)"
   done < <(
     grep -rhE '^[[:space:]]*repository:[[:space:]]*"?https://' --include=Chart.yaml \
-      "${REPO_ROOT}/argo_apps" "${REPO_ROOT}/lib/helm" 2>/dev/null \
-    | sed -E 's#.*(https://[^"[:space:]]+).*#\1#' | sort -u
+      "${REPO_ROOT}/argo_apps" "${REPO_ROOT}/lib/helm" 2> /dev/null \
+      | sed -E 's#.*(https://[^"[:space:]]+).*#\1#' | sort -u
   )
 }
 
 make_scratch_dir() {
-  TMPD="$(mktemp -d)"; trap 'rm -rf "$TMPD"' EXIT
+  TMPD="$(mktemp -d)"
+  trap 'rm -rf "$TMPD"' EXIT
   export REPO_ROOT TMPD
-  export -f pin_chart_lock_timestamp   # each worker below runs in its own `bash -c`, not this shell
+  export -f pin_chart_lock_timestamp # each worker below runs in its own `bash -c`, not this shell
 }
 
 # One worker per chart, capped at JOBS concurrent. Detection is `helm dependency build`, which fast-fails on
@@ -79,9 +83,12 @@ report_results() {
     [ -e "$f" ] || continue
     IFS=$'\t' read -r status msg < "$f"
     case "$status" in
-      ok)    ok "$msg" ;;
-      fixed) ok "$msg"; FIXED=$((FIXED+1)) ;;
-      *)     bad "$msg" ;;
+      ok) ok "$msg" ;;
+      fixed)
+        ok "$msg"
+        FIXED=$((FIXED + 1))
+        ;;
+      *) bad "$msg" ;;
     esac
   done
   say "regenerated ${FIXED} stale lock(s)"

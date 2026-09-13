@@ -21,55 +21,65 @@ source "$ENV_FILE"
 
 # Scripts run under `set -u`, so default every key here: an older .env missing one must not trip it.
 # Empty means "skip the feature it enables", see each key's comment in .env.example.
-: "${KUBE_API_HOST:=localhost}"           # Cilium reaches the API here before pod networking exists (Talos KubePrism)
-: "${KUBE_API_PORT:=7445}"                # port for the above
-: "${KUBELET_TLS_INSECURE:=true}"         # metrics-server skips kubelet cert verification (self-signed certs, no CSR approver)
-: "${ETCD_METRICS_PORT:=2381}"            # etcd's metrics listener, scraped for control-plane dashboards
+: "${KUBE_API_HOST:=localhost}"              # Cilium reaches the API here before pod networking exists (Talos KubePrism)
+: "${KUBE_API_PORT:=7445}"                   # port for the above
+: "${KUBELET_TLS_INSECURE:=true}"            # metrics-server skips kubelet cert verification (self-signed certs, no CSR approver)
+: "${ETCD_METRICS_PORT:=2381}"               # etcd's metrics listener, scraped for control-plane dashboards
 : "${LONGHORN_DATA_PATH:=/var/mnt/storage}"  # where Longhorn stores replica data on each node
-: "${KUBE_CONTEXT:=}"                     # the ONE kubectl context every script here may touch; empty = ask once and write it back to .env
-: "${GITHUB_GHCR_PULL_TOKEN_SECRET:=}"    # here it is only a docker login; node-level pull auth, if you need it, is configured on the nodes
-: "${GHCR_SERVER:=ghcr.io}"               # registry check_multiarch.sh logs in to when the token above is set
-: "${ARGOCD_GITHUB_PAT_SECRET:=}"         # 02a seeds ArgoCD's repo-creds Secret
-: "${NTFY_PHONE_PASSWORD_SECRET:=}"       # 06 seeds the ntfy 'phone' user (Grafana pushes alerts to ntfy, phone subscribes)
-: "${GOOGLE_SSO_CLIENT_ID:=}"      # 04_google_sso writes it into the google-sso values
-: "${GOOGLE_SSO_CLIENT_SECRET:=}"  # 04_google_sso seals it for Envoy Gateway OIDC
-: "${CLOUDFLARE_API_TOKEN_SECRET:=}"  # 04_cloudflare_token seals it into cert-manager for DNS-01 (empty = HTTP-01 only)
-: "${AWS_DEPLOY_ACCESS_KEY_ID:=}"          # 10a runs Terraform with these; empty = skip S3 backups (10a-10e no-op)
-: "${AWS_DEPLOY_SECRET_ACCESS_KEY_SECRET:=}"  # 10a Terraform deployer secret (never sealed into the cluster)
+: "${KUBE_CONTEXT:=}"                        # the ONE kubectl context every script here may touch; empty = ask once and write it back to .env
+: "${GITHUB_GHCR_PULL_TOKEN_SECRET:=}"       # here it is only a docker login; node-level pull auth, if you need it, is configured on the nodes
+: "${GHCR_SERVER:=ghcr.io}"                  # registry check_multiarch.sh logs in to when the token above is set
+: "${ARGOCD_GITHUB_PAT_SECRET:=}"            # 02a seeds ArgoCD's repo-creds Secret
+: "${NTFY_PHONE_PASSWORD_SECRET:=}"          # 06 seeds the ntfy 'phone' user (Grafana pushes alerts to ntfy, phone subscribes)
+: "${GOOGLE_SSO_CLIENT_ID:=}"                # 04_google_sso writes it into the google-sso values
+: "${GOOGLE_SSO_CLIENT_SECRET:=}"            # 04_google_sso seals it for Envoy Gateway OIDC
+: "${CLOUDFLARE_API_TOKEN_SECRET:=}"         # 04_cloudflare_token seals it into cert-manager for DNS-01 (empty = HTTP-01 only)
+: "${AWS_DEPLOY_ACCESS_KEY_ID:=}"            # 10a runs Terraform with these; empty = skip S3 backups (10a-10e no-op)
+: "${AWS_DEPLOY_SECRET_ACCESS_KEY_SECRET:=}" # 10a Terraform deployer secret (never sealed into the cluster)
 # Not secrets, defaulted for the same set -u reason.
-: "${BASE_DOMAIN:=}"               # 04_values writes it into the SSO + ingress chart values; every public host sits under it
-: "${SSO_ALLOWLIST:=}"             # 04_values writes it into the google-sso allowlist (space-separated accounts)
-: "${INGRESS_LB_IP:=}"             # 04_values writes it into the envoy-gateway values (the one IP every ingress answers on)
-: "${POLL_SYNC_ENABLED:=false}"    # 02b patches timeout.reconciliation from this (false=300s fallback / true=60s)
-: "${CLOUDFLARE_WILDCARD_DOMAINS:=}"  # 04_values writes into the gateway + ingress-lib values (DNS-01 wildcard host tiers; empty = none, HTTP-01 only)
-: "${AWS_REGION:=}"                    # 10a Terraform region + 10b CNPG S3 endpoint region
-: "${S3_BACKUP_BUCKET:=}"              # 10a Terraform bucket name + 10b injects it into pg-cluster values
-: "${S3_BACKUP_TRANSITION_DAYS:=30}"   # 10a lifecycle: Glacier-IR transition age
-: "${S3_BACKUP_RETENTION_DAYS:=180}"   # 10a lifecycle: expiry age (recovery window)
-: "${CNPG_BACKUP_RPO:=15min}"          # 10b sets archive_timeout in pg-cluster values
+: "${BASE_DOMAIN:=}"                 # 04_values writes it into the SSO + ingress chart values; every public host sits under it
+: "${SSO_ALLOWLIST:=}"               # 04_values writes it into the google-sso allowlist (space-separated accounts)
+: "${INGRESS_LB_IP:=}"               # 04_values writes it into the envoy-gateway values (the one IP every ingress answers on)
+: "${POLL_SYNC_ENABLED:=false}"      # 02b patches timeout.reconciliation from this (false=300s fallback / true=60s)
+: "${CLOUDFLARE_WILDCARD_DOMAINS:=}" # 04_values writes into the gateway + ingress-lib values (DNS-01 wildcard host tiers; empty = none, HTTP-01 only)
+: "${AWS_REGION:=}"                  # 10a Terraform region + 10b CNPG S3 endpoint region
+: "${S3_BACKUP_BUCKET:=}"            # 10a Terraform bucket name + 10b injects it into pg-cluster values
+: "${S3_BACKUP_TRANSITION_DAYS:=30}" # 10a lifecycle: Glacier-IR transition age
+: "${S3_BACKUP_RETENTION_DAYS:=180}" # 10a lifecycle: expiry age (recovery window)
+: "${CNPG_BACKUP_RPO:=15min}"        # 10b sets archive_timeout in pg-cluster values
 
-SS_CONTROLLER_NS="sealed-secrets"                            # kubeseal --controller-namespace (== 02_sealed_secrets)
-SS_CONTROLLER_NAME="sealed-secrets"                          # kubeseal --controller-name
+SS_CONTROLLER_NS="sealed-secrets"                           # kubeseal --controller-namespace (== 02_sealed_secrets)
+SS_CONTROLLER_NAME="sealed-secrets"                         # kubeseal --controller-name
 SS_POD_SELECTOR="app.kubernetes.io/name=sealed-secrets"     # the controller pods (readiness probe)
-SS_KEY_LABEL="sealedsecrets.bitnami.com/sealed-secrets-key"  # label on its key Secrets (03 backup/restore)
-MONITORING_NS="monitoring"                                   # the monitoring-stack namespace (ntfy seal / krr)
-WORKLOAD_CHARTS="${REPO_ROOT}/argo_apps/workloads/charts"    # the workloads tree the recover_* scripts edit
-PLATFORM_CHARTS="${REPO_ROOT}/argo_apps/platform/charts"     # the platform tree the step scripts write values into
-TF_DIR="${REPO_ROOT}/terraform"                              # the Terraform root (10a applies it; 10b-10e read its outputs)
+SS_KEY_LABEL="sealedsecrets.bitnami.com/sealed-secrets-key" # label on its key Secrets (03 backup/restore)
+MONITORING_NS="monitoring"                                  # the monitoring-stack namespace (ntfy seal / krr)
+WORKLOAD_CHARTS="${REPO_ROOT}/argo_apps/workloads/charts"   # the workloads tree the recover_* scripts edit
+PLATFORM_CHARTS="${REPO_ROOT}/argo_apps/platform/charts"    # the platform tree the step scripts write values into
+TF_DIR="${REPO_ROOT}/terraform"                             # the Terraform root (10a applies it; 10b-10e read its outputs)
 
 # Cannot live in a flat .env: it interpolates.
 # The two host tiers. Fixed labels, not knobs: the SSO policy sets one cookieDomain for BASE_DOMAIN, and a
 # cookie only ever reaches that domain and its subdomains, so a tier outside it could never be logged into.
-OPS_DOMAIN="ops.${BASE_DOMAIN}"                 # platform UIs:  <sub>.ops.<base>
-APP_DOMAIN="app.${BASE_DOMAIN}"                 # workloads:     <sub>.app.<base>
+OPS_DOMAIN="ops.${BASE_DOMAIN}" # platform UIs:  <sub>.ops.<base>
+APP_DOMAIN="app.${BASE_DOMAIN}" # workloads:     <sub>.app.<base>
 
-say()  { printf '\n\033[1;36m>> %s\033[0m\n' "$*"; }
-die()  { printf '\033[1;31mERROR: %s\033[0m\n' "$*" >&2; exit 1; }
+say() { printf '\n\033[1;36m>> %s\033[0m\n' "$*"; }
+die() {
+  printf '\033[1;31mERROR: %s\033[0m\n' "$*" >&2
+  exit 1
+}
 warn() { printf '  \033[33m[warn]\033[0m %s\n' "$*"; }
 
-PASS=0; FAIL=0
-ok()  { printf '  \033[32m[PASS]\033[0m %s\n' "$1"; PASS=$((PASS+1)); }
-bad() { printf '  \033[31m[FAIL]\033[0m %s\n' "$1"; FAIL=$((FAIL+1)); }
+PASS=0
+FAIL=0
+ok() {
+  printf '  \033[32m[PASS]\033[0m %s\n' "$1"
+  PASS=$((PASS + 1))
+}
+bad() {
+  printf '  \033[31m[FAIL]\033[0m %s\n' "$1"
+  FAIL=$((FAIL + 1))
+}
 # Returns non-zero if anything failed, so a caller can `summary || exit 1`.
 summary() {
   printf '\n=============== summary: %d passed, %d failed ===============\n' "$PASS" "$FAIL"
@@ -79,14 +89,14 @@ summary() {
 require() {
   local t
   for t in "$@"; do
-    command -v "$t" >/dev/null && continue
+    command -v "$t" > /dev/null && continue
     case "$t" in
-      kubectl)  die "kubectl not found on PATH, install it (https://kubernetes.io/docs/tasks/tools/)" ;;
-      helm)     die "helm not found on PATH, install it (https://helm.sh/docs/intro/install/)" ;;
-      yq)       die "yq not found on PATH, install it (https://github.com/mikefarah/yq, brew install yq)" ;;
+      kubectl) die "kubectl not found on PATH, install it (https://kubernetes.io/docs/tasks/tools/)" ;;
+      helm) die "helm not found on PATH, install it (https://helm.sh/docs/intro/install/)" ;;
+      yq) die "yq not found on PATH, install it (https://github.com/mikefarah/yq, brew install yq)" ;;
       kubeseal) die "kubeseal not found on PATH, install it (brew install kubeseal)" ;;
-      docker)   die "docker not found on PATH (and it needs host networking enabled)" ;;
-      *)        die "$t not found on PATH" ;;
+      docker) die "docker not found on PATH (and it needs host networking enabled)" ;;
+      *) die "$t not found on PATH" ;;
     esac
   done
 }
@@ -100,7 +110,8 @@ require() {
 pin_chart_lock_timestamp() {
   local lock="${1}/Chart.lock"
   [ -f "$lock" ] || return 0
-  local tmp; tmp="$(mktemp)"
+  local tmp
+  tmp="$(mktemp)"
   sed 's/^generated:.*/generated: "1970-01-01T00:00:00Z"/' "$lock" > "$tmp" && cat "$tmp" > "$lock"
   rm -f "$tmp"
 }
@@ -114,8 +125,10 @@ pin_chart_lock_timestamp() {
 # line and keeping its trailing comment. The value is written verbatim, so the caller quotes it when the CRD
 # needs a string. Silent when the path isn't found, so every caller asserts with a `yq -r` read-back after.
 ys_set() {
-  local f="$1" v="$2"; shift 2
-  local tmp; tmp="$(mktemp)" || return 1
+  local f="$1" v="$2"
+  shift 2
+  local tmp
+  tmp="$(mktemp)" || return 1
   VAL="$v" awk -v path="$*" '
     function keyof(s) { sub(/^ */, "", s); sub(/:.*/, "", s); gsub(/^"|"$/, "", s); return s }
     BEGIN { n = split(path, want, " "); lvl = 1; parent = -1; val = ENVIRON["VAL"] }
@@ -136,8 +149,10 @@ ys_set() {
 # ys_set_list <file> <space-separated items> <key...>: same, for a key whose value is a block sequence of
 # plain scalars. Rewrites the whole sequence; no items collapses it to an inline `[]`.
 ys_set_list() {
-  local f="$1" items="$2"; shift 2
-  local tmp; tmp="$(mktemp)" || return 1
+  local f="$1" items="$2"
+  shift 2
+  local tmp
+  tmp="$(mktemp)" || return 1
   ITEMS="$items" awk -v path="$*" '
     function keyof(s) { sub(/^ */, "", s); sub(/:.*/, "", s); gsub(/^"|"$/, "", s); return s }
     BEGIN { n = split(path, want, " "); lvl = 1; parent = -1; m = split(ENVIRON["ITEMS"], item, " ") }
@@ -164,8 +179,10 @@ ys_set_list() {
 # ys_set_each <file> <value> <key...> <leaf>: set <leaf> on EVERY item of the block sequence at <key...>.
 # ys_set walks mappings only, so it cannot reach a key under a `- ` item; this is the sequence counterpart.
 ys_set_each() {
-  local f="$1" v="$2"; shift 2
-  local tmp; tmp="$(mktemp)" || return 1
+  local f="$1" v="$2"
+  shift 2
+  local tmp
+  tmp="$(mktemp)" || return 1
   VAL="$v" awk -v path="$*" '
     function keyof(s) { sub(/^ *(- )?/, "", s); sub(/:.*/, "", s); gsub(/^"|"$/, "", s); return s }
     BEGIN { n = split(path, want, " "); lvl = 1; parent = -1; val = ENVIRON["VAL"] }
@@ -190,11 +207,13 @@ ys_set_each() {
 
 # Accepts both spellings because callers pass `true` and `1` about evenly. A gate that recognised only one
 # would prompt in an unattended run, and an orchestrator with no stdin reads that as an abort.
-assume_yes() { case "${ASSUME_YES:-}" in true|1|yes|YES) return 0 ;; *) return 1 ;; esac; }
+assume_yes() { case "${ASSUME_YES:-}" in true | 1 | yes | YES) return 0 ;; *) return 1 ;; esac }
 
 confirm() {
   assume_yes && return 0
-  local a; read -rp "$1 [y/N]: " a; [[ "$a" =~ ^[Yy]$ ]]
+  local a
+  read -rp "$1 [y/N]: " a
+  [[ "$a" =~ ^[Yy]$ ]]
 }
 
 # Destructive-action gate: make the operator type a word, because y is too easy to hit by reflex. Both return
@@ -202,8 +221,15 @@ confirm() {
 #   confirm_word        <WORD> <prompt>  honours ASSUME_YES, for steps an orchestrator drives unattended
 #   confirm_word_always <WORD> <prompt>  ignores it, for the gates that wipe the cluster. An ASSUME_YES left
 #                                        over from an earlier command must never be able to skip those.
-_ask_word() { local a; read -r -p ">> ${2:+$2 }type $1 to proceed: " a; [ "$a" = "$1" ]; }
-confirm_word()        { assume_yes && return 0; _ask_word "$@"; }
+_ask_word() {
+  local a
+  read -r -p ">> ${2:+$2 }type $1 to proceed: " a
+  [ "$a" = "$1" ]
+}
+confirm_word() {
+  assume_yes && return 0
+  _ask_word "$@"
+}
 confirm_word_always() { _ask_word "$@"; }
 
 # Prints "<values-file>\t<alias>" and returns 0, or nothing and 1.
@@ -217,20 +243,24 @@ wl_find_alias() {
     a="$(SRC="$src" VKEY="$vkey" yq -r \
       '[to_entries[] | select(.value | type == "!!map")
         | select(.value.name == strenv(SRC)) | select(.value[strenv(VKEY)] != null) | .key] | .[0] // ""' \
-      "$f" 2>/dev/null)"
-    if [ -n "$a" ] && [ "$a" != "null" ]; then printf '%s\t%s\n' "$f" "$a"; return 0; fi
+      "$f" 2> /dev/null)"
+    if [ -n "$a" ] && [ "$a" != "null" ]; then
+      printf '%s\t%s\n' "$f" "$a"
+      return 0
+    fi
   done
   return 1
 }
 
 # Callers test emptiness, so this works for scalars and maps alike: an absent key and an empty one both read "".
-vy_read() { ALIAS="$2" K="$3" yq -r '.[strenv(ALIAS)][strenv(K)] // ""' "$1" 2>/dev/null; }
+vy_read() { ALIAS="$2" K="$3" yq -r '.[strenv(ALIAS)][strenv(K)] // ""' "$1" 2> /dev/null; }
 
 # SUBSTITUTES an existing line rather than inserting one, which is safe because both charts make the knob
 # REQUIRED. Callers still assert with vy_read afterwards. Each writes the WHOLE line, comment included, so the
 # pair round-trips: whichever ran last leaves no orphan comment from the other.
 vy_protect_on() {
-  local f="$1" alias="$2" tmp; tmp="$(mktemp)"
+  local f="$1" alias="$2" tmp
+  tmp="$(mktemp)"
   awk -v alias="$alias" '
     $0 ~ "^"alias":" { inb=1; print; next }
     inb && /^[^[:space:]#]/ { inb=0 }
@@ -243,7 +273,8 @@ vy_protect_on() {
 }
 
 vy_protect_off() {
-  local f="$1" alias="$2" tmp; tmp="$(mktemp)"
+  local f="$1" alias="$2" tmp
+  tmp="$(mktemp)"
   awk -v alias="$alias" '
     $0 ~ "^"alias":" { inb=1; print; next }
     inb && /^[^[:space:]#]/ { inb=0 }
@@ -255,7 +286,7 @@ vy_protect_off() {
   rm -f "$tmp"
 }
 
-CLUSTER_DIR="${REPO_ROOT}/secrets"   # this repo's sealed-secrets key + webhook secret; a symlink to an off-repo store
+CLUSTER_DIR="${REPO_ROOT}/secrets" # this repo's sealed-secrets key + webhook secret; a symlink to an off-repo store
 
 # Created on demand, because a missing gitignored dir must not be what stops a bootstrap. It holds the
 # sealed-secrets master key, which cannot be regenerated: lose it and every SealedSecret already committed stays
@@ -277,7 +308,7 @@ ensure_cluster_dir() {
   warn "  outlives the clone before you rely on this cluster:"
   warn "    rmdir ${CLUSTER_DIR} && ln -s /path/to/your/synced/store ${CLUSTER_DIR}"
 }
-PINNED_KUBECONFIG="${REPO_ROOT}/.cache/kubeconfig"   # derived, gitignored; rewritten by every use_kubeconfig call
+PINNED_KUBECONFIG="${REPO_ROOT}/.cache/kubeconfig" # derived, gitignored; rewritten by every use_kubeconfig call
 
 # Offers the contexts in $1 and writes the pick back to .env, so this is asked once per checkout. Needs a TTY:
 # an orchestrator step running unattended must not silently pick a cluster.
@@ -291,12 +322,13 @@ _pick_kube_context() {
 $(printf '         %s\n' "${names[@]}")"
   say "KUBE_CONTEXT is not set in .env. Which cluster may this repo touch?"
   warn "every script here applies to it, and the DANGEROUS_ ones redeliver the whole platform. Choose carefully."
-  for n in "${!names[@]}"; do printf '   %2d) %s\n' "$((n+1))" "${names[$n]}"; done
+  for n in "${!names[@]}"; do printf '   %2d) %s\n' "$((n + 1))" "${names[$n]}"; done
   read -r -p ">> number: " choice || die "aborted"
   [[ "$choice" =~ ^[0-9]+$ ]] && [ "$choice" -ge 1 ] && [ "$choice" -le "${#names[@]}" ] || die "not a listed number: ${choice}"
-  KUBE_CONTEXT="${names[$((choice-1))]}"
+  KUBE_CONTEXT="${names[$((choice - 1))]}"
   if grep -q '^KUBE_CONTEXT=' "$ENV_FILE"; then
-    local tmp; tmp="$(mktemp)"
+    local tmp
+    tmp="$(mktemp)"
     sed "s|^KUBE_CONTEXT=.*|KUBE_CONTEXT=\"${KUBE_CONTEXT}\"|" "$ENV_FILE" > "$tmp" && cat "$tmp" > "$ENV_FILE"
     rm -f "$tmp"
   else
@@ -315,7 +347,7 @@ use_kubeconfig() {
   # $KUBECONFIG naively and the second call (any child step sourcing this file, or a re-run in the same shell)
   # derives the pinned config FROM ITSELF, so one bad write poisons every run after it with no way back.
   local amb="${KUBECONFIG_SOURCE:-${KUBECONFIG:-$HOME/.kube/config}}"
-  [ "$amb" = "$PINNED_KUBECONFIG" ] && amb="$HOME/.kube/config"   # never our own output
+  [ "$amb" = "$PINNED_KUBECONFIG" ] && amb="$HOME/.kube/config" # never our own output
   export KUBECONFIG_SOURCE="$amb"
   local src="$amb"
   [ -f "$src" ] || die "no kubeconfig at ${src}. This repo starts from a cluster that already exists:
@@ -329,23 +361,26 @@ use_kubeconfig() {
   # no other cluster is even reachable from it.
   local tmp err
   tmp="$(mktemp "${PINNED_KUBECONFIG}.XXXXXX")" || die "could not write next to ${PINNED_KUBECONFIG}"
-  if ! err="$(KUBECONFIG="$src" kubectl config view --flatten --minify --context="$KUBE_CONTEXT" 2>&1 >"$tmp")"; then
+  if ! err="$(KUBECONFIG="$src" kubectl config view --flatten --minify --context="$KUBE_CONTEXT" 2>&1 > "$tmp")"; then
     rm -f "$tmp"
     die "context \"${KUBE_CONTEXT}\" (from .env) is not usable in ${src}: ${err}
-       available: $(KUBECONFIG="$src" kubectl config get-contexts -o name 2>/dev/null | tr '\n' ' ')"
+       available: $(KUBECONFIG="$src" kubectl config get-contexts -o name 2> /dev/null | tr '\n' ' ')"
   fi
-  [ -s "$tmp" ] || { rm -f "$tmp"; die "rendering context \"${KUBE_CONTEXT}\" from ${src} produced nothing"; }
+  [ -s "$tmp" ] || {
+    rm -f "$tmp"
+    die "rendering context \"${KUBE_CONTEXT}\" from ${src} produced nothing"
+  }
   mv "$tmp" "$PINNED_KUBECONFIG"
   export KUBECONFIG="$PINNED_KUBECONFIG"
 }
-assert_api() { kubectl get nodes >/dev/null 2>&1 || die "kubectl can't reach the API via ${KUBECONFIG} (context: $(kubectl config current-context 2>/dev/null || echo none))"; }
+assert_api() { kubectl get nodes > /dev/null 2>&1 || die "kubectl can't reach the API via ${KUBECONFIG} (context: $(kubectl config current-context 2> /dev/null || echo none))"; }
 
 # Every sealing step's preflight. Asserts a controller pod is READY, not merely that the get succeeded:
 # `kubectl get pods -l <selector>` exits 0 when NOTHING matches, so a plain get catches an unreachable API but
 # waves through a missing controller, which then fails deep inside kubeseal instead.
 assert_sealed_secrets_ready() {
   kubectl get pods -n "$SS_CONTROLLER_NS" -l "$SS_POD_SELECTOR" \
-      -o jsonpath='{.items[*].status.conditions[?(@.type=="Ready")].status}' 2>/dev/null | grep -q True \
+    -o jsonpath='{.items[*].status.conditions[?(@.type=="Ready")].status}' 2> /dev/null | grep -q True \
     || die "no Ready sealed-secrets controller in ns/${SS_CONTROLLER_NS}. Is the platform app 02_sealed_secrets synced?
        kubectl -n ${SS_CONTROLLER_NS} get pods"
 }
@@ -361,8 +396,8 @@ export_deploy_aws_creds() {
 # The S3 backup writer creds, created by 13 and living in Terraform state, never in .env. Sets AKID + SAK.
 read_backup_creds() {
   say "reading backup-writer creds from terraform output"
-  AKID="$(terraform -chdir="$TF_DIR" output -raw backup_access_key_id 2>/dev/null)" || true
-  SAK="$(terraform -chdir="$TF_DIR" output -raw backup_secret_access_key 2>/dev/null)" || true
+  AKID="$(terraform -chdir="$TF_DIR" output -raw backup_access_key_id 2> /dev/null)" || true
+  SAK="$(terraform -chdir="$TF_DIR" output -raw backup_secret_access_key 2> /dev/null)" || true
   [ -n "$AKID" ] && [ -n "$SAK" ] \
     || die "no Terraform outputs: run 10a_s3_backup_bucket.sh first (and it must have applied)"
   ok "got writer access key id + secret from terraform"
@@ -375,17 +410,20 @@ read_backup_creds() {
 # Retried, because the controller is often still settling when a bootstrap reaches the sealing steps, and it
 # DIES rather than returning non-zero: a failed seal leaves <outfile> holding the PREVIOUS cluster's
 # ciphertext, which a caller that carried on would commit.
-SEAL_BACKOFF="4 8 16 32 64"   # seconds between tries; 5 retries, so 6 tries and ~2 min before giving up
+SEAL_BACKOFF="4 8 16 32 64" # seconds between tries; 5 retries, so 6 tries and ~2 min before giving up
 kubeseal_to() {
-  local out="$1"; shift
+  local out="$1"
+  shift
   local inf err attempt=1 delay
   [ "$#" -gt 0 ] || set -- --format yaml --scope strict
-  inf="$(mktemp)"; cat > "$inf"   # buffered to a file, not a var: --raw input must keep its bytes exactly
+  inf="$(mktemp)"
+  cat > "$inf" # buffered to a file, not a var: --raw input must keep its bytes exactly
   mkdir -p "$(dirname "$out")"
   for delay in $SEAL_BACKOFF ""; do
     if err="$(kubeseal --controller-namespace "$SS_CONTROLLER_NS" --controller-name "$SS_CONTROLLER_NAME" \
-                "$@" < "$inf" 2>&1 > "${out}.tmp")" && [ -s "${out}.tmp" ]; then
-      mv "${out}.tmp" "$out"; rm -f "$inf"
+      "$@" < "$inf" 2>&1 > "${out}.tmp")" && [ -s "${out}.tmp" ]; then
+      mv "${out}.tmp" "$out"
+      rm -f "$inf"
       [ "$attempt" -gt 1 ] && ok "kubeseal succeeded on attempt ${attempt}" >&2
       return 0
     fi
@@ -407,8 +445,10 @@ kubeseal_to() {
 # strict-scope, then sanity-check the result. The ONE manifest sealer; only 14's cluster-wide raw ciphertext
 # goes elsewhere. Emits ok/bad per check, and dies via kubeseal_to if the seal cannot be made.
 seal_secret() {
-  local name="$1" ns="$2" out="$3"; shift 3
-  local pair key value manifest; local args=()
+  local name="$1" ns="$2" out="$3"
+  shift 3
+  local pair key value manifest
+  local args=()
   [ "$#" -gt 0 ] || die "seal_secret ${name}: no key=value pairs given"
   for pair in "$@"; do
     case "$pair" in *=*) ;; *) die "seal_secret ${name}: '${pair}' is not key=value" ;; esac
@@ -422,8 +462,9 @@ seal_secret() {
   ok "sealed ${name} -> ${out} (ns ${ns}), overwritten if it existed"
   grep -q 'kind: SealedSecret' "$out" && ok "output is a SealedSecret" || bad "not a SealedSecret manifest"
   for pair in "$@"; do
-    key="${pair%%=*}"; value="${pair#*=}"
-    grep -q "$key"    "$out" && ok "encryptedData has ${key}" || bad "encryptedData missing ${key}"
+    key="${pair%%=*}"
+    value="${pair#*=}"
+    grep -q "$key" "$out" && ok "encryptedData has ${key}" || bad "encryptedData missing ${key}"
     grep -qF "$value" "$out" && bad "PLAINTEXT ${key} in output, DO NOT COMMIT" || ok "no plaintext ${key} in output"
   done
 }
@@ -431,14 +472,20 @@ seal_secret() {
 # The caller sets STEP=0 and STEP_TOTAL=<n> once; every step goes through step()/run_step(), so adding or
 # removing a step only changes STEP_TOTAL, never a hand-written number.
 
-step() { STEP=$((STEP+1)); say "STEP ${STEP}/${STEP_TOTAL}, $*"; }
+step() {
+  STEP=$((STEP + 1))
+  say "STEP ${STEP}/${STEP_TOTAL}, $*"
+}
 
 # run_step <label> <dir> <script> [best-effort] [hint]: runs <dir>/<script> in a subshell with stdin detached,
 # then dies (default) or warns and returns 1 (best-effort). The 5th arg overrides the recovery hint.
 run_step() {
   local label="$1" dir="$2" script="$3" mode="${4:-fatal}" hint="${5:-}"
   step "${script} (${label})"
-  if ( cd "$dir" && bash "./$script" </dev/null ); then ok "${script} done"; return 0; fi
+  if (cd "$dir" && bash "./$script" < /dev/null); then
+    ok "${script} done"
+    return 0
+  fi
   if [ "$mode" = best-effort ]; then
     warn "${hint:-${script} did not complete; re-run it by hand + commit/push if needed}"
     return 1
@@ -453,37 +500,43 @@ run_step() {
 # negotiates HTTP/1.1 by default, and requiring HTTP/2 hangs every host forever.
 _ingress_serves_ok() {
   local host="$1" ip="$2" issuer code
-  issuer="$(printf '' | openssl s_client -connect "${ip}:443" -servername "$host" 2>/dev/null \
-            | openssl x509 -noout -issuer 2>/dev/null)"
-  printf '%s' "$issuer" | grep -qiE "Let.?s Encrypt" || return 1   # temp/self-signed/wrong cert -> wait
+  issuer="$(printf '' | openssl s_client -connect "${ip}:443" -servername "$host" 2> /dev/null \
+    | openssl x509 -noout -issuer 2> /dev/null)"
+  printf '%s' "$issuer" | grep -qiE "Let.?s Encrypt" || return 1 # temp/self-signed/wrong cert -> wait
   code="$(curl -k --http2 -sS -o /dev/null -w '%{http_code}' \
-    --resolve "${host}:443:${ip}" --max-time 10 "https://${host}/" 2>/dev/null)"
-  case "${code:-000}" in [234][0-9][0-9]) return 0;; *) return 1;; esac   # 000 (conn/TLS fail) / 5xx -> wait
+    --resolve "${host}:443:${ip}" --max-time 10 "https://${host}/" 2> /dev/null)"
+  case "${code:-000}" in [234][0-9][0-9]) return 0 ;; *) return 1 ;; esac # 000 (conn/TLS fail) / 5xx -> wait
 }
 
 # verify_ingress <gateway-ns> <wait-secs> [host...]: poll until every HTTPS host on the Gateways in <ns>
 # serves. With no hosts given, derives them from the Gateways' HTTPS listeners. Best-effort: ArgoCD brings the
 # ingress up async and HTTP-01 issuance takes minutes, so it prints ok/warn and returns 0 iff all serve.
 verify_ingress() {
-  local ns="$1" wait_secs="$2"; shift 2
+  local ns="$1" wait_secs="$2"
+  shift 2
   local want_hosts="$*"
   use_kubeconfig
-  if ! command -v curl >/dev/null || ! command -v openssl >/dev/null; then
-    warn "curl/openssl not both present, skipping ingress verification"; return 0
+  if ! command -v curl > /dev/null || ! command -v openssl > /dev/null; then
+    warn "curl/openssl not both present, skipping ingress verification"
+    return 0
   fi
-  local deadline=$(( $(date +%s) + wait_secs )) remaining="" lbip="" hosts h
+  local deadline=$(($(date +%s) + wait_secs)) remaining="" lbip="" hosts h
   while :; do
     lbip="$(kubectl get gateway -n "$ns" \
-            -o jsonpath='{range .items[*]}{.status.addresses[0].value}{"\n"}{end}' 2>/dev/null | grep -m1 .)"
+      -o jsonpath='{range .items[*]}{.status.addresses[0].value}{"\n"}{end}' 2> /dev/null | grep -m1 .)"
     if [ -n "$want_hosts" ]; then hosts="$want_hosts"; else
       hosts="$(kubectl get gateway -n "$ns" \
-               -o jsonpath='{range .items[*].spec.listeners[?(@.protocol=="HTTPS")]}{.hostname}{"\n"}{end}' 2>/dev/null \
-               | sort -u | tr '\n' ' ')"
+        -o jsonpath='{range .items[*].spec.listeners[?(@.protocol=="HTTPS")]}{.hostname}{"\n"}{end}' 2> /dev/null \
+        | sort -u | tr '\n' ' ')"
     fi
-    if [ -n "$lbip" ] && [ -n "${hosts// }" ]; then
+    if [ -n "$lbip" ] && [ -n "${hosts// /}" ]; then
       remaining=""
       for h in $hosts; do _ingress_serves_ok "$h" "$lbip" || remaining="${remaining} ${h}"; done
-      [ -z "${remaining// }" ] && { echo; ok "all ingress hosts serve an LE cert over HTTPS (via ${lbip})"; return 0; }
+      [ -z "${remaining// /}" ] && {
+        echo
+        ok "all ingress hosts serve an LE cert over HTTPS (via ${lbip})"
+        return 0
+      }
     fi
     if [ "$(date +%s)" -ge "$deadline" ]; then
       echo
@@ -491,7 +544,8 @@ verify_ingress() {
       warn "inspect: kubectl get gateway,certificate -A ; kubectl -n argocd get applications"
       return 1
     fi
-    printf '.'; sleep 10
+    printf '.'
+    sleep 10
   done
 }
 
@@ -501,12 +555,12 @@ verify_ingress() {
 # Never touches a Running op. Best-effort: warns and returns 1 on timeout.
 converge_argocd_apps() {
   local deadline pending name sync health opphase a
-  deadline=$(( $(date +%s) + ${1:-720} ))
+  deadline=$(($(date +%s) + ${1:-720}))
   use_kubeconfig
   # Hard-refresh every app first, so ArgoCD re-compares against the latest commit even on apps still
   # reporting Synced against an older revision.
-  kubectl -n argocd get applications -o name 2>/dev/null | while read -r a; do
-    kubectl -n argocd annotate "$a" argocd.argoproj.io/refresh=hard --overwrite >/dev/null 2>&1 || true
+  kubectl -n argocd get applications -o name 2> /dev/null | while read -r a; do
+    kubectl -n argocd annotate "$a" argocd.argoproj.io/refresh=hard --overwrite > /dev/null 2>&1 || true
   done
   while :; do
     pending=""
@@ -514,15 +568,25 @@ converge_argocd_apps() {
       [ -z "$name" ] && continue
       { [ "$sync" = "Synced" ] && [ "$health" = "Healthy" ]; } && continue
       pending="${pending} ${name}"
-      kubectl -n argocd annotate app "$name" argocd.argoproj.io/refresh=hard --overwrite >/dev/null 2>&1 || true
-      if [ "$opphase" != "Running" ]; then          # don't interrupt an in-flight sync; only push idle stragglers
+      kubectl -n argocd annotate app "$name" argocd.argoproj.io/refresh=hard --overwrite > /dev/null 2>&1 || true
+      if [ "$opphase" != "Running" ]; then # don't interrupt an in-flight sync; only push idle stragglers
         kubectl -n argocd patch app "$name" --type merge \
-          -p '{"operation":{"initiatedBy":{"username":"converge-backstop"},"sync":{}}}' >/dev/null 2>&1 || true
+          -p '{"operation":{"initiatedBy":{"username":"converge-backstop"},"sync":{}}}' > /dev/null 2>&1 || true
       fi
     done < <(kubectl -n argocd get applications \
-      -o jsonpath='{range .items[*]}{.metadata.name}{" "}{.status.sync.status}{" "}{.status.health.status}{" "}{.status.operationState.phase}{"\n"}{end}' 2>/dev/null)
-    [ -z "${pending// }" ] && { echo; ok "all ArgoCD apps Synced + Healthy"; return 0; }
-    [ "$(date +%s)" -ge "$deadline" ] && { echo; warn "apps not Synced+Healthy within ${1:-720}s:${pending}"; warn "inspect: kubectl -n argocd get applications"; return 1; }
-    printf '.'; sleep 20
+      -o jsonpath='{range .items[*]}{.metadata.name}{" "}{.status.sync.status}{" "}{.status.health.status}{" "}{.status.operationState.phase}{"\n"}{end}' 2> /dev/null)
+    [ -z "${pending// /}" ] && {
+      echo
+      ok "all ArgoCD apps Synced + Healthy"
+      return 0
+    }
+    [ "$(date +%s)" -ge "$deadline" ] && {
+      echo
+      warn "apps not Synced+Healthy within ${1:-720}s:${pending}"
+      warn "inspect: kubectl -n argocd get applications"
+      return 1
+    }
+    printf '.'
+    sleep 20
   done
 }
