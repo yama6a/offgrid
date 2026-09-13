@@ -120,7 +120,7 @@ resolve_objects() {
       OBJECTS="s3://${BUCKET}/${TARGET#/}"   # caller passed a full key relative to the bucket
       aws s3 ls "$OBJECTS" >/dev/null 2>&1 || die "object not found: ${OBJECTS}" ;;
   esac
-  OBJECTS_ONELINE="$(printf '%s ' $OBJECTS)"   # space-joined for the pod's `for` loop (keys have no spaces)
+  OBJECTS_ONELINE="${OBJECTS//$'\n'/ }"   # space-joined for the pod's `for` loop (keys have no spaces)
   N_OBJ="$(printf '%s\n' "$OBJECTS" | grep -c .)"
   ok "restoring ${N_OBJ} object(s):"
   printf '%s\n' "$OBJECTS" | sed 's/^/    /'

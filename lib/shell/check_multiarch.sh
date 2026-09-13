@@ -111,7 +111,7 @@ check_image() {
     return 0
   fi
   for a in "${ARCHES[@]}"; do
-    printf '%s\n' $HAVE | grep -qx "$a" || missing="${missing} ${a}"
+    case " ${HAVE} " in *" ${a} "*) ;; *) missing="${missing} ${a}" ;; esac
   done
   if [ -z "${missing// }" ]; then ok "${img}  [${HAVE}]"
   else                           bad "${img}: no ${missing# } manifest (has: ${HAVE})"

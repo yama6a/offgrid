@@ -68,7 +68,7 @@ check_prerequisites() {
   # Cluster-shape knobs. Wrong here means Cilium never reaches the API, or Longhorn writes to the root disk,
   # so they are checked rather than trusted.
   [ -n "${KUBE_API_HOST}" ] || die "KUBE_API_HOST is empty (set it in .env); Cilium needs the API before pod networking exists"
-  case "$KUBE_API_PORT" in ""|*[!0-9]*) die "KUBE_API_PORT is '${KUBE_API_PORT}', which is not a port number" ;; esac
+  case "${KUBE_API_PORT:-}" in ""|*[!0-9]*) die "KUBE_API_PORT is '${KUBE_API_PORT}', which is not a port number" ;; esac
   case "$ETCD_METRICS_PORT" in ""|*[!0-9]*) die "ETCD_METRICS_PORT is '${ETCD_METRICS_PORT}', which is not a port number" ;; esac
   case "$KUBELET_TLS_INSECURE" in true|false) ;; *) die "KUBELET_TLS_INSECURE is '${KUBELET_TLS_INSECURE}', expected true or false" ;; esac
   case "$LONGHORN_DATA_PATH" in /*) ;; *) die "LONGHORN_DATA_PATH is '${LONGHORN_DATA_PATH}', expected an absolute path" ;; esac

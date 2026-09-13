@@ -164,7 +164,7 @@ seed_ntfy_and_push_token() {
 # Best-effort: warns rather than failing the rebuild if it cannot confirm within INGRESS_WAIT.
 verify_ingress_serving() {
   step "verify ingress serving (LE cert + HTTPS response), up to ${INGRESS_WAIT}s"
-  verify_ingress "$INGRESS_GW_NS" "$INGRESS_WAIT" $INGRESS_HOSTS || true
+  verify_ingress "$INGRESS_GW_NS" "$INGRESS_WAIT" "$INGRESS_HOSTS" || true
 }
 
 print_handoff() {

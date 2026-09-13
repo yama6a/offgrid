@@ -125,7 +125,7 @@ resolve_git_state() {
   echo "    instance            : ${NS}/${INSTANCE}"
   echo "    live Redis CR       : ${CR_EXISTS}"
   if [ -n "$FOUND" ]; then
-    echo "    owning chart        : ${VALUES#${REPO_ROOT}/} (alias '${ALIAS}')"
+    echo "    owning chart        : ${VALUES#"${REPO_ROOT}"/} (alias '${ALIAS}')"
     echo "    git deletionProtection: ${GIT_PROTECT}"
     echo "    uncommitted edits to that values.yaml: ${DIRTY}"
   else
@@ -147,7 +147,7 @@ Restore it in git FIRST, then re-run this and it will wait for Argo to build it:
 It comes back EMPTY on a fresh PVC; this script then loads the dump into it. See docs/09_redis.md."
   fi
   if [ "$DIRTY" = "yes" ]; then
-    warn "${VALUES#${REPO_ROOT}/} has uncommitted changes: ArgoCD syncs the pushed remote, not your working tree."
+    warn "${VALUES#"${REPO_ROOT}"/} has uncommitted changes: ArgoCD syncs the pushed remote, not your working tree."
     die "commit + push first, then re-run."
   fi
   [ "$CR_EXISTS" = "no" ] || return 0
@@ -226,7 +226,7 @@ resolve_dump() {
        key="$(printf '%s' "$KEYS" | sed -n "${TARGET}p")"
        OBJECT="${DEST}${key}" ;;
   esac
-  obj_key="${OBJECT#s3://${BUCKET}/}"
+  obj_key="${OBJECT#s3://"${BUCKET}"/}"
   head="$(aws s3api head-object --bucket "$BUCKET" --key "$obj_key" 2>/dev/null || true)"
   [ -n "$head" ] || die "no such object: ${OBJECT} (exact key match; pick one from the list above)"
   SIZE="$(printf '%s' "$head" | sed -n 's/.*"ContentLength"[[:space:]]*:[[:space:]]*\([0-9][0-9]*\).*/\1/p' | head -1)"
@@ -464,14 +464,14 @@ reprotect() {
   fi
   vy_protect_on "$VALUES" "$ALIAS" || die "edit failed"
   [ "$(vy_read "$VALUES" "$ALIAS" deletionProtection)" = "true" ] \
-    && ok "set ${ALIAS}.deletionProtection=true in ${VALUES#${REPO_ROOT}/} (it was false; never leave an instance unprotected)" \
+    && ok "set ${ALIAS}.deletionProtection=true in ${VALUES#"${REPO_ROOT}"/} (it was false; never leave an instance unprotected)" \
     || die "post-edit check failed: ${ALIAS}.deletionProtection is not true"
   git -C "$REPO_ROOT" --no-pager diff --stat -- "$VALUES" | sed 's/^/    /'
 cat <<NEXT
 
 Last step, commit and push:
 
-    git add ${VALUES#${REPO_ROOT}/}
+    git add ${VALUES#"${REPO_ROOT}"/}
     git commit -m "${INSTANCE}: restore done, re-protect"
     git push
 

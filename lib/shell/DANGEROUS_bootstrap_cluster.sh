@@ -205,7 +205,7 @@ backup_new_master_key() {
 # HTTPS host until it serves a REAL, LE-backed response. Best-effort: warns, never fails the bootstrap.
 verify_ingress_serving() {
   step "verify ingress serving (LE cert + HTTPS response), up to ${INGRESS_WAIT}s"
-  verify_ingress "$INGRESS_GW_NS" "$INGRESS_WAIT" $INGRESS_HOSTS || true
+  verify_ingress "$INGRESS_GW_NS" "$INGRESS_WAIT" "$INGRESS_HOSTS" || true
 }
 
 print_handoff() {

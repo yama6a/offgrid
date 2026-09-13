@@ -174,7 +174,7 @@ resolve_server() {
   IFS=$'\t' read -r values alias <<< "$(wl_find_alias "$SOURCE" postgresVersion || true)"
   if [ -n "$values" ]; then
     v="$(ALIAS="$alias" yq -r '.[strenv(ALIAS)].postgresVersion // ""' "$values" 2>/dev/null)"
-    [ -n "$v" ] && { SERVER="${SOURCE}-pg${v}"; ok "catalog serverName: ${SERVER} (from ${values#${REPO_ROOT}/})"; return 0; }
+    [ -n "$v" ] && { SERVER="${SOURCE}-pg${v}"; ok "catalog serverName: ${SERVER} (from ${values#"${REPO_ROOT}"/})"; return 0; }
   fi
   SERVER="$SOURCE"
   warn "no live Cluster and no chart values for ${SOURCE}, so falling back to the bare prefix ${SERVER}"
@@ -311,7 +311,7 @@ resolve_owning_chart() {
   FOUND="$(wl_find_alias "$SOURCE" postgresVersion || true)"
   IFS=$'\t' read -r VALUES ALIAS <<< "$FOUND" || true   # tab-separated, split explicitly
   [ -n "$FOUND" ] || die "no workload chart under ${WORKLOAD_CHARTS} has a pg-cluster instance named ${SOURCE}. In-place restore drives that chart's values; add the instance back to git first, or use --mode side."
-  ok "owning chart: ${VALUES#${REPO_ROOT}/} (alias '${ALIAS}')"
+  ok "owning chart: ${VALUES#"${REPO_ROOT}"/} (alias '${ALIAS}')"
   APP_NAME="$(basename "$(dirname "$VALUES")" | tr '_' '-')"
 }
 
@@ -362,7 +362,7 @@ enable_restore() {
     vy_restore_on "$VALUES" "$ALIAS" "$TARGET" || die "edit failed"
   fi
   [ "$(vy_read "$VALUES" "$ALIAS" restore)" != "" ] || die "post-edit check failed: ${ALIAS}.restore is not set in ${VALUES}"
-  ok "set ${ALIAS}.restore.enabled=true in ${VALUES#${REPO_ROOT}/}"
+  ok "set ${ALIAS}.restore.enabled=true in ${VALUES#"${REPO_ROOT}"/}"
   # The next run deletes the Cluster, which the chart's Prune=false,Delete=false annotations do not block, but
   # leaving them on through a deliberate delete contradicts what they are there to say.
   if [ "$GIT_PROTECT" = "true" ]; then
@@ -378,7 +378,7 @@ cat <<NEXT
 
 Now commit and push, so ArgoCD renders the recovery bootstrap:
 
-    git add ${VALUES#${REPO_ROOT}/}
+    git add ${VALUES#"${REPO_ROOT}"/}
     git commit -m "restore ${SOURCE} from S3"
     git push
 
@@ -463,7 +463,7 @@ wait_for_recovery() {
 
 run_restore_phase() {
   say "PHASE 2/3, wait for the restore"
-  [ "$DIRTY" = "yes" ] && { warn "${VALUES#${REPO_ROOT}/} has uncommitted changes: ArgoCD syncs the pushed remote, not your working tree."; warn "commit + push first, then re-run."; summary; exit 1; }
+  [ "$DIRTY" = "yes" ] && { warn "${VALUES#"${REPO_ROOT}"/} has uncommitted changes: ArgoCD syncs the pushed remote, not your working tree."; warn "commit + push first, then re-run."; summary; exit 1; }
   delete_stale_cluster
   clear_failed_recovery_jobs
   wait_for_recovery
@@ -513,7 +513,7 @@ roll_secret_consumers() {
     warn "none found referencing ${SOURCE}-app; if something connects with those creds, restart it by hand"
     return 0
   fi
-  echo "$consumers" | sed 's/^/    /'
+  printf '%s\n' "$consumers" | sed 's/^/    /'
   if confirm "Roll them so they pick up the new password?"; then
     while read -r c; do [ -z "$c" ] && continue
       kubectl -n "$NS" rollout restart "$c" >/dev/null 2>&1 && ok "rolled ${c}" || bad "could not roll ${c}"
@@ -526,7 +526,7 @@ disable_restore_and_reprotect() {
   say "Final edit: turn the restore flag off"
   vy_restore_off "$VALUES" "$ALIAS" || die "edit failed"
   [ "$(vy_read "$VALUES" "$ALIAS" restore)" = "" ] || die "post-edit check failed: ${ALIAS}.restore still set in ${VALUES}"
-  ok "removed ${ALIAS}.restore from ${VALUES#${REPO_ROOT}/}"
+  ok "removed ${ALIAS}.restore from ${VALUES#"${REPO_ROOT}"/}"
   if [ "$GIT_PROTECT" != "true" ]; then
     vy_protect_on "$VALUES" "$ALIAS" || die "edit failed"
     [ "$(vy_read "$VALUES" "$ALIAS" deletionProtection)" = "true" ] \
@@ -538,7 +538,7 @@ cat <<NEXT
 
 Last step, commit and push:
 
-    git add ${VALUES#${REPO_ROOT}/}
+    git add ${VALUES#"${REPO_ROOT}"/}
     git commit -m "${SOURCE}: restore done, re-protect"
     git push
 

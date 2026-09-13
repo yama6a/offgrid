@@ -93,7 +93,7 @@ apply_smoke_knobs() {
 }
 
 usage() {
-  cat <<EOF
+  cat <<'EOF'
 usage: storage_bench.sh [run] [--workload fio|pgbench|amqp|pgsync|all] [--repeats N] [--smoke]
                               [--resume <run-dir>]
        storage_bench.sh teardown

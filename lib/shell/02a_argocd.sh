@@ -44,7 +44,7 @@ vendor_argocd_subchart() {
   if [ "$lock_before" -eq 0 ] && [ -f "${CHART_DIR}/Chart.lock" ]; then
     say "NOTE: Chart.lock was just generated, COMMIT it"
     echo "   ArgoCD's repo-server runs 'helm dependency build', which REQUIRES a committed Chart.lock."
-    echo "   git add ${CHART_DIR#${REPO_ROOT}/}/Chart.lock"
+    echo "   git add ${CHART_DIR#"${REPO_ROOT}"/}/Chart.lock"
   fi
 }
 
