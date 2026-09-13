@@ -7,9 +7,9 @@ SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 source "${SCRIPT_DIR}/common.sh"
 
 # ---- knobs ----
-NS="$SS_CONTROLLER_NS"                                          # controller namespace (Application destination)
-KEY_LABEL="$SS_KEY_LABEL"                                       # label the controller stamps on its key Secrets
-BACKUP_FILE="${CLUSTER_DIR}/sealed-secrets-master.key"          # gitignored dir
+NS="$SS_CONTROLLER_NS"                                 # controller namespace (Application destination)
+KEY_LABEL="$SS_KEY_LABEL"                              # label the controller stamps on its key Secrets
+BACKUP_FILE="${CLUSTER_DIR}/sealed-secrets-master.key" # gitignored dir
 
 # ---- functions ----
 
@@ -27,10 +27,11 @@ check_prerequisites() {
 count_key_secrets() {
   local keys count
   say "looking for key Secrets in ns/${NS} (label ${KEY_LABEL})"
-  keys="$(kubectl get secret -n "$NS" -l "$KEY_LABEL" -o name 2>/dev/null)"
+  keys="$(kubectl get secret -n "$NS" -l "$KEY_LABEL" -o name 2> /dev/null)"
   if [ -z "$keys" ]; then
     bad "no Secrets with label ${KEY_LABEL} in ns/${NS}, is the controller running? (kubectl -n ${NS} get pods)"
-    summary; exit 1
+    summary
+    exit 1
   fi
   count="$(printf '%s\n' "$keys" | grep -c .)"
   ok "found ${count} key Secret(s)"
@@ -42,8 +43,11 @@ write_backup() {
   # Via a temp file: a direct redirect truncates first, so a failed dump would replace a GOOD backup of the one
   # key that cannot be regenerated with an empty file. mktemp is 0600 and mv preserves it.
   local tmp
-  tmp="$(mktemp "${BACKUP_FILE}.XXXXXX")" || { bad "could not write next to ${BACKUP_FILE}"; return; }
-  if kubectl get secret -n "$NS" -l "$KEY_LABEL" -o yaml >"$tmp" 2>/dev/null && [ -s "$tmp" ]; then
+  tmp="$(mktemp "${BACKUP_FILE}.XXXXXX")" || {
+    bad "could not write next to ${BACKUP_FILE}"
+    return
+  }
+  if kubectl get secret -n "$NS" -l "$KEY_LABEL" -o yaml > "$tmp" 2> /dev/null && [ -s "$tmp" ]; then
     mv "$tmp" "$BACKUP_FILE"
     ok "key(s) written and chmod 600"
   else
@@ -55,7 +59,7 @@ write_backup() {
 verify_backup() {
   say "verifying the backup"
   [ -s "$BACKUP_FILE" ] && ok "backup file is non-empty" || bad "backup file is empty"
-  grep -q 'kind: Secret' "$BACKUP_FILE" 2>/dev/null \
+  grep -q 'kind: Secret' "$BACKUP_FILE" 2> /dev/null \
     && ok "backup contains Secret manifests" || bad "backup does not contain 'kind: Secret'"
 }
 
@@ -65,7 +69,7 @@ print_result() {
     echo "  kubectl -n ${NS} get pods"
     return 0
   fi
-cat <<EOF
+  cat << EOF
 Sealed Secrets master key backed up to:
   ${BACKUP_FILE}
 This file lives in the gitignored secrets/ dir, it is NEVER committed. Store a copy somewhere

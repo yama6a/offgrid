@@ -8,11 +8,11 @@ source "${SCRIPT_DIR}/common.sh"
 
 # ---- knobs ----
 VB_CHART_DIR="${PLATFORM_CHARTS}/08_vm_backup"
-VB_VALUES="${VB_CHART_DIR}/values.yaml"                     # the central chart values (single source)
-VB_NAMESPACE="monitoring"                                   # == the app destination, and where the stores live
+VB_VALUES="${VB_CHART_DIR}/values.yaml" # the central chart values (single source)
+VB_NAMESPACE="monitoring"               # == the app destination, and where the stores live
 SEALED_OUT="${VB_CHART_DIR}/templates/vm-backup-s3-sealedsecret.yaml"
-SECRET_NAME="vm-backup-s3"                                  # == values secretName; the CronJob mounts it
-SECRET_KEY_ID="AWS_ACCESS_KEY_ID"                           # == the env names the CronJob's aws-cli reads
+SECRET_NAME="vm-backup-s3"        # == values secretName; the CronJob mounts it
+SECRET_KEY_ID="AWS_ACCESS_KEY_ID" # == the env names the CronJob's aws-cli reads
 SECRET_KEY_SECRET="AWS_SECRET_ACCESS_KEY"
 
 # ---- functions ----
@@ -25,7 +25,7 @@ check_prerequisites() {
     warn "AWS_DEPLOY_ACCESS_KEY_ID empty in .env -> S3 backups disabled; skipping (vm-backup values left as-is)."
     exit 0
   fi
-  [ -n "$AWS_REGION" ]       || die "AWS_REGION is empty in .env"
+  [ -n "$AWS_REGION" ] || die "AWS_REGION is empty in .env"
   [ -n "$S3_BACKUP_BUCKET" ] || die "S3_BACKUP_BUCKET is empty in .env"
   ok "tools present, values file found"
 }
@@ -34,9 +34,9 @@ check_prerequisites() {
 enable_in_chart_values() {
   say "enabling backups: injecting bucket/region into ${VB_VALUES} (the CronJob renders once bucket is set)"
   ys_set "$VB_VALUES" "\"${S3_BACKUP_BUCKET}\"" bucket
-  ys_set "$VB_VALUES" "\"${AWS_REGION}\""       region
+  ys_set "$VB_VALUES" "\"${AWS_REGION}\"" region
   [ "$(yq -r '.bucket' "$VB_VALUES")" = "$S3_BACKUP_BUCKET" ] && ok "bucket=${S3_BACKUP_BUCKET}" || bad "bucket not set"
-  [ "$(yq -r '.region' "$VB_VALUES")" = "$AWS_REGION" ]       && ok "region=${AWS_REGION}"       || bad "region not set"
+  [ "$(yq -r '.region' "$VB_VALUES")" = "$AWS_REGION" ] && ok "region=${AWS_REGION}" || bad "region not set"
 }
 
 seal_writer_creds() {
@@ -53,7 +53,7 @@ print_result() {
     echo "Something failed, see above. Fix and re-run (idempotent)."
     return 0
   fi
-cat <<EOF
+  cat << EOF
 VictoriaMetrics + VictoriaLogs S3 backups enabled (bucket ${S3_BACKUP_BUCKET}, prefix vm/, schedule from the chart
 values). ONE central CronJob (ns ${VB_NAMESPACE}) exports both stores automatically.
 Next:
@@ -68,7 +68,7 @@ EOF
 # ---- main ----
 
 check_prerequisites
-read_backup_creds        # they live in Terraform state, not .env: 10a must have run
+read_backup_creds # they live in Terraform state, not .env: 10a must have run
 enable_in_chart_values
 seal_writer_creds
 

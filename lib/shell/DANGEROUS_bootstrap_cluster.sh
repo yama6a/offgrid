@@ -12,16 +12,17 @@ set -uo pipefail
 
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 source "${SCRIPT_DIR}/common.sh"
-cd "$REPO_ROOT" || exit 1           # git ops and relative hints below; set -e is off, so guard the cd
+cd "$REPO_ROOT" || exit 1 # git ops and relative hints below; set -e is off, so guard the cd
 
 # ---- knobs ----
-STEP=0; STEP_TOTAL=18               # common.sh step/run_step; bump TOTAL if you add or remove a step
-STEP_DIR="$SCRIPT_DIR"              # every step script is a sibling of this orchestrator
-INGRESS_GW_NS="gateway"             # namespace of the shared Gateway (ingress verify)
-INGRESS_HOSTS=""                    # space-separated hosts to check; empty = derive from Gateways
-CONTROLLER_WAIT=900                 # secs to wait for the sealed-secrets controller (ArgoCD wave 2)
-INGRESS_WAIT=900                    # secs to wait for the ingress to actually serve (HTTP-01 is slow)
-CONVERGE_WAIT=900                   # secs for the converge backstop to drive every app to Synced+Healthy
+STEP=0
+STEP_TOTAL=18           # common.sh step/run_step; bump TOTAL if you add or remove a step
+STEP_DIR="$SCRIPT_DIR"  # every step script is a sibling of this orchestrator
+INGRESS_GW_NS="gateway" # namespace of the shared Gateway (ingress verify)
+INGRESS_HOSTS=""        # space-separated hosts to check; empty = derive from Gateways
+CONTROLLER_WAIT=900     # secs to wait for the sealed-secrets controller (ArgoCD wave 2)
+INGRESS_WAIT=900        # secs to wait for the ingress to actually serve (HTTP-01 is slow)
+CONVERGE_WAIT=900       # secs for the converge backstop to drive every app to Synced+Healthy
 COMMIT_MSG_SYNC="bootstrap: sync config before ArgoCD bootstrap"
 COMMIT_MSG_SEAL="bootstrap: re-seal SSO + argocd webhook secrets + CNPG/Redis S3 backup creds/values"
 
@@ -30,7 +31,7 @@ COMMIT_MSG_SEAL="bootstrap: re-seal SSO + argocd webhook secrets + CNPG/Redis S3
 check_prerequisites() {
   require git kubectl helm yq kubeseal
   ensure_cluster_dir
-  docker info >/dev/null 2>&1 || die "docker not responding (start Rancher/Docker Desktop)"
+  docker info > /dev/null 2>&1 || die "docker not responding (start Rancher/Docker Desktop)"
   [ -f "${STEP_DIR}/01_cilium.sh" ] || die "missing 01_cilium.sh, run from the repo root"
   # Pinned BEFORE the banner, so the confirmation names the context this installs onto and an unset or typo'd
   # KUBE_CONTEXT fails here rather than after you have typed the confirmation word. Cheap (a config read); the
@@ -39,7 +40,7 @@ check_prerequisites() {
 }
 
 confirm_bootstrap() {
-cat <<EOF
+  cat << EOF
 
 This will install the ENTIRE platform onto the cluster KUBE_CONTEXT names in .env:
   context : ${KUBE_CONTEXT}
@@ -51,7 +52,10 @@ Requires a Kubernetes cluster that already exists, with no CNI installed and kub
 kubectl context pointing at it. See the README, "What this expects of your cluster".
 To re-deliver onto a cluster that already has a platform, abort and use DANGEROUS_rebuild_cluster.sh.
 EOF
-  confirm_word_always BOOTSTRAP || { echo "aborted (phew!)."; exit 0; }
+  confirm_word_always BOOTSTRAP || {
+    echo "aborted (phew!)."
+    exit 0
+  }
 }
 
 # This repo does not build the cluster, so the only preflight is that one exists and we can reach it. An
@@ -60,7 +64,7 @@ assert_cluster_exists() {
   local node_count
   say "precondition: the cluster exists and is reachable"
   assert_api
-  node_count="$(kubectl get nodes --no-headers 2>/dev/null | wc -l | tr -d ' ')"
+  node_count="$(kubectl get nodes --no-headers 2> /dev/null | wc -l | tr -d ' ')"
   [ "${node_count:-0}" -gt 0 ] || die "no nodes found via context ${KUBE_CONTEXT} (${KUBECONFIG}).
        Build a cluster first and point KUBE_CONTEXT at it. See the README, \"What this expects of your cluster\"."
   ok "${node_count} node(s) reachable (NotReady is expected until step 1 installs the CNI)"
@@ -72,7 +76,7 @@ commit_and_push_config() {
   if git diff --cached --quiet; then
     ok "nothing new to commit"
   else
-    git commit -m "$COMMIT_MSG_SYNC" >/dev/null && ok "committed local changes" || die "git commit failed"
+    git commit -m "$COMMIT_MSG_SYNC" > /dev/null && ok "committed local changes" || die "git commit failed"
   fi
   git push || die "git push failed, ArgoCD deploys the REMOTE; push manually then resume from 02a_argocd.sh by hand"
   ok "remote up to date"
@@ -85,13 +89,15 @@ wait_for_sealed_secrets_controller() {
   local deadline
   step "waiting for the sealed-secrets controller (ArgoCD wave 2), up to ${CONTROLLER_WAIT}s"
   use_kubeconfig
-  deadline=$(( $(date +%s) + CONTROLLER_WAIT ))
+  deadline=$(($(date +%s) + CONTROLLER_WAIT))
   until kubectl get pods -n "$SS_CONTROLLER_NS" -l "$SS_POD_SELECTOR" \
-          -o jsonpath='{.items[*].status.conditions[?(@.type=="Ready")].status}' 2>/dev/null | grep -q True; do
+    -o jsonpath='{.items[*].status.conditions[?(@.type=="Ready")].status}' 2> /dev/null | grep -q True; do
     [ "$(date +%s)" -lt "$deadline" ] || die "sealed-secrets controller not Ready within ${CONTROLLER_WAIT}s (kubectl -n ${SS_CONTROLLER_NS} get pods). Cluster is up; once the controller is Ready, re-seal by hand (04_google_sso, 02b_argocd_webhook) + commit/push, then 03_backup_sealed_secrets_key.sh."
-    printf '.'; sleep 10
+    printf '.'
+    sleep 10
   done
-  echo; ok "sealed-secrets controller Ready"
+  echo
+  ok "sealed-secrets controller Ready"
 }
 
 # Re-writes the shared clientID and re-seals google-oauth against the fresh key. No prompting: allowlists are
@@ -161,7 +167,7 @@ commit_and_push_sealed_secrets() {
   if git diff --cached --quiet; then
     ok "nothing new to commit"
   else
-    git commit -m "$COMMIT_MSG_SEAL" >/dev/null && ok "committed re-sealed secrets" || warn "commit failed; commit + push by hand"
+    git commit -m "$COMMIT_MSG_SEAL" > /dev/null && ok "committed re-sealed secrets" || warn "commit failed; commit + push by hand"
   fi
   git push || warn "push failed; push by hand so ArgoCD picks up the re-sealed secrets"
 }
@@ -187,11 +193,11 @@ seed_ntfy_and_push_token() {
     "06_ntfy_auth didn't complete; re-run 'make configure-ntfy-auth' + commit/push once ntfy is up" || return 0
   git add -A
   if git diff --cached --quiet; then ok "no ntfy token change to commit"; else
-    git commit -m "bootstrap: seal Grafana ntfy token" >/dev/null && ok "committed sealed ntfy token" || warn "commit failed; commit by hand"
+    git commit -m "bootstrap: seal Grafana ntfy token" > /dev/null && ok "committed sealed ntfy token" || warn "commit failed; commit by hand"
   fi
   git push || warn "push failed; push the sealed grafana-ntfy token by hand"
-  converge_argocd_apps "$CONVERGE_WAIT" || true                                   # apply the pushed SealedSecret
-  kubectl -n "$MONITORING_NS" rollout restart deploy/grafana >/dev/null 2>&1 \
+  converge_argocd_apps "$CONVERGE_WAIT" || true # apply the pushed SealedSecret
+  kubectl -n "$MONITORING_NS" rollout restart deploy/grafana > /dev/null 2>&1 \
     && ok "grafana restarted (picks up GF_NTFY_TOKEN)" || warn "restart grafana by hand to pick up GF_NTFY_TOKEN"
 }
 
@@ -209,7 +215,7 @@ verify_ingress_serving() {
 }
 
 print_handoff() {
-cat <<EOF
+  cat << EOF
 
 =============== cluster bootstrapped ===============
 ArgoCD is bootstrapped and reconciling every app from git. Watch it:

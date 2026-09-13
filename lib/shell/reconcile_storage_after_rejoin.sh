@@ -11,7 +11,7 @@ SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 source "${SCRIPT_DIR}/common.sh"
 
 usage() {
-  cat <<EOF
+  cat << EOF
 reconcile_storage_after_rejoin.sh <host> [--yes]     (or: make reconcile-storage NODE=<host>)
   <host>   the node to reconcile; omit it to pick from the cluster
   --yes    skip the confirmation prompt
@@ -24,10 +24,10 @@ EOF
 }
 
 # ---- knobs ----
-SETTLE_WAIT=300     # secs to wait for longhorn-manager on the node, and for the cluster to converge
-DISK_RETRIES=12     # attempts per disk patch; the webhook refuses every one while the manager resyncs
+SETTLE_WAIT=300 # secs to wait for longhorn-manager on the node, and for the cluster to converge
+DISK_RETRIES=12 # attempts per disk patch; the webhook refuses every one while the manager resyncs
 DISK_RETRY_SLEEP=10
-DISK_WAIT=180       # secs for the re-added disk to report a UUID and Ready; slower than the patch itself
+DISK_WAIT=180 # secs for the re-added disk to report a UUID and Ready; slower than the patch itself
 POLL=10
 LH_NS="longhorn-system"
 
@@ -45,17 +45,29 @@ DISK_COND=""
 parse_args() {
   while [ $# -gt 0 ]; do
     case "$1" in
-      -h|--help)     usage; exit 0 ;;
-      --yes|--apply) ASSUME_YES="true"; shift ;;
-      -*)            die "unknown flag: $1 (see --help)" ;;
-      *)             NODE="$1"; shift ;;
+      -h | --help)
+        usage
+        exit 0
+        ;;
+      --yes | --apply)
+        ASSUME_YES="true"
+        shift
+        ;;
+      -*) die "unknown flag: $1 (see --help)" ;;
+      *)
+        NODE="$1"
+        shift
+        ;;
     esac
   done
 }
 
 resolve_node() {
-  [ -n "$NODE" ] || { kubectl get nodes -o name | sed 's|node/|  |'; read -rp "Node to reconcile: " NODE; }
-  kubectl get node "$NODE" >/dev/null 2>&1 || die "no such node: ${NODE}"
+  [ -n "$NODE" ] || {
+    kubectl get nodes -o name | sed 's|node/|  |'
+    read -rp "Node to reconcile: " NODE
+  }
+  kubectl get node "$NODE" > /dev/null 2>&1 || die "no such node: ${NODE}"
 }
 
 # A healthy peer to copy the disk spec from, and to prove the cluster can carry the rebuild.
@@ -64,7 +76,8 @@ pick_survivor() {
   while read -r n; do
     [ "$n" = "$NODE" ] && continue
     if [ "$(kubectl get node "$n" -o jsonpath='{range .status.conditions[?(@.type=="Ready")]}{.status}{end}')" = "True" ]; then
-      SURVIVOR="$n"; break
+      SURVIVOR="$n"
+      break
     fi
   done <<< "$(kubectl get nodes -o jsonpath='{range .items[*]}{.metadata.name}{"\n"}{end}')"
   [ -n "$SURVIVOR" ] || die "no other node is Ready; this reconciles one node against a cluster that is still up"
@@ -78,7 +91,7 @@ assert_no_last_replica_here() {
   say "1/3 preflight"
   while read -r vol; do
     [ -z "$vol" ] && continue
-    elsewhere="$(kubectl -n "$LH_NS" get replicas.longhorn.io -o json 2>/dev/null | VOL="$vol" NODE="$NODE" python3 -c '
+    elsewhere="$(kubectl -n "$LH_NS" get replicas.longhorn.io -o json 2> /dev/null | VOL="$vol" NODE="$NODE" python3 -c '
 import json,os,sys
 vol, node = os.environ["VOL"], os.environ["NODE"]
 n = 0
@@ -91,12 +104,16 @@ for r in json.load(sys.stdin)["items"]:
     # the recovery that would give them a node to run on again. healthyAt is the durable signal.
     if s.get("healthyAt") or (r.get("status") or {}).get("currentState") == "running": n += 1
 print(n)')"
-    if [ "${elsewhere:-0}" -eq 0 ]; then bad "${vol} has no healthy replica off ${NODE}"; safe="no"; fi
-  done <<< "$(kubectl -n "$LH_NS" get volumes.longhorn.io -o jsonpath='{range .items[*]}{.metadata.name}{"\n"}{end}' 2>/dev/null)"
+    if [ "${elsewhere:-0}" -eq 0 ]; then
+      bad "${vol} has no healthy replica off ${NODE}"
+      safe="no"
+    fi
+  done <<< "$(kubectl -n "$LH_NS" get volumes.longhorn.io -o jsonpath='{range .items[*]}{.metadata.name}{"\n"}{end}' 2> /dev/null)"
   if [ "$safe" != "yes" ]; then
     warn "those volumes would be destroyed, not rebuilt. Restore them first (make restore-longhorn), or wait if a"
     warn "rebuild is still running: kubectl -n ${LH_NS} get volumes.longhorn.io"
-    summary; exit 1
+    summary
+    exit 1
   fi
   ok "every volume has a healthy replica off ${NODE}"
 }
@@ -107,7 +124,10 @@ confirm_reconcile() {
   echo "    About to, on ${NODE}: drop its stale replica records and reset its Longhorn disk record."
   echo "    Its data is already gone; this deletes the API objects that still point at it."
   echo
-  confirm "Proceed?" || { warn "nothing changed"; exit 0; }
+  confirm "Proceed?" || {
+    warn "nothing changed"
+    exit 0
+  }
 }
 
 # A node that reports Ready is still bringing its DaemonSets up, and the disk step below reads what one of them
@@ -116,13 +136,21 @@ confirm_reconcile() {
 wait_for_longhorn_manager() {
   local deadline lhm
   printf '    letting %s settle: longhorn-manager (up to %ss) ' "$NODE" "$SETTLE_WAIT"
-  deadline=$(( $(date +%s) + SETTLE_WAIT ))
+  deadline=$(($(date +%s) + SETTLE_WAIT))
   while :; do
     lhm="$(kubectl -n "$LH_NS" get pods -l app=longhorn-manager \
-           --field-selector="spec.nodeName=${NODE}" -o jsonpath='{.items[0].status.containerStatuses[0].ready}' 2>/dev/null)"
-    [ "$lhm" = "true" ] && { echo "ready"; break; }
-    [ "$(date +%s)" -ge "$deadline" ] && { echo "TIMEOUT"; warn "longhorn-manager on ${NODE} is not Ready; its disk state may read stale below"; break; }
-    printf '.'; sleep "$POLL"
+      --field-selector="spec.nodeName=${NODE}" -o jsonpath='{.items[0].status.containerStatuses[0].ready}' 2> /dev/null)"
+    [ "$lhm" = "true" ] && {
+      echo "ready"
+      break
+    }
+    [ "$(date +%s)" -ge "$deadline" ] && {
+      echo "TIMEOUT"
+      warn "longhorn-manager on ${NODE} is not Ready; its disk state may read stale below"
+      break
+    }
+    printf '.'
+    sleep "$POLL"
   done
 }
 
@@ -131,24 +159,26 @@ wait_for_longhorn_manager() {
 drop_stale_replicas() {
   local stale
   say "2/3 disk record on ${NODE}"
-  stale="$(kubectl -n "$LH_NS" get replicas.longhorn.io -o jsonpath="{range .items[?(@.spec.nodeID==\"${NODE}\")]}{.metadata.name}{\"\n\"}{end}" 2>/dev/null)"
-  if [ -z "${stale// }" ]; then
+  stale="$(kubectl -n "$LH_NS" get replicas.longhorn.io -o jsonpath="{range .items[?(@.spec.nodeID==\"${NODE}\")]}{.metadata.name}{\"\n\"}{end}" 2> /dev/null)"
+  if [ -z "${stale// /}" ]; then
     ok "no replicas recorded on ${NODE}"
     return 0
   fi
   printf '%s\n' "$stale" | grep -c . | xargs -I{} echo "    {} stale replica(s) to drop"
-  printf '%s\n' "$stale" | xargs -r kubectl -n "$LH_NS" delete replicas.longhorn.io >/dev/null 2>&1 \
+  printf '%s\n' "$stale" | xargs -r kubectl -n "$LH_NS" delete replicas.longhorn.io > /dev/null 2>&1 \
     && ok "dropped the stale replicas on ${NODE}" || bad "could not drop the stale replicas on ${NODE}"
 }
 
 # Longhorn's validating webhook rejects EVERY patch here while the manager is still catching up with the
 # replica deletions ("are being syncing", "remove all replicas first"), so each one is retried.
-lh_retry() {   # lh_retry <what> <kubectl patch args...>
-  local what="$1"; shift
+lh_retry() { # lh_retry <what> <kubectl patch args...>
+  local what="$1"
+  shift
   local i
   for i in $(seq 1 "$DISK_RETRIES"); do
     if LAST_ERR="$(kubectl -n "$LH_NS" patch nodes.longhorn.io "$NODE" "$@" 2>&1)"; then
-      ok "${what} (attempt ${i})"; return 0
+      ok "${what} (attempt ${i})"
+      return 0
     fi
     sleep "$DISK_RETRY_SLEEP"
   done
@@ -159,14 +189,14 @@ lh_retry() {   # lh_retry <what> <kubectl patch args...>
 
 reset_disk_record() {
   local dkey spec removed="yes"
-  DISK_UUID_BEFORE="$(kubectl -n "$LH_NS" get nodes.longhorn.io "$NODE" -o jsonpath='{range .status.diskStatus.*}{.diskUUID}{end}' 2>/dev/null)"
-  DISK_COND="$(kubectl -n "$LH_NS" get nodes.longhorn.io "$NODE" -o jsonpath='{range .status.diskStatus.*}{range .conditions[?(@.type=="Ready")]}{.status}{end}{end}' 2>/dev/null)"
+  DISK_UUID_BEFORE="$(kubectl -n "$LH_NS" get nodes.longhorn.io "$NODE" -o jsonpath='{range .status.diskStatus.*}{.diskUUID}{end}' 2> /dev/null)"
+  DISK_COND="$(kubectl -n "$LH_NS" get nodes.longhorn.io "$NODE" -o jsonpath='{range .status.diskStatus.*}{range .conditions[?(@.type=="Ready")]}{.status}{end}{end}' 2> /dev/null)"
   if [ "$DISK_COND" = "True" ]; then
     ok "the disk record already matches the disk; nothing to reset"
     return 0
   fi
-  dkey="$(kubectl -n "$LH_NS" get nodes.longhorn.io "$NODE" -o go-template='{{range $k,$v := .spec.disks}}{{$k}}{{end}}' 2>/dev/null)"
-  spec="$(kubectl -n "$LH_NS" get nodes.longhorn.io "$SURVIVOR" -o jsonpath='{.spec.disks}' 2>/dev/null)"
+  dkey="$(kubectl -n "$LH_NS" get nodes.longhorn.io "$NODE" -o go-template='{{range $k,$v := .spec.disks}}{{$k}}{{end}}' 2> /dev/null)"
+  spec="$(kubectl -n "$LH_NS" get nodes.longhorn.io "$SURVIVOR" -o jsonpath='{.spec.disks}' 2> /dev/null)"
   [ -n "$spec" ] || die "could not read ${SURVIVOR}'s disk spec to copy"
   if [ -n "$dkey" ]; then
     # allowScheduling has to land first, the webhook will not remove a schedulable disk. And a merge patch of
@@ -191,13 +221,20 @@ reset_disk_record() {
 wait_for_disk_ready() {
   local deadline
   printf '    waiting for the disk to come Ready (up to %ss) ' "$DISK_WAIT"
-  deadline=$(( $(date +%s) + DISK_WAIT ))
+  deadline=$(($(date +%s) + DISK_WAIT))
   while :; do
-    DISK_UUID_AFTER="$(kubectl -n "$LH_NS" get nodes.longhorn.io "$NODE" -o jsonpath='{range .status.diskStatus.*}{.diskUUID}{end}' 2>/dev/null)"
-    DISK_COND="$(kubectl -n "$LH_NS" get nodes.longhorn.io "$NODE" -o jsonpath='{range .status.diskStatus.*}{range .conditions[?(@.type=="Ready")]}{.status}{end}{end}' 2>/dev/null)"
-    [ "$DISK_COND" = "True" ] && [ -n "$DISK_UUID_AFTER" ] && { echo "ready"; break; }
-    [ "$(date +%s)" -ge "$deadline" ] && { echo "TIMEOUT"; break; }
-    printf '.'; sleep "$POLL"
+    DISK_UUID_AFTER="$(kubectl -n "$LH_NS" get nodes.longhorn.io "$NODE" -o jsonpath='{range .status.diskStatus.*}{.diskUUID}{end}' 2> /dev/null)"
+    DISK_COND="$(kubectl -n "$LH_NS" get nodes.longhorn.io "$NODE" -o jsonpath='{range .status.diskStatus.*}{range .conditions[?(@.type=="Ready")]}{.status}{end}{end}' 2> /dev/null)"
+    [ "$DISK_COND" = "True" ] && [ -n "$DISK_UUID_AFTER" ] && {
+      echo "ready"
+      break
+    }
+    [ "$(date +%s)" -ge "$deadline" ] && {
+      echo "TIMEOUT"
+      break
+    }
+    printf '.'
+    sleep "$POLL"
   done
   if [ "$DISK_COND" != "True" ]; then
     bad "${NODE}'s disk is still not Ready (UUID ${DISK_UUID_AFTER:-none}, was ${DISK_UUID_BEFORE:-none})"
@@ -213,18 +250,21 @@ wait_for_disk_ready() {
 wait_for_volumes_healthy() {
   local deadline deg
   say "3/3 waiting for volumes to come back (up to ${SETTLE_WAIT}s)"
-  deadline=$(( $(date +%s) + SETTLE_WAIT ))
+  deadline=$(($(date +%s) + SETTLE_WAIT))
   while :; do
-    deg="$(kubectl -n "$LH_NS" get volumes.longhorn.io -o jsonpath='{range .items[*]}{.status.robustness}{"\n"}{end}' 2>/dev/null | grep -vc '^healthy$')"
+    deg="$(kubectl -n "$LH_NS" get volumes.longhorn.io -o jsonpath='{range .items[*]}{.status.robustness}{"\n"}{end}' 2> /dev/null | grep -vc '^healthy$')"
     printf '    volumes not healthy: %s\n' "${deg:-?}"
     [ "${deg:-1}" -eq 0 ] && break
-    [ "$(date +%s)" -ge "$deadline" ] && { warn "not fully converged yet; a Longhorn rebuild or a CNPG clone can outlast this"; break; }
+    [ "$(date +%s)" -ge "$deadline" ] && {
+      warn "not fully converged yet; a Longhorn rebuild or a CNPG clone can outlast this"
+      break
+    }
     sleep "$POLL"
   done
 }
 
 print_next_steps() {
-cat <<NEXT
+  cat << NEXT
 
 Expect ${NODE} to stay EMPTY for a while. replica-auto-balance is disabled, so Longhorn never moves a healthy
 replica, and every volume rebuilt during the outage picked the two survivors. See docs/05_storage.md.

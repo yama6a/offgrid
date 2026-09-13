@@ -8,13 +8,13 @@ SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 source "${SCRIPT_DIR}/common.sh"
 
 # ---- knobs ----
-GW_VALUES="${PLATFORM_CHARTS}/03_gateway/values.yaml"   # source for the Secret name + key
+GW_VALUES="${PLATFORM_CHARTS}/03_gateway/values.yaml" # source for the Secret name + key
 CM_CHART="${PLATFORM_CHARTS}/02_cert_manager"
-SEALED_OUT="${CM_CHART}/templates/cloudflare-api-token-sealedsecret.yaml"    # sealed CF token (committed)
-SEAL_NS="cert-manager"   # the ClusterIssuer dns01 apiTokenSecretRef resolves in cert-manager's ns
+SEALED_OUT="${CM_CHART}/templates/cloudflare-api-token-sealedsecret.yaml" # sealed CF token (committed)
+SEAL_NS="cert-manager"                                                    # the ClusterIssuer dns01 apiTokenSecretRef resolves in cert-manager's ns
 
 # ---- state ----
-SEAL_NAME=""   # set by read_secret_ref
+SEAL_NAME="" # set by read_secret_ref
 SEAL_KEY=""
 
 # ---- functions ----
@@ -46,10 +46,10 @@ check_prerequisites() {
 # Read from the gateway values rather than hardcoded, so the issuer and this Secret always agree.
 read_secret_ref() {
   say "reading the token Secret name + key from ${GW_VALUES}"
-  SEAL_NAME="$(yq -r '.acme.cloudflare.apiTokenSecretName' "$GW_VALUES" 2>/dev/null)"
-  SEAL_KEY="$(yq -r '.acme.cloudflare.apiTokenSecretKey' "$GW_VALUES" 2>/dev/null)"
+  SEAL_NAME="$(yq -r '.acme.cloudflare.apiTokenSecretName' "$GW_VALUES" 2> /dev/null)"
+  SEAL_KEY="$(yq -r '.acme.cloudflare.apiTokenSecretKey' "$GW_VALUES" 2> /dev/null)"
   [ -n "$SEAL_NAME" ] && [ "$SEAL_NAME" != "null" ] || die "couldn't read .acme.cloudflare.apiTokenSecretName from ${GW_VALUES}"
-  [ -n "$SEAL_KEY" ]  && [ "$SEAL_KEY" != "null" ]  || die "couldn't read .acme.cloudflare.apiTokenSecretKey from ${GW_VALUES}"
+  [ -n "$SEAL_KEY" ] && [ "$SEAL_KEY" != "null" ] || die "couldn't read .acme.cloudflare.apiTokenSecretKey from ${GW_VALUES}"
   ok "seal ${SEAL_NAME}/${SEAL_NS}, key ${SEAL_KEY}"
 }
 
@@ -63,7 +63,7 @@ print_result() {
     echo "Something failed, see above. Fix and re-run (idempotent)."
     return 0
   fi
-cat <<EOF
+  cat << EOF
 Cloudflare token sealed -> ${SEALED_OUT#"${REPO_ROOT}/"}
 
 Next:

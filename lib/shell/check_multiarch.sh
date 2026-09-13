@@ -8,7 +8,7 @@ SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 source "${SCRIPT_DIR}/common.sh"
 
 usage() {
-  cat <<EOF
+  cat << EOF
 check_multiarch.sh                      (or: make check-multiarch [ARCH=amd64])
   ARCH="amd64 arm64"   require these architectures instead of the ones the cluster currently runs
 
@@ -21,26 +21,26 @@ EOF
 }
 
 # ---- knobs ----
-ERR_FILE="/tmp/.ma_err"   # docker manifest inspect's stderr, so a failed read can be told apart from a miss
+ERR_FILE="/tmp/.ma_err" # docker manifest inspect's stderr, so a failed read can be told apart from a miss
 
 # Single-architecture ON PURPOSE. An entry only belongs here if the chart also pins the pod off every other
 # architecture, so add the pin FIRST: skipping an unpinned image just hides the CrashLoopBackOff until deploy.
 SKIP_IMAGES=(
-  "intel/intel-gpu-plugin"   # amd64-only upstream; nodeAffinity on extensions.talos.dev/i915
+  "intel/intel-gpu-plugin" # amd64-only upstream; nodeAffinity on extensions.talos.dev/i915
 )
 
 # ---- state ----
-ARCHES=()    # set by resolve_required_arches
-IMAGES=""    # set by collect_pod_images
-UNREAD=0     # bumped by check_image
-HAVE=""      # set by read_image_arches: the architectures found, empty if the manifest could not be read
+ARCHES=() # set by resolve_required_arches
+IMAGES="" # set by collect_pod_images
+UNREAD=0  # bumped by check_image
+HAVE=""   # set by read_image_arches: the architectures found, empty if the manifest could not be read
 READ_ERR=""
 
 # ---- functions ----
 
 check_prerequisites() {
   require docker kubectl
-  docker info >/dev/null 2>&1 || die "docker not responding (start Rancher/Docker Desktop)"
+  docker info > /dev/null 2>&1 || die "docker not responding (start Rancher/Docker Desktop)"
   use_kubeconfig
   assert_api
 }
@@ -54,7 +54,7 @@ resolve_required_arches() {
     return 0
   fi
   read -ra ARCHES <<< "$(kubectl get nodes \
-    -o jsonpath='{range .items[*]}{.metadata.labels.kubernetes\.io/arch}{"\n"}{end}' 2>/dev/null | sort -u | tr '\n' ' ')"
+    -o jsonpath='{range .items[*]}{.metadata.labels.kubernetes\.io/arch}{"\n"}{end}' 2> /dev/null | sort -u | tr '\n' ' ')"
   [ "${#ARCHES[@]}" -gt 0 ] || die "could not read kubernetes.io/arch from any node"
   say "requiring: ${ARCHES[*]}  (every architecture in the cluster)"
 }
@@ -64,7 +64,7 @@ resolve_required_arches() {
 login_to_ghcr() {
   [ -n "${GITHUB_GHCR_PULL_TOKEN_SECRET}" ] || return 0
   printf '%s' "$GITHUB_GHCR_PULL_TOKEN_SECRET" \
-    | docker login "$GHCR_SERVER" -u "$GHCR_USER" --password-stdin >/dev/null 2>&1 \
+    | docker login "$GHCR_SERVER" -u "$GHCR_USER" --password-stdin > /dev/null 2>&1 \
     && ok "logged in to ${GHCR_SERVER}" || warn "could not log in to ${GHCR_SERVER}; private images may read as missing"
   return 0
 }
@@ -72,7 +72,7 @@ login_to_ghcr() {
 # initContainers too: an arm64-only init container fails just as hard as an arm64-only app, and is easy to miss.
 collect_pod_images() {
   IMAGES="$(kubectl get pods -A -o jsonpath='{range .items[*]}{range .spec.containers[*]}{.image}{"\n"}{end}{range .spec.initContainers[*]}{.image}{"\n"}{end}{end}' \
-            2>/dev/null | grep . | sort -u)"
+    2> /dev/null | grep . | sort -u)"
   [ -n "$IMAGES" ] || die "no pod images found, is this the right cluster?"
   say "$(printf '%s\n' "$IMAGES" | grep -c .) distinct images"
 }
@@ -86,11 +86,13 @@ collect_pod_images() {
 # every unauthenticated image costs 43s of sleeping to learn what the first attempt already said.
 read_image_arches() {
   local img="$1" s raw
-  HAVE=""; READ_ERR=""
+  HAVE=""
+  READ_ERR=""
   for s in 0 3 10 30; do
     [ "$s" -gt 0 ] && sleep "$s"
-    raw="$(docker manifest inspect --verbose "$img" 2>"$ERR_FILE")"; READ_ERR="$(cat "$ERR_FILE")"
-    HAVE="$(printf '%s' "$raw" | yq -r '[.[].Descriptor.platform | select(.os == "linux") | .architecture] | unique | join(" ")' 2>/dev/null)"
+    raw="$(docker manifest inspect --verbose "$img" 2> "$ERR_FILE")"
+    READ_ERR="$(cat "$ERR_FILE")"
+    HAVE="$(printf '%s' "$raw" | yq -r '[.[].Descriptor.platform | select(.os == "linux") | .architecture] | unique | join(" ")' 2> /dev/null)"
     [ -n "$HAVE" ] && break
     grep -qiE 'rate limit|toomanyrequests' <<< "$READ_ERR" && break
   done
@@ -102,19 +104,25 @@ read_image_arches() {
 check_image() {
   local img="$1" missing="" a skip
   for skip in "${SKIP_IMAGES[@]}"; do
-    case "$img" in "${skip}"*) say "${img}: skipped, pinned single-arch on purpose"; return 0 ;; esac
+    case "$img" in "${skip}"*)
+      say "${img}: skipped, pinned single-arch on purpose"
+      return 0
+      ;;
+    esac
   done
   read_image_arches "$img"
   if [ -z "$HAVE" ]; then
-    UNREAD=$((UNREAD+1))
+    UNREAD=$((UNREAD + 1))
     warn "${img}: could not read its manifest, NOT checked (${READ_ERR##*: })"
     return 0
   fi
   for a in "${ARCHES[@]}"; do
     case " ${HAVE} " in *" ${a} "*) ;; *) missing="${missing} ${a}" ;; esac
   done
-  if [ -z "${missing// }" ]; then ok "${img}  [${HAVE}]"
-  else                           bad "${img}: no ${missing# } manifest (has: ${HAVE})"
+  if [ -z "${missing// /}" ]; then
+    ok "${img}  [${HAVE}]"
+  else
+    bad "${img}: no ${missing# } manifest (has: ${HAVE})"
   fi
 }
 
@@ -137,7 +145,11 @@ print_result() {
 
 # ---- main ----
 
-case "${1:-}" in -h|--help) usage; exit 0 ;; esac
+case "${1:-}" in -h | --help)
+  usage
+  exit 0
+  ;;
+esac
 
 check_prerequisites
 resolve_required_arches

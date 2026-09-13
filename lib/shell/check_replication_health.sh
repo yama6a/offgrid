@@ -33,7 +33,7 @@ CHECKS=(
 _longhorn_unready() {
   kubectl -n longhorn-system get volumes.longhorn.io \
     -o jsonpath='{range .items[?(@.status.robustness=="degraded")]}{.metadata.name}{" "}{end}{range .items[?(@.status.robustness=="faulted")]}{.metadata.name}{" "}{end}' \
-    2>/dev/null
+    2> /dev/null
 }
 
 # In sync means phase=="Cluster in healthy state", readyInstances==spec.instances (the streaming standby is up
@@ -43,8 +43,8 @@ _longhorn_unready() {
 _cnpg_unready() {
   kubectl get clusters.postgresql.cnpg.io -A \
     -o jsonpath='{range .items[*]}{.metadata.namespace}/{.metadata.name}{"|"}{.spec.instances}{"|"}{.status.readyInstances}{"|"}{.status.phase}{"|"}{.status.currentPrimary}{"|"}{.status.targetPrimary}{"\n"}{end}' \
-    2>/dev/null \
-  | awk -F'|' 'NF>=4 && ( $3 != $2 || $4 != "Cluster in healthy state" || ($6 != "" && $5 != $6) ) { printf "%s ", $1 }'
+    2> /dev/null \
+    | awk -F'|' 'NF>=4 && ( $3 != $2 || $4 != "Cluster in healthy state" || ($6 != "" && $5 != $6) ) { printf "%s ", $1 }'
 }
 
 # All broker replicas ready (quorum queues have full membership) plus cluster available. Deliberately ignores
@@ -52,17 +52,18 @@ _cnpg_unready() {
 _rabbitmq_unready() {
   kubectl get rabbitmqclusters.rabbitmq.com -A \
     -o jsonpath='{range .items[*]}{.metadata.namespace}/{.metadata.name}{"|"}{range .status.conditions[*]}{.type}={.status};{end}{"\n"}{end}' \
-    2>/dev/null \
-  | awk -F'|' 'NF>=2 && !( $2 ~ /AllReplicasReady=True;/ && $2 ~ /ClusterAvailable=True;/ ) { printf "%s ", $1 }'
+    2> /dev/null \
+    | awk -F'|' 'NF>=2 && !( $2 ~ /AllReplicasReady=True;/ && $2 ~ /ClusterAvailable=True;/ ) { printf "%s ", $1 }'
 }
 
 run_checks() {
   local pair what fn pending
   [ -n "${NODE:-}" ] && say "replication health (about to drain ${NODE})" || say "replication health"
   for pair in "${CHECKS[@]}"; do
-    what="${pair%%:*}"; fn="${pair##*:}"
+    what="${pair%%:*}"
+    fn="${pair##*:}"
     pending="$("$fn")"
-    if [ -z "${pending// }" ]; then ok "${what} healthy + in sync"; else bad "${what} not in sync: ${pending}"; fi
+    if [ -z "${pending// /}" ]; then ok "${what} healthy + in sync"; else bad "${what} not in sync: ${pending}"; fi
   done
 }
 

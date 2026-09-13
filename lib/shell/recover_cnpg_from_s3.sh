@@ -9,7 +9,7 @@ SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 source "${SCRIPT_DIR}/common.sh"
 
 usage() {
-  cat <<EOF
+  cat << EOF
 recover_cnpg_from_s3.sh [--mode in-place|side] [--namespace <ns>] [--source <cluster>]
                         [--target latest|"YYYY-MM-DD HH:MM:SS+ZZ"] [--name <recovery-name>]
                         [--server <serverName>] [--yes]
@@ -32,29 +32,29 @@ EOF
 
 # ---- knobs ----
 STORAGE_CLASS="longhorn-r2-ephemeral" # side mode: same class the pg-cluster wrapper uses
-STORAGE_SIZE="10Gi"               # side mode: a throwaway clone's ceiling, thin so it costs only what it writes
+STORAGE_SIZE="10Gi"                   # side mode: a throwaway clone's ceiling, thin so it costs only what it writes
 PLUGIN="barman-cloud.cloudnative-pg.io"
-SYNC_WAIT=600                     # in-place: secs to wait for Argo to sync the pushed commit
-READY_WAIT=1200                   # in-place: secs to wait for the recovered cluster to reach full readiness
+SYNC_WAIT=600   # in-place: secs to wait for Argo to sync the pushed commit
+READY_WAIT=1200 # in-place: secs to wait for the recovered cluster to reach full readiness
 POLL=10
 
 # ---- state ----
-MODE=""            # set by parse_args / prompt_for_mode
+MODE="" # set by parse_args / prompt_for_mode
 NS=""
 SOURCE=""
 RECOVERY_NAME=""
 TARGET="latest"
 ASSUME_YES="false"
-OBJECTSTORE=""     # set by prompt_for_database
-SERVER=""          # barman catalog prefix; --server, else resolved
-IMAGE=""           # side mode: operand image, resolved to the catalog's major
-DEST=""            # set by check_objectstore
+OBJECTSTORE="" # set by prompt_for_database
+SERVER=""      # barman catalog prefix; --server, else resolved
+IMAGE=""       # side mode: operand image, resolved to the catalog's major
+DEST=""        # set by check_objectstore
 RECOVERABLE="unknown"
-FOUND=""           # set by resolve_owning_chart
+FOUND="" # set by resolve_owning_chart
 VALUES=""
 ALIAS=""
 APP_NAME=""
-GIT_RESTORE=""     # set by resolve_state
+GIT_RESTORE="" # set by resolve_state
 GIT_PROTECT=""
 LIVE_EXISTS="no"
 LIVE_READY=""
@@ -63,21 +63,45 @@ LIVE_CREATED=""
 ENABLED_AT=""
 RECOVERED="no"
 DIRTY="no"
-PRIMARY=""         # set by verify_restored_data
+PRIMARY="" # set by verify_restored_data
 
 # ---- functions ----
 
 parse_args() {
   while [ $# -gt 0 ]; do
     case "$1" in
-      --mode)      MODE="$2"; shift 2 ;;
-      --namespace) NS="$2"; shift 2 ;;
-      --source)    SOURCE="$2"; shift 2 ;;
-      --name)      RECOVERY_NAME="$2"; shift 2 ;;
-      --target)    TARGET="$2"; shift 2 ;;
-      --server)    SERVER="$2"; shift 2 ;;
-      --yes|--apply) ASSUME_YES="true"; shift ;;
-      -h|--help)   usage; exit 0 ;;
+      --mode)
+        MODE="$2"
+        shift 2
+        ;;
+      --namespace)
+        NS="$2"
+        shift 2
+        ;;
+      --source)
+        SOURCE="$2"
+        shift 2
+        ;;
+      --name)
+        RECOVERY_NAME="$2"
+        shift 2
+        ;;
+      --target)
+        TARGET="$2"
+        shift 2
+        ;;
+      --server)
+        SERVER="$2"
+        shift 2
+        ;;
+      --yes | --apply)
+        ASSUME_YES="true"
+        shift
+        ;;
+      -h | --help)
+        usage
+        exit 0
+        ;;
       *) die "unknown arg: $1 (see --help)" ;;
     esac
   done
@@ -91,7 +115,8 @@ parse_args() {
 # Buffers the block so the insert goes after its last INDENTED line, not after the column-0 comment block that
 # introduces the NEXT alias (which is where a naive append lands, reading as if it belonged to that one).
 vy_restore_on() {
-  local f="$1" alias="$2" tt="${3:-}" tmp; tmp="$(mktemp)"
+  local f="$1" alias="$2" tt="${3:-}" tmp
+  tmp="$(mktemp)"
   awk -v alias="$alias" -v tt="$tt" '
     function emit() {
       print "  # TRANSIENT (DR restore): rebuild from S3 instead of initdb. Removed again once verified."
@@ -118,7 +143,8 @@ vy_restore_on() {
 
 # vy_restore_off <file> <alias>: drop the `restore:` block plus the comment line above it.
 vy_restore_off() {
-  local f="$1" alias="$2" tmp; tmp="$(mktemp)"
+  local f="$1" alias="$2" tmp
+  tmp="$(mktemp)"
   awk -v alias="$alias" '
     $0 ~ "^"alias":" { inb=1; print; next }
     inb && /^[^[:space:]#]/ { inb=0 }
@@ -133,7 +159,7 @@ vy_restore_off() {
 prompt_for_mode() {
   if [ -z "$MODE" ]; then
     say "CNPG recovery from S3"
-cat <<'MODES'
+    cat << 'MODES'
   in-place   the DB is GONE or broken; bring it back as itself, under its own name, GitOps-managed.
              Edits the workload's values.yaml; you commit+push; re-run to continue. Resumable.
   side       the DB is fine, or you just want to look: build a separate throwaway cluster
@@ -141,40 +167,50 @@ cat <<'MODES'
 MODES
     read -rp "Mode [in-place/side]: " MODE
   fi
-  case "$MODE" in in-place|side) ;; *) die "mode must be 'in-place' or 'side'" ;; esac
+  case "$MODE" in in-place | side) ;; *) die "mode must be 'in-place' or 'side'" ;; esac
 }
 
 list_catalogs() {
-  kubectl get crd objectstores.barmancloud.cnpg.io >/dev/null 2>&1 \
+  kubectl get crd objectstores.barmancloud.cnpg.io > /dev/null 2>&1 \
     || die "ObjectStore CRD missing: is the barman plugin (platform app 03_barman_cloud_plugin) synced?"
   say "Backed-up databases the cluster knows about (an ObjectStore == a catalog):"
   kubectl get objectstores.barmancloud.cnpg.io -A \
     -o custom-columns='NAMESPACE:.metadata.namespace,OBJECTSTORE:.metadata.name,DESTINATION:.spec.configuration.destinationPath,RECOVERY WINDOW:.status.serverRecoveryWindow' \
-    2>/dev/null || warn "could not list ObjectStores"
+    2> /dev/null || warn "could not list ObjectStores"
   echo
   warn "In a real DR the ObjectStore may be gone too; the catalog in S3 is what matters, not this list."
   echo
 }
 
 prompt_for_database() {
-  [ -n "$NS" ]     || read -rp "Namespace: " NS
+  [ -n "$NS" ] || read -rp "Namespace: " NS
   [ -n "$SOURCE" ] || read -rp "Database (CNPG cluster) name: " SOURCE
   { [ -n "$NS" ] && [ -n "$SOURCE" ]; } || die "namespace and database name are both required"
-  OBJECTSTORE="${SOURCE}-backups"   # the chart always names it <cluster>-backups
+  OBJECTSTORE="${SOURCE}-backups" # the chart always names it <cluster>-backups
 }
 
 # The catalog sits under <cluster>-pg<major>, not <cluster>: a major upgrade rotates the prefix, so after one
 # the catalog you want is usually the PREVIOUS major's. Never assumed, always resolved.
 resolve_server() {
   local values="" alias="" v=""
-  [ -n "$SERVER" ] && { ok "catalog serverName: ${SERVER} (--server)"; return 0; }
+  [ -n "$SERVER" ] && {
+    ok "catalog serverName: ${SERVER} (--server)"
+    return 0
+  }
   SERVER="$(kubectl -n "$NS" get cluster.postgresql.cnpg.io "$SOURCE" \
-            -o jsonpath="{.spec.plugins[?(@.name=='${PLUGIN}')].parameters.serverName}" 2>/dev/null)"
-  [ -n "$SERVER" ] && { ok "catalog serverName: ${SERVER} (from the live Cluster)"; return 0; }
+    -o jsonpath="{.spec.plugins[?(@.name=='${PLUGIN}')].parameters.serverName}" 2> /dev/null)"
+  [ -n "$SERVER" ] && {
+    ok "catalog serverName: ${SERVER} (from the live Cluster)"
+    return 0
+  }
   IFS=$'\t' read -r values alias <<< "$(wl_find_alias "$SOURCE" postgresVersion || true)"
   if [ -n "$values" ]; then
-    v="$(ALIAS="$alias" yq -r '.[strenv(ALIAS)].postgresVersion // ""' "$values" 2>/dev/null)"
-    [ -n "$v" ] && { SERVER="${SOURCE}-pg${v}"; ok "catalog serverName: ${SERVER} (from ${values#"${REPO_ROOT}"/})"; return 0; }
+    v="$(ALIAS="$alias" yq -r '.[strenv(ALIAS)].postgresVersion // ""' "$values" 2> /dev/null)"
+    [ -n "$v" ] && {
+      SERVER="${SOURCE}-pg${v}"
+      ok "catalog serverName: ${SERVER} (from ${values#"${REPO_ROOT}"/})"
+      return 0
+    }
   fi
   SERVER="$SOURCE"
   warn "no live Cluster and no chart values for ${SOURCE}, so falling back to the bare prefix ${SERVER}"
@@ -185,29 +221,34 @@ resolve_server() {
 # A restore needs a COMPLETED BASE BACKUP; WAL alone has no recovery point and the recovery job hangs.
 check_objectstore() {
   local frp sec
-  if ! kubectl -n "$NS" get objectstore.barmancloud.cnpg.io "$OBJECTSTORE" >/dev/null 2>&1; then
+  if ! kubectl -n "$NS" get objectstore.barmancloud.cnpg.io "$OBJECTSTORE" > /dev/null 2>&1; then
     warn "ObjectStore ${NS}/${OBJECTSTORE} is absent (expected in a real DR); it is re-created from git on an in-place restore."
     DEST=""
     return 0
   fi
   frp="$(kubectl -n "$NS" get objectstore.barmancloud.cnpg.io "$OBJECTSTORE" \
-         -o jsonpath="{.status.serverRecoveryWindow.${SERVER}.firstRecoverabilityPoint}" 2>/dev/null)"
+    -o jsonpath="{.status.serverRecoveryWindow.${SERVER}.firstRecoverabilityPoint}" 2> /dev/null)"
   DEST="$(kubectl -n "$NS" get objectstore.barmancloud.cnpg.io "$OBJECTSTORE" \
-          -o jsonpath='{.spec.configuration.destinationPath}' 2>/dev/null)"
+    -o jsonpath='{.spec.configuration.destinationPath}' 2> /dev/null)"
   sec="$(kubectl -n "$NS" get objectstore.barmancloud.cnpg.io "$OBJECTSTORE" \
-         -o jsonpath='{.spec.configuration.s3Credentials.accessKeyId.name}' 2>/dev/null)"
-  [ -n "$sec" ] && { kubectl -n "$NS" get secret "$sec" >/dev/null 2>&1 \
+    -o jsonpath='{.spec.configuration.s3Credentials.accessKeyId.name}' 2> /dev/null)"
+  [ -n "$sec" ] && { kubectl -n "$NS" get secret "$sec" > /dev/null 2>&1 \
     && ok "S3 creds secret ${sec} present" \
     || bad "S3 creds secret ${NS}/${sec} missing: restore the sealed-secrets key (make restore-secrets-key) or re-run 10b_cnpg_backup.sh"; }
-  if [ -n "$frp" ]; then RECOVERABLE="yes"; ok "recovery point in the catalog: ${frp}"
-  else RECOVERABLE="no";  bad "ObjectStore reports NO recovery point (no completed base backup) for ${SERVER}"; fi
+  if [ -n "$frp" ]; then
+    RECOVERABLE="yes"
+    ok "recovery point in the catalog: ${frp}"
+  else
+    RECOVERABLE="no"
+    bad "ObjectStore reports NO recovery point (no completed base backup) for ${SERVER}"
+  fi
 }
 
 # Independent check straight against S3, using the .env deployer creds. Also the only check that catches a
 # destinationPath change having orphaned the old catalog.
 check_s3_catalog() {
   local prefix
-  if [ -z "${AWS_DEPLOY_ACCESS_KEY_ID:-}" ] || ! command -v aws >/dev/null 2>&1; then
+  if [ -z "${AWS_DEPLOY_ACCESS_KEY_ID:-}" ] || ! command -v aws > /dev/null 2>&1; then
     warn "skipping the direct S3 check (no aws cli, or AWS_DEPLOY_ACCESS_KEY_ID unset in .env)"
     return 0
   fi
@@ -215,7 +256,7 @@ check_s3_catalog() {
   prefix="${prefix%/}/${SERVER}/base/"
   say "Base backups in the catalog (${prefix})"
   export_deploy_aws_creds
-  if aws s3 ls "$prefix" 2>/dev/null | grep -q .; then
+  if aws s3 ls "$prefix" 2> /dev/null | grep -q .; then
     aws s3 ls "$prefix" | sed 's/^/    /'
     ok "at least one base backup is in S3"
     RECOVERABLE="yes"
@@ -232,7 +273,10 @@ gate_on_recoverability() {
   [ "$RECOVERABLE" = "no" ] || return 0
   warn "Without a base backup there is nothing to restore to. Fix that FIRST (a Backup CR, method: plugin),"
   warn "or point at the catalog that does have one."
-  confirm "Continue anyway?" || { summary; exit 1; }
+  confirm "Continue anyway?" || {
+    summary
+    exit 1
+  }
 }
 
 # Postgres cannot replay a catalog written by a different major, and an unset imageName means the operator's
@@ -242,11 +286,12 @@ resolve_operand_image() {
   local major="" images="${REPO_ROOT}/lib/helm/pg-cluster/files/postgres-images.yaml"
   case "$SERVER" in *-pg[0-9]*) major="${SERVER##*-pg}" ;; esac
   if [ -n "$major" ] && [ -f "$images" ]; then
-    IMAGE="$(MAJOR="$major" yq -r '.[strenv(MAJOR)] // ""' "$images" 2>/dev/null)"
+    IMAGE="$(MAJOR="$major" yq -r '.[strenv(MAJOR)] // ""' "$images" 2> /dev/null)"
   fi
   [ -n "$IMAGE" ] || IMAGE="$(kubectl -n "$NS" get cluster.postgresql.cnpg.io "$SOURCE" \
-                              -o jsonpath='{.spec.imageName}' 2>/dev/null)"
-  if [ -n "$IMAGE" ]; then ok "operand image: ${IMAGE}"
+    -o jsonpath='{.spec.imageName}' 2> /dev/null)"
+  if [ -n "$IMAGE" ]; then
+    ok "operand image: ${IMAGE}"
   else warn "could not resolve an image for this catalog; the clone gets the operator default, which fails the recovery if its major differs"; fi
 }
 
@@ -254,15 +299,16 @@ resolve_operand_image() {
 run_side_restore() {
   local rt="" img="" manifest
   [ -z "$RECOVERY_NAME" ] && RECOVERY_NAME="${SOURCE}-restore"
-  kubectl -n "$NS" get cluster.postgresql.cnpg.io "$RECOVERY_NAME" >/dev/null 2>&1 \
+  kubectl -n "$NS" get cluster.postgresql.cnpg.io "$RECOVERY_NAME" > /dev/null 2>&1 \
     && die "Cluster ${NS}/${RECOVERY_NAME} already exists: pick another --name (this never overwrites a live cluster)"
-  kubectl -n "$NS" get objectstore.barmancloud.cnpg.io "$OBJECTSTORE" >/dev/null 2>&1 \
+  kubectl -n "$NS" get objectstore.barmancloud.cnpg.io "$OBJECTSTORE" > /dev/null 2>&1 \
     || die "side mode reads the live ObjectStore ${NS}/${OBJECTSTORE}, which is absent; use --mode in-place, or restore the workload's files first"
 
   [ "$TARGET" = "latest" ] || rt="$(printf '\n      recoveryTarget:\n        targetTime: "%s"' "$TARGET")"
   resolve_operand_image
   [ -z "$IMAGE" ] || img="$(printf '\n  imageName: %s' "$IMAGE")"
-  manifest="$(cat <<YAML
+  manifest="$(
+    cat << YAML
 apiVersion: postgresql.cnpg.io/v1
 kind: Cluster
 metadata:
@@ -286,13 +332,18 @@ spec:
           barmanObjectName: ${OBJECTSTORE}
           serverName: ${SERVER}
 YAML
-)"
+  )"
   say "Plan: read catalog ${OBJECTSTORE} (serverName ${SERVER}), target ${TARGET}, into NEW cluster ${RECOVERY_NAME} (1 instance, no re-archiving)"
-  echo "----- manifest -----"; echo "$manifest"; echo "--------------------"
-  confirm "Apply it?" || { warn "not applied"; exit 0; }
+  echo "----- manifest -----"
+  echo "$manifest"
+  echo "--------------------"
+  confirm "Apply it?" || {
+    warn "not applied"
+    exit 0
+  }
   echo "$manifest" | kubectl apply -f - || die "apply failed"
   ok "side cluster ${NS}/${RECOVERY_NAME} created"
-cat <<INSTRUCTIONS
+  cat << INSTRUCTIONS
 
 Watch it pull the base backup and replay WAL:
     kubectl -n ${NS} get pods -l cnpg.io/cluster=${RECOVERY_NAME} -w
@@ -302,14 +353,15 @@ Its data is served at ${RECOVERY_NAME}-rw.${NS}. It does NOT archive WAL and is 
 delete it when you are done:
     kubectl -n ${NS} delete cluster.postgresql.cnpg.io ${RECOVERY_NAME}
 INSTRUCTIONS
-  summary; exit 0
+  summary
+  exit 0
 }
 
 # postgresVersion is the kind discriminator: it keeps this from ever matching a redis alias, whose chart has no
 # restore knob and would silently swallow the block.
 resolve_owning_chart() {
   FOUND="$(wl_find_alias "$SOURCE" postgresVersion || true)"
-  IFS=$'\t' read -r VALUES ALIAS <<< "$FOUND" || true   # tab-separated, split explicitly
+  IFS=$'\t' read -r VALUES ALIAS <<< "$FOUND" || true # tab-separated, split explicitly
   [ -n "$FOUND" ] || die "no workload chart under ${WORKLOAD_CHARTS} has a pg-cluster instance named ${SOURCE}. In-place restore drives that chart's values; add the instance back to git first, or use --mode side."
   ok "owning chart: ${VALUES#"${REPO_ROOT}"/} (alias '${ALIAS}')"
   APP_NAME="$(basename "$(dirname "$VALUES")" | tr '_' '-')"
@@ -325,13 +377,13 @@ resolve_owning_chart() {
 resolve_state() {
   GIT_RESTORE="$(yq -r ".${ALIAS}.restore.enabled // false" "$VALUES")"
   GIT_PROTECT="$(yq -r ".${ALIAS}.deletionProtection // false" "$VALUES")"
-  LIVE_READY="$(kubectl -n "$NS" get cluster.postgresql.cnpg.io "$SOURCE" -o jsonpath='{.status.readyInstances}' 2>/dev/null)"
-  LIVE_WANT="$(kubectl -n "$NS" get cluster.postgresql.cnpg.io "$SOURCE" -o jsonpath='{.status.instances}' 2>/dev/null)"
-  kubectl -n "$NS" get cluster.postgresql.cnpg.io "$SOURCE" >/dev/null 2>&1 && LIVE_EXISTS="yes"
-  git -C "$REPO_ROOT" diff --quiet -- "$VALUES" 2>/dev/null || DIRTY="yes"
-  LIVE_CREATED="$(kubectl -n "$NS" get cluster.postgresql.cnpg.io "$SOURCE" -o jsonpath='{.metadata.creationTimestamp}' 2>/dev/null)"
-  ENABLED_AT="$(TZ=UTC git -C "$REPO_ROOT" log -1 --format=%cd --date=format-local:'%Y-%m-%dT%H:%M:%SZ' -- "$VALUES" 2>/dev/null)"
-  kubectl -n "$NS" get job -l "cnpg.io/cluster=${SOURCE}" -o name 2>/dev/null | grep -q -- '-full-recovery' && RECOVERED="yes"
+  LIVE_READY="$(kubectl -n "$NS" get cluster.postgresql.cnpg.io "$SOURCE" -o jsonpath='{.status.readyInstances}' 2> /dev/null)"
+  LIVE_WANT="$(kubectl -n "$NS" get cluster.postgresql.cnpg.io "$SOURCE" -o jsonpath='{.status.instances}' 2> /dev/null)"
+  kubectl -n "$NS" get cluster.postgresql.cnpg.io "$SOURCE" > /dev/null 2>&1 && LIVE_EXISTS="yes"
+  git -C "$REPO_ROOT" diff --quiet -- "$VALUES" 2> /dev/null || DIRTY="yes"
+  LIVE_CREATED="$(kubectl -n "$NS" get cluster.postgresql.cnpg.io "$SOURCE" -o jsonpath='{.metadata.creationTimestamp}' 2> /dev/null)"
+  ENABLED_AT="$(TZ=UTC git -C "$REPO_ROOT" log -1 --format=%cd --date=format-local:'%Y-%m-%dT%H:%M:%SZ' -- "$VALUES" 2> /dev/null)"
+  kubectl -n "$NS" get job -l "cnpg.io/cluster=${SOURCE}" -o name 2> /dev/null | grep -q -- '-full-recovery' && RECOVERED="yes"
   [ -n "$LIVE_CREATED" ] && [ -n "$ENABLED_AT" ] && [[ "$LIVE_CREATED" > "$ENABLED_AT" ]] && RECOVERED="yes"
 
   say "State"
@@ -352,7 +404,11 @@ enable_restore() {
     warn "Cluster ${NS}/${SOURCE} is LIVE and serving (${LIVE_READY}/${LIVE_WANT})."
     warn "An in-place restore DELETES it and rebuilds from the catalog, so anything not yet archived is lost."
     warn "To read old rows without touching the running DB, answer no and re-run with --mode side."
-    confirm "Rewind it to the catalog?" || { warn "nothing changed"; summary; exit 0; }
+    confirm "Rewind it to the catalog?" || {
+      warn "nothing changed"
+      summary
+      exit 0
+    }
   fi
   if [ "$TARGET" = "latest" ]; then
     echo "    target: latest (newest base backup, then replay every WAL in the catalog)"
@@ -374,7 +430,7 @@ enable_restore() {
     ok "set ${ALIAS}.deletionProtection=false (put back in phase 3)"
   fi
   git -C "$REPO_ROOT" --no-pager diff --stat -- "$VALUES" | sed 's/^/    /'
-cat <<NEXT
+  cat << NEXT
 
 Now commit and push, so ArgoCD renders the recovery bootstrap:
 
@@ -390,7 +446,8 @@ What the next run does: waits for the sync to reach the live Cluster, deletes it
 carrying bootstrap.recovery, watches the base-backup pull and WAL replay, clears the recovery job if it is
 stuck, verifies the data, rolls the consumers, and puts both flags back.
 NEXT
-  summary; exit 0
+  summary
+  exit 0
 }
 
 # CNPG reads spec.bootstrap once, at create time, so the Cluster running now can never become the recovered
@@ -400,11 +457,12 @@ delete_stale_cluster() {
   local synced was_yes
   [ "$LIVE_EXISTS" = "yes" ] && [ "$RECOVERED" != "yes" ] || return 0
   synced="$(kubectl -n "$NS" get cluster.postgresql.cnpg.io "$SOURCE" \
-            -o jsonpath='{.metadata.annotations.cnpg\.io/skipEmptyWalArchiveCheck}' 2>/dev/null)"
+    -o jsonpath='{.metadata.annotations.cnpg\.io/skipEmptyWalArchiveCheck}' 2> /dev/null)"
   if [ "$synced" != "enabled" ]; then
     bad "the live Cluster does not carry cnpg.io/skipEmptyWalArchiveCheck, so ArgoCD has not synced the restore yet"
     warn "push the phase-1 commit, then watch it land (up to ${SYNC_WAIT}s):  kubectl -n argocd get app ${APP_NAME} -w"
-    summary; exit 1
+    summary
+    exit 1
   fi
   ok "ArgoCD has synced the restore render onto the live Cluster"
   warn "deleting Cluster ${NS}/${SOURCE}. Its PVCs go with it; the recovery reads the S3 catalog, which is untouched."
@@ -418,12 +476,13 @@ delete_stale_cluster() {
   fi
   if ! confirm "Delete it so ArgoCD recreates it with bootstrap.recovery?"; then
     warn "not deleted, so nothing will happen: the running Cluster can never become the recovered one"
-    summary; exit 1
+    summary
+    exit 1
   fi
   ASSUME_YES="$was_yes"
   kubectl -n "$NS" delete cluster.postgresql.cnpg.io "$SOURCE" || die "delete failed"
   ok "deleted"
-  kubectl -n argocd annotate app "$APP_NAME" argocd.argoproj.io/refresh=hard --overwrite >/dev/null 2>&1 \
+  kubectl -n argocd annotate app "$APP_NAME" argocd.argoproj.io/refresh=hard --overwrite > /dev/null 2>&1 \
     && ok "asked ArgoCD to refresh ${APP_NAME} now rather than on its next poll" \
     || warn "could not poke ArgoCD; it recreates the Cluster on its next reconciliation regardless"
 }
@@ -433,13 +492,13 @@ delete_stale_cluster() {
 clear_failed_recovery_jobs() {
   local failed
   failed="$(kubectl -n "$NS" get job -l "cnpg.io/cluster=${SOURCE}" \
-            -o jsonpath='{range .items[?(@.status.failed)]}{.metadata.name}{" "}{end}' 2>/dev/null)"
-  [ -n "${failed// }" ] || return 0
+    -o jsonpath='{range .items[?(@.status.failed)]}{.metadata.name}{" "}{end}' 2> /dev/null)"
+  [ -n "${failed// /}" ] || return 0
   warn "failed recovery job(s): ${failed}"
-  kubectl -n "$NS" logs -l "cnpg.io/cluster=${SOURCE}" --all-containers --tail=8 2>/dev/null \
+  kubectl -n "$NS" logs -l "cnpg.io/cluster=${SOURCE}" --all-containers --tail=8 2> /dev/null \
     | grep -iE "error|expected empty archive|fail" | tail -5 | sed 's/^/    /'
   if confirm "Delete them so the operator starts a fresh recovery?"; then
-    kubectl -n "$NS" delete job -l "cnpg.io/cluster=${SOURCE}" --wait=false >/dev/null 2>&1
+    kubectl -n "$NS" delete job -l "cnpg.io/cluster=${SOURCE}" --wait=false > /dev/null 2>&1
     ok "cleared; a new recovery job will be created"
   fi
 }
@@ -447,23 +506,39 @@ clear_failed_recovery_jobs() {
 wait_for_recovery() {
   local deadline r w p
   say "watching (up to ${READY_WAIT}s): base-backup pull, WAL replay, promotion, replica join"
-  deadline=$(( $(date +%s) + READY_WAIT ))
+  deadline=$(($(date +%s) + READY_WAIT))
   while :; do
-    r="$(kubectl -n "$NS" get cluster.postgresql.cnpg.io "$SOURCE" -o jsonpath='{.status.readyInstances}' 2>/dev/null)"
-    w="$(kubectl -n "$NS" get cluster.postgresql.cnpg.io "$SOURCE" -o jsonpath='{.status.instances}' 2>/dev/null)"
-    p="$(kubectl -n "$NS" get cluster.postgresql.cnpg.io "$SOURCE" -o jsonpath='{.status.phase}' 2>/dev/null)"
+    r="$(kubectl -n "$NS" get cluster.postgresql.cnpg.io "$SOURCE" -o jsonpath='{.status.readyInstances}' 2> /dev/null)"
+    w="$(kubectl -n "$NS" get cluster.postgresql.cnpg.io "$SOURCE" -o jsonpath='{.status.instances}' 2> /dev/null)"
+    p="$(kubectl -n "$NS" get cluster.postgresql.cnpg.io "$SOURCE" -o jsonpath='{.status.phase}' 2> /dev/null)"
     printf '    ready=%s/%s  %s\n' "${r:-0}" "${w:-?}" "${p:-<no Cluster yet>}"
-    [ -n "$r" ] && [ "$r" = "$w" ] && { ok "cluster ${SOURCE} is fully ready (${r}/${w})"; break; }
-    case "$p" in *unrecoverable*) warn "operator reports the cluster unrecoverable; check the recovery job logs:";
-      warn "  kubectl -n ${NS} logs -l cnpg.io/cluster=${SOURCE} --all-containers --tail=40" ;; esac
-    [ "$(date +%s)" -ge "$deadline" ] && { bad "not ready within ${READY_WAIT}s"; warn "re-run to keep waiting, or inspect: kubectl cnpg status ${SOURCE} -n ${NS}"; summary; exit 1; }
+    [ -n "$r" ] && [ "$r" = "$w" ] && {
+      ok "cluster ${SOURCE} is fully ready (${r}/${w})"
+      break
+    }
+    case "$p" in *unrecoverable*)
+      warn "operator reports the cluster unrecoverable; check the recovery job logs:"
+      warn "  kubectl -n ${NS} logs -l cnpg.io/cluster=${SOURCE} --all-containers --tail=40"
+      ;;
+    esac
+    [ "$(date +%s)" -ge "$deadline" ] && {
+      bad "not ready within ${READY_WAIT}s"
+      warn "re-run to keep waiting, or inspect: kubectl cnpg status ${SOURCE} -n ${NS}"
+      summary
+      exit 1
+    }
     sleep "$POLL"
   done
 }
 
 run_restore_phase() {
   say "PHASE 2/3, wait for the restore"
-  [ "$DIRTY" = "yes" ] && { warn "${VALUES#"${REPO_ROOT}"/} has uncommitted changes: ArgoCD syncs the pushed remote, not your working tree."; warn "commit + push first, then re-run."; summary; exit 1; }
+  [ "$DIRTY" = "yes" ] && {
+    warn "${VALUES#"${REPO_ROOT}"/} has uncommitted changes: ArgoCD syncs the pushed remote, not your working tree."
+    warn "commit + push first, then re-run."
+    summary
+    exit 1
+  }
   delete_stale_cluster
   clear_failed_recovery_jobs
   wait_for_recovery
@@ -472,13 +547,13 @@ run_restore_phase() {
 # The script cannot know your schema, so it reports every table with its live row count: that is the evidence
 # that the base backup AND the WAL replay landed.
 verify_restored_data() {
-  local tl frp now   # `now`: where the REBUILT cluster archives to, which is not $SERVER after a cross-major restore
+  local tl frp now # `now`: where the REBUILT cluster archives to, which is not $SERVER after a cross-major restore
   say "PHASE 3/3, verify and finish"
   PRIMARY="$(kubectl -n "$NS" get pods -l "cnpg.io/cluster=${SOURCE},cnpg.io/instanceRole=primary" \
-             -o jsonpath='{.items[0].metadata.name}' 2>/dev/null)"
-  [ -n "$PRIMARY" ] || PRIMARY="$(kubectl -n "$NS" get cluster.postgresql.cnpg.io "$SOURCE" -o jsonpath='{.status.currentPrimary}' 2>/dev/null)"
+    -o jsonpath='{.items[0].metadata.name}' 2> /dev/null)"
+  [ -n "$PRIMARY" ] || PRIMARY="$(kubectl -n "$NS" get cluster.postgresql.cnpg.io "$SOURCE" -o jsonpath='{.status.currentPrimary}' 2> /dev/null)"
 
-  kubectl cnpg status "$SOURCE" -n "$NS" 2>/dev/null | sed -n '1,20p' | sed 's/^/    /' \
+  kubectl cnpg status "$SOURCE" -n "$NS" 2> /dev/null | sed -n '1,20p' | sed 's/^/    /' \
     || warn "kubectl cnpg plugin not installed; skipping the status block"
 
   if [ -n "$PRIMARY" ]; then
@@ -487,18 +562,18 @@ verify_restored_data() {
     SELECT table_schema||'.'||table_name||' = '||
            (xpath('/row/c/text()', query_to_xml('SELECT count(*) AS c FROM '||quote_ident(table_schema)||'.'||quote_ident(table_name), false, true, '')))[1]::text||' rows'
     FROM information_schema.tables WHERE table_type='BASE TABLE' AND table_schema NOT IN ('pg_catalog','information_schema')
-    ORDER BY 1;" 2>/dev/null | sed 's/^/    /' || warn "could not list tables"
-    tl="$(kubectl -n "$NS" exec "$PRIMARY" -c postgres -- psql -U postgres -Atc "SELECT timeline_id FROM pg_control_checkpoint()" 2>/dev/null)"
+    ORDER BY 1;" 2> /dev/null | sed 's/^/    /' || warn "could not list tables"
+    tl="$(kubectl -n "$NS" exec "$PRIMARY" -c postgres -- psql -U postgres -Atc "SELECT timeline_id FROM pg_control_checkpoint()" 2> /dev/null)"
     [ -n "$tl" ] && ok "recovered onto timeline ${tl} (a restore always advances it)"
   fi
 
   now="$(kubectl -n "$NS" get cluster.postgresql.cnpg.io "$SOURCE" \
-         -o jsonpath="{.spec.plugins[?(@.name=='${PLUGIN}')].parameters.serverName}" 2>/dev/null)"
+    -o jsonpath="{.spec.plugins[?(@.name=='${PLUGIN}')].parameters.serverName}" 2> /dev/null)"
   [ -n "$now" ] || now="$SERVER"
   frp="$(kubectl -n "$NS" get objectstore.barmancloud.cnpg.io "$OBJECTSTORE" \
-         -o jsonpath="{.status.serverRecoveryWindow.${now}.firstRecoverabilityPoint}" 2>/dev/null)"
+    -o jsonpath="{.status.serverRecoveryWindow.${now}.firstRecoverabilityPoint}" 2> /dev/null)"
   [ -n "$frp" ] && ok "the restored cluster is itself backed up again (recovery point ${frp} under ${now})" \
-                || warn "no recovery point yet on the new timeline; a base backup runs on the ScheduledBackup's next tick (force one with a Backup CR if you want it now)"
+    || warn "no recovery point yet on the new timeline; a base backup runs on the ScheduledBackup's next tick (force one with a Backup CR if you want it now)"
   return 0
 }
 
@@ -507,16 +582,17 @@ verify_restored_data() {
 roll_secret_consumers() {
   local consumers c
   say "Consumers of the regenerated ${SOURCE}-app Secret"
-  consumers="$(kubectl -n "$NS" get deploy,statefulset -o json 2>/dev/null \
-    | yq -r --input-format=json '.items[] | select([.. | select(tag == "!!map") | select(.secretKeyRef != null) | .secretKeyRef.name] | contains(["'"${SOURCE}"'-app"])) | (.kind|downcase)+"/"+.metadata.name' 2>/dev/null | sort -u)"
-  if [ -z "${consumers// }" ]; then
+  consumers="$(kubectl -n "$NS" get deploy,statefulset -o json 2> /dev/null \
+    | yq -r --input-format=json '.items[] | select([.. | select(tag == "!!map") | select(.secretKeyRef != null) | .secretKeyRef.name] | contains(["'"${SOURCE}"'-app"])) | (.kind|downcase)+"/"+.metadata.name' 2> /dev/null | sort -u)"
+  if [ -z "${consumers// /}" ]; then
     warn "none found referencing ${SOURCE}-app; if something connects with those creds, restart it by hand"
     return 0
   fi
   printf '%s\n' "$consumers" | sed 's/^/    /'
   if confirm "Roll them so they pick up the new password?"; then
-    while read -r c; do [ -z "$c" ] && continue
-      kubectl -n "$NS" rollout restart "$c" >/dev/null 2>&1 && ok "rolled ${c}" || bad "could not roll ${c}"
+    while read -r c; do
+      [ -z "$c" ] && continue
+      kubectl -n "$NS" rollout restart "$c" > /dev/null 2>&1 && ok "rolled ${c}" || bad "could not roll ${c}"
     done <<< "$consumers"
   fi
 }
@@ -534,7 +610,7 @@ disable_restore_and_reprotect() {
       || die "post-edit check failed: ${ALIAS}.deletionProtection is not true"
   fi
   git -C "$REPO_ROOT" --no-pager diff --stat -- "$VALUES" | sed 's/^/    /'
-cat <<NEXT
+  cat << NEXT
 
 Last step, commit and push:
 

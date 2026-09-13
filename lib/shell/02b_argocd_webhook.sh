@@ -9,20 +9,20 @@ source "${SCRIPT_DIR}/common.sh"
 
 # ---- knobs ----
 ARGOCD_CHART="${PLATFORM_CHARTS}/01_argocd"
-ARGOCD_VALUES="${ARGOCD_CHART}/values.yaml"                          # poll cadence patched here
+ARGOCD_VALUES="${ARGOCD_CHART}/values.yaml" # poll cadence patched here
 # A wave-3 app of its own, NOT the wave-1 argocd chart above: a SealedSecret in that chart aborts the
 # cold-boot argocd install before the sealed-secrets CRD exists (wave 2).
 SEALED_OUT="${PLATFORM_CHARTS}/03_argocd_webhook_secret/templates/argocd-secret-sealedsecret.yaml"
-INGRESS_VALUES="${PLATFORM_CHARTS}/06_platform_ingress/values.yaml"  # source of the argocd host
-SEAL_NAME="argocd-secret"            # ArgoCD reads webhook.github.secret ONLY from the Secret with this name
+INGRESS_VALUES="${PLATFORM_CHARTS}/06_platform_ingress/values.yaml" # source of the argocd host
+SEAL_NAME="argocd-secret"                                           # ArgoCD reads webhook.github.secret ONLY from the Secret with this name
 SEAL_NAMESPACE="argocd"
-WEBHOOK_KEY="webhook.github.secret"  # the argocd-secret data key ArgoCD's GitHub webhook handler reads
-WEBHOOK_FILE="${CLUSTER_DIR}/argocd-github-webhook-secret.txt"  # plaintext for GitHub (gitignored off-repo store)
+WEBHOOK_KEY="webhook.github.secret"                            # the argocd-secret data key ArgoCD's GitHub webhook handler reads
+WEBHOOK_FILE="${CLUSTER_DIR}/argocd-github-webhook-secret.txt" # plaintext for GitHub (gitignored off-repo store)
 
 # ---- state ----
-RECON=""            # set by resolve_poll_cadence
-WEBHOOK_SECRET=""   # set by mint_webhook_secret
-ARGOCD_DOMAIN=""    # set by print_result
+RECON=""          # set by resolve_poll_cadence
+WEBHOOK_SECRET="" # set by mint_webhook_secret
+ARGOCD_DOMAIN=""  # set by print_result
 
 # ---- functions ----
 
@@ -31,7 +31,7 @@ check_prerequisites() {
   require kubeseal kubectl yq openssl
   ensure_cluster_dir
   use_kubeconfig
-  [ -f "$ARGOCD_VALUES" ]  || die "missing ${ARGOCD_VALUES} (the 01_argocd chart should ship it)"
+  [ -f "$ARGOCD_VALUES" ] || die "missing ${ARGOCD_VALUES} (the 01_argocd chart should ship it)"
   [ -f "$INGRESS_VALUES" ] || die "missing ${INGRESS_VALUES} (the 06_platform_ingress chart should ship it)"
   assert_api
   assert_sealed_secrets_ready
@@ -42,9 +42,9 @@ check_prerequisites() {
 resolve_poll_cadence() {
   say "poll cadence from .env POLL_SYNC_ENABLED=${POLL_SYNC_ENABLED}"
   case "$POLL_SYNC_ENABLED" in
-    true)  RECON="60s"  ;;
+    true) RECON="60s" ;;
     false) RECON="300s" ;;
-    *)     die "POLL_SYNC_ENABLED must be true or false in .env (got '${POLL_SYNC_ENABLED}')" ;;
+    *) die "POLL_SYNC_ENABLED must be true or false in .env (got '${POLL_SYNC_ENABLED}')" ;;
   esac
   ok "timeout.reconciliation -> ${RECON}"
 }
@@ -58,7 +58,10 @@ mint_webhook_secret() {
     ok "reusing existing webhook secret (delete ${WEBHOOK_FILE} to rotate)"
   else
     WEBHOOK_SECRET="$(openssl rand -hex 32)" || die "openssl rand failed"
-    ( umask 077; printf '%s\n' "$WEBHOOK_SECRET" > "$WEBHOOK_FILE" ) || die "could not write ${WEBHOOK_FILE}"
+    (
+      umask 077
+      printf '%s\n' "$WEBHOOK_SECRET" > "$WEBHOOK_FILE"
+    ) || die "could not write ${WEBHOOK_FILE}"
     ok "generated a new webhook secret (openssl rand -hex 32)"
   fi
   [ -n "$WEBHOOK_SECRET" ] || die "webhook secret is empty"
@@ -85,8 +88,8 @@ seal_webhook_secret() {
 # argocd-secret. 02a_argocd.sh does this too; repeated here so a standalone run is self-sufficient.
 mark_live_secret_patch_managed() {
   say "marking the live argocd-secret patch-managed"
-  if kubectl -n "$SEAL_NAMESPACE" get secret "$SEAL_NAME" >/dev/null 2>&1; then
-    kubectl -n "$SEAL_NAMESPACE" annotate secret "$SEAL_NAME" sealedsecrets.bitnami.com/patch=true --overwrite >/dev/null 2>&1 \
+  if kubectl -n "$SEAL_NAMESPACE" get secret "$SEAL_NAME" > /dev/null 2>&1; then
+    kubectl -n "$SEAL_NAMESPACE" annotate secret "$SEAL_NAME" sealedsecrets.bitnami.com/patch=true --overwrite > /dev/null 2>&1 \
       && ok "live ${SEAL_NAME} annotated patch-managed" || warn "could not annotate live ${SEAL_NAME}; do it by hand if the merge is refused"
   else
     warn "live ${SEAL_NAME} not present yet (created by argocd-server); 02a_argocd.sh annotates it, or annotate by hand later"
@@ -102,13 +105,13 @@ write_poll_cadence() {
 
 print_result() {
   local webhook_url
-  ARGOCD_DOMAIN="$(yq -r '.ingress.ingresses[] | select(.hosts[].subdomain == "argocd") | .domain' "$INGRESS_VALUES" 2>/dev/null | head -1)"
+  ARGOCD_DOMAIN="$(yq -r '.ingress.ingresses[] | select(.hosts[].subdomain == "argocd") | .domain' "$INGRESS_VALUES" 2> /dev/null | head -1)"
   webhook_url="https://argocd.${ARGOCD_DOMAIN:-<domain>}/api/webhook"
   if [ "$FAIL" -ne 0 ]; then
     echo "Something failed, see above. Fix and re-run (idempotent)."
     return 0
   fi
-cat <<EOF
+  cat << EOF
 
 ArgoCD webhook wired. Finish in TWO places:
 

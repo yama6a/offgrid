@@ -8,12 +8,12 @@ SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 source "${SCRIPT_DIR}/common.sh"
 
 # ---- knobs ----
-CHART_DIR="${PLATFORM_CHARTS}/01_argocd"     # the wrapper chart (Argo consumes it too)
-ROOT_APP="${REPO_ROOT}/argo_apps/root.yaml"  # the root-of-roots (recurses argo_apps/roots/)
+CHART_DIR="${PLATFORM_CHARTS}/01_argocd"    # the wrapper chart (Argo consumes it too)
+ROOT_APP="${REPO_ROOT}/argo_apps/root.yaml" # the root-of-roots (recurses argo_apps/roots/)
 RELEASE="argocd"
 NS="argocd"
 REPO_ARGO="https://argoproj.github.io/argo-helm"
-HELM_TIMEOUT="8m"                            # 3x Pi 5 image pulls can be slow
+HELM_TIMEOUT="8m" # 3x Pi 5 image pulls can be slow
 
 # ---- functions ----
 
@@ -24,7 +24,7 @@ check_prerequisites() {
   [ -f "${ROOT_APP}" ] || die "no root app at ${ROOT_APP}"
   use_kubeconfig
   assert_api
-  kubectl -n kube-system get ds/cilium >/dev/null 2>&1 || die "Cilium not found, run step 04 (01_cilium.sh) first"
+  kubectl -n kube-system get ds/cilium > /dev/null 2>&1 || die "Cilium not found, run step 04 (01_cilium.sh) first"
   ok "kubectl + helm present, API reachable, chart + root app found, Cilium up"
 }
 
@@ -32,10 +32,10 @@ vendor_argocd_subchart() {
   local lock_before=0
   say "helm dependency build (${CHART_DIR})"
   [ -f "${CHART_DIR}/Chart.lock" ] && lock_before=1
-  helm repo add argo "$REPO_ARGO" >/dev/null 2>&1 || true
-  helm repo update argo >/dev/null 2>&1 || helm repo update >/dev/null
+  helm repo add argo "$REPO_ARGO" > /dev/null 2>&1 || true
+  helm repo update argo > /dev/null 2>&1 || helm repo update > /dev/null
   # build wants an existing Chart.lock; update generates one. Try build, fall back to update.
-  if helm dependency build "$CHART_DIR" >/dev/null 2>&1 || helm dependency update "$CHART_DIR" >/dev/null 2>&1; then
+  if helm dependency build "$CHART_DIR" > /dev/null 2>&1 || helm dependency update "$CHART_DIR" > /dev/null 2>&1; then
     pin_chart_lock_timestamp "$CHART_DIR"
     ok "argo-cd subchart vendored under charts/"
   else
@@ -58,17 +58,17 @@ vendor_argocd_subchart() {
 seed_argocd_secret() {
   say "seeding argocd-secret (argocd-server needs it at startup; chart is createSecret:false)"
   # The namespace must exist first: helm's --create-namespace fires too late for this.
-  kubectl create namespace "$NS" --dry-run=client -o yaml | kubectl apply -f - >/dev/null 2>&1 \
+  kubectl create namespace "$NS" --dry-run=client -o yaml | kubectl apply -f - > /dev/null 2>&1 \
     && ok "namespace ${NS} present" || bad "could not ensure namespace ${NS}"
-  if kubectl -n "$NS" get secret argocd-secret >/dev/null 2>&1; then
+  if kubectl -n "$NS" get secret argocd-secret > /dev/null 2>&1; then
     ok "argocd-secret already exists (left as-is; server.secretkey preserved)"
   else
-    kubectl -n "$NS" create secret generic argocd-secret >/dev/null 2>&1 \
+    kubectl -n "$NS" create secret generic argocd-secret > /dev/null 2>&1 \
       && ok "argocd-secret seeded (empty; argocd-server fills server.secretkey on boot)" \
       || bad "could not seed argocd-secret (argocd-server will crashloop without it)"
   fi
-  kubectl -n "$NS" label secret argocd-secret app.kubernetes.io/part-of=argocd --overwrite >/dev/null 2>&1 || true
-  kubectl -n "$NS" annotate secret argocd-secret sealedsecrets.bitnami.com/patch=true --overwrite >/dev/null 2>&1 \
+  kubectl -n "$NS" label secret argocd-secret app.kubernetes.io/part-of=argocd --overwrite > /dev/null 2>&1 || true
+  kubectl -n "$NS" annotate secret argocd-secret sealedsecrets.bitnami.com/patch=true --overwrite > /dev/null 2>&1 \
     && ok "argocd-secret labelled part-of=argocd + annotated patch-managed" \
     || warn "could not annotate/label argocd-secret; annotate it by hand or the webhook merge is refused"
 }
@@ -80,7 +80,7 @@ install_argocd() {
   # die, not bad: a failure here means the namespace was never created, so every later step would cascade into
   # FAILs that bury the real cause. Abort so the helm error is the last thing on screen.
   if helm upgrade --install "$RELEASE" "$CHART_DIR" --namespace "$NS" \
-       --create-namespace --reset-values --wait --timeout "$HELM_TIMEOUT"; then
+    --create-namespace --reset-values --wait --timeout "$HELM_TIMEOUT"; then
     ok "argocd release applied"
   else
     die "helm install failed (see output above; re-run is safe/idempotent)"
@@ -89,11 +89,11 @@ install_argocd() {
 
 wait_for_argocd_workloads() {
   say "waiting for ArgoCD workloads"
-  kubectl -n "$NS" rollout status statefulset/argocd-application-controller --timeout=180s >/dev/null 2>&1 \
+  kubectl -n "$NS" rollout status statefulset/argocd-application-controller --timeout=180s > /dev/null 2>&1 \
     && ok "application-controller ready" || bad "application-controller not ready"
-  kubectl -n "$NS" rollout status deploy/argocd-repo-server --timeout=180s >/dev/null 2>&1 \
+  kubectl -n "$NS" rollout status deploy/argocd-repo-server --timeout=180s > /dev/null 2>&1 \
     && ok "repo-server ready" || bad "repo-server not ready"
-  kubectl -n "$NS" rollout status deploy/argocd-server --timeout=180s >/dev/null 2>&1 \
+  kubectl -n "$NS" rollout status deploy/argocd-server --timeout=180s > /dev/null 2>&1 \
     && ok "server ready" || bad "server ready"
 }
 
@@ -103,7 +103,7 @@ wait_for_argocd_workloads() {
 assert_root_repo_url() {
   local got
   [ -n "$REPO_URL" ] || die "REPO_URL is empty, set it in .env"
-  got="$(yq -r '.spec.source.repoURL' "$ROOT_APP" 2>/dev/null)"
+  got="$(yq -r '.spec.source.repoURL' "$ROOT_APP" 2> /dev/null)"
   [ "$got" = "$REPO_URL" ] \
     && ok "root repoURL == ${REPO_URL}" \
     || bad "root repoURL is '${got}', expected '${REPO_URL}'. Run \`make configure-values\`, commit and push first"
@@ -114,9 +114,9 @@ assert_root_repo_url() {
 assert_tree_pushed() {
   local ahead
   [ -n "$REPO_ROOT" ] || return 0
-  [ -n "$(git -C "$REPO_ROOT" status --porcelain -- argo_apps lib/helm 2>/dev/null)" ] \
+  [ -n "$(git -C "$REPO_ROOT" status --porcelain -- argo_apps lib/helm 2> /dev/null)" ] \
     && bad "uncommitted changes under argo_apps/ or lib/helm/, commit & push them, then re-run"
-  ahead="$(git -C "$REPO_ROOT" rev-list --count '@{u}..HEAD' 2>/dev/null || echo 0)"
+  ahead="$(git -C "$REPO_ROOT" rev-list --count '@{u}..HEAD' 2> /dev/null || echo 0)"
   [ "${ahead:-0}" -gt 0 ] \
     && bad "${ahead} unpushed commit(s) on the current branch, push them, then re-run (ArgoCD only sees pushed commits)"
   return 0
@@ -134,7 +134,7 @@ seed_git_credential() {
   fi
   # username: GitHub authenticates off the PAT (password) and ignores this, but Basic Auth needs it non-empty,
   # so it is hardcoded. For a non-GitHub remote that DOES use it, set it here.
-  if kubectl -n "$NS" apply -f - >/dev/null 2>&1 <<EOF
+  if kubectl -n "$NS" apply -f - > /dev/null 2>&1 << EOF; then
 apiVersion: v1
 kind: Secret
 metadata:
@@ -149,14 +149,15 @@ stringData:
   password: ${ARGOCD_GITHUB_PAT_SECRET}
   forceHttpBasicAuth: "true"
 EOF
-  then ok "repository credential seeded (upsert) for ${REPO_URL}"
-  else bad "could not seed repository credential"
+    ok "repository credential seeded (upsert) for ${REPO_URL}"
+  else
+    bad "could not seed repository credential"
   fi
 }
 
 apply_root_app() {
   say "handing off to GitOps (kubectl apply root)"
-  kubectl apply -f "$ROOT_APP" >/dev/null 2>&1 && ok "root applied" || bad "kubectl apply root failed"
+  kubectl apply -f "$ROOT_APP" > /dev/null 2>&1 && ok "root applied" || bad "kubectl apply root failed"
 }
 
 # Only confirms the handoff took, i.e. that the root-of-roots created the platform tree. Deliberately NOT a
@@ -165,13 +166,16 @@ apply_root_app() {
 confirm_gitops_handoff() {
   local csync _
   say "confirming GitOps handoff (root created the platform tree)"
-  for _ in $(seq 1 60); do kubectl -n "$NS" get application platform >/dev/null 2>&1 && break; sleep 2; done
-  if kubectl -n "$NS" get application platform >/dev/null 2>&1; then
+  for _ in $(seq 1 60); do
+    kubectl -n "$NS" get application platform > /dev/null 2>&1 && break
+    sleep 2
+  done
+  if kubectl -n "$NS" get application platform > /dev/null 2>&1; then
     ok "handoff confirmed: root created the platform tree (converges async; key restore + converge come next)"
   else
     bad "root did not create the platform app in ~120s (check: kubectl -n ${NS} get applications)"
   fi
-  csync="$(kubectl -n "$NS" get application cilium -o jsonpath='{.status.sync.status}' 2>/dev/null)"
+  csync="$(kubectl -n "$NS" get application cilium -o jsonpath='{.status.sync.status}' 2> /dev/null)"
   echo "   app/cilium sync status: ${csync:-<not created yet>}  (expected Synced, auto-adopted, no pod churn)"
 }
 
@@ -180,7 +184,7 @@ confirm_gitops_handoff() {
 # port-forward is the break-glass that bypasses the Gateway + SSO.
 print_access() {
   say "ArgoCD access"
-cat <<EOF
+  cat << EOF
    UI via port-forward (no ingress yet; server runs plain HTTP, no login, anonymous is admin):
      kubectl -n ${NS} port-forward svc/argocd-server 8080:80
      open http://localhost:8080   (lands in as admin, no username/password)
@@ -195,7 +199,7 @@ print_result() {
     echo "confirm argo_apps/** (incl. Chart.lock) is committed AND pushed to origin, then re-run."
     return 0
   fi
-cat <<EOF
+  cat << EOF
 ArgoCD is up and self-managed from argo_apps/platform/charts/01_argocd/. The root-of-roots
 (argo_apps/root.yaml) watches argo_apps/roots/ and creates the platform root, then the workloads root ~5s
 later (no health wait; both converge async via retry). Add a PLATFORM app under argo_apps/platform/{charts,apps}/ (NN_ = sync-wave);

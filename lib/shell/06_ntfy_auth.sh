@@ -7,24 +7,28 @@ SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 source "${SCRIPT_DIR}/common.sh"
 
 # ---- knobs ----
-NTFY_NS="$MONITORING_NS"                       # ntfy runs beside grafana (05_ntfy)
-GRAFANA_CHART="${PLATFORM_CHARTS}/05_grafana"  # the token is read by grafana
-SEALED_OUT="${GRAFANA_CHART}/templates/grafana-ntfy-sealedsecret.yaml"   # sealed write token (committed)
-SECRET_NAME="grafana-ntfy"                     # Secret Grafana reads GF_NTFY_TOKEN from
-SECRET_KEY="token"                             # fixed contract with 05_grafana envValueFrom
-TOPIC="cluster-alerts"                         # matches 05_grafana webhook + 05_ntfy
-PHONE_USER="phone"                             # Android subscriber (read-only)
-GRAFANA_USER="grafana"                         # webhook publisher (write-only, token auth)
+NTFY_NS="$MONITORING_NS"                                               # ntfy runs beside grafana (05_ntfy)
+GRAFANA_CHART="${PLATFORM_CHARTS}/05_grafana"                          # the token is read by grafana
+SEALED_OUT="${GRAFANA_CHART}/templates/grafana-ntfy-sealedsecret.yaml" # sealed write token (committed)
+SECRET_NAME="grafana-ntfy"                                             # Secret Grafana reads GF_NTFY_TOKEN from
+SECRET_KEY="token"                                                     # fixed contract with 05_grafana envValueFrom
+TOPIC="cluster-alerts"                                                 # matches 05_grafana webhook + 05_ntfy
+PHONE_USER="phone"                                                     # Android subscriber (read-only)
+GRAFANA_USER="grafana"                                                 # webhook publisher (write-only, token auth)
 
 # ---- state ----
-TOKEN=""   # set by mint_grafana_token
+TOKEN="" # set by mint_grafana_token
 
 # ---- functions ----
 
 # Operates on the pod's /var/lib/ntfy/user.db via /etc/ntfy/server.yml.
-nexec()    { kubectl -n "$NTFY_NS" exec deploy/ntfy -- ntfy "$@"; }
+nexec() { kubectl -n "$NTFY_NS" exec deploy/ntfy -- ntfy "$@"; }
 # Same, injecting NTFY_PASSWORD: ntfy's documented non-interactive input for `user add` / `user change-pass`.
-nexec_pw() { local pw="$1"; shift; kubectl -n "$NTFY_NS" exec deploy/ntfy -- env NTFY_PASSWORD="$pw" ntfy "$@"; }
+nexec_pw() {
+  local pw="$1"
+  shift
+  kubectl -n "$NTFY_NS" exec deploy/ntfy -- env NTFY_PASSWORD="$pw" ntfy "$@"
+}
 
 check_prerequisites() {
   say "prerequisites"
@@ -65,26 +69,26 @@ handle_disabled() {
 # change-pass fallback.
 seed_users_and_acls() {
   say "seeding ntfy users + ACLs on topic '${TOPIC}'"
-  if nexec_pw "$NTFY_PHONE_PASSWORD_SECRET" user add "$PHONE_USER" >/dev/null 2>&1; then
+  if nexec_pw "$NTFY_PHONE_PASSWORD_SECRET" user add "$PHONE_USER" > /dev/null 2>&1; then
     ok "phone user created"
   else
-    nexec_pw "$NTFY_PHONE_PASSWORD_SECRET" user change-pass "$PHONE_USER" >/dev/null 2>&1 \
+    nexec_pw "$NTFY_PHONE_PASSWORD_SECRET" user change-pass "$PHONE_USER" > /dev/null 2>&1 \
       && ok "phone user existed -> password rotated" || bad "could not create/rotate phone user"
   fi
-  nexec_pw "$(openssl rand -hex 24)" user add "$GRAFANA_USER" >/dev/null 2>&1 \
+  nexec_pw "$(openssl rand -hex 24)" user add "$GRAFANA_USER" > /dev/null 2>&1 \
     && ok "grafana user created" || ok "grafana user already exists"
-  nexec access "$PHONE_USER"   "$TOPIC" ro >/dev/null 2>&1 && ok "phone ACL: ro on ${TOPIC}"   || bad "could not set phone ACL"
-  nexec access "$GRAFANA_USER" "$TOPIC" wo >/dev/null 2>&1 && ok "grafana ACL: wo on ${TOPIC}" || bad "could not set grafana ACL"
+  nexec access "$PHONE_USER" "$TOPIC" ro > /dev/null 2>&1 && ok "phone ACL: ro on ${TOPIC}" || bad "could not set phone ACL"
+  nexec access "$GRAFANA_USER" "$TOPIC" wo > /dev/null 2>&1 && ok "grafana ACL: wo on ${TOPIC}" || bad "could not set grafana ACL"
 }
 
 # Drops any existing grafana tokens first, so this rotates rather than accumulating. Format: tk_<alnum>.
 mint_grafana_token() {
   local tid
   say "minting the Grafana write token"
-  for tid in $(nexec token list "$GRAFANA_USER" 2>/dev/null | grep -oE 'tk_[A-Za-z0-9]+'); do
-    nexec token remove "$GRAFANA_USER" "$tid" >/dev/null 2>&1 || true
+  for tid in $(nexec token list "$GRAFANA_USER" 2> /dev/null | grep -oE 'tk_[A-Za-z0-9]+'); do
+    nexec token remove "$GRAFANA_USER" "$tid" > /dev/null 2>&1 || true
   done
-  TOKEN="$(nexec token add "$GRAFANA_USER" 2>/dev/null | grep -oE 'tk_[A-Za-z0-9]+' | head -1)"
+  TOKEN="$(nexec token add "$GRAFANA_USER" 2> /dev/null | grep -oE 'tk_[A-Za-z0-9]+' | head -1)"
   [ -n "$TOKEN" ] || die "failed to mint an ntfy token for ${GRAFANA_USER} (try: kubectl -n ${NTFY_NS} exec deploy/ntfy -- ntfy token add ${GRAFANA_USER})"
   ok "token minted"
 }
@@ -100,7 +104,7 @@ print_result() {
     echo "Something failed, see above. Fix and re-run (idempotent)."
     return 0
   fi
-cat <<EOF
+  cat << EOF
 ntfy auth seeded; Grafana write token sealed at ${SEALED_OUT}.
 
 Next:

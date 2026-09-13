@@ -10,9 +10,9 @@ source "${SCRIPT_DIR}/common.sh"
 # ---- knobs ----
 NS="$SS_CONTROLLER_NS"
 CONTROLLER_LABEL="$SS_POD_SELECTOR"
-KEY_LABEL="$SS_KEY_LABEL"                                # label the controller stamps on its key Secrets
-BACKUP_FILE="${CLUSTER_DIR}/sealed-secrets-master.key"   # what 03_backup_sealed_secrets_key.sh wrote
-WAIT=900                                                 # secs to wait for the controller (ArgoCD wave 2)
+KEY_LABEL="$SS_KEY_LABEL"                              # label the controller stamps on its key Secrets
+BACKUP_FILE="${CLUSTER_DIR}/sealed-secrets-master.key" # what 03_backup_sealed_secrets_key.sh wrote
+WAIT=900                                               # secs to wait for the controller (ArgoCD wave 2)
 
 # ---- functions ----
 
@@ -23,7 +23,7 @@ check_prerequisites() {
   use_kubeconfig
   [ -f "$BACKUP_FILE" ] || die "no backup at ${BACKUP_FILE}, run 03_backup_sealed_secrets_key.sh first (while a cluster holding the key is up), or re-seal instead (04_google_sso, 06_ntfy_auth)"
   [ -s "$BACKUP_FILE" ] || die "backup ${BACKUP_FILE} is empty, do not trust it"
-  grep -q 'kind: Secret' "$BACKUP_FILE" 2>/dev/null || die "backup ${BACKUP_FILE} has no 'kind: Secret', wrong/corrupt file"
+  grep -q 'kind: Secret' "$BACKUP_FILE" 2> /dev/null || die "backup ${BACKUP_FILE} has no 'kind: Secret', wrong/corrupt file"
   assert_api
   ok "kubectl present, API reachable, backup looks valid"
 }
@@ -32,13 +32,15 @@ check_prerequisites() {
 wait_for_controller() {
   local deadline
   say "waiting for the sealed-secrets controller in ns/${NS} (up to ${WAIT}s)"
-  deadline=$(( $(date +%s) + WAIT ))
-  until kubectl get pods -n "$NS" -l "$CONTROLLER_LABEL" 2>/dev/null | grep -q ' Running'; do
+  deadline=$(($(date +%s) + WAIT))
+  until kubectl get pods -n "$NS" -l "$CONTROLLER_LABEL" 2> /dev/null | grep -q ' Running'; do
     if [ "$(date +%s)" -ge "$deadline" ]; then
       bad "controller not Running after ${WAIT}s, is ArgoCD past wave 2? (kubectl -n ${NS} get pods)"
-      summary; exit 1
+      summary
+      exit 1
     fi
-    printf '.'; sleep 5
+    printf '.'
+    sleep 5
   done
   echo
   ok "controller is Running"
@@ -47,7 +49,7 @@ wait_for_controller() {
 # `kubectl apply` of the labelled key Secret(s) is the official restore form, matching what 03_backup dumped.
 apply_backup_key() {
   say "applying ${BACKUP_FILE} into ns/${NS}"
-  if kubectl apply -f "$BACKUP_FILE" >/dev/null 2>&1; then
+  if kubectl apply -f "$BACKUP_FILE" > /dev/null 2>&1; then
     ok "key Secret(s) applied"
   else
     bad "kubectl apply failed, key NOT restored"
@@ -61,16 +63,17 @@ apply_backup_key() {
 remove_foreign_keys() {
   local backup_keys removed=0 s name
   say "removing any key the fresh controller minted (not in the backup)"
-  backup_keys="$(kubectl create --dry-run=client -f "$BACKUP_FILE" -o name 2>/dev/null | sed 's#^.*/##')"
+  backup_keys="$(kubectl create --dry-run=client -f "$BACKUP_FILE" -o name 2> /dev/null | sed 's#^.*/##')"
   if [ -z "$backup_keys" ]; then
     bad "could not read key names from ${BACKUP_FILE}, left foreign keys in place (active sealing key may be ephemeral)"
     return 0
   fi
-  for s in $(kubectl get secret -n "$NS" -l "$KEY_LABEL" -o name 2>/dev/null); do
+  for s in $(kubectl get secret -n "$NS" -l "$KEY_LABEL" -o name 2> /dev/null); do
     name="${s#secret/}"
-    grep -qx "$name" <<<"$backup_keys" && continue           # a backup key, keep it
-    if kubectl delete -n "$NS" "$s" >/dev/null 2>&1; then
-      printf '  removed foreign key %s\n' "$name"; removed=$((removed+1))
+    grep -qx "$name" <<< "$backup_keys" && continue # a backup key, keep it
+    if kubectl delete -n "$NS" "$s" > /dev/null 2>&1; then
+      printf '  removed foreign key %s\n' "$name"
+      removed=$((removed + 1))
     else
       bad "could not delete foreign key ${name}, it may still win as the active sealing key"
     fi
@@ -80,12 +83,12 @@ remove_foreign_keys() {
 
 restart_controller() {
   say "restarting the controller to load the key"
-  if kubectl delete pod -n "$NS" -l "$CONTROLLER_LABEL" >/dev/null 2>&1; then
+  if kubectl delete pod -n "$NS" -l "$CONTROLLER_LABEL" > /dev/null 2>&1; then
     ok "controller pod(s) deleted (will restart)"
   else
     bad "could not restart the controller, restart by hand: kubectl delete pod -n ${NS} -l ${CONTROLLER_LABEL}"
   fi
-  kubectl wait --for=condition=Ready pod -n "$NS" -l "$CONTROLLER_LABEL" --timeout=120s >/dev/null 2>&1 || true
+  kubectl wait --for=condition=Ready pod -n "$NS" -l "$CONTROLLER_LABEL" --timeout=120s > /dev/null 2>&1 || true
 }
 
 print_result() {
@@ -94,7 +97,7 @@ print_result() {
     echo "or re-seal instead (04_google_sso, 06_ntfy_auth) + commit/push."
     return 0
   fi
-cat <<EOF
+  cat << EOF
 Sealed Secrets master key restored from:
   ${BACKUP_FILE}
 The controller is back up with the old key loaded; the committed SealedSecrets decrypt into their Secrets

@@ -8,18 +8,18 @@ SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 source "${SCRIPT_DIR}/common.sh"
 
 # ---- knobs ----
-INGRESS_VALUES="${PLATFORM_CHARTS}/06_platform_ingress/values.yaml"  # URL source of truth
+INGRESS_VALUES="${PLATFORM_CHARTS}/06_platform_ingress/values.yaml" # URL source of truth
 RABBITMQ_NS="rabbitmq"
-RABBITMQ_SECRET="rabbitmq-default-user"    # operator-generated admin creds
+RABBITMQ_SECRET="rabbitmq-default-user" # operator-generated admin creds
 RABBITMQ_SUBDOMAIN="rabbitmq"
-NTFY_SUBDOMAIN="ntfy"                      # a host under the platform ingress, not an ingress of its own
-NTFY_USER="phone"                          # Android subscriber (read-only)
-NTFY_TOPIC="cluster-alerts"                # matches 06_ntfy_auth.sh / 05_ntfy
-WEBHOOK_FILE="${CLUSTER_DIR}/argocd-github-webhook-secret.txt"   # plaintext webhook secret (02b mints it)
+NTFY_SUBDOMAIN="ntfy"                                          # a host under the platform ingress, not an ingress of its own
+NTFY_USER="phone"                                              # Android subscriber (read-only)
+NTFY_TOPIC="cluster-alerts"                                    # matches 06_ntfy_auth.sh / 05_ntfy
+WEBHOOK_FILE="${CLUSTER_DIR}/argocd-github-webhook-secret.txt" # plaintext webhook secret (02b mints it)
 ARGOCD_SUBDOMAIN="argocd"
 
 # ---- state ----
-API_UP=1            # set by check_prerequisites
+API_UP=1 # set by check_prerequisites
 PLATFORM_DOMAIN=""
 
 # ---- functions ----
@@ -31,8 +31,8 @@ check_prerequisites() {
   say "prerequisites"
   require kubectl yq
   [ -f "$INGRESS_VALUES" ] || die "missing ${INGRESS_VALUES}"
-  use_kubeconfig                                              # dies only if the kubeconfig FILE is absent
-  kubectl get nodes >/dev/null 2>&1 || API_UP=0
+  use_kubeconfig # dies only if the kubeconfig FILE is absent
+  kubectl get nodes > /dev/null 2>&1 || API_UP=0
   [ "$API_UP" -eq 1 ] && ok "cluster reachable" || warn "cluster unreachable, RabbitMQ creds will be <unavailable>"
   PLATFORM_DOMAIN="$(ingress_domain platform)"
 }
@@ -42,8 +42,8 @@ show_rabbitmq() {
   say "RabbitMQ (management UI)"
   echo "  URL:      https://${RABBITMQ_SUBDOMAIN}.${PLATFORM_DOMAIN}"
   if [ "$API_UP" -eq 1 ]; then
-    user="$(kubectl -n "$RABBITMQ_NS" get secret "$RABBITMQ_SECRET" -o jsonpath='{.data.username}' 2>/dev/null | base64 -d)"
-    pass="$(kubectl -n "$RABBITMQ_NS" get secret "$RABBITMQ_SECRET" -o jsonpath='{.data.password}' 2>/dev/null | base64 -d)"
+    user="$(kubectl -n "$RABBITMQ_NS" get secret "$RABBITMQ_SECRET" -o jsonpath='{.data.username}' 2> /dev/null | base64 -d)"
+    pass="$(kubectl -n "$RABBITMQ_NS" get secret "$RABBITMQ_SECRET" -o jsonpath='{.data.password}' 2> /dev/null | base64 -d)"
     if [ -n "$user" ] && [ -n "$pass" ]; then
       echo "  Username: ${user}"
       echo "  Password: ${pass}"
@@ -77,7 +77,7 @@ show_ntfy() {
 show_github_webhook() {
   say "GitHub webhook (ArgoCD push-sync)"
   echo "  Config:   ${REPO_URL}/settings/hooks/new"
-  echo "  Payload:  https://${ARGOCD_SUBDOMAIN}.${PLATFORM_DOMAIN}/api/webhook"   # HMAC-verified, bypasses SSO
+  echo "  Payload:  https://${ARGOCD_SUBDOMAIN}.${PLATFORM_DOMAIN}/api/webhook" # HMAC-verified, bypasses SSO
   if [ -s "$WEBHOOK_FILE" ]; then
     echo "  Secret:   $(cat "$WEBHOOK_FILE")"
     ok "read webhook secret (${WEBHOOK_FILE})"
@@ -92,8 +92,8 @@ show_sso_only_hosts() {
   local sub
   say "SSO-only (log in with your Google account, no separate login)"
   while read -r sub; do
-    [ "$sub" = "$RABBITMQ_SUBDOMAIN" ] && continue                # rabbitmq has its own login, shown above
-    [ "$sub" = "$NTFY_SUBDOMAIN" ] && continue                    # ntfy's edge is open, shown above
+    [ "$sub" = "$RABBITMQ_SUBDOMAIN" ] && continue # rabbitmq has its own login, shown above
+    [ "$sub" = "$NTFY_SUBDOMAIN" ] && continue     # ntfy's edge is open, shown above
     printf '  %-9s https://%s.%s\n' "${sub}:" "$sub" "$PLATFORM_DOMAIN"
   done < <(yq -r '.ingress.ingresses[] | select(.name=="platform").hosts[].subdomain' "$INGRESS_VALUES")
 }

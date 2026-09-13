@@ -9,11 +9,11 @@ source "${SCRIPT_DIR}/common.sh"
 
 # ---- knobs ----
 LH_CHART_DIR="${PLATFORM_CHARTS}/02_longhorn"
-LH_VALUES="${LH_CHART_DIR}/values.yaml"                     # the Longhorn wrapper values (single source)
-LH_NAMESPACE="longhorn-system"                              # == the app destination
+LH_VALUES="${LH_CHART_DIR}/values.yaml" # the Longhorn wrapper values (single source)
+LH_NAMESPACE="longhorn-system"          # == the app destination
 SEALED_OUT="${LH_CHART_DIR}/templates/backup-s3-sealedsecret.yaml"
-SECRET_NAME="longhorn-backup-s3"                            # == values backupTargetCredentialSecret
-SECRET_KEY_ID="AWS_ACCESS_KEY_ID"                           # == the names Longhorn's backup target reads
+SECRET_NAME="longhorn-backup-s3"  # == values backupTargetCredentialSecret
+SECRET_KEY_ID="AWS_ACCESS_KEY_ID" # == the names Longhorn's backup target reads
 SECRET_KEY_SECRET="AWS_SECRET_ACCESS_KEY"
 
 # ---- functions ----
@@ -26,7 +26,7 @@ check_prerequisites() {
     warn "AWS_DEPLOY_ACCESS_KEY_ID empty in .env -> S3 backups disabled; skipping (02_longhorn values left as-is)."
     exit 0
   fi
-  [ -n "$AWS_REGION" ]       || die "AWS_REGION is empty in .env"
+  [ -n "$AWS_REGION" ] || die "AWS_REGION is empty in .env"
   [ -n "$S3_BACKUP_BUCKET" ] || die "S3_BACKUP_BUCKET is empty in .env"
   ok "tools present, values file found"
 }
@@ -39,7 +39,7 @@ enable_in_chart_values() {
   local backup_target="s3://${S3_BACKUP_BUCKET}@${AWS_REGION}/longhorn/"
   say "enabling backups: injecting backupTarget + credential secret into ${LH_VALUES}"
   ys_set "$LH_VALUES" "\"${backup_target}\"" longhorn defaultBackupStore backupTarget
-  ys_set "$LH_VALUES" "\"${SECRET_NAME}\""   longhorn defaultBackupStore backupTargetCredentialSecret
+  ys_set "$LH_VALUES" "\"${SECRET_NAME}\"" longhorn defaultBackupStore backupTargetCredentialSecret
   [ "$(yq -r '.longhorn.defaultBackupStore.backupTarget' "$LH_VALUES")" = "$backup_target" ] \
     && ok "backupTarget=${backup_target}" || bad "backupTarget not set"
   [ "$(yq -r '.longhorn.defaultBackupStore.backupTargetCredentialSecret' "$LH_VALUES")" = "$SECRET_NAME" ] \
@@ -60,7 +60,7 @@ print_result() {
     echo "Something failed, see above. Fix and re-run (idempotent)."
     return 0
   fi
-cat <<EOF
+  cat << EOF
 Longhorn S3 backups enabled (bucket ${S3_BACKUP_BUCKET}, prefix longhorn/, daily+weekly RecurringJobs). Only volumes
 on the 'longhorn-r2-retained-with-backups' StorageClass are backed up (opt-in). Redis + the monitoring volumes stay unbacked.
 Next:
@@ -76,7 +76,7 @@ EOF
 # ---- main ----
 
 check_prerequisites
-read_backup_creds        # they live in Terraform state, not .env: 10a must have run
+read_backup_creds # they live in Terraform state, not .env: 10a must have run
 enable_in_chart_values
 seal_writer_creds
 
