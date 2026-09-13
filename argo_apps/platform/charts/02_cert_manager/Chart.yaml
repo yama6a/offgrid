@@ -1,0 +1,10 @@
+apiVersion: v2
+name: cert-manager
+description: cert-manager, the X.509 issuance and renewal controller. The ClusterIssuers ship with 03_gateway, not here.
+type: application
+version: 0.1.0 # local chart, never bump version
+
+dependencies:
+  - name: cert-manager
+    version: "v1.21.2"
+    repository: https://charts.jetstack.io

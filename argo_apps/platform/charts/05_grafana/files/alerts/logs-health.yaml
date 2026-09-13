@@ -1,0 +1,46 @@
+apiVersion: 1
+groups:
+  - orgId: 1
+    name: logs-health
+    folder: offgrid
+    interval: 1m
+    rules:
+      - uid: high-error-log-rate
+        title: High error-log rate
+        condition: C
+        for: 5m
+        labels: {severity: warning}
+        annotations:
+          summary: 'More than 100 error logs in the last 5m across the cluster'
+          description: |
+            - >100 error logs in 5m cluster-wide: something is failing loudly
+            - open VictoriaLogs (vlogs) filtered on level:error to find the source
+            - drill into the noisiest namespace/pod
+        noDataState: OK
+        execErrState: KeepLast
+        data:
+          - refId: A
+            relativeTimeRange: {from: 300, to: 0}
+            datasourceUid: VictoriaLogs
+            model:
+              refId: A
+              queryType: stats
+              # Matches structured (level:error) AND logfmt text (level=error) so text-format loggers count,
+              # but NOT bare `error`, which substring-matched info logs merely mentioning the word.
+              # The NOT-list mutes benign lines misclassed as error: cert-manager informer, argocd cache race.
+              expr: '(level:error OR level:ERROR OR "level=error" OR "level=ERROR") AND NOT ("OnUpdate missing ObjectOld" OR "DiffFromCache" OR "cache: key is missing") | stats count() as logs'
+          - refId: B
+            relativeTimeRange: {from: 300, to: 0}
+            datasourceUid: __expr__
+            model: {refId: B, type: reduce, expression: A, reducer: last, datasource: {type: __expr__, uid: __expr__}}
+          - refId: C
+            relativeTimeRange: {from: 300, to: 0}
+            datasourceUid: __expr__
+            model:
+              refId: C
+              type: threshold
+              expression: B
+              datasource: {type: __expr__, uid: __expr__}
+              conditions:
+                - type: query
+                  evaluator: {type: gt, params: [100]}

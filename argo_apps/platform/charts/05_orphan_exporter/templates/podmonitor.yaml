@@ -1,0 +1,16 @@
+# This scrape is WHY the exporter's own labels are res_-prefixed: it stamps namespace/pod/instance/container/
+# job here and vmagent adds cluster, all of which beat the metric's own. See the exporter in configmap.yaml.
+apiVersion: monitoring.coreos.com/v1
+kind: PodMonitor
+metadata:
+  name: orphan-exporter
+  namespace: {{ .Release.Namespace }}
+  labels:
+    app.kubernetes.io/name: orphan-exporter
+spec:
+  selector:
+    matchLabels:
+      app.kubernetes.io/name: orphan-exporter
+  podMetricsEndpoints:
+    - port: metrics
+      interval: 60s

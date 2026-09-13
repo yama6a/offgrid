@@ -1,0 +1,10 @@
+apiVersion: v2
+name: grafana
+description: Grafana, the dashboards UI and the alerting owner for the monitoring core (no Alertmanager, no vmalert). Its own auth is off; the platform-ingress SSO is the only gate.
+type: application
+version: 0.1.0 # local chart, never bump version
+
+dependencies:
+  - name: grafana
+    version: "10.5.15"
+    repository: https://grafana.github.io/helm-charts

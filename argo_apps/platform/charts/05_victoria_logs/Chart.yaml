@@ -1,0 +1,10 @@
+apiVersion: v2
+name: victoria-logs
+description: The logs half of observability, a single-replica VLSingle store plus the victoria-logs-collector DaemonSet that tails every container log and the node's own system logs.
+type: application
+version: 0.1.0 # local chart, never bump version
+
+dependencies:
+  - name: victoria-logs-collector
+    version: "0.3.7"
+    repository: https://victoriametrics.github.io/helm-charts/

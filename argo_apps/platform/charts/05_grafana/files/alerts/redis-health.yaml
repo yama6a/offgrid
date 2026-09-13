@@ -1,0 +1,309 @@
+apiVersion: 1
+groups:
+  # redis-down uses DYNAMIC severity: the redis-instance alertCritical knob stamps alert-criticality onto the
+  # pod, joined here. Everything else is a data-plane anomaly, so warning, except the two-level memory rule.
+  # These instances run noeviction with maxmemory at 80% of the container limit, so approaching maxmemory means
+  # WRITES START FAILING rather than keys being evicted. That is why the alerts are on memory percent, not on
+  # eviction rate. No replication alerts: instances are standalone by design.
+  - orgId: 1
+    name: redis-health
+    folder: offgrid
+    interval: 1m
+    rules:
+      - uid: redis-down
+        title: Redis instance down
+        condition: C
+        for: 2m
+        labels:
+          severity: '{{ if eq (index $labels "label_alert_criticality") "critical" }}critical{{ else }}warning{{ end }}'
+        annotations:
+          summary: 'Redis {{ $labels.namespace }}/{{ $labels.pod }} is not responding (redis_up=0)'
+          description: |
+            - exporter can't reach Redis: pod down, crashlooping, or OOMKilled
+            - check: kubectl -n {{ $labels.namespace }} get pod {{ $labels.pod }}
+            - logs: kubectl -n {{ $labels.namespace }} logs {{ $labels.pod }} -c {{ $labels.namespace }}
+            - Longhorn volume may be detached mid-reschedule: check the PVC/attachment
+        noDataState: OK
+        execErrState: KeepLast
+        data:
+          - refId: A
+            relativeTimeRange: {from: 600, to: 0}
+            datasourceUid: VictoriaMetrics
+            model:
+              refId: A
+              instant: true
+              expr: '(redis_up == bool 0) * on(namespace, pod) group_left(label_alert_criticality) kube_pod_labels'
+          - refId: B
+            relativeTimeRange: {from: 600, to: 0}
+            datasourceUid: __expr__
+            model: {refId: B, type: reduce, expression: A, reducer: last, datasource: {type: __expr__, uid: __expr__}}
+          - refId: C
+            relativeTimeRange: {from: 600, to: 0}
+            datasourceUid: __expr__
+            model:
+              refId: C
+              type: threshold
+              expression: B
+              datasource: {type: __expr__, uid: __expr__}
+              conditions:
+                - type: query
+                  evaluator: {type: gt, params: [0]}
+      # noeviction means writes fail at 100%. `> 0` guards instances with maxmemory unset.
+      - uid: redis-memory-high
+        title: Redis memory usage high
+        condition: C
+        for: 5m
+        labels: {severity: warning}
+        annotations:
+          summary: 'Redis {{ $labels.namespace }}/{{ $labels.pod }} above 90% of maxmemory (writes fail at 100%, noeviction)'
+          description: |
+            - nearing maxmemory (80% of the container limit), and noeviction means writes fail outright at 100%
+            - fix: raise resources.limits.memory in the workload values.yaml
+            - or shed keys: check TTLs / unbounded keys: redis-cli info keyspace
+        noDataState: OK
+        execErrState: KeepLast
+        data:
+          - refId: A
+            relativeTimeRange: {from: 600, to: 0}
+            datasourceUid: VictoriaMetrics
+            model:
+              refId: A
+              instant: true
+              expr: '100 * redis_memory_used_bytes / (redis_memory_max_bytes > 0)'
+          - refId: B
+            relativeTimeRange: {from: 600, to: 0}
+            datasourceUid: __expr__
+            model: {refId: B, type: reduce, expression: A, reducer: last, datasource: {type: __expr__, uid: __expr__}}
+          - refId: C
+            relativeTimeRange: {from: 600, to: 0}
+            datasourceUid: __expr__
+            model:
+              refId: C
+              type: threshold
+              expression: B
+              datasource: {type: __expr__, uid: __expr__}
+              conditions:
+                - type: query
+                  evaluator: {type: gt, params: [90]}
+      - uid: redis-memory-critical
+        title: Redis memory usage critical
+        condition: C
+        for: 2m
+        labels: {severity: critical}
+        annotations:
+          summary: 'Redis {{ $labels.namespace }}/{{ $labels.pod }} above 98% of maxmemory: writes about to fail (noeviction)'
+          description: |
+            - at >98% of maxmemory, and noeviction means writes fail outright at 100% (imminent)
+            - fix now: raise resources.limits.memory in the workload values.yaml
+            - or shed keys immediately: redis-cli info keyspace, check for missing TTLs
+        noDataState: OK
+        execErrState: KeepLast
+        data:
+          - refId: A
+            relativeTimeRange: {from: 600, to: 0}
+            datasourceUid: VictoriaMetrics
+            model:
+              refId: A
+              instant: true
+              expr: '100 * redis_memory_used_bytes / (redis_memory_max_bytes > 0)'
+          - refId: B
+            relativeTimeRange: {from: 600, to: 0}
+            datasourceUid: __expr__
+            model: {refId: B, type: reduce, expression: A, reducer: last, datasource: {type: __expr__, uid: __expr__}}
+          - refId: C
+            relativeTimeRange: {from: 600, to: 0}
+            datasourceUid: __expr__
+            model:
+              refId: C
+              type: threshold
+              expression: B
+              datasource: {type: __expr__, uid: __expr__}
+              conditions:
+                - type: query
+                  evaluator: {type: gt, params: [98]}
+      # At maxclients Redis refuses new connections, which surfaces as app errors, so fire near-immediately.
+      - uid: redis-rejected-connections
+        title: Redis rejected connections
+        condition: C
+        for: 1m
+        labels: {severity: warning}
+        annotations:
+          summary: 'Redis {{ $labels.namespace }}/{{ $labels.pod }} rejected connections (maxclients reached)'
+          description: |
+            - hit maxclients: new connections refused, clients see errors
+            - check: redis-cli info clients (connected_clients vs maxclients)
+            - likely a client-side connection leak: check the app's pool sizing/close
+        noDataState: OK
+        execErrState: KeepLast
+        data:
+          - refId: A
+            relativeTimeRange: {from: 600, to: 0}
+            datasourceUid: VictoriaMetrics
+            model:
+              refId: A
+              instant: true
+              expr: 'increase(redis_rejected_connections_total[5m])'
+          - refId: B
+            relativeTimeRange: {from: 600, to: 0}
+            datasourceUid: __expr__
+            model: {refId: B, type: reduce, expression: A, reducer: last, datasource: {type: __expr__, uid: __expr__}}
+          - refId: C
+            relativeTimeRange: {from: 600, to: 0}
+            datasourceUid: __expr__
+            model:
+              refId: C
+              type: threshold
+              expression: B
+              datasource: {type: __expr__, uid: __expr__}
+              conditions:
+                - type: query
+                  evaluator: {type: gt, params: [0]}
+      - uid: redis-connections-high
+        title: Redis connections near maxclients
+        condition: C
+        for: 5m
+        labels: {severity: warning}
+        annotations:
+          summary: 'Redis {{ $labels.namespace }}/{{ $labels.pod }} using >80% of maxclients'
+          description: |
+            - connection count nearing maxclients: rejections imminent
+            - check: redis-cli info clients; likely a client pool leak
+            - fix the client (close/reuse connections) before it saturates
+        noDataState: OK
+        execErrState: KeepLast
+        data:
+          - refId: A
+            relativeTimeRange: {from: 600, to: 0}
+            datasourceUid: VictoriaMetrics
+            model:
+              refId: A
+              instant: true
+              expr: 'redis_connected_clients / redis_config_maxclients'
+          - refId: B
+            relativeTimeRange: {from: 600, to: 0}
+            datasourceUid: __expr__
+            model: {refId: B, type: reduce, expression: A, reducer: last, datasource: {type: __expr__, uid: __expr__}}
+          - refId: C
+            relativeTimeRange: {from: 600, to: 0}
+            datasourceUid: __expr__
+            model:
+              refId: C
+              type: threshold
+              expression: B
+              datasource: {type: __expr__, uid: __expr__}
+              conditions:
+                - type: query
+                  evaluator: {type: gt, params: [0.8]}
+      # RDB status 0 means the last background save failed (0=err, 1=ok in the exporter).
+      - uid: redis-rdb-save-failing
+        title: Redis RDB save failing
+        condition: C
+        for: 5m
+        labels: {severity: warning}
+        annotations:
+          summary: 'Redis {{ $labels.namespace }}/{{ $labels.pod }} last RDB background save FAILED'
+          description: |
+            - last background RDB save failed: snapshot on disk is stale
+            - usual cause: PVC full or fork failed under memory pressure
+            - check: redis-cli info persistence; df on /data; the pod's logs
+        noDataState: OK
+        execErrState: KeepLast
+        data:
+          - refId: A
+            relativeTimeRange: {from: 600, to: 0}
+            datasourceUid: VictoriaMetrics
+            model:
+              refId: A
+              instant: true
+              expr: 'redis_rdb_last_bgsave_status == bool 0'
+          - refId: B
+            relativeTimeRange: {from: 600, to: 0}
+            datasourceUid: __expr__
+            model: {refId: B, type: reduce, expression: A, reducer: last, datasource: {type: __expr__, uid: __expr__}}
+          - refId: C
+            relativeTimeRange: {from: 600, to: 0}
+            datasourceUid: __expr__
+            model:
+              refId: C
+              type: threshold
+              expression: B
+              datasource: {type: __expr__, uid: __expr__}
+              conditions:
+                - type: query
+                  evaluator: {type: gt, params: [0]}
+      # AOF write status 0 means failing. Only durable instances report a real status, RDB-only ones stay at 1,
+      # so there are no false positives. On a durable instance this is a data-loss risk.
+      - uid: redis-aof-write-failing
+        title: Redis AOF write failing
+        condition: C
+        for: 5m
+        labels: {severity: warning}
+        annotations:
+          summary: 'Redis {{ $labels.namespace }}/{{ $labels.pod }} last AOF write FAILED (data-loss risk on a durable instance)'
+          description: |
+            - AOF write failing on a durable instance: writes since last fsync at risk
+            - usual cause: PVC full or a disk I/O error
+            - check: redis-cli info persistence (aof_last_write_status); df on /data
+        noDataState: OK
+        execErrState: KeepLast
+        data:
+          - refId: A
+            relativeTimeRange: {from: 600, to: 0}
+            datasourceUid: VictoriaMetrics
+            model:
+              refId: A
+              instant: true
+              expr: 'redis_aof_last_write_status == bool 0'
+          - refId: B
+            relativeTimeRange: {from: 600, to: 0}
+            datasourceUid: __expr__
+            model: {refId: B, type: reduce, expression: A, reducer: last, datasource: {type: __expr__, uid: __expr__}}
+          - refId: C
+            relativeTimeRange: {from: 600, to: 0}
+            datasourceUid: __expr__
+            model:
+              refId: C
+              type: threshold
+              expression: B
+              datasource: {type: __expr__, uid: __expr__}
+              conditions:
+                - type: query
+                  evaluator: {type: gt, params: [0]}
+      - uid: redis-fragmentation-high
+        title: Redis memory fragmentation high
+        condition: C
+        for: 30m
+        labels: {severity: warning}
+        annotations:
+          summary: 'Redis {{ $labels.namespace }}/{{ $labels.pod }} memory fragmentation ratio >1.5'
+          description: |
+            - RSS well above dataset: jemalloc churn not being reclaimed
+            - check: redis-cli info memory (mem_fragmentation_ratio, used_memory)
+            - active defrag is on: give it time, or restart the pod to reset RSS
+            - only alerts once the instance is >50% full, so this is real fragmentation
+        noDataState: OK
+        execErrState: KeepLast
+        data:
+          - refId: A
+            relativeTimeRange: {from: 600, to: 0}
+            datasourceUid: VictoriaMetrics
+            model:
+              refId: A
+              instant: true
+              # Only above 50% full: on a near-empty tiny instance RSS overhead inflates the ratio.
+              expr: 'redis_mem_fragmentation_ratio and (redis_memory_used_bytes / (redis_memory_max_bytes > 0) > 0.5)'
+          - refId: B
+            relativeTimeRange: {from: 600, to: 0}
+            datasourceUid: __expr__
+            model: {refId: B, type: reduce, expression: A, reducer: last, datasource: {type: __expr__, uid: __expr__}}
+          - refId: C
+            relativeTimeRange: {from: 600, to: 0}
+            datasourceUid: __expr__
+            model:
+              refId: C
+              type: threshold
+              expression: B
+              datasource: {type: __expr__, uid: __expr__}
+              conditions:
+                - type: query
+                  evaluator: {type: gt, params: [1.5]}

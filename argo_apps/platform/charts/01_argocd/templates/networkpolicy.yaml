@@ -1,0 +1,62 @@
+# Namespace-wide default-deny for argocd. If this is wrong when ENFORCED, argocd loses API and git egress and
+# cannot self-heal the fix. Break-glass: `kubectl delete ciliumnetworkpolicy -n argocd argocd`.
+apiVersion: cilium.io/v2
+kind: CiliumNetworkPolicy
+metadata:
+  name: argocd
+  namespace: {{ .Release.Namespace }}
+spec:
+  endpointSelector: {}
+  ingress:
+    # UI/API from the merged Envoy edge. Cilium enforces on the destination POD port, so 8080, not the
+    # Service's 80.
+    - fromEndpoints:
+        - matchLabels:
+            k8s:io.kubernetes.pod.namespace: envoy-gateway-system
+            app.kubernetes.io/managed-by: envoy-gateway
+      toPorts:
+        - ports:
+            - { port: "8080", protocol: TCP }
+    # vmagent scrapes each component's metrics (server / repo-server / controller / applicationset).
+    - fromEndpoints:
+        - matchLabels:
+            k8s:io.kubernetes.pod.namespace: monitoring
+            app.kubernetes.io/name: vmagent
+      toPorts:
+        - ports:
+            - { port: "8083", protocol: TCP }
+            - { port: "8084", protocol: TCP }
+            - { port: "8082", protocol: TCP }
+            - { port: "8080", protocol: TCP }
+            - { port: "9121", protocol: TCP }   # the argocd-redis exporter sidecar
+    # kubectl port-forward to argocd-server, break-glass. Also lands on the pod port, not the Service's.
+    - fromEntities: [host]
+      toPorts:
+        - ports:
+            - { port: "8080", protocol: TCP }
+    # Component mesh within the argocd namespace (repo-server :8081, redis :6379, ...).
+    - fromEndpoints:
+        - {}
+    # Watch replies from the apiserver land on ephemeral ports. Conntrack covers them while the entry
+    # lives; once it ages out mid-stream the retransmit arrives as a new flow with no rule to match.
+    - fromEntities: [kube-apiserver]
+  egress:
+    # DNS.
+    - toEndpoints:
+        - matchLabels:
+            k8s:io.kubernetes.pod.namespace: kube-system
+            k8s-app: kube-dns
+      toPorts:
+        - ports:
+            - { port: "53", protocol: UDP }
+            - { port: "53", protocol: TCP }
+    # application-controller reconciles the cluster with cluster-admin.
+    - toEntities: [kube-apiserver]
+    # repo-server / applicationset clone from GitHub.
+    - toEntities: [world]
+      toPorts:
+        - ports:
+            - { port: "443", protocol: TCP }
+    # Component mesh within the argocd namespace.
+    - toEndpoints:
+        - {}

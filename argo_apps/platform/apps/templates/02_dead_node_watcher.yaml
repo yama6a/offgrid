@@ -1,0 +1,33 @@
+# dead-node-watcher: declares a NotReady node dead so its volumes detach in seconds, not ~6 minutes.
+apiVersion: argoproj.io/v1alpha1
+kind: Application
+metadata:
+  name: dead-node-watcher
+  namespace: argocd
+  finalizers:
+    - resources-finalizer.argocd.argoproj.io
+  annotations:
+    argocd.argoproj.io/sync-wave: "2"
+spec:
+  project: default
+  revisionHistoryLimit: 0
+  source:
+    repoURL: {{ .Values.repoURL }}
+    targetRevision: HEAD
+    path: argo_apps/platform/charts/02_dead_node_watcher
+  destination:
+    server: https://kubernetes.default.svc
+    namespace: dead-node-watcher
+  syncPolicy:
+    automated:
+      prune: true
+      selfHeal: true
+    retry:
+      limit: -1
+      refresh: true
+      backoff:
+        duration: 5s
+        factor: 2
+        maxDuration: 1m
+    syncOptions:
+      - CreateNamespace=true

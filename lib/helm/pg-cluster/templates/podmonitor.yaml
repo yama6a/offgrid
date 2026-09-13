@@ -1,0 +1,36 @@
+apiVersion: monitoring.coreos.com/v1
+kind: PodMonitor
+metadata:
+  name: {{ include "pg-cluster.name" . }}-cluster-podmonitor
+  namespace: {{ .Release.Namespace }}
+  {{- with (include "pg-cluster.protectAnnotations" .) }}
+  annotations:
+    {{- . | nindent 4 }}
+  {{- end }}
+  labels:
+    cnpg.io/cluster: {{ include "pg-cluster.name" . }}
+    {{- include "pg-cluster.labels" . | nindent 4 }}
+spec:
+  selector:
+    matchLabels:
+      cnpg.io/cluster: {{ include "pg-cluster.name" . }}
+      cnpg.io/podRole: instance
+  podMetricsEndpoints:
+    - port: metrics
+      # Lets the exporter's own `cluster` label (the CNPG cluster name) beat vmagent's global cluster=<k8s
+      # cluster> external label, which otherwise renames it to exported_cluster and leaves the CNPG dashboard,
+      # which resolves its instances from `cluster`, showing "No data". A metricRelabelings rule can NOT do this:
+      # vmagent merges its external labels AFTER those run, so there is nothing to rename yet. `cluster` is the
+      # only label these pods export that collides with a target label.
+      honorLabels: true
+      metricRelabelings:
+        # Keep the cnpg_pg_settings_setting series something reads: max_connections drives the
+        # connection-saturation alert, the rest fill the CNPG dashboard's Configuration row, one tile each.
+        # RE2 has no negative lookahead, so stamp the kept series then drop every other pg_settings series.
+        - sourceLabels: [__name__, name]
+          regex: "cnpg_pg_settings_setting;(max_connections|shared_buffers|effective_cache_size|work_mem|maintenance_work_mem|random_page_cost|seq_page_cost|block_size)"
+          targetLabel: __tmp_keep_pgsetting
+          replacement: "keep"
+        - sourceLabels: [__name__, __tmp_keep_pgsetting]
+          regex: "cnpg_pg_settings_setting;"
+          action: drop

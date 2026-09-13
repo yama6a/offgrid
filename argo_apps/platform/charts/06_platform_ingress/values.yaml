@@ -1,0 +1,44 @@
+ingress:
+  ingresses:
+    - name: platform
+      domain: ops.example.com # written by 04_values.sh; platform UIs sit under *.ops.<base>, workloads under *.app.<base>
+      issuer: letsencrypt-prod # GitHub webhook SSL verification to argocd.<domain> needs a publicly-trusted cert
+      hosts:
+        - subdomain: argocd
+          targetNamespace: argocd
+          targetService: argocd-server
+          targetPort: 80
+          requestTimeout: "0s"           # the UI keeps /api/v1/stream/* open to receive live updates; Envoy's 15s default cuts it off with a 504
+
+        - subdomain: grafana
+          targetNamespace: monitoring
+          targetService: grafana
+          targetPort: 80
+        - subdomain: vmui
+          targetNamespace: monitoring
+          targetService: vmsingle-victoria-metrics-k8s-stack
+          targetPort: 8428
+        - subdomain: vlogs
+          targetNamespace: monitoring
+          targetService: vlsingle-victoria-logs
+          targetPort: 9428
+        - subdomain: hubble
+          targetNamespace: kube-system
+          targetService: hubble-ui
+          targetPort: 80
+        - subdomain: longhorn
+          targetNamespace: longhorn-system
+          targetService: longhorn-frontend # no auth of its own, gated by google-sso
+          targetPort: 80
+        - subdomain: rabbitmq
+          targetNamespace: rabbitmq
+          targetService: rabbitmq          # management UI, gated by google-sso then RabbitMQ's own login
+          targetPort: 15672
+        # Deliberately NOT listed in 04_google_sso, so this edge stays OPEN: a mobile app cannot do human
+        # OAuth. ntfy's own deny-all + token auth is the only gate. Keep this ingress on letsencrypt-prod:
+        # the Android app validates TLS and rejects a staging cert.
+        - subdomain: ntfy
+          targetNamespace: monitoring
+          targetService: ntfy
+          targetPort: 8080
+          requestTimeout: "0s"           # the app holds a long-poll stream; 15s would force a reconnect 4x/min

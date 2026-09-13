@@ -1,0 +1,40 @@
+# Default-deny both ways for the prober.
+apiVersion: cilium.io/v2
+kind: CiliumNetworkPolicy
+metadata:
+  name: blackbox-exporter
+  namespace: {{ .Release.Namespace }}
+spec:
+  endpointSelector:
+    matchLabels:
+      app.kubernetes.io/name: prometheus-blackbox-exporter
+  ingress:
+    # vmagent drives every probe and scrapes the exporter's own metrics; both land on :9115.
+    - fromEndpoints:
+        - matchLabels:
+            k8s:io.kubernetes.pod.namespace: monitoring
+            app.kubernetes.io/name: vmagent
+      toPorts:
+        - ports:
+            - { port: "9115", protocol: TCP }
+    # Kubelet TCP health probes hit the pod directly from the node.
+    - fromEntities: [host, remote-node]
+      toPorts:
+        - ports:
+            - { port: "9115", protocol: TCP }
+  egress:
+    # DNS (CoreDNS).
+    - toEndpoints:
+        - matchLabels:
+            k8s:io.kubernetes.pod.namespace: kube-system
+            k8s-app: kube-dns
+      toPorts:
+        - ports:
+            - { port: "53", protocol: UDP }
+            - { port: "53", protocol: TCP }
+    # The probe targets. Every ingress host resolves to the WAN address and comes back in via the router's
+    # hairpin, so from Cilium's side this is egress to `world`, not to the cluster's own gateway.
+    - toEntities: [world]
+      toPorts:
+        - ports:
+            - { port: "443", protocol: TCP }

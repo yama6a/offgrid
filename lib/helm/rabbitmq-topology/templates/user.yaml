@@ -1,0 +1,10 @@
+{{- $user := include "rabbitmq-topology.user" . -}}
+apiVersion: rabbitmq.com/v1beta1
+kind: User
+metadata:
+  name: {{ $user }}
+  namespace: {{ .Release.Namespace }}
+spec:
+  # importCredentialsSecret is OMITTED, so the operator GENERATES the username and password into Secret
+  # `{{ $user }}-user-credentials`, which the pod mounts. Nothing secret in git.
+  {{- include "rabbitmq-topology.clusterRef" . | nindent 2 }}

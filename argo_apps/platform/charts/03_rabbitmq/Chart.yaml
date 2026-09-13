@@ -1,0 +1,10 @@
+apiVersion: v2
+name: rabbitmq
+description: RabbitMQ, both operators and their CRDs plus the single shared broker and vhost, in ONE chart so the CRDs and the CRs land in one sync.
+type: application
+version: 0.1.0 # local chart, never bump version
+
+dependencies:
+  - name: rabbitmq-cluster-operator
+    version: "0.6.16"
+    repository: "oci://ghcr.io/cloudpirates-io/helm-charts"

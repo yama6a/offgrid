@@ -1,0 +1,193 @@
+apiVersion: 1
+groups:
+  # Per ROUTE. Envoy labels its upstream cluster stats envoy_cluster_name="httproute/<gw-ns>/<route>/rule/N",
+  # one per HTTPRoute rule, so grouping by that label gives per-route alerts. Filtered to httproute/.+ to skip
+  # Envoy's internal clusters (eg, xds_cluster, prometheus_stats, *_googleapis).
+  # The >0.2 rq/s floor keeps the error-ratio rules quiet on trivial traffic.
+  # envoy_cluster_upstream_rq_time is in MILLISECONDS.
+  - orgId: 1
+    name: ingress-http
+    folder: offgrid
+    interval: 1m
+    rules:
+      - uid: ingress-5xx-high
+        title: Ingress route 5xx rate high
+        condition: C
+        for: 5m
+        labels: {severity: warning}
+        annotations:
+          summary: 'Ingress route {{ $labels.envoy_cluster_name }} is returning >2% 5xx'
+          description: |
+            - backend returning 5xx: app errors or upstream unhealthy (cluster name = httproute/<gw-ns>/<route>/rule/N)
+            - find the backend Service/pods behind that HTTPRoute and check their logs
+            - pods: kubectl get pods -A | grep <backend>; logs: kubectl -n <ns> logs <pod>
+        noDataState: OK
+        execErrState: KeepLast
+        data:
+          - refId: A
+            relativeTimeRange: {from: 600, to: 0}
+            datasourceUid: VictoriaMetrics
+            model:
+              refId: A
+              instant: true
+              expr: '100 * sum by (envoy_cluster_name) (rate(envoy_cluster_upstream_rq_xx{envoy_response_code_class="5", envoy_cluster_name=~"httproute/.+"}[5m])) / sum by (envoy_cluster_name) (rate(envoy_cluster_upstream_rq_total{envoy_cluster_name=~"httproute/.+"}[5m])) and sum by (envoy_cluster_name) (rate(envoy_cluster_upstream_rq_total{envoy_cluster_name=~"httproute/.+"}[5m])) > 0.2'
+          - refId: B
+            relativeTimeRange: {from: 600, to: 0}
+            datasourceUid: __expr__
+            model: {refId: B, type: reduce, expression: A, reducer: last, datasource: {type: __expr__, uid: __expr__}}
+          - refId: C
+            relativeTimeRange: {from: 600, to: 0}
+            datasourceUid: __expr__
+            model:
+              refId: C
+              type: threshold
+              expression: B
+              datasource: {type: __expr__, uid: __expr__}
+              conditions:
+                - type: query
+                  evaluator: {type: gt, params: [2]}
+      - uid: ingress-4xx-high
+        title: Ingress route 4xx rate high
+        condition: C
+        for: 10m
+        labels: {severity: warning}
+        annotations:
+          summary: 'Ingress route {{ $labels.envoy_cluster_name }} is returning >25% 4xx'
+          description: |
+            - high client-error rate: often 401/403 from SSO, or 404 from a route/path mismatch
+            - cluster name = httproute/<gw-ns>/<route>/rule/N; check that HTTPRoute's matches + the google-sso allowlist
+            - inspect: kubectl get httproute -A; kubectl -n gateway get securitypolicy
+        noDataState: OK
+        execErrState: KeepLast
+        data:
+          - refId: A
+            relativeTimeRange: {from: 600, to: 0}
+            datasourceUid: VictoriaMetrics
+            model:
+              refId: A
+              instant: true
+              expr: '100 * sum by (envoy_cluster_name) (rate(envoy_cluster_upstream_rq_xx{envoy_response_code_class="4", envoy_cluster_name=~"httproute/.+"}[5m])) / sum by (envoy_cluster_name) (rate(envoy_cluster_upstream_rq_total{envoy_cluster_name=~"httproute/.+"}[5m])) and sum by (envoy_cluster_name) (rate(envoy_cluster_upstream_rq_total{envoy_cluster_name=~"httproute/.+"}[5m])) > 0.2'
+          - refId: B
+            relativeTimeRange: {from: 600, to: 0}
+            datasourceUid: __expr__
+            model: {refId: B, type: reduce, expression: A, reducer: last, datasource: {type: __expr__, uid: __expr__}}
+          - refId: C
+            relativeTimeRange: {from: 600, to: 0}
+            datasourceUid: __expr__
+            model:
+              refId: C
+              type: threshold
+              expression: B
+              datasource: {type: __expr__, uid: __expr__}
+              conditions:
+                - type: query
+                  evaluator: {type: gt, params: [25]}
+      - uid: ingress-latency-p95-high
+        title: Ingress route p95 latency high
+        condition: C
+        for: 10m
+        labels: {severity: warning}
+        annotations:
+          summary: 'Ingress route {{ $labels.envoy_cluster_name }} p95 upstream latency above 2s'
+          description: |
+            - backend slow to respond: overloaded, CPU-throttled, or waiting on a dependency (DB/Redis)
+            - cluster name = httproute/<gw-ns>/<route>/rule/N; find the backend pods and check load/throttling
+            - pods: kubectl -n <ns> top pod; logs: kubectl -n <ns> logs <pod>
+        noDataState: OK
+        execErrState: KeepLast
+        data:
+          - refId: A
+            relativeTimeRange: {from: 600, to: 0}
+            datasourceUid: VictoriaMetrics
+            model:
+              refId: A
+              instant: true
+              expr: 'histogram_quantile(0.95, sum by (le, envoy_cluster_name) (rate(envoy_cluster_upstream_rq_time_bucket{envoy_cluster_name=~"httproute/.+"}[5m])))'
+          - refId: B
+            relativeTimeRange: {from: 600, to: 0}
+            datasourceUid: __expr__
+            model: {refId: B, type: reduce, expression: A, reducer: last, datasource: {type: __expr__, uid: __expr__}}
+          - refId: C
+            relativeTimeRange: {from: 600, to: 0}
+            datasourceUid: __expr__
+            model:
+              refId: C
+              type: threshold
+              expression: B
+              datasource: {type: __expr__, uid: __expr__}
+              conditions:
+                - type: query
+                  evaluator: {type: gt, params: [2000]}
+      # The 503 cause: a route whose backend has zero healthy hosts.
+      - uid: ingress-no-healthy-upstream
+        title: Ingress route has no healthy upstream
+        condition: C
+        for: 5m
+        labels: {severity: critical}
+        annotations:
+          summary: 'Ingress route {{ $labels.envoy_cluster_name }} has no healthy upstream hosts'
+          description: |
+            - outage: every backend endpoint is down/unhealthy, clients get 503
+            - cluster name = httproute/<gw-ns>/<route>/rule/N; check the backend Service has ready endpoints
+            - endpoints: kubectl -n <ns> get endpoints <svc>; pods: kubectl -n <ns> get pods
+        noDataState: OK
+        execErrState: KeepLast
+        data:
+          - refId: A
+            relativeTimeRange: {from: 600, to: 0}
+            datasourceUid: VictoriaMetrics
+            model:
+              refId: A
+              instant: true
+              expr: 'sum by (envoy_cluster_name) (envoy_cluster_membership_healthy{envoy_cluster_name=~"httproute/.+"}) == bool 0 and sum by (envoy_cluster_name) (envoy_cluster_membership_total{envoy_cluster_name=~"httproute/.+"}) > 0'
+          - refId: B
+            relativeTimeRange: {from: 600, to: 0}
+            datasourceUid: __expr__
+            model: {refId: B, type: reduce, expression: A, reducer: last, datasource: {type: __expr__, uid: __expr__}}
+          - refId: C
+            relativeTimeRange: {from: 600, to: 0}
+            datasourceUid: __expr__
+            model:
+              refId: C
+              type: threshold
+              expression: B
+              datasource: {type: __expr__, uid: __expr__}
+              conditions:
+                - type: query
+                  evaluator: {type: gt, params: [0]}
+      - uid: ingress-upstream-connect-failures
+        title: Ingress route upstream connection failures
+        condition: C
+        for: 10m
+        labels: {severity: warning}
+        annotations:
+          summary: 'Ingress route {{ $labels.envoy_cluster_name }} has upstream connection failures'
+          description: |
+            - Envoy can't open connections to the backend: pods restarting, port mismatch, or NetworkPolicy block
+            - cluster name = httproute/<gw-ns>/<route>/rule/N; verify Service port matches the container port
+            - check: kubectl -n <ns> get endpoints <svc>; kubectl -n <ns> get ciliumnetworkpolicy
+        noDataState: OK
+        execErrState: KeepLast
+        data:
+          - refId: A
+            relativeTimeRange: {from: 600, to: 0}
+            datasourceUid: VictoriaMetrics
+            model:
+              refId: A
+              instant: true
+              expr: 'sum by (envoy_cluster_name) (rate(envoy_cluster_upstream_cx_connect_fail{envoy_cluster_name=~"httproute/.+"}[5m]))'
+          - refId: B
+            relativeTimeRange: {from: 600, to: 0}
+            datasourceUid: __expr__
+            model: {refId: B, type: reduce, expression: A, reducer: last, datasource: {type: __expr__, uid: __expr__}}
+          - refId: C
+            relativeTimeRange: {from: 600, to: 0}
+            datasourceUid: __expr__
+            model:
+              refId: C
+              type: threshold
+              expression: B
+              datasource: {type: __expr__, uid: __expr__}
+              conditions:
+                - type: query
+                  evaluator: {type: gt, params: [0]}

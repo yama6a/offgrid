@@ -1,0 +1,30 @@
+{{- /*
+Extra redis.conf, mounted over the operator's generated base config. The `redis-additional.conf` key name is
+fixed by the operator.
+
+Active defrag: jemalloc does not return freed memory, so a high-churn workload leaves used_memory_rss inflated.
+Upstream's trigger thresholds never fire on a Pi-sized instance (default ignore-bytes 100mb against a ~77Mi
+maxmemory), hence the lowered values below.
+Redis conf takes no trailing inline comments, a `#` after a value is parsed as an argument, so the rationale
+has to live up here rather than on the lines themselves.
+*/ -}}
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: {{ .Values.name }}-ext-config
+  namespace: {{ .Release.Namespace }}
+  {{- with (include "redis-instance.protectAnnotations" .) }}
+  annotations:
+    {{- . | nindent 4 }}
+  {{- end }}
+  labels:
+    {{- include "redis-instance.labels" . | nindent 4 }}
+data:
+  redis-additional.conf: |
+    activedefrag yes
+    active-defrag-ignore-bytes 16mb
+    active-defrag-threshold-lower 15
+    {{- if .Values.persistence }}
+    appendonly yes
+    appendfsync everysec
+    {{- end }}

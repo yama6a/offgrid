@@ -1,0 +1,5 @@
+apiVersion: v2
+name: platform-apps
+description: Every platform Application, rendered from templates/ so repoURL lives in one place.
+type: application
+version: 0.1.0 # local chart, never bump version

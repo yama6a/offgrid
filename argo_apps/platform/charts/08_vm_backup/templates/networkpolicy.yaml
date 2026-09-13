@@ -1,0 +1,55 @@
+{{- /*
+Egress lockdown for the central backup pod, under the same bucket gate as the CronJob. Egress-only, the pod
+exposes nothing. VMSingle and VLSingle each separately allow this pod inbound in their own policy.
+No apiserver rule: the job reads the stores over HTTP by Service DNS and never touches the k8s API.
+*/ -}}
+{{- if .Values.bucket }}
+apiVersion: cilium.io/v2
+kind: CiliumNetworkPolicy
+metadata:
+  name: vm-backup
+  namespace: {{ .Release.Namespace }}
+spec:
+  endpointSelector:
+    matchLabels:
+      app.kubernetes.io/name: vm-backup
+      app.kubernetes.io/component: vm-backup
+  egress:
+    # DNS. L7 so Cilium's DNS proxy can back the toFQDNs rule below.
+    - toEndpoints:
+        - matchLabels:
+            k8s:io.kubernetes.pod.namespace: kube-system
+            k8s-app: kube-dns
+      toPorts:
+        - ports:
+            - { port: "53", protocol: UDP }
+            - { port: "53", protocol: TCP }
+          rules:
+            dns:
+              - matchPattern: "*"
+    # VMSingle metrics export.
+    - toEndpoints:
+        - matchLabels:
+            k8s:io.kubernetes.pod.namespace: monitoring
+            app.kubernetes.io/name: vmsingle
+            app.kubernetes.io/instance: victoria-metrics-k8s-stack
+      toPorts:
+        - ports:
+            - { port: "8428", protocol: TCP }
+    # VLSingle logs export.
+    - toEndpoints:
+        - matchLabels:
+            k8s:io.kubernetes.pod.namespace: monitoring
+            app.kubernetes.io/name: vlsingle
+            app.kubernetes.io/instance: victoria-logs
+      toPorts:
+        - ports:
+            - { port: "9428", protocol: TCP }
+    # S3 upload, both virtual-hosted and path-style regional endpoints.
+    - toFQDNs:
+        - matchPattern: "*.s3.{{ .Values.region }}.amazonaws.com"
+        - matchName: "s3.{{ .Values.region }}.amazonaws.com"
+      toPorts:
+        - ports:
+            - { port: "443", protocol: TCP }
+{{- end }}

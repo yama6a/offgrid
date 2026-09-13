@@ -1,0 +1,124 @@
+# Static checks only, no cluster. Each job NAME is a branch-protection required-check context, so renaming one
+# silently drops that gate until branch protection is updated too.
+name: CI
+
+on:
+  pull_request:
+    branches: [main]
+  push:
+    branches: [main]
+
+concurrency:
+  group: ci-${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: true
+
+permissions:
+  contents: read
+
+jobs:
+  shell:
+    name: shell
+    runs-on: ubuntu-24.04-arm
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+      # -e SC2034 is "X appears unused", which fires on common.sh's shared constants. They ARE used,
+      # by the scripts that source it, but shellcheck reads one file at a time so it never sees the use.
+      - uses: yama6a/gha/.github/actions/shellcheck@v1
+        with:
+          glob: lib/shell/*.sh
+          exclude: SC2034
+
+  yaml:
+    name: yaml
+    runs-on: ubuntu-24.04-arm
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+      - uses: yama6a/gha/.github/actions/yaml-checks@v1
+
+  renovate-config:
+    name: renovate-config
+    runs-on: ubuntu-24.04-arm
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+      # A broken config silently halts ALL dependency updates.
+      - uses: yama6a/gha/.github/actions/validate-renovate-config@v1
+        with:
+          config-file: renovate.json5
+
+  helm:
+    name: helm
+    runs-on: ubuntu-24.04-arm
+    env:
+      JOBS: 8 # parallel helm workers. The work is part network, part CPU, so above the core count still pays.
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+      - uses: azure/setup-helm@9bc31f4ebc9c6b171d7bfbaa5d006ae7abdb4310 # v5.0.1
+        with:
+          version: v4.3.0 # pinned so the gate matches the maintainer's local helm
+      # Install only; the render pass below feeds it a file list and needs the flags, not a run.
+      - uses: yama6a/gha/.github/actions/kubeconform@v1
+        with:
+          strict: 'false'
+          parallelism: ${{ env.JOBS }}
+      - name: add upstream helm repos
+        # helm dependency build needs classic (https) repos registered locally, exactly as ArgoCD's repo-server
+        # does. OCI deps need none. Derive them from every Chart.yaml so this never needs a hardcoded list.
+        # Serial and up front, so the parallel workers below only READ the index cache, never race writing it.
+        run: |
+          find argo_apps lib/helm -name Chart.yaml -print0 \
+            | xargs -0 grep -hoE 'repository:[[:space:]]*"?https://[^" ]+' \
+            | sed -E 's/repository:[[:space:]]*"?//' | sort -u | while read -r url; do
+                helm repo add "r$(printf '%s' "$url" | cksum | cut -d' ' -f1)" "$url" >/dev/null 2>&1 || true
+              done
+      - name: helm dependency build
+        # Reproduces ArgoCD's repo-server: rebuilds charts/ from the COMMITTED Chart.lock, so a missing or stale
+        # lock fails here rather than on sync.
+        # --skip-refresh: without it helm re-downloads every registered repo index (~30MB across 12 repos) once
+        # per chart, which was most of this job's runtime. The step above already fetched them seconds ago.
+        # No lib/helm chart has dependencies of its own, so the file:// sources stay read-only while workers run.
+        # Each worker buffers to its own file, so the per-chart groups below still print in a stable order.
+        run: |
+          out="$(mktemp -d)"; export out
+          grep -rl --include=Chart.yaml '^dependencies:' argo_apps lib/helm \
+            | xargs -n1 dirname | sort -u > "$out/dirs"
+          # the sh -c body is single-quoted on purpose: the worker expands $1 and $out, this shell must not
+          # shellcheck disable=SC2016
+          xargs -a "$out/dirs" -P "$JOBS" -n1 sh -c '
+            d="$1"; f="${out}/$(printf %s "$d" | tr / _)"
+            helm dependency build "$d" --skip-refresh > "$f" 2>&1 || mv "$f" "$f.fail"' _
+          fail=0
+          while read -r d; do
+            f="${out}/$(printf %s "$d" | tr / _)"
+            echo "::group::dep-build $d"; cat "$f" "$f.fail" 2>/dev/null || true; echo "::endgroup::"
+            if [ -e "$f.fail" ]; then echo "::error::dependency build failed: $d"; fail=1; fi
+          done < "$out/dirs"
+          exit $fail
+      - name: helm lint + template + kubeconform
+        # The ArgoCD-delivered wrappers plus the two apps/ charts that render the Application manifests
+        # themselves. The lib/helm/ shared charts are validated transitively as their deps.
+        # Render every chart first, validate after: one kubeconform over all of them downloads each CRD schema
+        # once, where 37 separate invocations each re-fetch the same schemas from the catalog.
+        run: |
+          out="$(mktemp -d)"; render="$(mktemp -d)"; export out render
+          find argo_apps \( -path '*/charts/*/Chart.yaml' -o -path '*/apps/Chart.yaml' \) \
+            -not -path '*/charts/*/charts/*' -printf '%h\n' | sort > "$out/dirs"
+          # the sh -c body is single-quoted on purpose: the worker expands $1 and $out, this shell must not
+          # shellcheck disable=SC2016
+          xargs -a "$out/dirs" -P "$JOBS" -n1 sh -c '
+            d="$1"; f="${out}/$(printf %s "$d" | tr / _)"; rc=0
+            mkdir -p "${render}/$(dirname "$d")"
+            { helm lint "$d" || rc=1
+              helm template "$d" --api-versions monitoring.coreos.com/v1 > "${render}/${d}.yaml" || rc=1
+            } > "$f" 2>&1
+            [ "$rc" = 0 ] || mv "$f" "$f.fail"' _
+          fail=0
+          while read -r d; do
+            f="${out}/$(printf %s "$d" | tr / _)"
+            echo "::group::$d"; cat "$f" "$f.fail" 2>/dev/null || true; echo "::endgroup::"
+            if [ -e "$f.fail" ]; then echo "::error::helm lint/template failed: $d"; fail=1; fi
+          done < "$out/dirs"
+          # KUBECONFORM_ARGS is meant to split into words here
+          # shellcheck disable=SC2086
+          find "$render" -name '*.yaml' -print0 \
+            | xargs -0 -r kubeconform $KUBECONFORM_ARGS || fail=1
+          exit $fail

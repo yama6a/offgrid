@@ -1,0 +1,14 @@
+{{- /* Renders nothing: fail-fast guards only (like the lib charts' validate.yaml). */ -}}
+{{- $seen := dict }}
+{{- range $d := fromYamlArray (include "google-sso.domains" .) }}
+{{- if not $d.domain }}{{ fail "google-sso: an extraDomains entry has no domain (the registrable domain its hosts sit under)" }}{{ end }}
+{{- if hasKey $seen $d.domain }}{{ fail (printf "google-sso: domain %q is listed twice. Each registrable domain gets exactly one SecurityPolicy, so the second entry would collide on sso-%s" $d.domain ($d.domain | replace "." "-")) }}{{ end }}
+{{- $_ := set $seen $d.domain true }}
+{{- if not $d.hosts }}{{ fail (printf "google-sso: domain %q gates no hosts. Remove the entry: it would still mint a google-sso.%s callback host and its cert for nothing" $d.domain $d.domain) }}{{ end }}
+{{- range $h := $d.hosts }}
+{{- if not $h.subdomain }}{{ fail (printf "google-sso: a host under %q has no subdomain" $d.domain) }}{{ end }}
+{{- if or (eq $h.subdomain $d.domain) (hasSuffix (printf ".%s" $d.domain) $h.subdomain) }}
+{{- fail (printf "google-sso: host subdomain %q under %q looks like a full hostname. Give just the subdomain (e.g. \"argocd.ops\"); the policy composes it against the domain, and the route name it targets is built the same way" $h.subdomain $d.domain) }}
+{{- end }}
+{{- end }}
+{{- end }}

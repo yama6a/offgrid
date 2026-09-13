@@ -1,0 +1,10 @@
+apiVersion: v2
+name: victoria-metrics-k8s-stack
+description: The monitoring core, VMSingle + VMAgent + node-exporter + kube-state-metrics. The bundled operator, vmalert, Alertmanager and Grafana are all off, each runs standalone.
+type: application
+version: 0.1.0 # local chart, never bump version
+
+dependencies:
+  - name: victoria-metrics-k8s-stack
+    version: "0.92.1"
+    repository: https://victoriametrics.github.io/helm-charts/

@@ -1,0 +1,8 @@
+apiVersion: v2
+name: barman-cloud-plugin
+description: The CloudNativePG Barman Cloud CNPG-I plugin, the component that performs WAL archiving and base backups to S3. Must live in the operator's namespace.
+type: application
+version: 0.1.0 # local chart, never bump version
+# Ships no upstream Helm chart, only a release manifest, so it is vendored verbatim as
+# templates/plugin-barman-cloud.yaml. To bump: re-run the curl in this chart's README.md and re-commit.
+appVersion: "v0.13.0" # also the image tag inside the vendored manifest

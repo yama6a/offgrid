@@ -1,0 +1,46 @@
+redis-operator:
+  redisOperator:
+    # Only guards the master-slave anti-affinity feature (RedisReplication), which we don't use. Off means
+    # there is no webhook serving-cert to manage, so no cert-manager dependency.
+    webhook: false
+    # Endpoint only. No PodMonitor ships from here (upstream has no toggle); the signal that matters is the
+    # per-instance redis-exporter, scraped by the redis-instance ServiceMonitor.
+    metrics:
+      enabled: true
+    imagePullPolicy: IfNotPresent # the tag is immutable, so Always just re-pulls on a bandwidth-limited cluster
+
+  # Top-level keys (the chart's pod/container contexts), NOT under redisOperator. readOnlyRootFilesystem is
+  # left off, unverified whether the controller has scratch writes.
+  podSecurityContext:
+    runAsNonRoot: true
+  securityContext:
+    runAsNonRoot: true
+    allowPrivilegeEscalation: false
+    capabilities:
+      drop: ["ALL"]
+    seccompProfile:
+      type: RuntimeDefault
+
+  # Fully specified, not just memory: Helm deep-merges this map, so an omitted key silently inherits the
+  # chart's 500m default. Dropping a key needs an explicit null, which renders as no key at all.
+  resources:
+    requests:
+      cpu: 10m
+      memory: 60Mi
+    limits:
+      cpu: null # no cpu limit anywhere in the cluster: CFS throttling stalls a burst even when the node is idle
+      memory: 92Mi
+
+  # Soft + hostname: bare Pi nodes have no zone label, and soft means raising replicas never wedges a pod
+  # Pending on 3 nodes. No-op at the chart's default single replica.
+  affinity:
+    podAntiAffinity:
+      preferredDuringSchedulingIgnoredDuringExecution:
+        - weight: 100
+          podAffinityTerm:
+            labelSelector:
+              matchLabels:
+                app.kubernetes.io/name: redis-operator
+            topologyKey: kubernetes.io/hostname
+
+# No StorageClasses here. Every redis-instance PVC uses longhorn-r2-ephemeral, owned by 02_longhorn.

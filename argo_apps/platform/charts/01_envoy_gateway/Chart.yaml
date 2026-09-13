@@ -1,0 +1,10 @@
+apiVersion: v2
+name: envoy-gateway
+description: Envoy Gateway, the cluster's Gateway API data plane. Owns the Gateway API CRDs, the `eg` GatewayClass and the LB-IP-pinning EnvoyProxy.
+type: application
+version: 0.1.0 # local chart, never bump version
+
+dependencies:
+  - name: gateway-helm
+    version: "1.9.1"
+    repository: "oci://docker.io/envoyproxy"

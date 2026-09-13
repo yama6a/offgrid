@@ -1,0 +1,50 @@
+victoria-metrics-operator:
+  # CRDs come from 00_victoria_metrics_operator_crds. Disabling here only takes effect together with
+  # `plain: false`, per the chart's own requirement.
+  crds:
+    enabled: false
+    plain: false
+
+  operator:
+    disable_prometheus_converter: false # ServiceMonitor -> VMServiceScrape etc, continuously
+    # Stamps IgnoreExtraneous + Prune=false on every converted object, so ArgoCD never flags or prunes
+    # operator-created resources it cannot see in git. This is what keeps the monitoring apps Synced.
+    prometheus_converter_add_argocd_ignore_annotations: true
+    enable_converter_ownership: true # deleting a ServiceMonitor then garbage-collects its VMServiceScrape
+
+  # Off deliberately, for two reasons:
+  #   1. This operator is wave 1, BEFORE cert-manager (wave 2), so the issued webhook cert is unavailable.
+  #   2. The non-cert-manager fallback generates the cert with Helm genCA at TEMPLATE time. ArgoCD re-renders
+  #      every sync, so the served cert and the injected caBundle drift apart and CR creation fails with
+  #      "x509: certificate signed by unknown authority".
+  # It only does admission-time syntactic validation; bad CRs are still caught at reconcile.
+  admissionWebhooks:
+    enabled: false
+
+  resources:
+    requests: {cpu: 73m, memory: 103Mi}
+    limits: {memory: 176Mi}
+
+  # The Go runtime is blind to the cgroup cap and only GCs on heap growth, so a spike during bulk
+  # prometheus-to-VM conversion can OOMKill the very component driving it. Keep this under the limit above.
+  env:
+    - name: GOMEMLIMIT
+      value: "110MiB"
+
+  priorityClassName: platform-critical
+
+  serviceMonitor:
+    enabled: true
+    vm: true
+
+  # Soft + hostname: bare Pi nodes have no zone label, and soft means raising replicaCount never wedges a pod
+  # Pending on 3 nodes. No-op at the default single replica.
+  affinity:
+    podAntiAffinity:
+      preferredDuringSchedulingIgnoredDuringExecution:
+        - weight: 100
+          podAffinityTerm:
+            labelSelector:
+              matchLabels:
+                app.kubernetes.io/name: victoria-metrics-operator
+            topologyKey: kubernetes.io/hostname

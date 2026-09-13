@@ -1,0 +1,112 @@
+apiVersion: postgresql.cnpg.io/v1
+kind: Cluster
+metadata:
+  name: {{ include "pg-cluster.name" . }}
+  namespace: {{ .Release.Namespace }}
+  {{- $protect := include "pg-cluster.protectAnnotations" . }}
+  {{- $sameCatalog := and .Values.restore.enabled (or (not .Values.restore.serverName) (eq .Values.restore.serverName (include "pg-cluster.serverName" .))) }}
+  {{- if or $protect $sameCatalog }}
+  annotations:
+    {{- with $protect }}
+    {{- . | nindent 4 }}
+    {{- end }}
+    {{- if $sameCatalog }}
+    cnpg.io/skipEmptyWalArchiveCheck: enabled # MANDATORY when restoring from the prefix we then archive into
+    {{- end }}
+  {{- end }}
+  labels:
+    {{- include "pg-cluster.labels" . | nindent 4 }}
+spec:
+  # inheritedMetadata, not metadata.labels: only this reaches the instance pods and their PVCs.
+  inheritedMetadata:
+    labels:
+      longhorn-replica-affinity/enabled: "true"
+  instances: {{ if .Values.highAvailability }}3{{ else }}1{{ end }}
+  imageName: {{ include "pg-cluster.image" . }}
+  imagePullPolicy: IfNotPresent
+  # non-root postgres UID/GID (CNPG default for the postgresql image).
+  postgresUID: 26
+  postgresGID: 26
+  storage:
+    size: {{ .Values.size }}
+    storageClass: longhorn-r2-ephemeral # network-replicated, so an instance re-attaches on a surviving node
+  {{- with .Values.resources }}
+  resources:
+    {{- toYaml . | nindent 4 }}
+  {{- end }}
+  affinity:
+    topologyKey: kubernetes.io/hostname # Don't put recplica and primary on the same node (default was zone, which we don't have)
+    podAntiAffinityType: required # refuse to place two instances on one node rather than merely preferring not to
+  priorityClassName: data-critical # Evicted after the platform control plane but before stateless apps, under node memory pressure
+  primaryUpdateMethod: {{ if .Values.highAvailability }}switchover{{ else }}restart{{ end }} # single-node: short down-time
+  primaryUpdateStrategy: unsupervised
+  enablePDB: {{ if .Values.highAvailability }}true{{ else }}false{{ end }} # PDB on single-node would block a rolling node upgrade
+  # Shutdown stage 1 refuses NEW connections but waits for existing ones, and an app holding an idle pooled
+  # connection never closes it, so the 180s default stalls every planned switchover for the full 180s. At 15s
+  # it escalates to terminating connections, which is what keeps a node drain quick.
+  smartShutdownTimeout: 15
+  switchoverDelay: 60 # caps the window with NO primary while the old one archives WAL (default is 3600)
+  stopDelay: 1800
+  logLevel: info
+  enableSuperuserAccess: false # apps connect only via the `app` role
+
+  postgresql:
+    {{- if .Values.highAvailability }}
+    # a commit waits for 1 of the 2 standbys to flush it, so a promoted standby never loses an acked write.
+    # `required`: if no standby can ack, writes STALL instead of silently degrading to asynchronous.
+    synchronous: { method: any, number: 1, dataDurability: required }
+    {{- end }}
+    {{- $params := deepCopy (.Values.postgresql.parameters | default dict) }}
+    {{- if eq (include "pg-cluster.backupsEnabled" .) "true" }}
+    {{- $b := .Files.Get "files/backup.yaml" | fromYaml }}
+    {{- if $b.archiveTimeout }}{{ $_ := set $params "archive_timeout" $b.archiveTimeout }}{{ end }}
+    {{- end }}
+    {{- with $params }}
+    parameters:
+      {{- toYaml . | nindent 6 }}
+    {{- end }}
+
+  monitoring:
+    disableDefaultQueries: false
+    tls:
+      enabled: false # podmonitor scrapes http, and cross-node pod traffic is wireguard-encrypted.
+
+  bootstrap:
+  {{- if .Values.restore.enabled }}
+    # DR path (values.yaml `restore`): rebuild this instance from its own S3 catalog instead of empty.
+    recovery:
+      source: barman-origin
+      database: app
+      owner: app
+      {{- with .Values.restore.targetTime }}
+      recoveryTarget:
+        targetTime: {{ . | quote }}
+      {{- end }}
+  {{- else }}
+    initdb:
+      database: app
+      owner: app
+      postInitSQL: # allow major upgrade via logical replication instead of offline pg_upgrade
+        - ALTER ROLE app WITH REPLICATION;
+        - GRANT pg_create_subscription TO app;
+  {{- end }}
+
+  {{- if .Values.restore.enabled }}
+  externalClusters:
+    - name: barman-origin
+      plugin:
+        name: barman-cloud.cloudnative-pg.io
+        parameters:
+          barmanObjectName: {{ include "pg-cluster.name" . }}-backups
+          serverName: {{ .Values.restore.serverName | default (include "pg-cluster.serverName" .) }}
+  {{- end }}
+
+  {{- if eq (include "pg-cluster.backupsEnabled" .) "true" }}
+  plugins:
+    - name: barman-cloud.cloudnative-pg.io
+      enabled: true
+      isWALArchiver: true
+      parameters:
+        barmanObjectName: {{ include "pg-cluster.name" . }}-backups
+        serverName: {{ include "pg-cluster.serverName" . }} # rotates with the major; see the helper
+  {{- end }}

@@ -1,0 +1,73 @@
+cert-manager:
+  crds:
+    enabled: true
+    keep: true # never let a prune cascade-delete them, that takes every Certificate/Issuer/Order CR with it
+
+  global:
+    priorityClassName: platform-critical # an evicted webhook fails ALL cert admission cluster-wide until it reschedules
+    revisionHistoryLimit: 0
+
+  enableCertificateOwnerRef: true # GC the issued TLS Secret with its Certificate; upstream default leaves it orphaned
+
+  startupapicheck:
+    enabled: false # a PostSync hook Job per sync; ArgoCD's unbounded retry already converges that ordering
+
+  prometheus:
+    enabled: true
+    servicemonitor: # lowercase, cert-manager spells this key differently from most charts
+      enabled: true
+
+  resources:
+    requests: { cpu: 10m, memory: 49Mi }
+    limits:   { memory: 95Mi }
+  # Soft + hostname on all three: bare Pi nodes carry no zone label, and soft means raising replicaCount
+  # never wedges a pod Pending on a 3-node cluster. No-op at the default single replica.
+  affinity:
+    podAntiAffinity:
+      preferredDuringSchedulingIgnoredDuringExecution:
+        - weight: 100
+          podAffinityTerm:
+            labelSelector:
+              matchLabels:
+                app.kubernetes.io/name: cert-manager
+                app.kubernetes.io/component: controller
+            topologyKey: kubernetes.io/hostname
+  webhook:
+    resources:
+      requests: { cpu: 10m, memory: 38Mi }
+      limits:   { memory: 69Mi }
+    affinity:
+      podAntiAffinity:
+        preferredDuringSchedulingIgnoredDuringExecution:
+          - weight: 100
+            podAffinityTerm:
+              labelSelector:
+                matchLabels:
+                  app.kubernetes.io/name: webhook
+                  app.kubernetes.io/component: webhook
+              topologyKey: kubernetes.io/hostname
+  cainjector:
+    resources:
+      requests: { cpu: 10m, memory: 107Mi }
+      limits:   { memory: 163Mi }
+    affinity:
+      podAntiAffinity:
+        preferredDuringSchedulingIgnoredDuringExecution:
+          - weight: 100
+            podAffinityTerm:
+              labelSelector:
+                matchLabels:
+                  app.kubernetes.io/name: cainjector
+                  app.kubernetes.io/component: cainjector
+              topologyKey: kubernetes.io/hostname
+
+  # HTTP-01 through Gateway API. Not a feature gate, it only exists in this controller config file.
+  config:
+    apiVersion: controller.config.cert-manager.io/v1alpha1
+    kind: ControllerConfiguration
+    enableGatewayAPI: true
+
+  # DNS-01 self-check resolvers. Public ones on purpose: a split-horizon home DNS makes the _acme-challenge
+  # TXT look un-propagated and wedges issuance. Only exercised by a dns01 solver.
+  dns01RecursiveNameservers: "1.1.1.1:53,9.9.9.9:53"
+  dns01RecursiveNameserversOnly: true

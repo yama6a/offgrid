@@ -1,0 +1,26 @@
+{{- /*
+Allowlist egress from client pods to the DB pods.
+*/ -}}
+{{- $cluster := .Values.name }}
+{{- range $i, $client := .Values.allowedClients }}
+---
+apiVersion: cilium.io/v2
+kind: CiliumNetworkPolicy
+metadata:
+  name: {{ $cluster }}-client-egress-{{ $i }}
+  namespace: {{ $.Release.Namespace }}
+spec:
+  endpointSelector:
+    matchLabels:
+      {{- range $k, $v := $client.matchLabels }}
+      {{ $k }}: {{ $v | quote }}
+      {{- end }}
+  egress:
+    - toEndpoints:
+        - matchLabels:
+            cnpg.io/cluster: {{ $cluster }}
+            cnpg.io/podRole: instance
+      toPorts:
+        - ports:
+            - { port: "5432", protocol: TCP }
+{{- end }}

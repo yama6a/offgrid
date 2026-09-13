@@ -1,0 +1,63 @@
+{{- /*
+The standalone OpsTree Redis instance: the operator reconciles a single-pod StatefulSet with ONE PVC. No HA
+or replication by design; on node loss Longhorn reattaches the volume elsewhere and the pod reschedules.
+Field shape mirrors the upstream ot-helm/redis standalone template.
+Everything a workload should not decide is pinned here, once, for every instance at once.
+*/ -}}
+apiVersion: redis.redis.opstreelabs.in/v1beta2
+kind: Redis
+metadata:
+  name: {{ .Values.name }}
+  namespace: {{ .Release.Namespace }}
+  {{- with (include "redis-instance.protectAnnotations" .) }}
+  annotations:
+    {{- . | nindent 4 }}
+  {{- end }}
+  labels:
+    {{- include "redis-instance.labels" . | nindent 4 }}
+    longhorn-replica-affinity/enabled: "true"
+    {{- if .Values.persistence }}
+    redis-backup.offgrid/enabled: "true"   # discovered by the central 07_redis_backup job (durable only)
+    {{- end }}
+spec:
+  # A durable store outranks the stateless app pods it serves under node memory pressure. No effect on a
+  # cgroup OOM kill. The kernel picks its victim by oom_score_adj, which is set from QoS class and memory
+  # request, so priority does not protect this pod from being killed for exceeding its own memory limit.
+  priorityClassName: data-critical
+  kubernetesConfig:
+    image: "quay.io/opstree/redis:{{ .Values.redisVersion }}"
+    imagePullPolicy: IfNotPresent
+    resources:
+      {{- toYaml .Values.resources | nindent 6 }}
+    # No auth: the CiliumNetworkPolicy is the access control, so there is no secret to commit or generate.
+    # To add a password, put a `redisSecret: { name, key }` here pointing at a sealed Secret.
+  redisExporter:
+    enabled: true
+    # renovate: datasource=docker
+    image: "quay.io/opstree/redis-exporter:v1.89.0"
+    imagePullPolicy: IfNotPresent
+    # Not exposed as a value: the sidecar's footprint belongs to the exporter, not to the instance it scrapes,
+    # so it does not scale with the Redis size. Left unset the container counts as free to the scheduler.
+    resources:
+      requests: {cpu: 10m, memory: 16Mi}
+      limits: {memory: 32Mi}
+  redisConfig:
+    # Extra redis.conf overlay from templates/configmap.yaml. The ConfigMap always exists, so this is
+    # unconditional; the AOF lines inside it are what varies by mode.
+    additionalRedisConfig: {{ .Values.name }}-ext-config
+    # The operator computes the byte value at reconcile, so Redis cannot OOM its own cgroup. Needs
+    # resources.limits.memory. Eviction stays at the Redis default noeviction: at the cap, writes fail.
+    maxMemoryPercentOfLimit: 80
+  storage:
+    volumeClaimTemplate:
+      spec:
+        accessModes: ["ReadWriteOnce"]
+        # One class for BOTH modes. Reclaim is not a safety knob here: deletionProtection stops an accidental
+        # prune, and an intentional delete falls back to the S3 dump. A Retain class would only leak PVs.
+        storageClassName: longhorn-r2-ephemeral
+        resources:
+          requests:
+            storage: {{ .Values.initialFixedDiskSize }}
+  podSecurityContext:
+    runAsUser: 1000
+    fsGroup: 1000

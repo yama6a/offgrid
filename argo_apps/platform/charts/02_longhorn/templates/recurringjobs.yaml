@@ -1,0 +1,46 @@
+{{- /*
+Trim runs on every volume; the backup jobs only exist once a backupTarget is configured, and only act on the
+volumes their StorageClass's recurringJobSelector puts in the `backup` group.
+`retain` is the ONLY backup retention: the S3 longhorn/ prefix has no lifecycle rule.
+No snapshot job, local snapshots cost scarce Pi NVMe.
+*/ -}}
+---
+apiVersion: longhorn.io/v1beta2
+kind: RecurringJob
+metadata:
+  name: filesystem-trim-weekly
+  namespace: {{ .Release.Namespace }}
+spec:
+  cron: "0 5 * * 0"   # Sunday 05:00 UTC, after the backup jobs so they don't collide
+  task: filesystem-trim
+  # `default` is Longhorn's own catch-all: every volume with no recurring job of its own is in it, which is
+  # every volume we create. `trim` is here so a class that has its own selector can still name this job.
+  # Returns blocks the filesystem has freed to the SSD, which is what keeps a thin volume thin.
+  groups: [default, trim]
+  concurrency: 1      # walking a filesystem is IO-heavy, one volume at a time on 3 Pis
+{{- if .Values.longhorn.defaultBackupStore.backupTarget }}
+---
+apiVersion: longhorn.io/v1beta2
+kind: RecurringJob
+metadata:
+  name: backup-daily
+  namespace: {{ .Release.Namespace }}
+spec:
+  cron: "0 3 * * *"   # 03:00 UTC daily; offset from CNPG/Redis (02:00) to spread S3 upload load
+  task: backup
+  groups: [backup]    # volumes join via the longhorn-r2-retained-with-backups class's recurringJobSelector
+  retain: 7           # ~1 week of daily restore points; Longhorn prunes older backups + their now-unused blocks
+  concurrency: 1      # one volume at a time, 3 Pis, don't saturate the home uplink
+---
+apiVersion: longhorn.io/v1beta2
+kind: RecurringJob
+metadata:
+  name: backup-weekly
+  namespace: {{ .Release.Namespace }}
+spec:
+  cron: "0 4 * * 0"   # Sunday 04:00 UTC, after the daily so they don't collide
+  task: backup
+  groups: [backup]
+  retain: 8           # ~2 months of weekly restore points
+  concurrency: 1
+{{- end }}

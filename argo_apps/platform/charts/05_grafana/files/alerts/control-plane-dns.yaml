@@ -1,0 +1,125 @@
+apiVersion: 1
+groups:
+  # apiserver and kubelet being DOWN is already covered by target-down; the value-add here is the apiserver
+  # server-error RATE.
+  # kube-scheduler and kube-controller-manager get NO alerts: they are not scraped on this cluster, because the
+  # the control-plane metrics bind is not landing, so there is no `up` series for them. Fix the scrape first.
+  - orgId: 1
+    name: control-plane
+    folder: offgrid
+    interval: 1m
+    rules:
+      - uid: apiserver-error-rate-high
+        title: API server 5xx error rate high
+        condition: C
+        for: 10m
+        labels: {severity: critical}
+        annotations:
+          summary: 'kube-apiserver is returning >5% 5xx responses'
+          description: |
+            - kube-apiserver serving >5% 5xx: API calls, controllers, kubectl failing
+            - check: kubectl get --raw /healthz?verbose
+            - inspect the apiserver static-pod logs on the control-plane nodes
+        noDataState: OK
+        execErrState: KeepLast
+        data:
+          - refId: A
+            relativeTimeRange: {from: 600, to: 0}
+            datasourceUid: VictoriaMetrics
+            model:
+              refId: A
+              instant: true
+              expr: 'sum(rate(apiserver_request_total{code=~"5.."}[5m])) / sum(rate(apiserver_request_total[5m]))'
+          - refId: B
+            relativeTimeRange: {from: 600, to: 0}
+            datasourceUid: __expr__
+            model: {refId: B, type: reduce, expression: A, reducer: last, datasource: {type: __expr__, uid: __expr__}}
+          - refId: C
+            relativeTimeRange: {from: 600, to: 0}
+            datasourceUid: __expr__
+            model:
+              refId: C
+              type: threshold
+              expression: B
+              datasource: {type: __expr__, uid: __expr__}
+              conditions:
+                - type: query
+                  evaluator: {type: gt, params: [0.05]}
+  # CoreDNS. DNS underpins nearly everything, so its failures look like widespread breakage.
+  - orgId: 1
+    name: dns
+    folder: offgrid
+    interval: 1m
+    rules:
+      - uid: coredns-down
+        title: CoreDNS replica down
+        condition: C
+        for: 5m
+        labels: {severity: warning}
+        annotations:
+          summary: 'Fewer than 2 CoreDNS replicas are up'
+          description: |
+            - fewer than 2 CoreDNS replicas up: cluster DNS resolution at risk
+            - check: kubectl -n kube-system get pods -l k8s-app=kube-dns
+            - logs: kubectl -n kube-system logs -l k8s-app=kube-dns
+        noDataState: OK
+        execErrState: KeepLast
+        data:
+          - refId: A
+            relativeTimeRange: {from: 600, to: 0}
+            datasourceUid: VictoriaMetrics
+            model:
+              refId: A
+              instant: true
+              expr: 'count(up{job="core-dns"} == 1)'
+          - refId: B
+            relativeTimeRange: {from: 600, to: 0}
+            datasourceUid: __expr__
+            model: {refId: B, type: reduce, expression: A, reducer: last, datasource: {type: __expr__, uid: __expr__}}
+          - refId: C
+            relativeTimeRange: {from: 600, to: 0}
+            datasourceUid: __expr__
+            model:
+              refId: C
+              type: threshold
+              expression: B
+              datasource: {type: __expr__, uid: __expr__}
+              conditions:
+                - type: query
+                  evaluator: {type: lt, params: [2]}
+      - uid: coredns-serverfail-rate
+        title: CoreDNS SERVFAIL rate high
+        condition: C
+        for: 10m
+        labels: {severity: warning}
+        annotations:
+          summary: 'CoreDNS is returning >2% SERVFAIL responses'
+          description: |
+            - CoreDNS returning >2% SERVFAIL: lookups failing cluster-wide
+            - check: kubectl -n kube-system logs -l k8s-app=kube-dns
+            - verify upstream resolvers + NetworkPolicy reaching CoreDNS
+        noDataState: OK
+        execErrState: KeepLast
+        data:
+          - refId: A
+            relativeTimeRange: {from: 600, to: 0}
+            datasourceUid: VictoriaMetrics
+            model:
+              refId: A
+              instant: true
+              expr: 'sum(rate(coredns_dns_responses_total{rcode="SERVFAIL"}[5m])) / sum(rate(coredns_dns_responses_total[5m]))'
+          - refId: B
+            relativeTimeRange: {from: 600, to: 0}
+            datasourceUid: __expr__
+            model: {refId: B, type: reduce, expression: A, reducer: last, datasource: {type: __expr__, uid: __expr__}}
+          - refId: C
+            relativeTimeRange: {from: 600, to: 0}
+            datasourceUid: __expr__
+            model:
+              refId: C
+              type: threshold
+              expression: B
+              datasource: {type: __expr__, uid: __expr__}
+              conditions:
+                - type: query
+                  evaluator: {type: gt, params: [0.02]}

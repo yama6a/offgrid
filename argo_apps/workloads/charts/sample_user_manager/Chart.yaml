@@ -1,0 +1,30 @@
+apiVersion: v2
+name: sample-user-manager
+description: The user-domain hub. The sample-app /manager binary (HTTP GET /users + Postgres) and the owner of all three messaging exchanges.
+type: application
+version: 0.1.0 # local chart, never bump version
+
+# Helm renders a dependency once, so N instances == N aliases. Each alias is a values key carrying its own name.
+dependencies:
+  - name: pg-cluster
+    alias: maindb
+    version: "*"
+    repository: "file://../../../../lib/helm/pg-cluster"
+  - name: pg-cluster
+    alias: analyticsdb
+    version: "*"
+    repository: "file://../../../../lib/helm/pg-cluster"
+  - name: redis-instance
+    alias: redis-cache
+    version: "*"
+    repository: "file://../../../../lib/helm/redis-instance"
+  - name: redis-instance
+    alias: redis-sessions
+    version: "*"
+    repository: "file://../../../../lib/helm/redis-instance"
+  - name: ingress
+    version: "*"
+    repository: "file://../../../../lib/helm/ingress"
+  - name: rabbitmq-topology
+    version: "*"
+    repository: "file://../../../../lib/helm/rabbitmq-topology"

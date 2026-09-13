@@ -1,0 +1,18 @@
+{{- /*
+Scrape ntfy's own metrics listener. It is the transport every alert leaves through, so `up` on this target is
+the only in-cluster signal that the notification path still exists. See the alerting-path alert group.
+*/ -}}
+apiVersion: monitoring.coreos.com/v1
+kind: PodMonitor
+metadata:
+  name: ntfy
+  namespace: {{ .Release.Namespace }}
+  labels:
+    app.kubernetes.io/name: ntfy
+spec:
+  selector:
+    matchLabels:
+      app.kubernetes.io/name: ntfy
+  podMetricsEndpoints:
+    - port: metrics
+      interval: 30s

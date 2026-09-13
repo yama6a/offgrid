@@ -1,0 +1,55 @@
+# All SCs are 2-replica to volumes survive tje loss of one node.
+# A volume's spec size is only a CEILING. Real occupancy grows with what is written (nothing is reserved).
+# templates/recurringjobs.yaml hands freed blocks back to the SSD weekly.
+# `parameters` is IMMUTABLE once a class exists, so adding a key here means deleting the class by hand first.
+# SCs that don't have `recurringJobSelector` defined get the `trim` job through Longhorn's `default` group.
+
+---
+apiVersion: storage.k8s.io/v1
+kind: StorageClass
+metadata:
+  name: longhorn-r2-ephemeral
+provisioner: driver.longhorn.io
+allowVolumeExpansion: true
+reclaimPolicy: Delete
+volumeBindingMode: Immediate
+parameters:
+  numberOfReplicas: "2"
+  staleReplicaTimeout: "30"
+  fsType: "ext4"
+  dataLocality: "disabled" # every read and write crosses the 1GbE net, even to a replica on this very node
+
+# Longhorn moves one of the volumes to the same node where workload pod runs on, so reads have ~30% lower latency.
+# Only for small volumes that benefit from the lowest possible read-latency. Write latency stays the same regardless.
+---
+apiVersion: storage.k8s.io/v1
+kind: StorageClass
+metadata:
+  name: longhorn-r2-ephemeral-local
+provisioner: driver.longhorn.io
+allowVolumeExpansion: true
+reclaimPolicy: Delete
+volumeBindingMode: Immediate
+parameters:
+  numberOfReplicas: "2"
+  staleReplicaTimeout: "30"
+  fsType: "ext4"
+  dataLocality: "best-effort" # best-effort, not strict: if no local room, schedule anyway rather than fail
+
+# For persistent data with no app-level backup (sqlite, config). recurringJobSelector adds every volume to the
+# `backup` group. since defining `recurringJobSelector` removes the SC from Longhorns `default` group, we add trim back manually.
+---
+apiVersion: storage.k8s.io/v1
+kind: StorageClass
+metadata:
+  name: longhorn-r2-retained-with-backups
+provisioner: driver.longhorn.io
+allowVolumeExpansion: true
+reclaimPolicy: Retain
+volumeBindingMode: Immediate
+parameters:
+  numberOfReplicas: "2"
+  staleReplicaTimeout: "30"
+  fsType: "ext4"
+  dataLocality: "disabled"
+  recurringJobSelector: '[{"name":"backup","isGroup":true},{"name":"trim","isGroup":true}]'

@@ -1,0 +1,52 @@
+{{- /* One PV and the one PVC bound to it, per entry. Ranges to nothing when volumes[] is empty, so declaring
+       this dependency without filling it in renders no manifest at all. */ -}}
+{{- range $v := .Values.volumes }}
+{{- $pv := include "nfs-volume.pvName" (dict "namespace" $.Release.Namespace "volume" $v) }}
+{{- $modes := $v.accessModes | default (list "ReadWriteMany") }}
+---
+apiVersion: v1
+kind: PersistentVolume
+metadata:
+  name: {{ $pv }}
+  labels:
+    app: {{ $v.name }}
+spec:
+  # A ceiling nothing enforces: NFS reports no size to the kubelet and no quota is applied. It exists so the
+  # PVC below has something to request and match.
+  capacity:
+    storage: {{ $v.capacity }}
+  accessModes:
+    {{- $modes | toYaml | nindent 4 }}
+  # Retain by default. Delete would drop the PV object and still leave every byte on the server, so the only
+  # thing it reclaims is the illusion of having reclaimed something.
+  persistentVolumeReclaimPolicy: {{ $v.reclaimPolicy | default "Retain" }}
+  # Explicitly empty, not omitted: an omitted class lets the DefaultStorageClass admission plugin stamp one in.
+  storageClassName: ""
+  mountOptions:
+    {{- $v.mountOptions | default (list "nfsvers=4.1" "hard" "noatime") | toYaml | nindent 4 }}
+  # Pre-binds the PV to exactly one PVC. Without it, any PVC anywhere whose request this PV satisfies can win
+  # the bind first, and the intended claim then sits Pending behind it.
+  claimRef:
+    namespace: {{ $.Release.Namespace }}
+    name: {{ $v.name }}
+  nfs:
+    server: {{ $v.server | quote }}
+    path: {{ $v.path | quote }}
+    readOnly: {{ $v.readOnly | default false }}
+---
+apiVersion: v1
+kind: PersistentVolumeClaim
+metadata:
+  name: {{ $v.name }}
+  namespace: {{ $.Release.Namespace }}
+  labels:
+    app: {{ $v.name }}
+spec:
+  storageClassName: ""
+  volumeName: {{ $pv }} # names the PV, so this claim can bind to that one and nothing else
+  accessModes:
+    {{- $modes | toYaml | nindent 4 }}
+  resources:
+    requests:
+      storage: {{ $v.capacity }}
+{{- end }}

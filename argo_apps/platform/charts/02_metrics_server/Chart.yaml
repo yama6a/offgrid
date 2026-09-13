@@ -1,0 +1,10 @@
+apiVersion: v2
+name: metrics-server
+description: metrics-server, the metrics.k8s.io APIService behind `kubectl top` and CPU/memory HPAs. VictoriaMetrics does not serve metrics.k8s.io.
+type: application
+version: 0.1.0 # local chart, never bump version
+
+dependencies:
+  - name: metrics-server
+    version: "3.14.0"
+    repository: https://kubernetes-sigs.github.io/metrics-server/

@@ -1,0 +1,27 @@
+{{- /*
+Allowlist egress from client pods to the Redis pod, the companion to networkpolicy.yaml's ingress. One CNP
+per client. SAME-NS ONLY: a namespaced CNP selects only pods in its own namespace, which is why an
+allowedClients entry carries no namespace.
+*/ -}}
+{{- $name := .Values.name }}
+{{- range $i, $client := .Values.allowedClients }}
+---
+apiVersion: cilium.io/v2
+kind: CiliumNetworkPolicy
+metadata:
+  name: {{ $name }}-client-egress-{{ $i }}
+  namespace: {{ $.Release.Namespace }}
+spec:
+  endpointSelector:
+    matchLabels:
+      {{- range $k, $v := $client.matchLabels }}
+      {{ $k }}: {{ $v | quote }}
+      {{- end }}
+  egress:
+    - toEndpoints:
+        - matchLabels:
+            app: {{ $name }}
+      toPorts:
+        - ports:
+            - { port: "6379", protocol: TCP }
+{{- end }}

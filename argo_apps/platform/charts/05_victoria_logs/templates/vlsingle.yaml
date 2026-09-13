@@ -1,0 +1,32 @@
+# The VictoriaLogs store, reconciled by the standalone VM operator. The operator materialises it as a
+# Deployment plus a `vlsingle-<name>` Service on :9428, and auto-creates a self VMServiceScrape.
+apiVersion: operator.victoriametrics.com/v1
+kind: VLSingle
+metadata:
+  name: {{ .Values.vlsingle.name }}
+  namespace: {{ .Values.vlsingle.namespace }}
+  {{- if .Values.deletionProtection }}
+  annotations:
+    # Orphan-not-delete. See values.yaml for the flip-then-remove deletion flow.
+    argocd.argoproj.io/sync-options: Prune=false,Delete=false
+  {{- end }}
+spec:
+  # Opt out of Reloader (02_reloader runs with auto-reload-all): this is the log store on a single RWO volume,
+  # so a restart loses ingest and forces a detach/reattach.
+  podMetadata:
+    labels:
+      longhorn-replica-affinity/enabled: "true"
+    annotations:
+      reloader.stakater.com/auto: "false"
+  retentionPeriod: {{ .Values.vlsingle.retentionPeriod | quote }}
+  {{- with .Values.vlsingle.extraArgs }}
+  extraArgs: {{ toYaml . | nindent 4 }}
+  {{- end }}
+  storage:
+    storageClassName: {{ .Values.vlsingle.storage.storageClassName }}
+    accessModes:
+      - ReadWriteOnce
+    resources:
+      requests:
+        storage: {{ .Values.vlsingle.storage.size }}
+  resources: {{ .Values.vlsingle.resources | toYaml | nindent 4 }}

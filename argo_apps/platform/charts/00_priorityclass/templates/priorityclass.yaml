@@ -1,0 +1,10 @@
+{{- range .Values.classes }}
+---
+apiVersion: scheduling.k8s.io/v1
+kind: PriorityClass
+metadata:
+  name: {{ .name }}
+value: {{ .value | int64 }}
+globalDefault: false # never: it would silently bump EVERY pod that omits priorityClassName
+description: {{ .description | quote }}
+{{- end }}

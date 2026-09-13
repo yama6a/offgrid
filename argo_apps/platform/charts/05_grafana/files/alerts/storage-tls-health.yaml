@@ -1,0 +1,159 @@
+apiVersion: 1
+groups:
+  # cert-manager ingress TLS plus PV/PVC phase, all warning. Longhorn volume health lives in
+  # longhorn-health.yaml.
+  - orgId: 1
+    name: storage-tls-health
+    folder: offgrid
+    interval: 1m
+    rules:
+      # A is seconds until expiry, and `lt` 1209600 is 14d. Also fires once already expired, since that is
+      # negative.
+      - uid: cert-expiring-soon
+        title: TLS certificate expiring soon
+        condition: C
+        for: 1h
+        labels: {severity: warning}
+        annotations:
+          summary: 'Certificate {{ $labels.exported_namespace }}/{{ $labels.name }} expires in <14d'
+          description: |
+            - cert {{ $labels.exported_namespace }}/{{ $labels.name }} is within 14d of expiry (or already expired): renewal is stalling
+            - inspect: kubectl -n {{ $labels.exported_namespace }} describe certificate {{ $labels.name }}
+            - check the Issuer/ACME order + challenge: kubectl -n {{ $labels.exported_namespace }} get certificaterequest,order,challenge
+        noDataState: OK
+        execErrState: KeepLast
+        data:
+          - refId: A
+            relativeTimeRange: {from: 600, to: 0}
+            datasourceUid: VictoriaMetrics
+            model:
+              refId: A
+              instant: true
+              expr: 'certmanager_certificate_expiration_timestamp_seconds - time()'
+          - refId: B
+            relativeTimeRange: {from: 600, to: 0}
+            datasourceUid: __expr__
+            model: {refId: B, type: reduce, expression: A, reducer: last, datasource: {type: __expr__, uid: __expr__}}
+          - refId: C
+            relativeTimeRange: {from: 600, to: 0}
+            datasourceUid: __expr__
+            model:
+              refId: C
+              type: threshold
+              expression: B
+              datasource: {type: __expr__, uid: __expr__}
+              conditions:
+                - type: query
+                  evaluator: {type: lt, params: [1209600]}
+      # `== bool 0` yields 1 when the cert's Ready=True condition is not 1.
+      - uid: cert-not-ready
+        title: TLS certificate not ready
+        condition: C
+        for: 1h
+        labels: {severity: warning}
+        annotations:
+          summary: 'Certificate {{ $labels.exported_namespace }}/{{ $labels.name }} is not Ready'
+          description: |
+            - cert {{ $labels.exported_namespace }}/{{ $labels.name }} is not Ready: issuance/renewal failed
+            - inspect: kubectl -n {{ $labels.exported_namespace }} describe certificate {{ $labels.name }}
+            - trace the ACME order/challenge: kubectl -n {{ $labels.exported_namespace }} get certificaterequest,order,challenge; check the Issuer is Ready
+        noDataState: OK
+        execErrState: KeepLast
+        data:
+          - refId: A
+            relativeTimeRange: {from: 600, to: 0}
+            datasourceUid: VictoriaMetrics
+            model:
+              refId: A
+              instant: true
+              expr: 'certmanager_certificate_ready_status{condition="True"} == bool 0'
+          - refId: B
+            relativeTimeRange: {from: 600, to: 0}
+            datasourceUid: __expr__
+            model: {refId: B, type: reduce, expression: A, reducer: last, datasource: {type: __expr__, uid: __expr__}}
+          - refId: C
+            relativeTimeRange: {from: 600, to: 0}
+            datasourceUid: __expr__
+            model:
+              refId: C
+              type: threshold
+              expression: B
+              datasource: {type: __expr__, uid: __expr__}
+              conditions:
+                - type: query
+                  evaluator: {type: gt, params: [0]}
+      - uid: pv-errors
+        title: PersistentVolume in error state
+        condition: C
+        for: 15m
+        labels: {severity: warning}
+        annotations:
+          summary: 'PersistentVolume {{ $labels.persistentvolume }} is {{ $labels.phase }}'
+          description: |
+            - PV {{ $labels.persistentvolume }} is in phase {{ $labels.phase }} (Failed/Pending): its backing volume isn't usable
+            - inspect: kubectl describe pv {{ $labels.persistentvolume }}
+            - for Longhorn-backed PVs check the volume health: kubectl -n longhorn-system get volumes.longhorn.io
+        noDataState: OK
+        execErrState: KeepLast
+        data:
+          - refId: A
+            relativeTimeRange: {from: 600, to: 0}
+            datasourceUid: VictoriaMetrics
+            model:
+              refId: A
+              instant: true
+              expr: 'kube_persistentvolume_status_phase{phase=~"Failed|Pending"} == 1'
+          - refId: B
+            relativeTimeRange: {from: 600, to: 0}
+            datasourceUid: __expr__
+            model: {refId: B, type: reduce, expression: A, reducer: last, datasource: {type: __expr__, uid: __expr__}}
+          - refId: C
+            relativeTimeRange: {from: 600, to: 0}
+            datasourceUid: __expr__
+            model:
+              refId: C
+              type: threshold
+              expression: B
+              datasource: {type: __expr__, uid: __expr__}
+              conditions:
+                - type: query
+                  evaluator: {type: gt, params: [0]}
+      - uid: pvc-pending
+        title: PersistentVolumeClaim unbound
+        condition: C
+        for: 15m
+        labels: {severity: warning}
+        annotations:
+          summary: 'PVC {{ $labels.namespace }}/{{ $labels.persistentvolumeclaim }} is {{ $labels.phase }}'
+          description: |
+            - PVC {{ $labels.namespace }}/{{ $labels.persistentvolumeclaim }} is {{ $labels.phase }} (Pending/Lost): not bound to a volume
+            - inspect: kubectl -n {{ $labels.namespace }} describe pvc {{ $labels.persistentvolumeclaim }}
+            - check the StorageClass/provisioner + Longhorn schedulable disk capacity (see the Longhorn alerts)
+        noDataState: OK
+        execErrState: KeepLast
+        data:
+          - refId: A
+            relativeTimeRange: {from: 600, to: 0}
+            datasourceUid: VictoriaMetrics
+            model:
+              refId: A
+              instant: true
+              expr: 'kube_persistentvolumeclaim_status_phase{phase=~"Pending|Lost"} == 1'
+          - refId: B
+            relativeTimeRange: {from: 600, to: 0}
+            datasourceUid: __expr__
+            model: {refId: B, type: reduce, expression: A, reducer: last, datasource: {type: __expr__, uid: __expr__}}
+          - refId: C
+            relativeTimeRange: {from: 600, to: 0}
+            datasourceUid: __expr__
+            model:
+              refId: C
+              type: threshold
+              expression: B
+              datasource: {type: __expr__, uid: __expr__}
+              conditions:
+                - type: query
+                  evaluator: {type: gt, params: [0]}
+# In its OWN file so a VL-datasource model mismatch cannot break the metrics rules above.
+# VERIFY the query model against the live victoriametrics-logs-datasource at apply time: the plugin's alerting
+# model field names can change between versions.

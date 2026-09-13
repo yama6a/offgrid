@@ -1,0 +1,37 @@
+{{- if eq (include "pg-cluster.backupsEnabled" .) "true" -}}
+{{- $b := .Files.Get "files/backup.yaml" | fromYaml -}}
+apiVersion: barmancloud.cnpg.io/v1
+kind: ObjectStore
+metadata:
+  name: {{ include "pg-cluster.name" . }}-backups
+  namespace: {{ .Release.Namespace }}
+  annotations:
+    argocd.argoproj.io/sync-wave: "-1" # apply the ObjectStore BEFORE the Cluster.
+    {{- with (include "pg-cluster.protectAnnotations" .) }}
+    {{- . | nindent 4 }}
+    {{- end }}
+  labels:
+    cnpg.io/cluster: {{ include "pg-cluster.name" . }}
+    {{- include "pg-cluster.labels" . | nindent 4 }}
+spec:
+  retentionPolicy: {{ required "pg-cluster: files/backup.yaml retentionPolicy missing but backups on; run 10b_cnpg_backup.sh" $b.retentionPolicy | quote }}
+  configuration:
+    wal:
+      compression: gzip # shrink WAL before upload (also shrinks near-empty idle segments).
+      encryption: AES256 # request SSE-S3 on upload; matches the bucket's AWS-managed SSE.
+      maxParallel: 1
+    data:
+      compression: gzip
+      encryption: AES256
+      jobs: 2
+    endpointURL: "https://s3.{{ required "pg-cluster: files/backup.yaml region missing but backups on; run 10b_cnpg_backup.sh" $b.region }}.amazonaws.com"
+    destinationPath: "s3://{{ $b.bucket }}/cnpg/{{ .Release.Namespace }}/" # s3://<bucket>/cnpg/<ns>/<name>-pg<major>/{wals,base}
+    s3Credentials:
+      accessKeyId:
+        name: {{ include "pg-cluster.backupSecretName" . }}
+        key: ACCESS_KEY_ID
+      secretAccessKey:
+        name: {{ include "pg-cluster.backupSecretName" . }}
+        key: ACCESS_SECRET_KEY
+  instanceSidecarConfiguration: {}
+{{- end }}

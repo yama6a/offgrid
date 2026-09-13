@@ -1,0 +1,22 @@
+{{- if eq (include "pg-cluster.backupsEnabled" .) "true" -}}
+apiVersion: postgresql.cnpg.io/v1
+kind: ScheduledBackup
+metadata:
+  name: {{ include "pg-cluster.name" . }}-daily
+  namespace: {{ .Release.Namespace }}
+  {{- with (include "pg-cluster.protectAnnotations" .) }}
+  annotations:
+    {{- . | nindent 4 }}
+  {{- end }}
+  labels:
+    {{- include "pg-cluster.labels" . | nindent 4 }}
+spec:
+  immediate: true
+  schedule: "0 0 2 * * *" # sec, min, hour, DoM, MoY, DoW
+  method: plugin
+  backupOwnerReference: self
+  cluster:
+    name: {{ include "pg-cluster.name" . }}
+  pluginConfiguration:
+    name: barman-cloud.cloudnative-pg.io
+{{- end }}

@@ -1,0 +1,26 @@
+# Storage that ALREADY EXISTS on an NFS server. Every entry is a pointer to an export: nothing here provisions
+# it, resizes it or backs it up, and deleting the PV never touches a byte on the server.
+# The kubelet mounts these in the HOST network namespace and bind-mounts the result into the pod, so the
+# traffic is never the pod's and no CiliumNetworkPolicy applies to it. A consumer needs no egress rule.
+#
+#   - name: media-library            # REQUIRED: the PVC name, i.e. what a pod's claimName says. Unique per namespace
+#     server: 192.168.10.220         # REQUIRED: the NFS server, IP or resolvable name
+#     path: /mnt/pool/media          # REQUIRED: the export path on that server
+#     capacity: 50Ti                 # REQUIRED: BOOKKEEPING ONLY. NFS reports no size and nothing enforces this.
+#                                    # The API demands a number and the PVC request must match it to bind
+#     accessModes: [ReadWriteMany]   # OPTIONAL: default RWX, which is usually the point of a shared export
+#     reclaimPolicy: Retain          # OPTIONAL: Retain (default) | Delete. Delete deletes nothing on the server,
+#                                    # it only drops the PV, so it buys confusion and no space back
+#     readOnly: true                 # OPTIONAL: default false. Read-only at the PV, so no consumer can write
+#     mountOptions: [nfsvers=4.1, hard, noatime]   # OPTIONAL: the default. See below
+volumes: []
+
+# On mountOptions, because the default is a real choice and not a safe one:
+#   `hard`     retries forever. A pod doing IO when the server vanishes blocks until it returns, then resumes
+#              with nothing lost. The cost is that it blocks in uninterruptible sleep, so SIGKILL does not land
+#              and the kubelet can fail to tear the pod down until the server is back.
+#   `softerr,timeo=600,retrans=5`  returns EIO after a few minutes instead. Pods stay killable and the node
+#              never wedges, but a write in flight at that moment can be torn. These are the options Longhorn
+#              uses for its own RWX volumes.
+# `hard` is the default here because silent corruption is worse than a stuck pod. A consumer that would rather
+# take the error sets the other set explicitly.

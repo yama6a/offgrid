@@ -1,0 +1,371 @@
+# Resource numbers are sized for small nodes, roughly 8 GB each, already running etcd + control plane +
+# Cilium + Longhorn. Raise them on bigger hardware; nothing here breaks if you do.
+victoria-metrics-k8s-stack:
+  # The operator runs standalone (01_victoria_metrics_operator) and reconciles the CRs this chart emits.
+  victoria-metrics-operator:
+    enabled: false
+  crds:
+    enabled: false # owned by 00_victoria_metrics_operator_crds
+    plain: false
+
+  vmsingle:
+    enabled: true
+    # Orphan-not-delete. values.yaml cannot be templated, so this BLOCK is the flag: to intentionally delete
+    # the store, remove these two lines, push, let Argo sync, THEN remove the app.
+    annotations:
+      argocd.argoproj.io/sync-options: Prune=false,Delete=false
+    spec:
+      # Opt out of Reloader (02_reloader runs with auto-reload-all): this is the metrics store on a single RWO
+      # volume, so a restart is a gap in the data plus a detach/reattach.
+      podMetadata: {labels: {longhorn-replica-affinity/enabled: "true"}, annotations: {reloader.stakater.com/auto: "false"}}
+      revisionHistoryLimitCount: 0
+      retentionPeriod: "180d" # bump together with the PVC size below
+      replicaCount: 1
+      extraArgs:
+        dedup.minScrapeInterval: 60s # halves stored samples vs 30s; at this few series the lost resolution does not matter
+      storage:
+        storageClassName: longhorn-r2-ephemeral # the annotation above is the prune guard, Retain would only leak PVs
+        accessModes: ["ReadWriteOnce"]
+        resources:
+          requests:
+            storage: 50Gi
+      resources:
+        # Request tracks the real steady working set (~844Mi observed). At the old 512Mi it ran at 1.6x its
+        # request, which is exactly what the kubelet ranks on when it picks a node-pressure eviction victim.
+        requests: {cpu: 50m, memory: 896Mi}
+        # Sized for the daily vm-backup full-series export, not steady state: a tighter limit OOMs mid-export.
+        # No CPU limit, so merges and queries are never throttled.
+        limits: {memory: 2Gi}
+      # Reschedule fast on node loss. Longhorn is set to force-delete a StatefulSet pod on a down node
+      # (nodeDownPodDeletionPolicy), which is what frees the volume for the replacement pod to mount.
+      tolerations:
+        - key: node.kubernetes.io/unreachable
+          operator: Exists
+          effect: NoExecute
+          tolerationSeconds: 30
+        - key: node.kubernetes.io/not-ready
+          operator: Exists
+          effect: NoExecute
+          tolerationSeconds: 30
+
+  vmagent:
+    enabled: true
+    annotations:
+      argocd.argoproj.io/sync-options: Prune=false,Delete=false # same guard as vmsingle above
+    spec:
+      # Opt out of Reloader (02_reloader runs with auto-reload-all). The operator rewrites vmagent's scrape-config
+      # Secret every time a scrape target anywhere changes, and vmagent already reloads that without restarting,
+      # so leaving it on would restart vmagent during ordinary platform syncs.
+      podMetadata: {labels: {longhorn-replica-affinity/enabled: "true"}, annotations: {reloader.stakater.com/auto: "false"}}
+      revisionHistoryLimitCount: 0
+      # Discover ALL VMServiceScrape/VMPodScrape/VMProbe in every namespace regardless of labels, so the
+      # per-component scrapes and the operator-converted ServiceMonitors are all picked up.
+      selectAllByDefault: true
+      scrapeInterval: 60s
+      # The vmsingle failover design (30s tolerations + Longhorn RWO reattach) leans on vmagent buffering
+      # scrapes through the gap, but an emptyDir buffer is lost if vmagent itself restarts inside that window.
+      statefulMode: true
+      statefulStorage:
+        volumeClaimTemplate:
+          spec:
+            storageClassName: longhorn-r2-ephemeral # a remote-write buffer, nothing to preserve
+            accessModes: ["ReadWriteOnce"]
+            resources:
+              requests:
+                storage: 2Gi
+      externalLabels:
+        cluster: offgrid
+      extraArgs:
+        promscrape.streamParse: "true"
+      # Applied to EVERY scrape after collection, so the metric name (the `__name__` label) can be matched on.
+      # The catch-all for series we never want, whichever job emits them.
+      globalScrapeMetricRelabelConfigs:
+        # gRPC server counters come from argocd-server, hubble/cilium and others via converted ServiceMonitors
+        # that carry no per-source drop. TRADE-OFF: grpc_server_handled_total carries grpc_code (RPC error
+        # rates), so it goes too. For RPC health, narrow to (started|msg_received|msg_sent).
+        - sourceLabels: [__name__]
+          action: drop
+          regex: "grpc_server_(handled|started|msg_received|msg_sent)_total"
+        # Config dumps, one series per setting and the value is always 1: VM component flags, VM operator
+        # config keys, Grafana feature toggles, k8s feature-gates. Plus per-pod toleration inventory
+        # (`kubectl` it) and container_tasks_state (kube_pod_status_* already has pod health).
+        - sourceLabels: [__name__]
+          action: drop
+          regex: "flag|config_parameter|grafana_feature_toggles_info|kubernetes_feature_enabled|kube_pod_tolerations|container_tasks_state"
+        # erlang_vm_* is the RabbitMQ broker's Erlang runtime; alerts read rabbitmq_* only. Redis keeps the
+        # command rate/duration/failure _totals, only per-command latency goes.
+        - sourceLabels: [__name__]
+          action: drop
+          regex: "erlang_vm_.*|redis_commands_latencies_usec_bucket|redis_latency_percentiles_usec"
+        # Go runtime GC/scheduler histograms, per-bucket detail for EVERY Go target. Deliberately KEEPS
+        # go_sched_latencies_seconds_bucket (the VM dashboards use it) and the cheap go_memstats_* scalars.
+        - sourceLabels: [__name__]
+          action: drop
+          regex: "go_(gc_pauses_seconds|gc_heap_allocs_by_size_bytes|gc_heap_frees_by_size_bytes|sched_pauses_stopping_gc_seconds|sched_pauses_stopping_other_seconds|sched_pauses_total_gc_seconds|sched_pauses_total_other_seconds)_(bucket|count|sum)|go_gc_duration_seconds(_count|_sum)?"
+        # Longhorn manager's own client and queue plumbing. Storage HEALTH (longhorn_volume_*, _node_*,
+        # _backup_*) is untouched.
+        - sourceLabels: [__name__]
+          action: drop
+          regex: "longhorn_rest_client_.*|longhorn_workqueue_.*"
+        # Cilium internal latency histograms only. Every cilium_*_total dataplane/policy/drop counter stays.
+        - sourceLabels: [__name__]
+          action: drop
+          regex: "cilium_.*_bucket"
+        # Generic controller queue/REST histograms from many jobs. KEEPS workqueue_depth,
+        # rest_client_requests_total, rest_client_request_duration_seconds_bucket and
+        # controller_runtime_reconcile_total/_errors_total, so reconcile error RATE stays; only timing goes.
+        - sourceLabels: [__name__]
+          action: drop
+          regex: "workqueue_(queue|work)_duration_seconds_(bucket|count|sum)|controller_runtime_reconcile_time_seconds_(bucket|count|sum)|rest_client_request_size_bytes_bucket|rest_client_response_size_bytes_bucket|rest_client_rate_limiter_duration_seconds_bucket"
+        # cAdvisor detail nothing charts. usage_bytes counts reclaimable page cache, working_set is the real
+        # number; spec_* limits duplicate kube_pod_container_resource_limits. KEEPS cpu_usage, working_set,
+        # memory_{rss,swap,cache}, fs_* and oom_events for ad-hoc vmui digging.
+        - sourceLabels: [__name__]
+          action: drop
+          regex: "container_memory_(failures_total|failcnt|kernel_usage|mapped_file|max_usage_bytes|usage_bytes|total_active_file_bytes|total_inactive_file_bytes)|container_cpu_(load_average_10s|load_d_average_10s|system_seconds_total|user_seconds_total)|container_spec_(cpu_period|cpu_shares|memory_reservation_limit_bytes|memory_swap_limit_bytes)|container_pressure_.*|container_(processes|sockets|threads|threads_max|ulimits_soft|file_descriptors|health_state|last_seen|start_time_seconds)|container_blkio_device_usage_total"
+        # cAdvisor reads a host-network pod's stats from the HOST netns, so every such pod repeats all ~70 lxc
+        # veths and the node NICs: 9k series against 568 real. eth0 is the pod's own NIC, node NICs come from
+        # node_network_*. Enumerated because RE2 has no negative lookahead, so interface!="eth0" is unwritable.
+        - sourceLabels: [__name__, interface]
+          action: drop
+          regex: "container_network_.+;(lxc.*|cilium_.*|bond0|end0|dummy0|ip6tnl0|sit0|teql0|tunl0)"
+        # One series per bucket per label combo and nothing charts API latency. Global, not on the kubeApiServer
+        # scrape below: metrics-server and Grafana each embed an apiserver and re-emit the same families.
+        # apiserver_request_duration_seconds_{count,sum} survive, the api-server dashboard uses them.
+        - sourceLabels: [__name__]
+          action: drop
+          regex: "(grafana_)?apiserver_.+_bucket"
+        # Grafana's own HTTP/plugin/alerting-engine timings, charted nowhere.
+        - sourceLabels: [__name__]
+          action: drop
+          regex: "grafana_.+_(bucket|count|sum)"
+        # Envoy xDS-push and connection-lifetime timings. Enumerated, NOT envoy_.*_bucket: the ingress-http
+        # latency alert reads envoy_cluster_upstream_rq_time_bucket.
+        - sourceLabels: [__name__]
+          action: drop
+          regex: "envoy_(cluster_(update_duration|upstream_cx_length_ms|upstream_cx_connect_ms|upstream_rq_per_cx|external_upstream_rq_time|internal_upstream_rq_time)|http_(rds_update_duration|downstream_cx_length_ms|downstream_rq_time)|listener_(downstream_cx_length_ms|connections_accepted_per_socket_event)|sds_update_duration)_bucket"
+        # Kubelet timings nothing reads. KEEPS storage_operation_duration_seconds and
+        # kubelet_runtime_operations_duration_seconds, both charted by the kubelet dashboard.
+        - sourceLabels: [__name__]
+          action: drop
+          regex: "(csi_operations_seconds|volume_operation_total_seconds|kubelet_http_requests_duration_seconds|kubelet_image_pull_duration_seconds)_(bucket|count|sum)"
+        # authn/authz/schema-validation timings from every apiserver-shaped target. A failing authenticator
+        # shows up as 401/403 in apiserver_request_total, not as a latency shift.
+        - sourceLabels: [__name__]
+          action: drop
+          regex: "(authentication_duration_seconds|authentication_token_cache_request_duration_seconds|authorization_duration_seconds|field_validation_request_duration_seconds|node_authorizer_graph_actions_duration_seconds)_(bucket|count|sum)"
+      resources:
+        requests: {cpu: 50m, memory: 224Mi}
+        limits: {memory: 480Mi} # sized for the SIGHUP reload spike, not steady state; it OOMKilled at 384Mi
+      # Soft + hostname: bare Pi nodes have no zone label, and soft means raising replicaCount never wedges a
+      # pod Pending. Scaling out means full replication, with duplicates collapsed by dedup.minScrapeInterval.
+      affinity:
+        podAntiAffinity:
+          preferredDuringSchedulingIgnoredDuringExecution:
+            - weight: 100
+              podAffinityTerm:
+                labelSelector:
+                  matchLabels:
+                    app.kubernetes.io/name: vmagent
+                topologyKey: kubernetes.io/hostname
+
+  vmalert:
+    enabled: false               # Grafana owns alerting (05_grafana)
+  alertmanager:
+    enabled: false               # Grafana owns notifications (05_grafana)
+  grafana:
+    enabled: false               # standalone Grafana is its own app (05_grafana)
+
+  # The chart emits its default alerting + recording rules via a sync-job that is NOT ArgoCD-tracked, so a
+  # prune would not clean leftovers. Nothing evaluates them either, vmalert is off.
+  # The key is `defaultRules.enabled`. `.create` is silently ignored, so re-check this on a chart bump.
+  defaultRules:
+    enabled: false
+
+  defaultDashboards:
+    enabled: true
+    # Keys are dashboard SOURCE names (the ...-dashboard-<key> ConfigMap suffix the sync-job emits). Dropped
+    # below: irrelevant here (Windows, AIX, macOS, multi-cluster) or redundant with the Views/System set we
+    # keep. Kept: Kubernetes Views/System, kubelet, Networking Cluster + Namespace(Pods), node-exporter
+    # Full/Nodes, and the VictoriaMetrics dashboards.
+    dashboards:
+      persistentvolumesusage: {enabled: false} # replaced by 05_grafana's own persistent-volumes.json
+      etcd: {enabled: false}
+      apiserver: {enabled: false}
+      controller-manager: {enabled: false}
+      scheduler: {enabled: false}
+      k8s-resources-multicluster: {enabled: false}
+      k8s-resources-cluster: {enabled: false}
+      k8s-resources-namespace: {enabled: false}
+      k8s-resources-workloads-namespace: {enabled: false}
+      k8s-resources-node: {enabled: false}
+      k8s-resources-nodes-overview: {enabled: false}
+      k8s-resources-pod: {enabled: false}
+      k8s-resources-workload: {enabled: false}
+      k8s-resources-windows-cluster: {enabled: false}
+      k8s-resources-windows-namespace: {enabled: false}
+      k8s-resources-windows-pod: {enabled: false}
+      k8s-windows-cluster-rsrc-use: {enabled: false}
+      k8s-windows-node-rsrc-use: {enabled: false}
+      namespace-by-workload: {enabled: false}
+      pod-total: {enabled: false}
+      workload-total: {enabled: false}
+      node-cluster-rsrc-use: {enabled: false}
+      node-rsrc-use: {enabled: false}
+      nodes-aix: {enabled: false}
+      nodes-darwin: {enabled: false}
+      prometheus: {enabled: false}
+      prometheus-remote-write: {enabled: false}
+
+  prometheus-node-exporter:
+    enabled: true
+    revisionHistoryLimit: 0
+    # Cilium names each pod's veth lxc<random>, so every restart mints ~36 node_network_* series under a name
+    # that never repeats, which then sit in the index for the whole retention window. netdev has the traffic
+    # counters, netclass the carrier/mtu/speed/up gauges, so both need excluding. Keeps cilium_*, bond0, end0, lo.
+    extraArgs:
+      - --collector.netdev.device-exclude=^(lxc.*|dummy0|ip6tnl0|sit0|teql0|tunl0)$
+      - --collector.netclass.ignored-devices=^(lxc.*|dummy0|ip6tnl0|sit0|teql0|tunl0)$
+    # Node metrics are wanted from EVERY node whatever its role or condition, so tolerate every taint rather
+    # than trying to enumerate them.
+    tolerations:
+      - operator: Exists
+    resources:
+      requests: {cpu: 10m, memory: 26Mi}
+      limits: {memory: 44Mi}
+
+  kube-state-metrics:
+    enabled: true
+    revisionHistoryLimit: 0
+    # kube-state-metrics emits NO kube_*_labels series unless a label is allowlisted here. Allowlisting
+    # alert-criticality both creates kube_<obj>_labels and puts the value on it as label_alert_criticality,
+    # which the outage rules pull into their own query with a `group_left` join to tell critical from normal.
+    metricLabelsAllowlist:
+      - deployments=[alert-criticality]
+      - statefulsets=[alert-criticality]
+      - daemonsets=[alert-criticality]
+      - replicasets=[alert-criticality]
+      - pods=[alert-criticality]
+      - horizontalpodautoscalers=[alert-criticality]
+    resources:
+      requests: {cpu: 13m, memory: 73Mi}
+      limits: {memory: 112Mi}
+    # Soft + hostname, as elsewhere. Real scale-out also needs autosharding.enabled: true, which splits the
+    # watched objects across replicas; without it every replica watches everything and emits duplicate series.
+    affinity:
+      podAntiAffinity:
+        preferredDuringSchedulingIgnoredDuringExecution:
+          - weight: 100
+            podAffinityTerm:
+              labelSelector:
+                matchLabels:
+                  app.kubernetes.io/name: kube-state-metrics
+              topologyKey: kubernetes.io/hostname
+
+  kubelet:
+    vmScrape:
+      spec:
+        interval: 60s # chart default is 30s, but dedup.minScrapeInterval discards half of that at ingest
+    vmScrapes:
+      # /metrics/probes is only prober_probe_*, charted nowhere; probe failures show up in kube_pod_status_*
+      # and events instead.
+      probes: {enabled: false}
+
+  # Many distributions bind controller-manager, scheduler and etcd metrics to localhost, so exposing them is a
+  # host-level change made OUTSIDE ArgoCD (on Talos, in the machine config). `endpoints` are the CONTROL-PLANE
+  # node IPs, and only those: a worker runs none of the three. Do NOT hand-edit them: 04_values.sh reads them
+  # from the live cluster and rewrites this list, so adding a control-plane node updates it on the next run.
+  # If your control plane does not expose these at all, set enabled: false on all three.
+  kubeControllerManager:
+    enabled: true
+    endpoints: []
+    service:
+      enabled: true
+      port: 10257
+      targetPort: 10257
+    vmScrape:
+      spec:
+        endpoints:
+          - port: http-metrics
+            scheme: https
+            bearerTokenFile: /var/run/secrets/kubernetes.io/serviceaccount/token
+            tlsConfig:
+              insecureSkipVerify: true   # self-signed cert on the metrics port
+        jobLabel: app.kubernetes.io/component
+        namespaceSelector:
+          matchNames: []
+  kubeScheduler:
+    enabled: true
+    endpoints: []
+    service:
+      enabled: true
+      port: 10259
+      targetPort: 10259
+    vmScrape:
+      spec:
+        endpoints:
+          - port: http-metrics
+            scheme: https
+            bearerTokenFile: /var/run/secrets/kubernetes.io/serviceaccount/token
+            tlsConfig:
+              insecureSkipVerify: true
+        jobLabel: app.kubernetes.io/component
+        namespaceSelector:
+          matchNames: []
+  kubeEtcd:
+    enabled: true
+    endpoints: []
+    service:
+      enabled: true
+      # From ETCD_METRICS_PORT in .env, written by 04_values.sh. etcd's plain-HTTP metrics listener, with no
+      # auth, which Talos and kubeadm both place on 2381.
+      port: 2381
+      targetPort: 2381
+    vmScrape:
+      spec:
+        endpoints:
+          - port: http-metrics
+            scheme: http
+            # etcd_request_duration_seconds_bucket is NOT exported here, it comes from the apiserver job, so
+            # it is dropped under kubeApiServer below rather than here.
+            metricRelabelConfigs:
+              - source_labels: [__name__]
+                action: drop
+                regex: "grpc_server_(handled|started|msg_received|msg_sent)_total"
+        jobLabel: app.kubernetes.io/component
+        namespaceSelector:
+          matchNames: []
+  kubeApiServer:
+    enabled: true
+    vmScrape:
+      spec:
+        endpoints:
+          - port: https
+            scheme: https
+            bearerTokenFile: /var/run/secrets/kubernetes.io/serviceaccount/token
+            tlsConfig:
+              caFile: /var/run/secrets/kubernetes.io/serviceaccount/ca.crt
+              serverName: kubernetes
+            metricRelabelConfigs:
+              # The apiserver's own view of etcd, the biggest single contributor to this job. etcd's SERVER
+              # metrics come from the kubeEtcd job above, untouched. apiserver_*_bucket is dropped globally.
+              - source_labels: [__name__]
+                action: drop
+                regex: "etcd_request_duration_seconds_(bucket|count|sum)|etcd_requests_total|etcd_bookmark_total"
+              # Watch-cache/storage inventories, body sizes, admission and flow-control accounting, plus the
+              # {count,sum} the global bucket drop leaves. Delete the flowcontrol_ term to get API-throttling
+              # visibility back.
+              - source_labels: [__name__]
+                action: drop
+                regex: "apiserver_(watch_cache_.*|watch_events_.*|watch_list_duration_seconds_(count|sum)|storage_list_.*|storage_events_received_total|storage_objects|storage_consistency_checks_total|storage_transformation_duration_seconds_(count|sum)|cache_list_.*|resource_objects|resource_size_estimate_bytes|response_sizes_(count|sum)|request_body_size_bytes_(count|sum)|request_sli_duration_seconds_(count|sum)|request_slo_duration_seconds_(count|sum)|longrunning_requests|selfrequest_total|init_events_total|admission_(controller|webhook|step)_admission_duration_seconds_(count|sum)|flowcontrol_.*)|watch_cache_capacity|apiextensions_openapi_v(2|3)_regeneration_count"
+        jobLabel: component
+        namespaceSelector:
+          matchNames: [default]
+        selector:
+          matchLabels:
+            component: apiserver
+            provider: kubernetes
+  coreDns:
+    enabled: true
+  kubeProxy:
+    enabled: false # Cilium replaces kube-proxy, there is nothing to scrape

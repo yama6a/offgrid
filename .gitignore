@@ -1,0 +1,32 @@
+# Personal config + secrets: your real IPs / domains / usernames / tokens. Gitignored so they stay out of
+# git. Copy the committed template and edit:  cp .env.example .env
+# Only bare `.env` is ignored, so `.env.example` stays tracked.
+.env
+.env.bak
+.env.bak.*
+
+# This repo's own credentials: the sealed-secrets master key and the plaintext ArgoCD webhook secret, written
+# into `secrets/`, a symlink to an off-repo store (a synced drive). No kubeconfig lands here: kubectl comes
+# from your active context, pinned by KUBE_CONTEXT in .env. Never commit the symlink or anything it points at.
+/secrets
+
+# Scratch: benchmark runs and other throwaway output.
+/.cache/
+
+# Editor and OS droppings. Listed here rather than left to a personal global gitignore, so a fork on someone
+# else's machine does not commit them.
+.idea/
+.vscode/
+.DS_Store
+__pycache__/
+
+# Vendored Helm dependency blobs. `helm dependency build` pulls each chart's deps into its own charts/ dir;
+# reproducible from Chart.yaml (+ Chart.lock where committed), so never committed. One rule for every chart.
+**/charts/*.tgz
+
+# Chart.lock for the file://-only consumers: the git commit already fixes those deps, so a lock pins nothing
+# and BREAKS argocd's `helm dependency build` the moment the lib chart's inert version drifts from it. Charts
+# with a REMOTE dep still commit their lock (not matched here, they are listed explicitly).
+argo_apps/platform/charts/04_google_sso/Chart.lock
+argo_apps/platform/charts/06_platform_ingress/Chart.lock
+argo_apps/workloads/charts/*/Chart.lock

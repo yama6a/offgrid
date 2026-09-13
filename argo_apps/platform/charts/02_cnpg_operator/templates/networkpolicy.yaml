@@ -1,0 +1,59 @@
+# Default-deny both ways for the CNPG operator. POD-scoped, not namespace-wide: cnpg-system also holds the
+# barman-cloud plugin, which carries its own policy.
+apiVersion: cilium.io/v2
+kind: CiliumNetworkPolicy
+metadata:
+  name: cnpg-operator
+  namespace: {{ .Release.Namespace }}
+spec:
+  endpointSelector:
+    matchLabels:
+      app.kubernetes.io/name: cloudnative-pg
+  ingress:
+    # vmagent scrapes the controller.
+    - fromEndpoints:
+        - matchLabels:
+            k8s:io.kubernetes.pod.namespace: monitoring
+            app.kubernetes.io/name: vmagent
+      toPorts:
+        - ports:
+            - { port: "8080", protocol: TCP }
+    # The apiserver calls the admission webhooks; the Service maps :443 to the pod's :9443.
+    - fromEntities: [kube-apiserver]
+      toPorts:
+        - ports:
+            - { port: "9443", protocol: TCP }
+    # Kubelet probes, which also use the webhook-server port.
+    - fromEntities: [host, remote-node]
+      toPorts:
+        - ports:
+            - { port: "9443", protocol: TCP }
+  egress:
+    # DNS.
+    - toEndpoints:
+        - matchLabels:
+            k8s:io.kubernetes.pod.namespace: kube-system
+            k8s-app: kube-dns
+      toPorts:
+        - ports:
+            - { port: "53", protocol: UDP }
+            - { port: "53", protocol: TCP }
+    # Reconciles the Cluster/Backup/ScheduledBackup CRs.
+    - toEntities: [kube-apiserver]
+    # The instance-manager API on every Postgres instance. Instances live in WORKLOAD namespaces, and Cilium
+    # defaults an omitted namespace label to the policy's own, hence the explicit ns-Exists matchExpression.
+    - toEndpoints:
+        - matchLabels:
+            cnpg.io/podRole: instance
+          matchExpressions:
+            - { key: k8s:io.kubernetes.pod.namespace, operator: Exists }
+      toPorts:
+        - ports:
+            - { port: "8000", protocol: TCP }
+    # The barman-cloud CNPG-I plugin over gRPC, same namespace.
+    - toEndpoints:
+        - matchLabels:
+            app: barman-cloud
+      toPorts:
+        - ports:
+            - { port: "9090", protocol: TCP }

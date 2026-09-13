@@ -1,0 +1,25 @@
+{{- /*
+Scrape the merged data-plane Envoy pods' Prometheus stats, served by default with no telemetry config needed.
+Provides the envoy_cluster_* series labelled by envoy_cluster_name, which the per-route ingress-http alerts
+group on.
+*/ -}}
+{{- if .Values.envoyProxy.podMonitor.enabled }}
+apiVersion: monitoring.coreos.com/v1
+kind: PodMonitor
+metadata:
+  name: envoy-proxy
+  namespace: {{ .Release.Namespace }}
+  labels:
+    app.kubernetes.io/name: envoy
+    app.kubernetes.io/component: proxy
+spec:
+  selector:
+    matchLabels:
+      app.kubernetes.io/name: envoy
+      app.kubernetes.io/component: proxy
+      app.kubernetes.io/managed-by: envoy-gateway   # the merged data-plane proxy pods only
+  podMetricsEndpoints:
+    - port: metrics                 # :19001 (the proxy's stats listener)
+      path: /stats/prometheus
+      interval: 30s
+{{- end }}

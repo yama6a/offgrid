@@ -1,0 +1,24 @@
+user: ""          # OPTIONAL: (string) This workload's one user. Empty = the release name. Credentials land in Secret <user>-user-credentials.
+
+deadLetter: true  # OPTIONAL: (bool) Per consumer queue, a <queue>.dlx + <queue>.dlq pair. Nothing consumes a DLQ, you alert on its depth.
+deliveryLimit: 5  # OPTIONAL: (int) Failed redeliveries before a message goes to its DLQ.
+# Queue arguments are IMMUTABLE: turning deadLetter on for an EXISTING queue needs that queue deleted once.
+
+# Event exchanges this workload OWNS and publishes to (1 publisher : N consumers).
+#   - name: sample-events
+#     type: topic            # REQUIRED: topic | fanout | direct | headers
+publishEvents: []
+
+# Event exchanges this workload SUBSCRIBES to. Each gets a private "<user>.<exchange>" queue + binding.
+#   - exchange: other-events
+#     routingKey: "order.#"  # OPTIONAL: default "#"
+subscribeEvents: []
+
+# Command exchanges this workload OWNS and consumes (N publishers : 1 consumer). Always direct, setting type is rejected.
+#   - name: sample-commands
+#     routingKey: ""         # OPTIONAL: default is the name itself
+consumeCommands: []
+
+# Command exchanges owned by OTHER workloads that this one sends to. Grants write only, no declaration.
+#   - other-commands
+sendCommands: []

@@ -1,0 +1,129 @@
+# Orphan-not-delete: a prune leaves the store RUNNING instead of destroying its PVC, and restoring the files
+# re-adopts it. To remove: set false in a first commit, delete the app in a follow-up commit.
+deletionProtection: true
+
+vlsingle:
+  # The operator names the Service `vlsingle-<name>` on :9428. Keep in step with the collector remoteWrite
+  # URL below and the vlogs host in 06_platform_ingress.
+  name: victoria-logs
+  namespace: monitoring
+  retentionPeriod: "60d" # logs are bulkier than metrics, which get 180d
+  extraArgs:
+    # The hard ceiling on a single query, 30s by default, and the `timeout=` URL arg does NOT raise it.
+    # vm-backup's hourly log slices take ~1-2s of it each; the headroom is for a slow gzip/S3 leg holding
+    # the response open, because the clock runs until the CLIENT has consumed the stream.
+    search.maxQueryDuration: 5m
+  storage:
+    storageClassName: longhorn-r2-ephemeral # deletionProtection is the prune guard, so Retain would only leak PVs
+    size: 30Gi
+  resources:
+    # 96Mi was well under the real working set (~266Mi observed) and it still OOMKilled at the 512Mi limit
+    # after the hourly-slice change, so both move up together.
+    requests: {cpu: 10m, memory: 288Mi}
+    # Sized for the vm-backup export, not steady state. It now pulls the day in HOURLY slices, so peak is
+    # ~60MB of response per request instead of a ~1.4GB full-day dump that OOM'd mid-response.
+    limits: {memory: 640Mi}
+
+victoria-logs-collector:
+  remoteWrite:
+      # Cap the on-disk send buffer (default uncapped). VLSingle runs on these same 3 nodes, so if it goes
+      # down an uncapped buffer fills the node's /var/lib and takes the node with it. Capped, oldest logs drop.
+    - url: http://vlsingle-victoria-logs.monitoring.svc:9428
+      maxDiskUsagePerURL: 2GiB
+
+  collector:
+    # Applied pre-read, so it also saves CPU and hostPath I/O, and stops a self-ingestion feedback loop.
+    # %{HOSTNAME} is substituted per-pod by the chart.
+    excludeFilter: "kubernetes.pod_name:=%{HOSTNAME}"
+    # One searchable field per pod label on every log line, for no gain at this volume. The excludeFilter
+    # above matches pod_name, not a label, so turning this off does not affect it.
+    includePodLabels: false
+
+  # The pod is not on the host network, so its own hostname is the POD name. This is the only way a
+  # file-collected line can say which node it came from.
+  env:
+    - name: NODE_NAME
+      valueFrom:
+        fieldRef:
+          fieldPath: spec.nodeName
+
+  # The NODE's own logs, not the containers'. This is the one block that depends on how your OS stores system
+  # logs, and there is no knob for it: each entry below is a different source with its own settings, so adapt
+  # or delete the entries rather than templating them.
+  # The first entry assumes an OS that persists each system service to /var/log/<service>.log, kernel included,
+  # which Talos does from 1.12 onwards. On a journald distro there are no such files: drop that entry and
+  # collect from journald instead. The chart already hostPath-mounts /var/log read-only either way.
+  fileCollector:
+      # Top-level glob only, so it takes the service files and not /var/log/{pods,containers}, which the container
+      # collector above already reads. Rotation renames to <service>.log.1, which the glob skips and the
+      # collector follows to the end before switching, so a rotation neither duplicates nor drops lines.
+    - glob: /var/log/*.log
+      # BRACES, not a comma-separated list. -fileCollector.excludeGlob is a positional array paired with the
+      # glob entries below, and a bare comma starts a NEW array item: `a.log,b.log` silently excludes a.log
+      # from THIS glob and b.log from the hubble one, which matches nothing. Braces keep it one item, and the
+      # glob engine expands them. Verified: with `{auditd,dns-resolve-cache}` only kubelet.log and cri.log
+      # were collected out of a seeded set of four.
+      # Both files are pulled out by VOLUME, not relevance, and it is all-or-nothing: vlagent has no content
+      # filter for file collectors, only -kubernetesCollector.excludeFilter, so a rare non-DEBUG line in
+      # either is dropped along with the rest.
+      #   auditd:            the Linux audit subsystem, one record per syscall it watches, ~340MB a DAY per node
+      #                      against 4.4MB for every container log combined. Taking it in needs a bigger PVC AND
+      #                      a way to trim the records, not just deleting this line.
+      #   dns-resolve-cache: Talos host DNS, ~107MB a day and 47% of all log bytes, every line a DEBUG dump of a
+      #                      query and its response in wire format. 40281 of 40281 lines over 6h were DEBUG.
+      #                      Talos has no way to turn this down: machine.logging only sets remote destinations,
+      #                      and `debug: true` ADDS console output rather than gating the service log.
+      excludeGlob: /var/log/{auditd,dns-resolve-cache}.log
+      # controller-runtime colours its level, so without this the escape sequences land in `_msg` as literal
+      # text and every search has to work around them.
+      decolorizeFields: _msg
+      # The node goes in `node`, NOT in `hostname`: the collector always injects its own `hostname` field, and a
+      # second one from here makes VictoriaLogs reject the whole line ("stream tags must be sorted in
+      # alphabetical order ... skipping the log entry"), which is silent loss, visible only in the vlsingle log.
+      # So `hostname` stays as-is and holds the collector POD's name, which is of no use here.
+      extraFields: '{"source":"node","node":"%{NODE_NAME}"}' # `source:node` separates node from container logs
+      # The chart's default. Spelled out because the entries below set their own, and the chart pads the
+      # earlier positions with an EMPTY value to keep the flags aligned, which switches `_msg` mapping off for
+      # this glob: every etcd and kubelet line would arrive as "missing _msg field".
+      msgField: message,msg,log
+      # Replaces the default (hostname + file). Leaving the pod name in the stream would mint a new stream on
+      # every collector restart.
+      streamFields: node,file
+
+      # Hubble's DROPPED-flow export, turned on in 00_cilium. One JSON flow per line: which pod, port and
+      # identity got denied, which the `drop` METRIC cannot tell you. Query `source:hubble`.
+    - glob: /var/run/cilium/hubble/drops.log
+      extraFields: '{"source":"hubble","node":"%{NODE_NAME}"}'
+      msgField: flow.drop_reason_desc # the flow JSON has no message key, so _msg would read "missing _msg field"
+      streamFields: node,file
+
+      # The kube-apiserver audit log: who changed what. Talos enables it by DEFAULT, at ~1GB a day per node,
+      # which is why 03c narrows the policy first; this only collects what survives it. The exact filename,
+      # NOT a *.log glob: rotation renames to kube-apiserver-<timestamp>.log, and a glob would re-ingest every
+      # rotated file whole.
+    - glob: /var/log/audit/kube/kube-apiserver.log
+      extraFields: '{"source":"kube-audit","node":"%{NODE_NAME}"}'
+      msgField: requestURI # audit events have no message key either; the URI is the readable summary
+      streamFields: node,file
+
+  # For the hubble drop log above. /var/log is mounted by the chart already, /var/run/cilium is not.
+  extraVolumes:
+    - name: hubble-flowlogs
+      hostPath: {path: /var/run/cilium/hubble, type: DirectoryOrCreate}
+  extraVolumeMounts:
+    - name: hubble-flowlogs
+      mountPath: /var/run/cilium/hubble
+      readOnly: true
+
+  # Logs are wanted from EVERY node whatever its role or condition, so tolerate every taint rather than trying
+  # to enumerate them.
+  tolerations:
+    - operator: Exists
+
+  podMonitor:
+    enabled: true
+    vm: true
+
+  resources:
+    requests: {cpu: 10m, memory: 64Mi}
+    limits: {memory: 140Mi}

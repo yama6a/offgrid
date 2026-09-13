@@ -1,0 +1,11 @@
+# Priority drives kubelet node-pressure EVICTION order and scheduler PREEMPTION. It does NOT affect the kernel
+# OOM killer. That picks its victim from oom_score_adj, which the kubelet derives from the pod's QoS class
+# and memory request only, so priority never enters into it.
+# Consumers name these verbatim as priorityClassName, so a rename means editing every consumer.
+classes:
+  - name: platform-critical
+    value: 1000000000 # above workloads (0), below the built-in system-* (2000000000+) so kube-system still outranks
+    description: "Platform control-plane components (protected from eviction ahead of user workloads)."
+  - name: data-critical
+    value: 900000000 # under platform-critical: losing cert-manager or the CNI takes out more than any one database
+    description: "Workload data pods (databases, caches: evicted after the platform, before stateless apps)."

@@ -1,0 +1,15 @@
+app:
+  name: sample-user-signup
+  image: "ghcr.io/yama6a/pi5-k8s-sample-app:11"   # three-binary image (/manager, /signup, /auditor)
+  command: ["/signup"]
+  replicas: 1
+  resources:
+    requests: { cpu: 10m, memory: 24Mi }
+    limits:   { memory: 48Mi }
+
+rabbitmq-topology:
+  user: sample-user-signup         # == app.name; the pod reads <user>-user-credentials
+  sendCommands: [create-user-command]                          # write only, the manager owns the exchange
+  subscribeEvents:
+    - { exchange: user-events, routingKey: "users.created" }   # so it never sees users.deleted, nothing binds that key
+    - { exchange: user-audit-logger }                          # fanout, so routingKey is ignored

@@ -1,0 +1,43 @@
+{{- /*
+App lockdown, always rendered. Default-deny both ways, then allow ingress from the Envoy edge on the app port
+and egress for DNS plus the shared broker. No probes and no metrics scrape, so nothing else is opened.
+Postgres and Redis egress is deliberately absent: each store's own chart renders a client-egress CNP from its
+allowedClients, which is the single source of truth for the app-to-store edge in both directions.
+*/ -}}
+apiVersion: cilium.io/v2
+kind: CiliumNetworkPolicy
+metadata:
+  name: {{ .Values.app.name }}-app
+  namespace: {{ .Release.Namespace }}
+spec:
+  endpointSelector:
+    matchLabels:
+      app: {{ .Values.app.name }}
+  ingress:
+    # Only the ingress edge (Envoy) may reach the app, on its HTTP port.
+    - fromEndpoints:
+        - matchLabels:
+            k8s:io.kubernetes.pod.namespace: envoy-gateway-system
+            app.kubernetes.io/managed-by: envoy-gateway
+      toPorts:
+        - ports:
+            - { port: {{ .Values.app.port | quote }}, protocol: TCP }
+  egress:
+    # DNS to CoreDNS.
+    - toEndpoints:
+        - matchLabels:
+            k8s:io.kubernetes.pod.namespace: kube-system
+            k8s-app: kube-dns
+      toPorts:
+        - ports:
+            - { port: "53", protocol: UDP }
+            - { port: "53", protocol: TCP }
+    # The shared RabbitMQ broker. The broker side allows this via its `messaging-client: "true"` ingress rule,
+    # and the pod carries that label.
+    - toEndpoints:
+        - matchLabels:
+            k8s:io.kubernetes.pod.namespace: rabbitmq
+            app.kubernetes.io/name: rabbitmq
+      toPorts:
+        - ports:
+            - { port: "5672", protocol: TCP }

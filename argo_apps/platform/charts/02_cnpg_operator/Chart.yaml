@@ -1,0 +1,10 @@
+apiVersion: v2
+name: cnpg-operator
+description: The CloudNativePG operator and its CRDs. The databases themselves are workloads, via lib/helm/pg-cluster.
+type: application
+version: 0.1.0 # local chart, never bump version
+
+dependencies:
+  - name: cloudnative-pg
+    version: "0.29.0"
+    repository: https://cloudnative-pg.github.io/charts

@@ -1,0 +1,5 @@
+apiVersion: v2
+name: gateway
+description: The shared :80 Gateway that cert-manager's HTTP-01 solver routes attach to, plus the Let's Encrypt ClusterIssuers. Each HTTPS host is its own per-app Gateway.
+type: application
+version: 0.1.0 # local chart, never bump version

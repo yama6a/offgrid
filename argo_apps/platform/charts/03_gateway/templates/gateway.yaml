@@ -1,0 +1,21 @@
+# Owns ONLY the always-on HTTP :80 listener: cert-manager's HTTP-01 solver routes attach here, and later the
+# forced http-to-https redirect. No :443 listeners and no cert refs, so it is Programmed immediately and its
+# health never depends on an app's cert. Each app owns its own Gateway with its own :443 listener.
+# No spec.addresses: under mergeGateways the EnvoyProxy annotation is the sole IP authority, and a per-Gateway
+# address would conflict on the shared Service.
+apiVersion: gateway.networking.k8s.io/v1
+kind: Gateway
+metadata:
+  name: {{ .Values.gateway.name }}
+  namespace: {{ .Values.gateway.namespace }}
+spec:
+  gatewayClassName: {{ .Values.gateway.className }}
+  listeners:
+    - name: http
+      protocol: HTTP
+      port: 80
+      # All, so HTTPRoutes in any namespace can attach, including cert-manager's solver routes, which are
+      # created in the Certificate's namespace.
+      allowedRoutes:
+        namespaces:
+          from: All

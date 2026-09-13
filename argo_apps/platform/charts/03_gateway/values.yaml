@@ -1,0 +1,26 @@
+gateway:
+  name: shared-gateway
+  namespace: gateway # the per-app Gateways/Certificates/HTTPRoutes land here too
+  className: eg
+  # No pinned LoadBalancer IP here. mergeGateways is on (01_envoy_gateway), which collapses every `eg`
+  # Gateway onto ONE Envoy and ONE LB Service. That single Service gets its IP from the EnvoyProxy
+  # lbipam.cilium.io/ips annotation, so setting spec.addresses on a Gateway here would have several Gateways
+  # each claiming the same shared Service.
+acme:
+  email: "" # ACME account level, LE expiry notices go here
+  # Always test a new host against staging first, prod has tight rate limits.
+  issuers:
+    - name: letsencrypt-staging
+      server: "https://acme-staging-v02.api.letsencrypt.org/directory"
+    - name: letsencrypt-prod
+      server: "https://acme-v02.api.letsencrypt.org/directory"
+  # Optional, per-domain. 04_values.sh writes `zones` from .env and seals the token. Empty zones = no dns01
+  # solver and no wildcard certs, HTTP-01 for everything.
+  cloudflare:
+    zones: []
+    apiTokenSecretName: cloudflare-api-token # SealedSecret in the cert-manager namespace, sealed by 04_values.sh
+    apiTokenSecretKey: api-token
+    wildcardIssuer: letsencrypt-prod # default for every zone's wildcard cert; wildcards need DNS-01, so staging first dodges prod limits
+    # Per-zone override of the above, so a NEW zone proves itself on staging while the others stay on prod.
+    wildcardIssuerOverrides: {}
+    #   example.edu: letsencrypt-staging

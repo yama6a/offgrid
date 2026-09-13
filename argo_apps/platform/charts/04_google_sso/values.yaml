@@ -1,0 +1,53 @@
+namespace: gateway                       # must equal the ingress chart's hardcoded gateway namespace
+callbackImage: "traefik/whoami:v1.12.0"  # Envoy intercepts /oauth2/callback before it reaches this
+
+# One Google client for everything. clientID written by 04_google_sso.sh, the secret is sealed.
+oidc:
+  clientID: "000000000000-example.apps.googleusercontent.com"
+  clientSecretName: google-oauth   # sealed Secret, key `client-secret`
+  authSubdomain: google-sso        # callback host = <authSubdomain>.<domain>; register it as the redirect URI
+  idTokenCookie: "google-id-token"
+  logoutPath: "/oauth2/sign_out"   # off the default /logout so it doesn't swallow a backend's own /logout
+  refreshToken: true               # renew silently so a session outlives Google's ~1h token...
+  sessionTTL: "24h"                # ...capped here (needs access_type=offline)
+  csrfTokenTTL: "5m"               # short, so orphaned per-flow cookies drain fast
+  # XHR/websocket requests get 401 instead of a 302 to Google, else a logged-out SPA leaks cookies until Envoy
+  # resets the stream (ERR_HTTP2_PROTOCOL_ERROR). Empty disables.
+  denyRedirectSecFetchMode: "cors|no-cors|same-origin|websocket"
+
+# The platform's own registrable domain. Every host in `hosts` MUST sit under it: the policy sets one
+# cookieDomain, and a cookie only ever reaches that domain and its subdomains, so a host outside it never gets
+# the id token and loops through Google forever. Other domains go in `extraDomains`, one policy each.
+domain: example.com        # written by 04_values.sh from .env BASE_DOMAIN
+issuer: letsencrypt-prod   # callback cert issuer (letsencrypt-staging | letsencrypt-prod)
+
+# Who may log in, the default for every gated host on every domain. Never leave this empty on a real
+# deployment: an empty allowlist denies everyone, including you.
+allowlist:                 # written by 04_values.sh from .env SSO_ALLOWLIST
+  - you@example.com
+
+# Which hosts are SSO-gated. `subdomain` composes against `domain` into the FQDN its ingress renders, because
+# the policy attaches to routes by dashed-host name and both sides must agree. A host may carry its own
+# `allowlist` to override the one above.
+# This list is policy, not config, so it is NOT stamped: sample-user-manager is deliberately absent (open)
+# while sample-user-manager-sso is listed, and that contrast is the demo.
+hosts:
+  - subdomain: argocd.ops
+  - subdomain: grafana.ops
+  - subdomain: vmui.ops
+  - subdomain: vlogs.ops
+  - subdomain: hubble.ops
+  - subdomain: longhorn.ops
+  - subdomain: rabbitmq.ops   # edge SSO, then RabbitMQ's own login
+  - subdomain: sample-user-manager-sso.app
+
+# Other registrable domains, hand-written: 04_values.sh stamps only `domain` above. Each gets its own policy,
+# cookie scope and google-sso.<domain> callback, so each needs its own redirect URI on the same Google client.
+# 04_google_sso.sh prints them. See docs/04_ingress.md.
+extraDomains: []
+# - domain: example.edu
+#   issuer: letsencrypt-staging       # OPTIONAL: defaults to `issuer` above
+#   hosts:
+#     - subdomain: www
+#     - subdomain: api
+#       allowlist: [ops@example.edu]  # OPTIONAL: defaults to `allowlist` above

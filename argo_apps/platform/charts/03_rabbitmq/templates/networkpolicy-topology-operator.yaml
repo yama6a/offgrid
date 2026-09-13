@@ -1,0 +1,46 @@
+# Default-deny both ways for the Messaging Topology Operator, which reconciles the topology CRs by calling the
+# broker's HTTP management API. Not covered by the broker's own pod-scoped policy.
+# The subchart's own vanilla NetworkPolicy for it is allow-all-egress and is disabled in values: Cilium
+# enforces vanilla NPs and UNIONs them with CNPs, so it would blow this default-deny open.
+apiVersion: cilium.io/v2
+kind: CiliumNetworkPolicy
+metadata:
+  name: messaging-topology-operator
+  namespace: {{ .Release.Namespace }}
+spec:
+  endpointSelector:
+    matchLabels:
+      app.kubernetes.io/component: messaging-topology-operator
+      app.kubernetes.io/part-of: rabbitmq
+  ingress:
+    # The apiserver calls the validating admission webhook.
+    # remote-node: an apiserver on another node sources from that node's cilium_host IP, not the apiserver identity.
+    - fromEntities: [kube-apiserver, host, remote-node]
+      toPorts:
+        - ports:
+            - { port: "9443", protocol: TCP }
+    # Kubelet /healthz and /readyz probes, from the node.
+    - fromEntities: [host, remote-node]
+      toPorts:
+        - ports:
+            - { port: "8081", protocol: TCP }
+  egress:
+    # DNS.
+    - toEndpoints:
+        - matchLabels:
+            k8s:io.kubernetes.pod.namespace: kube-system
+            k8s-app: kube-dns
+      toPorts:
+        - ports:
+            - { port: "53", protocol: UDP }
+            - { port: "53", protocol: TCP }
+    # Watches the topology CRs in all namespaces and reports their status.
+    - toEntities: [kube-apiserver]
+    # Declares topology over the broker's management API. The shared broker is in THIS namespace, so a plain
+    # same-namespace selector suffices.
+    - toEndpoints:
+        - matchLabels:
+            app.kubernetes.io/name: rabbitmq
+      toPorts:
+        - ports:
+            - { port: "15672", protocol: TCP }

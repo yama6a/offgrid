@@ -1,0 +1,5 @@
+apiVersion: v2
+name: redis-instance
+description: Shared chart that renders one standalone OpsTree Redis CR plus its ServiceMonitor and a default-deny CiliumNetworkPolicy. Aliased once per instance, like pg-cluster.
+type: application
+version: 0.1.0 # local chart, never bump version

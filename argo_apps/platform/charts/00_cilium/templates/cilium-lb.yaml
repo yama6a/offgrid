@@ -1,0 +1,35 @@
+{{- if .Values.loadBalancer.enabled }}
+# LoadBalancer IPs for the cluster.
+apiVersion: cilium.io/v2
+kind: CiliumLoadBalancerIPPool
+metadata:
+  name: pool-default
+spec:
+  blocks:
+    - start: "{{ .Values.loadBalancer.ipPool.start }}"
+      stop:  "{{ .Values.loadBalancer.ipPool.stop }}"
+---
+apiVersion: cilium.io/v2alpha1
+kind: CiliumL2AnnouncementPolicy
+metadata:
+  name: l2-default
+spec:
+  loadBalancerIPs: true
+  # Announce externalIPs too, as a safety net. When one IP is both a LoadBalancer ingress IP and a
+  # spec.externalIP, Cilium creates a single ExternalIPs-typed frontend that loadBalancerIPs:true alone does
+  # NOT announce, and the type can land differently across restarts, silently dropping the ARP announcement.
+  externalIPs: true
+  # The wired-ethernet CLASS, not a device name: end0 on a Pi, eno1 or enp0s31f6 on x86. So new hardware needs no
+  # edit here, and a node can never match this policy while matching zero devices, which is the case that takes
+  # the announce lease and then answers no ARP at all. Still excludes lo, bond/dummy, the cilium_* virtuals and
+  # any wl* wifi. Correct ONLY because every node here has exactly one connected NIC: two on the same segment
+  # would both answer for the LB IP with different MACs, and it would flap between them.
+  interfaces:
+    - ^en
+  # Every node is a candidate, deliberately. Announcing is independent of both the node's role and where the
+  # backend runs: the service is externalTrafficPolicy Cluster, so whichever node answers the ARP forwards
+  # through the eBPF datapath to Envoy wherever it is. More candidates means the lease survives more node losses.
+  nodeSelector:
+    matchLabels:
+      kubernetes.io/os: linux
+{{- end }}

@@ -1,0 +1,18 @@
+{{- /*
+The ONE shared vhost every workload uses, created centrally so a single place owns it. The topology operator
+declares it as the broker's admin default-user, whose `administrator` tag lets it manage any vhost. Workload
+Users get explicit per-vhost Permission; the default `/` vhost stays admin-only.
+SkipDryRunOnMissingResource: the CRD ships with this app's own operator subchart, so skip the cold-boot server
+dry-run before the type is registered.
+*/ -}}
+apiVersion: rabbitmq.com/v1beta1
+kind: Vhost
+metadata:
+  name: {{ .Values.vhost }}
+  namespace: {{ .Release.Namespace }}
+  annotations:
+    argocd.argoproj.io/sync-options: SkipDryRunOnMissingResource=true
+spec:
+  name: {{ .Values.vhost }}
+  rabbitmqClusterReference:
+    name: {{ .Values.name }}

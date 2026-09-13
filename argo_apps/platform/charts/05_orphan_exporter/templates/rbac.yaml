@@ -1,0 +1,73 @@
+# Cluster-wide READ on the protected stateful CRs, Argo Applications, and the ObjectStores whose status
+# carries backup recoverability. No write, nothing else.
+apiVersion: rbac.authorization.k8s.io/v1
+kind: ClusterRole
+metadata:
+  name: orphan-exporter
+rules:
+  - apiGroups: ["postgresql.cnpg.io"]
+    resources: ["clusters"]
+    verbs: ["get", "list"]
+  - apiGroups: ["barmancloud.cnpg.io"]
+    resources: ["objectstores"]
+    verbs: ["get", "list"]
+  - apiGroups: ["redis.redis.opstreelabs.in"]
+    resources: ["redis"]
+    verbs: ["get", "list"]
+  - apiGroups: ["operator.victoriametrics.com"]
+    resources: ["vlsingles", "vmsingles", "vmagents"]
+    verbs: ["get", "list"]
+  - apiGroups: ["argoproj.io"]
+    resources: ["applications"]
+    verbs: ["get", "list"]
+  # PVs are cluster-scoped, so there is no narrower grant than this. Read only: the exporter reports an
+  # abandoned PV, `make cleanup-abandoned-pvs` is what deletes one.
+  - apiGroups: [""]
+    resources: ["persistentvolumes"]
+    verbs: ["get", "list"]
+  # Both, because an orphaned backupvolume is only visible by diffing the two.
+  - apiGroups: ["longhorn.io"]
+    resources: ["volumes", "backupvolumes"]
+    verbs: ["get", "list"]
+# ConfigMap access is deliberately not cluster-wide: see the namespaced Role below.
+---
+apiVersion: rbac.authorization.k8s.io/v1
+kind: ClusterRoleBinding
+metadata:
+  name: orphan-exporter
+roleRef:
+  apiGroup: rbac.authorization.k8s.io
+  kind: ClusterRole
+  name: orphan-exporter
+subjects:
+  - kind: ServiceAccount
+    name: orphan-exporter
+    namespace: {{ .Release.Namespace }}
+---
+# The one ConfigMap 07_redis_backup publishes its per-instance outcome into. Pinned to that object name: a
+# cluster-wide configmaps read would hand the exporter every ConfigMap in the cluster for one gauge.
+# The RoleBinding reaches across namespaces to the exporter's ServiceAccount.
+apiVersion: rbac.authorization.k8s.io/v1
+kind: Role
+metadata:
+  name: orphan-exporter-redis-backup-status
+  namespace: redis-backup
+rules:
+  - apiGroups: [""]
+    resources: ["configmaps"]
+    resourceNames: ["redis-backup-status"]
+    verbs: ["get"]
+---
+apiVersion: rbac.authorization.k8s.io/v1
+kind: RoleBinding
+metadata:
+  name: orphan-exporter-redis-backup-status
+  namespace: redis-backup
+roleRef:
+  apiGroup: rbac.authorization.k8s.io
+  kind: Role
+  name: orphan-exporter-redis-backup-status
+subjects:
+  - kind: ServiceAccount
+    name: orphan-exporter
+    namespace: {{ .Release.Namespace }}

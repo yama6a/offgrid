@@ -1,0 +1,10 @@
+apiVersion: v2
+name: sample-user-signup
+description: The sample-app /signup binary. Publishes create-user-command every 10s and consumes users.created plus the audit fanout.
+type: application
+version: 0.1.0 # local chart, never bump version
+
+dependencies:
+  - name: rabbitmq-topology
+    version: "*"
+    repository: "file://../../../../lib/helm/rabbitmq-topology"

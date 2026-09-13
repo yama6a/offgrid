@@ -1,0 +1,39 @@
+# Cluster-scoped, so Certificates in any namespace can use them. Each solves HTTP-01 via a temporary
+# HTTPRoute cert-manager attaches to the shared Gateway. The ACME account key is stored in a Secret in
+# cert-manager's namespace.
+{{- range .Values.acme.issuers }}
+---
+apiVersion: cert-manager.io/v1
+kind: ClusterIssuer
+metadata:
+  name: {{ .name }}
+spec:
+  acme:
+    email: {{ $.Values.acme.email | quote }}
+    server: {{ .server | quote }}
+    privateKeySecretRef:
+      name: {{ .name }}-account-key
+    solvers:
+      {{- /* DNS-01 first: cert-manager picks the most-specific solver per dnsName, so names under a
+             Cloudflare zone go DNS-01 and everything else falls through to the http01 catch-all. */}}
+      {{- with $.Values.acme.cloudflare }}
+      {{- if .zones }}
+      - dns01:
+          cloudflare:
+            apiTokenSecretRef:
+              name: {{ .apiTokenSecretName | quote }}
+              key: {{ .apiTokenSecretKey | quote }}
+        selector:
+          dnsZones:
+            {{- range .zones }}
+            - {{ . | quote }}
+            {{- end }}
+      {{- end }}
+      {{- end }}
+      - http01:
+          gatewayHTTPRoute:
+            parentRefs:
+              - name: {{ $.Values.gateway.name }}
+                namespace: {{ $.Values.gateway.namespace }}
+                kind: Gateway
+{{- end }}

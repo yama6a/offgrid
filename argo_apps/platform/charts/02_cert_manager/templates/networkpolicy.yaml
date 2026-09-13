@@ -1,0 +1,51 @@
+# Namespace-wide default-deny for cert-manager, which holds the ACME account key and every issued private key.
+apiVersion: cilium.io/v2
+kind: CiliumNetworkPolicy
+metadata:
+  name: cert-manager
+  namespace: {{ .Release.Namespace }}
+spec:
+  endpointSelector: {}          # controller + webhook + cainjector
+  ingress:
+    # vmagent scrapes metrics (all three pods expose :9402).
+    - fromEndpoints:
+        - matchLabels:
+            k8s:io.kubernetes.pod.namespace: monitoring
+            app.kubernetes.io/name: vmagent
+      toPorts:
+        - ports:
+            - { port: "9402", protocol: TCP }
+    # The apiserver calls the admission webhook; the Service maps :443 to the pod's :10250.
+    # remote-node: an apiserver on another node sources from that node's cilium_host IP, not the apiserver identity.
+    - fromEntities: [kube-apiserver, host, remote-node]
+      toPorts:
+        - ports:
+            - { port: "10250", protocol: TCP }
+  egress:
+    # DNS (CoreDNS).
+    - toEndpoints:
+        - matchLabels:
+            k8s:io.kubernetes.pod.namespace: kube-system
+            k8s-app: kube-dns
+      toPorts:
+        - ports:
+            - { port: "53", protocol: UDP }
+            - { port: "53", protocol: TCP }
+    # Certificate/Order/Secret + HTTP-01 HTTPRoutes.
+    - toEntities: [kube-apiserver]
+    # Let's Encrypt ACME + the Cloudflare API (DNS-01 apiToken calls to api.cloudflare.com).
+    - toEntities: [world]
+      toPorts:
+        - ports:
+            - { port: "443", protocol: TCP }
+    # HTTP-01 self-check to the challenge URL via the gateway.
+    - toEntities: [world]
+      toPorts:
+        - ports:
+            - { port: "80", protocol: TCP }
+    # DNS-01 propagation self-check, straight to the recursive nameservers set in values.yaml.
+    - toEntities: [world]
+      toPorts:
+        - ports:
+            - { port: "53", protocol: UDP }
+            - { port: "53", protocol: TCP }

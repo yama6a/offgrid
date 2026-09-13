@@ -1,0 +1,1 @@
+# Nothing to configure. 02b_argocd_webhook.sh writes the SealedSecret in templates/ verbatim.

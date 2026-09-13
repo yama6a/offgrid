@@ -1,0 +1,10 @@
+apiVersion: v2
+name: victoria-metrics-operator
+description: The VictoriaMetrics operator. Reconciles the VM*/VL* CRs and converts third-party ServiceMonitor/PodMonitor/PrometheusRule objects to VM equivalents.
+type: application
+version: 0.1.0 # local chart, never bump version
+
+dependencies:
+  - name: victoria-metrics-operator
+    version: "0.67.3"
+    repository: https://victoriametrics.github.io/helm-charts/

@@ -1,0 +1,316 @@
+apiVersion: 1
+groups:
+  # Static severities: Longhorn is shared critical-platform storage.
+  # longhorn_volume_robustness on this version is a per-STATE metric ({state="healthy|degraded|faulted|unknown"}
+  # = 1 for the current state), NOT a numeric 0-3 gauge, hence the {state="..."} selectors below.
+  - orgId: 1
+    name: longhorn-health
+    folder: offgrid
+    interval: 1m
+    rules:
+      # Dead-man's switch: if the longhorn-manager feed stops, every rule below silently goes NoData, so OK.
+      - uid: longhorn-manager-down
+        title: Longhorn manager metrics absent
+        condition: C
+        for: 5m
+        labels: {severity: critical}
+        annotations:
+          summary: 'Longhorn is not reporting metrics (manager down or unscraped): storage health is blind'
+          description: |
+            - longhorn-manager metrics feed is gone: every Longhorn alert below is silently blind
+            - check pods: kubectl -n longhorn-system get pods -l app=longhorn-manager
+            - check the ServiceMonitor scrape target in the VMAgent/Prometheus targets page
+        noDataState: OK
+        execErrState: KeepLast
+        data:
+          - refId: A
+            relativeTimeRange: {from: 600, to: 0}
+            datasourceUid: VictoriaMetrics
+            model:
+              refId: A
+              instant: true
+              expr: 'absent(longhorn_node_count_total)'
+          - refId: B
+            relativeTimeRange: {from: 600, to: 0}
+            datasourceUid: __expr__
+            model: {refId: B, type: reduce, expression: A, reducer: last, datasource: {type: __expr__, uid: __expr__}}
+          - refId: C
+            relativeTimeRange: {from: 600, to: 0}
+            datasourceUid: __expr__
+            model:
+              refId: C
+              type: threshold
+              expression: B
+              datasource: {type: __expr__, uid: __expr__}
+              conditions:
+                - type: query
+                  evaluator: {type: gt, params: [0]}
+      # Warning, not critical: the platform node-not-ready covers a hard k8s node loss, and volume impact
+      # surfaces via longhorn-volume-degraded.
+      - uid: longhorn-node-down
+        title: Longhorn node not ready
+        condition: C
+        for: 5m
+        labels: {severity: warning}
+        annotations:
+          summary: 'Longhorn node {{ $labels.node }} is not ready'
+          description: |
+            - node {{ $labels.node }} can't host replicas: disk mount, kernel modules, or multipathd likely
+            - inspect: kubectl -n longhorn-system get nodes.longhorn.io {{ $labels.node }} -o yaml
+            - verify the Longhorn data path is mounted, and iscsi/multipathd, on that node
+        noDataState: OK
+        execErrState: KeepLast
+        data:
+          - refId: A
+            relativeTimeRange: {from: 600, to: 0}
+            datasourceUid: VictoriaMetrics
+            model:
+              refId: A
+              instant: true
+              expr: 'max by (node) (longhorn_node_status{condition="ready"}) == bool 0'
+          - refId: B
+            relativeTimeRange: {from: 600, to: 0}
+            datasourceUid: __expr__
+            model: {refId: B, type: reduce, expression: A, reducer: last, datasource: {type: __expr__, uid: __expr__}}
+          - refId: C
+            relativeTimeRange: {from: 600, to: 0}
+            datasourceUid: __expr__
+            model:
+              refId: C
+              type: threshold
+              expression: B
+              datasource: {type: __expr__, uid: __expr__}
+              conditions:
+                - type: query
+                  evaluator: {type: gt, params: [0]}
+      # The disk itself, not the node: a node reports Ready while its only disk is rejected, so without this the
+      # only signal is disk-unschedulable below, which reads like a capacity problem and sends you to free space.
+      - uid: longhorn-disk-not-ready
+        title: Longhorn disk not ready
+        condition: C
+        for: 10m
+        labels: {severity: warning}
+        annotations:
+          summary: 'Longhorn disk {{ $labels.disk }} on node {{ $labels.node }} is not ready'
+          description: |
+            - disk {{ $labels.disk }} on {{ $labels.node }} is rejected outright: it holds no replicas and takes none
+            - the node can still report Ready, so check the DISK conditions: kubectl -n longhorn-system get nodes.longhorn.io {{ $labels.node }} -o yaml
+            - DiskFilesystemChanged, "record diskUUID doesn't match", means that node was replaced or reflashed
+              and the CR still records the old filesystem. Reset it: make reconcile-storage NODE=<host>
+            - otherwise suspect the Longhorn data path mount, or iscsi/multipathd on that node
+        noDataState: OK
+        execErrState: KeepLast
+        data:
+          - refId: A
+            relativeTimeRange: {from: 600, to: 0}
+            datasourceUid: VictoriaMetrics
+            model:
+              refId: A
+              instant: true
+              expr: 'max by (node, disk) (longhorn_disk_status{condition="ready"}) == bool 0'
+          - refId: B
+            relativeTimeRange: {from: 600, to: 0}
+            datasourceUid: __expr__
+            model: {refId: B, type: reduce, expression: A, reducer: last, datasource: {type: __expr__, uid: __expr__}}
+          - refId: C
+            relativeTimeRange: {from: 600, to: 0}
+            datasourceUid: __expr__
+            model:
+              refId: C
+              type: threshold
+              expression: B
+              datasource: {type: __expr__, uid: __expr__}
+              conditions:
+                - type: query
+                  evaluator: {type: gt, params: [0]}
+      # A disk that cannot accept new replicas fails future provisioning and post-node-loss rebuilds. Fires for
+      # ANY cause, including a not-ready disk, so the summary stays cause-neutral and disk-not-ready above is
+      # what tells the two apart.
+      - uid: longhorn-disk-unschedulable
+        title: Longhorn disk unschedulable
+        condition: C
+        for: 10m
+        labels: {severity: warning}
+        annotations:
+          summary: 'Longhorn disk {{ $labels.disk }} on node {{ $labels.node }} is unschedulable'
+          description: |
+            - disk {{ $labels.disk }} on {{ $labels.node }} can't take new replicas: new provisioning + rebuilds will fail
+            - if disk-not-ready fired for the same disk, that is the cause; fix that and ignore this one
+            - otherwise the disk is full or over storage-reserved; check the Longhorn UI Node page
+            - free space or raise the disk's storage-reserved: kubectl -n longhorn-system get nodes.longhorn.io {{ $labels.node }} -o yaml
+        noDataState: OK
+        execErrState: KeepLast
+        data:
+          - refId: A
+            relativeTimeRange: {from: 600, to: 0}
+            datasourceUid: VictoriaMetrics
+            model:
+              refId: A
+              instant: true
+              expr: 'max by (node, disk) (longhorn_disk_status{condition="schedulable"}) == bool 0'
+          - refId: B
+            relativeTimeRange: {from: 600, to: 0}
+            datasourceUid: __expr__
+            model: {refId: B, type: reduce, expression: A, reducer: last, datasource: {type: __expr__, uid: __expr__}}
+          - refId: C
+            relativeTimeRange: {from: 600, to: 0}
+            datasourceUid: __expr__
+            model:
+              refId: C
+              type: threshold
+              expression: B
+              datasource: {type: __expr__, uid: __expr__}
+              conditions:
+                - type: query
+                  evaluator: {type: gt, params: [0]}
+      # Longhorn's own accounting, tied to storageMinimalAvailablePercentage. A full disk blocks replica rebuild
+      # after a node loss. Complements node-disk-space on the raw partition.
+      - uid: longhorn-node-storage-high
+        title: Longhorn node storage high
+        condition: C
+        for: 10m
+        labels: {severity: warning}
+        annotations:
+          summary: 'Longhorn storage on node {{ $labels.node }} above 85% used'
+          description: |
+            - node {{ $labels.node }} Longhorn storage >85%: a full disk blocks replica rebuild after a node loss
+            - check per-disk usage in the Longhorn UI Node page or nodes.longhorn.io {{ $labels.node }}
+            - free volumes/snapshots, or add disk capacity on that node
+        noDataState: OK
+        execErrState: KeepLast
+        data:
+          - refId: A
+            relativeTimeRange: {from: 600, to: 0}
+            datasourceUid: VictoriaMetrics
+            model:
+              refId: A
+              instant: true
+              expr: '100 * longhorn_node_storage_usage_bytes / longhorn_node_storage_capacity_bytes'
+          - refId: B
+            relativeTimeRange: {from: 600, to: 0}
+            datasourceUid: __expr__
+            model: {refId: B, type: reduce, expression: A, reducer: last, datasource: {type: __expr__, uid: __expr__}}
+          - refId: C
+            relativeTimeRange: {from: 600, to: 0}
+            datasourceUid: __expr__
+            model:
+              refId: C
+              type: threshold
+              expression: B
+              datasource: {type: __expr__, uid: __expr__}
+              conditions:
+                - type: query
+                  evaluator: {type: gt, params: [85]}
+      # Fewer healthy replicas than desired, still available.
+      - uid: longhorn-volume-degraded
+        title: Longhorn volume degraded
+        condition: C
+        for: 10m
+        labels: {severity: warning}
+        annotations:
+          summary: 'Longhorn volume {{ $labels.volume }} (pvc {{ $labels.pvc_namespace }}/{{ $labels.pvc }}) is degraded'
+          description: |
+            - volume {{ $labels.volume }} ({{ $labels.pvc_namespace }}/{{ $labels.pvc }}) has fewer healthy replicas than desired: still available, but redundancy is reduced
+            - inspect: kubectl -n longhorn-system get volumes.longhorn.io {{ $labels.volume }} -o yaml
+            - check the Longhorn UI Volume page for the failed replica + its node/disk health
+            - usually self-heals once a schedulable disk is available; watch it rebuild
+        noDataState: OK
+        execErrState: KeepLast
+        data:
+          - refId: A
+            relativeTimeRange: {from: 600, to: 0}
+            datasourceUid: VictoriaMetrics
+            model:
+              refId: A
+              instant: true
+              expr: 'max by (pvc_namespace, pvc, volume) (longhorn_volume_robustness{state="degraded"})'
+          - refId: B
+            relativeTimeRange: {from: 600, to: 0}
+            datasourceUid: __expr__
+            model: {refId: B, type: reduce, expression: A, reducer: last, datasource: {type: __expr__, uid: __expr__}}
+          - refId: C
+            relativeTimeRange: {from: 600, to: 0}
+            datasourceUid: __expr__
+            model:
+              refId: C
+              type: threshold
+              expression: B
+              datasource: {type: __expr__, uid: __expr__}
+              conditions:
+                - type: query
+                  evaluator: {type: gt, params: [0]}
+      # Zero healthy replicas, so data is at risk.
+      - uid: longhorn-volume-faulted
+        title: Longhorn volume faulted
+        condition: C
+        for: 2m
+        labels: {severity: critical}
+        annotations:
+          summary: 'Longhorn volume {{ $labels.volume }} (pvc {{ $labels.pvc_namespace }}/{{ $labels.pvc }}) is FAULTED (no healthy replicas, data at risk)'
+          description: |
+            - volume {{ $labels.volume }} ({{ $labels.pvc_namespace }}/{{ $labels.pvc }}) has ZERO healthy replicas: I/O is failing, data at risk
+            - inspect now: kubectl -n longhorn-system get volumes.longhorn.io {{ $labels.volume }} -o yaml
+            - check every replica's node/disk in the Longhorn UI; bring a node back to recover, do NOT delete replicas
+            - if unrecoverable, restore from backup/snapshot
+        noDataState: OK
+        execErrState: KeepLast
+        data:
+          - refId: A
+            relativeTimeRange: {from: 600, to: 0}
+            datasourceUid: VictoriaMetrics
+            model:
+              refId: A
+              instant: true
+              expr: 'max by (pvc_namespace, pvc, volume) (longhorn_volume_robustness{state="faulted"})'
+          - refId: B
+            relativeTimeRange: {from: 600, to: 0}
+            datasourceUid: __expr__
+            model: {refId: B, type: reduce, expression: A, reducer: last, datasource: {type: __expr__, uid: __expr__}}
+          - refId: C
+            relativeTimeRange: {from: 600, to: 0}
+            datasourceUid: __expr__
+            model:
+              refId: C
+              type: threshold
+              expression: B
+              datasource: {type: __expr__, uid: __expr__}
+              conditions:
+                - type: query
+                  evaluator: {type: gt, params: [0]}
+      # Writes fail when a volume hits its provisioned capacity.
+      - uid: longhorn-volume-near-full
+        title: Longhorn volume near full
+        condition: C
+        for: 10m
+        labels: {severity: warning}
+        annotations:
+          summary: 'Longhorn volume {{ $labels.volume }} (pvc {{ $labels.pvc_namespace }}/{{ $labels.pvc }}) above 90% of capacity'
+          description: |
+            - volume {{ $labels.volume }} ({{ $labels.pvc_namespace }}/{{ $labels.pvc }}) is >90% full: writes fail once it hits 100%
+            - check actual usage from inside the consumer pod: kubectl -n {{ $labels.pvc_namespace }} exec ... -- df -h
+            - free data or expand the PVC (Longhorn supports online expansion): edit the PVC's spec.resources.requests.storage
+        noDataState: OK
+        execErrState: KeepLast
+        data:
+          - refId: A
+            relativeTimeRange: {from: 600, to: 0}
+            datasourceUid: VictoriaMetrics
+            model:
+              refId: A
+              instant: true
+              expr: '100 * longhorn_volume_actual_size_bytes / longhorn_volume_capacity_bytes'
+          - refId: B
+            relativeTimeRange: {from: 600, to: 0}
+            datasourceUid: __expr__
+            model: {refId: B, type: reduce, expression: A, reducer: last, datasource: {type: __expr__, uid: __expr__}}
+          - refId: C
+            relativeTimeRange: {from: 600, to: 0}
+            datasourceUid: __expr__
+            model:
+              refId: C
+              type: threshold
+              expression: B
+              datasource: {type: __expr__, uid: __expr__}
+              conditions:
+                - type: query
+                  evaluator: {type: gt, params: [90]}

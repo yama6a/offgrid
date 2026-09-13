@@ -1,0 +1,13 @@
+app:
+  name: sample-audit-logger
+  image: "ghcr.io/yama6a/pi5-k8s-sample-app:11"   # three-binary image (/manager, /signup, /auditor)
+  command: ["/auditor"]
+  replicas: 1
+  resources:
+    requests: { cpu: 10m, memory: 24Mi }
+    limits:   { memory: 48Mi }
+
+rabbitmq-topology:
+  user: sample-audit-logger        # == app.name; the pod reads <user>-user-credentials
+  subscribeEvents:
+    - { exchange: user-audit-logger }   # fanout, so routingKey is ignored; own queue sample-audit-logger.user-audit-logger

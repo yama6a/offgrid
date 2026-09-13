@@ -1,0 +1,93 @@
+{{/*
+ONE Google-OIDC SecurityPolicy per domain, attached to that domain's callback route AND its gated app routes,
+so a single OAuth flow completes on its callback host under one cookie identity.
+Login gate is oidc; authorization is per-host, each rule allowing a host only for its own allowlist. A host
+with no rule is denied, which includes the callback whoami itself.
+*/}}
+{{- $oidc := .Values.oidc -}}
+{{- range $d := fromYamlArray (include "google-sso.domains" $) }}
+{{- $slug := $d.domain | replace "." "-" }}
+---
+apiVersion: gateway.envoyproxy.io/v1alpha1
+kind: SecurityPolicy
+metadata:
+  name: sso-{{ $slug }}
+  namespace: {{ $.Values.namespace }}
+spec:
+  # Route names are the full host with dots turned to dashes, the ingress chart's naming, so they resolve
+  # whichever chart created the route.
+  targetRefs:
+    - group: gateway.networking.k8s.io
+      kind: HTTPRoute
+      name: google-sso-{{ $slug }}
+    {{- range $h := $d.hosts }}
+    - group: gateway.networking.k8s.io
+      kind: HTTPRoute
+      name: {{ printf "%s.%s" $h.subdomain $d.domain | replace "." "-" }}
+    {{- end }}
+
+  oidc:
+    provider:
+      issuer: "https://accounts.google.com"
+    clientID: {{ $oidc.clientID | quote }}
+    clientSecret:
+      name: {{ $oidc.clientSecretName | quote }}
+    # This domain's one callback host (register it on the Google OAuth client).
+    redirectURL: {{ printf "https://%s.%s/oauth2/callback" $oidc.authSubdomain $d.domain | quote }}
+    logoutPath: {{ $oidc.logoutPath | quote }}
+    # Domain-scoped, so one login covers every host on this domain. Each host still re-checks its allowlist.
+    cookieDomain: {{ $d.domain | quote }}
+    cookieNames:
+      idToken: {{ $oidc.idTokenCookie | quote }}
+    refreshToken: {{ $oidc.refreshToken }}
+    defaultRefreshTokenTTL: {{ $oidc.sessionTTL | quote }}
+    {{- with $oidc.csrfTokenTTL }}
+    csrfTokenTTL: {{ . | quote }}
+    {{- end }}
+    {{- with $oidc.denyRedirectSecFetchMode }}
+    denyRedirect:
+      headers:
+        - name: Sec-Fetch-Mode
+          type: RegularExpression
+          value: {{ . | quote }}
+    {{- end }}
+    scopes:
+      - openid
+      - email
+
+  jwt:
+    providers:
+      - name: google
+        issuer: "https://accounts.google.com"
+        remoteJWKS:
+          uri: "https://www.googleapis.com/oauth2/v3/certs"
+        extractFrom:
+          cookies:
+            - {{ $oidc.idTokenCookie | quote }}
+
+  authorization:
+    # Deny by default: the callback host and any unlisted host are denied. /oauth2/callback is handled by the
+    # oidc filter BEFORE authorization, so login still works.
+    defaultAction: Deny
+    rules:
+      {{- range $h := $d.hosts }}
+      {{- $fqdn := printf "%s.%s" $h.subdomain $d.domain }}
+      - name: allow-{{ $fqdn | replace "." "-" }}
+        action: Allow
+        principal:
+          # BOTH must match: the request host AND an email in that host's allowlist.
+          headers:
+            - name: ":authority"
+              values:
+                - {{ $fqdn | quote }}
+          jwt:
+            provider: google
+            claims:
+              - name: email
+                valueType: String
+                values:
+                  {{- range ($h.allowlist | default $.Values.allowlist) }}
+                  - {{ . | quote }}
+                  {{- end }}
+      {{- end }}
+{{- end }}

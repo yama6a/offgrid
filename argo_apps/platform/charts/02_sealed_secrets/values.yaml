@@ -1,0 +1,25 @@
+sealed-secrets:
+  fullnameOverride: sealed-secrets # this is what kubeseal's --controller-name/-namespace target, keep it stable
+
+  logLevel: INFO          # INFO | ERROR
+  logFormat: json         # text | json
+  logInfoStdout: true
+
+  priorityClassName: platform-critical # while it is gone NO SealedSecret unseals, blocking any secret-creating deploy
+
+  # The chart binds the "proxier" role to system:authenticated. We never proxy the SealedSecret API through
+  # the apiserver, so drop it.
+  rbac:
+    serviceProxier:
+      create: false
+      bind: false
+
+  resources:
+    requests: { cpu: 10m, memory: 21Mi }
+    limits:   { memory: 70Mi }
+
+  metrics:
+    serviceMonitor:
+      enabled: true
+    prometheusRule:
+      enabled: false # vmalert is off, so a rule here converts to an inert VMRule; the alert lives in 05_grafana

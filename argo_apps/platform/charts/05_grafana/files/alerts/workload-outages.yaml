@@ -1,0 +1,170 @@
+apiVersion: 1
+groups:
+  # Global workload alerts, all namespaces, one rule each. OUTAGE-class, so severity is DYNAMIC: critical when
+  # the firing object carries alert-criticality=critical. The label is not on the outage metric itself, so each
+  # rule pulls it off kube_<obj>_labels with a `group_left` join; that series only exists because
+  # kube-state-metrics allowlists the label (metricLabelsAllowlist in 05_victoria_metrics_k8s_stack). An absent
+  # label yields "", so warning.
+  # The next group is ANOMALY-class and always warning.
+  # Keep the `spec>0 and available==0` ordering. Reversing it makes the firing value 0, and multiplying by
+  # `kube_<obj>_labels` to attach the criticality label then keeps it 0, so the alert never fires.
+  - orgId: 1
+    name: workload-outages
+    folder: offgrid
+    interval: 1m
+    rules:
+      - uid: deployment-not-available
+        title: Deployment has no available replicas
+        condition: C
+        for: 5m
+        labels:
+          severity: '{{ if eq (index $labels "label_alert_criticality") "critical" }}critical{{ else }}warning{{ end }}'
+        annotations:
+          summary: 'Deployment {{ $labels.namespace }}/{{ $labels.deployment }} has no available replicas'
+          description: |
+            - full outage: zero replicas available, the Deployment is serving nothing
+            - status: kubectl -n {{ $labels.namespace }} rollout status deploy/{{ $labels.deployment }}
+            - events + pods: kubectl -n {{ $labels.namespace }} describe deploy {{ $labels.deployment }}
+            - logs: kubectl -n {{ $labels.namespace }} logs deploy/{{ $labels.deployment }}
+        noDataState: OK
+        execErrState: KeepLast
+        data:
+          - refId: A
+            relativeTimeRange: {from: 600, to: 0}
+            datasourceUid: VictoriaMetrics
+            model:
+              refId: A
+              instant: true
+              expr: '(kube_deployment_spec_replicas > 0 and kube_deployment_status_replicas_available == 0) * on(namespace, deployment) group_left(label_alert_criticality) kube_deployment_labels'
+          - refId: B
+            relativeTimeRange: {from: 600, to: 0}
+            datasourceUid: __expr__
+            model: {refId: B, type: reduce, expression: A, reducer: last, datasource: {type: __expr__, uid: __expr__}}
+          - refId: C
+            relativeTimeRange: {from: 600, to: 0}
+            datasourceUid: __expr__
+            model:
+              refId: C
+              type: threshold
+              expression: B
+              datasource: {type: __expr__, uid: __expr__}
+              conditions:
+                - type: query
+                  evaluator: {type: gt, params: [0]}
+      - uid: statefulset-not-available
+        title: StatefulSet has no ready replicas
+        condition: C
+        for: 5m
+        labels:
+          severity: '{{ if eq (index $labels "label_alert_criticality") "critical" }}critical{{ else }}warning{{ end }}'
+        annotations:
+          summary: 'StatefulSet {{ $labels.namespace }}/{{ $labels.statefulset }} has no ready replicas'
+          description: |
+            - full outage: zero ready replicas (check storage/PVC before assuming a crash)
+            - events + pods: kubectl -n {{ $labels.namespace }} describe statefulset {{ $labels.statefulset }}
+            - PVCs: kubectl -n {{ $labels.namespace }} get pvc
+            - logs: kubectl -n {{ $labels.namespace }} logs statefulset/{{ $labels.statefulset }}
+        noDataState: OK
+        execErrState: KeepLast
+        data:
+          - refId: A
+            relativeTimeRange: {from: 600, to: 0}
+            datasourceUid: VictoriaMetrics
+            model:
+              refId: A
+              instant: true
+              expr: '(kube_statefulset_replicas > 0 and kube_statefulset_status_replicas_ready == 0) * on(namespace, statefulset) group_left(label_alert_criticality) kube_statefulset_labels'
+          - refId: B
+            relativeTimeRange: {from: 600, to: 0}
+            datasourceUid: __expr__
+            model: {refId: B, type: reduce, expression: A, reducer: last, datasource: {type: __expr__, uid: __expr__}}
+          - refId: C
+            relativeTimeRange: {from: 600, to: 0}
+            datasourceUid: __expr__
+            model:
+              refId: C
+              type: threshold
+              expression: B
+              datasource: {type: __expr__, uid: __expr__}
+              conditions:
+                - type: query
+                  evaluator: {type: gt, params: [0]}
+      - uid: daemonset-not-available
+        title: DaemonSet has no available pods
+        condition: C
+        for: 5m
+        labels:
+          severity: '{{ if eq (index $labels "label_alert_criticality") "critical" }}critical{{ else }}warning{{ end }}'
+        annotations:
+          summary: 'DaemonSet {{ $labels.namespace }}/{{ $labels.daemonset }} has no available pods'
+          description: |
+            - full outage: no pods available on any scheduled node
+            - events + pods: kubectl -n {{ $labels.namespace }} describe daemonset {{ $labels.daemonset }}
+            - check node readiness/taints: kubectl get nodes
+            - logs: kubectl -n {{ $labels.namespace }} logs daemonset/{{ $labels.daemonset }}
+        noDataState: OK
+        execErrState: KeepLast
+        data:
+          - refId: A
+            relativeTimeRange: {from: 600, to: 0}
+            datasourceUid: VictoriaMetrics
+            model:
+              refId: A
+              instant: true
+              expr: '(kube_daemonset_status_desired_number_scheduled > 0 and kube_daemonset_status_number_available == 0) * on(namespace, daemonset) group_left(label_alert_criticality) kube_daemonset_labels'
+          - refId: B
+            relativeTimeRange: {from: 600, to: 0}
+            datasourceUid: __expr__
+            model: {refId: B, type: reduce, expression: A, reducer: last, datasource: {type: __expr__, uid: __expr__}}
+          - refId: C
+            relativeTimeRange: {from: 600, to: 0}
+            datasourceUid: __expr__
+            model:
+              refId: C
+              type: threshold
+              expression: B
+              datasource: {type: __expr__, uid: __expr__}
+              conditions:
+                - type: query
+                  evaluator: {type: gt, params: [0]}
+      # A container stuck in a FATAL waiting reason cannot start. This is also the criticality-critical path
+      # for CNPG, which has no Deployment or StatefulSet, so a crashlooping labelled CNPG or Redis pod pages
+      # critical here. `reason` stays in the series for the summary.
+      - uid: container-waiting-fatal
+        title: Container stuck (crashloop / image / config)
+        condition: C
+        for: 15m
+        labels:
+          severity: '{{ if eq (index $labels "label_alert_criticality") "critical" }}critical{{ else }}warning{{ end }}'
+        annotations:
+          summary: 'Container {{ $labels.namespace }}/{{ $labels.pod }}/{{ $labels.container }} stuck: {{ $labels.reason }}'
+          description: |
+            - container can't start: {{ $labels.reason }} (crashloop, bad image, or bad config)
+            - events: kubectl -n {{ $labels.namespace }} describe pod {{ $labels.pod }}
+            - crashloop -> logs: kubectl -n {{ $labels.namespace }} logs {{ $labels.pod }} -c {{ $labels.container }} --previous
+            - image/config -> verify image tag + referenced ConfigMap/Secret exist
+        noDataState: OK
+        execErrState: KeepLast
+        data:
+          - refId: A
+            relativeTimeRange: {from: 600, to: 0}
+            datasourceUid: VictoriaMetrics
+            model:
+              refId: A
+              instant: true
+              expr: '(max by (namespace, pod, container, reason) (kube_pod_container_status_waiting_reason{reason=~"CrashLoopBackOff|ImagePullBackOff|ErrImagePull|CreateContainerConfigError|CreateContainerError|InvalidImageName"}) > 0) * on(namespace, pod) group_left(label_alert_criticality) kube_pod_labels'
+          - refId: B
+            relativeTimeRange: {from: 600, to: 0}
+            datasourceUid: __expr__
+            model: {refId: B, type: reduce, expression: A, reducer: last, datasource: {type: __expr__, uid: __expr__}}
+          - refId: C
+            relativeTimeRange: {from: 600, to: 0}
+            datasourceUid: __expr__
+            model:
+              refId: C
+              type: threshold
+              expression: B
+              datasource: {type: __expr__, uid: __expr__}
+              conditions:
+                - type: query
+                  evaluator: {type: gt, params: [0]}

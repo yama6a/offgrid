@@ -1,0 +1,35 @@
+apiVersion: 1
+contactPoints:
+  - orgId: 1
+    name: ntfy
+    receivers:
+      - uid: ntfy-webhook
+        type: webhook
+        settings:
+          url: http://ntfy.monitoring.svc.cluster.local:8080/   # in-cluster JSON publish (topic is in the body)
+          httpMethod: POST
+          authorization_scheme: Bearer
+          authorization_credentials: ${GF_NTFY_TOKEN}           # sealed write token, env-interpolated; never committed
+          maxAlerts: 0                                          # no cap on alerts bundled per notification
+          payload:
+            # title is the alert's `summary`, message its `description`. Reads per-alert `.Annotations`, NOT
+            # `.CommonAnnotations`, which is empty whenever grouped alerts differ. policies.yaml groups by all
+            # labels, so each notification is one resource and `index .Alerts 0` is it; the range is a fallback.
+            # Built as a dict plus `data.ToJSON` so it escapes the multi-line description and any quotes for us.
+            # Hand-writing that JSON string would break on the newlines.
+            # The `$$` on the Go-template vars is not a typo. Grafana expands environment variables in
+            # contact-point settings at provision time, which is how ${GF_NTFY_TOKEN} resolves, so a bare
+            # `$sev` would be swallowed as an env var and arrive empty. `$$` escapes it to a literal `$`.
+            template: |
+              {{- $$sev := index .CommonLabels "severity" -}}
+              {{- $$prio := 3 -}}
+              {{- if eq $$sev "critical" }}{{ $$prio = 5 }}{{ else if eq $$sev "warning" }}{{ $$prio = 4 }}{{ end -}}
+              {{- $$msg := "" -}}
+              {{- range .Alerts }}{{ $$msg = printf "%s%s" $$msg .Annotations.description }}{{ end -}}
+              {{ coll.Dict
+                   "topic" "cluster-alerts"
+                   "title" (printf "%s: %s" (.Status | toUpper) (index .Alerts 0).Annotations.summary)
+                   "message" $$msg
+                   "priority" $$prio
+                   "tags" (coll.Slice $$sev)
+                 | data.ToJSON }}

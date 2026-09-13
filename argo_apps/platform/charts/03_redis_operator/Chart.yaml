@@ -1,0 +1,10 @@
+apiVersion: v2
+name: redis-operator
+description: The OpsTree Redis operator and its CRDs. The instances are per-workload, rendered by lib/helm/redis-instance.
+type: application
+version: 0.1.0 # local chart, never bump version
+
+dependencies:
+  - name: redis-operator
+    version: "0.26.1"
+    repository: https://ot-container-kit.github.io/helm-charts/

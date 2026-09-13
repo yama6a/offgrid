@@ -1,0 +1,20 @@
+{{- /*
+Default-deny both ways, with nothing allowed back. The plugin reaches the kubelet over a unix socket and reads
+sysfs; it has no network peers at all, not even DNS.
+*/ -}}
+apiVersion: cilium.io/v2
+kind: CiliumNetworkPolicy
+metadata:
+  name: intel-gpu-plugin
+  namespace: {{ .Release.Namespace }}
+spec:
+  endpointSelector:
+    matchLabels:
+      app.kubernetes.io/name: intel-gpu-plugin
+  # An empty rule is how Cilium spells "deny everything in this direction": it enables enforcement and permits
+  # nothing. `ingress: []` reads the same but is REJECTED ("rule must have at least one of Ingress, ...") and a
+  # rejected CNP is not enforced at all, so the pod would silently end up unpoliced.
+  ingress:
+    - {}
+  egress:
+    - {}

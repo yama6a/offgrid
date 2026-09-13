@@ -1,0 +1,44 @@
+# Default-deny both ways for the Barman Cloud plugin. POD-scoped, not namespace-wide: cnpg-system also holds
+# the cnpg-operator, which carries its own policy.
+# No instance-to-:9090 ingress rule on purpose: the CNPG instance SIDECAR does its own S3 work and reaches its
+# instance-manager over pod localhost, so it never dials this central Service.
+apiVersion: cilium.io/v2
+kind: CiliumNetworkPolicy
+metadata:
+  name: barman-cloud
+  namespace: {{ .Release.Namespace }}
+spec:
+  endpointSelector:
+    matchLabels:
+      app: barman-cloud
+  ingress:
+    # The CNPG operator drives the plugin over gRPC, same namespace.
+    - fromEndpoints:
+        - matchLabels:
+            app.kubernetes.io/name: cloudnative-pg
+      toPorts:
+        - ports:
+            - { port: "9090", protocol: TCP }
+    # Kubelet readiness probe, from the node.
+    - fromEntities: [host, remote-node]
+      toPorts:
+        - ports:
+            - { port: "9090", protocol: TCP }
+  egress:
+    # DNS.
+    - toEndpoints:
+        - matchLabels:
+            k8s:io.kubernetes.pod.namespace: kube-system
+            k8s-app: kube-dns
+      toPorts:
+        - ports:
+            - { port: "53", protocol: UDP }
+            - { port: "53", protocol: TCP }
+    # Watches ObjectStore/Backup CRs, writes Secrets and RBAC, holds leader-election leases.
+    - toEntities: [kube-apiserver]
+    # S3, for the operator-mode plugin to read the backup catalog. Broad world:443, like the pg-cluster rule,
+    # because S3's address set is large and volatile.
+    - toEntities: [world]
+      toPorts:
+        - ports:
+            - { port: "443", protocol: TCP }

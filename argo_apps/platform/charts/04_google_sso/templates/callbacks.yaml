@@ -1,0 +1,55 @@
+# The shared OIDC callback BACKEND: one tiny whoami behind every domain's google-sso.<domain> host. Envoy
+# intercepts /oauth2/callback before it reaches this, so the whoami only ever answers non-callback paths, and
+# only to someone who already cleared that host's gate. One Deployment and Service for every domain.
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: gateway-sso-callback
+  namespace: {{ .Values.namespace }}
+  labels:
+    app: gateway-sso-callback
+spec:
+  replicas: 1
+  revisionHistoryLimit: 0  # recovery is a git revert, never a rollback, so kept history is dead weight
+  selector:
+    matchLabels:
+      app: gateway-sso-callback
+  template:
+    metadata:
+      labels:
+        app: gateway-sso-callback
+    spec:
+      # PodSecurity `restricted` baseline; same block on every first-party pod in the repo.
+      securityContext:
+        runAsNonRoot: true
+        runAsUser: 65532          # whoami image declares no USER, so runAsNonRoot needs an explicit numeric uid
+        runAsGroup: 65532
+        seccompProfile: { type: RuntimeDefault }
+      containers:
+        - name: whoami
+          image: {{ .Values.callbackImage | quote }}
+          env:
+            - name: WHOAMI_PORT_NUMBER
+              value: "8080"       # :80 is unbindable as non-root; Service still fronts :80 via the named port
+          ports:
+            - name: http
+              containerPort: 8080
+          securityContext:
+            allowPrivilegeEscalation: false
+            capabilities: { drop: ["ALL"] }
+          resources:
+            requests: { cpu: 10m, memory: 16Mi }
+            limits:   { memory: 32Mi }
+---
+apiVersion: v1
+kind: Service
+metadata:
+  name: gateway-sso-callback
+  namespace: {{ .Values.namespace }}
+spec:
+  selector:
+    app: gateway-sso-callback
+  ports:
+    - name: http
+      port: 80
+      targetPort: http

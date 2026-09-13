@@ -1,0 +1,39 @@
+{{/*
+The one hand-written route in this chart: an SSO bypass for the ArgoCD GitHub webhook.
+The central SecurityPolicy attaches to routes BY EXACT NAME, and this route's name is not in
+04_google_sso domains[].hosts, so the policy never attaches and /api/webhook reaches ArgoCD ungated. Safe
+because ArgoCD verifies the GitHub HMAC signature on that endpoint itself.
+The path match is type: Exact so ONLY the webhook bypasses SSO, never the rest of the admin API. Getting that
+wrong would hand the whole admin API to anyone, because anonymous users are admins in this ArgoCD.
+Hand-written because the ingress chart cannot emit a path-matched route.
+*/}}
+{{- range $ing := .Values.ingress.ingresses }}
+{{- range $h := $ing.hosts }}
+{{- if eq $h.subdomain "argocd" }}
+{{- $ctx := dict "ingress" $ing "host" $h "release" $.Release }}
+{{- $name := include "ingress.hostName" $ctx }}
+---
+apiVersion: gateway.networking.k8s.io/v1
+kind: HTTPRoute
+metadata:
+  name: {{ $name }}-webhook                 # distinct from the SSO-gated `{{ $name }}` -> the SecurityPolicy never targets it
+  namespace: {{ include "ingress.gatewayNamespace" $ctx }}
+spec:
+  parentRefs:
+    - name: {{ $name }}                      # attach to the argocd host's own Gateway + listener (same as the gated route)
+      namespace: {{ include "ingress.gatewayNamespace" $ctx }}
+      sectionName: {{ $name }}
+  hostnames:
+    - {{ include "ingress.host" $ctx | quote }}
+  rules:
+    - matches:
+        - path:
+            type: Exact                      # ONLY /api/webhook is ungated; the admin API stays behind SSO
+            value: /api/webhook
+      backendRefs:
+        - name: {{ $h.targetService }}
+          namespace: {{ include "ingress.backendNs" $ctx }}
+          port: {{ $h.targetPort }}
+{{- end }}
+{{- end }}
+{{- end }}

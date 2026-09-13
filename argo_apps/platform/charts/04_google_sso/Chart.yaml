@@ -1,0 +1,10 @@
+apiVersion: v2
+name: google-sso
+description: Central Google-SSO. Per domain, one SecurityPolicy with per-host email allowlists plus the shared google-sso.<domain> callback host, so a host is gated by adding it to domains[].hosts here.
+type: application
+version: 0.1.0 # local chart, never bump version
+
+dependencies:
+  - name: ingress
+    version: "*"
+    repository: "file://../../../../lib/helm/ingress"

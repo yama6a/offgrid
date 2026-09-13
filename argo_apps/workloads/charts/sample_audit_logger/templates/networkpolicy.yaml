@@ -1,0 +1,34 @@
+{{- /*
+Service lockdown, always rendered. Egress-only: nothing calls this sink (no HTTP, no Service), it only
+dials the broker. No Postgres egress either, it has no database.
+*/ -}}
+{{- /* audit sink: consumes user-audit-logger (fanout), publishes nothing. */ -}}
+apiVersion: cilium.io/v2
+kind: CiliumNetworkPolicy
+metadata:
+  name: {{ .Values.app.name }}-app
+  namespace: {{ .Release.Namespace }}
+spec:
+  endpointSelector:
+    matchLabels:
+      app: {{ .Values.app.name }}
+  ingress: []   # nothing may reach the worker; listing ingress (even empty) makes it deny-by-default inbound
+  egress:
+    # DNS to CoreDNS.
+    - toEndpoints:
+        - matchLabels:
+            k8s:io.kubernetes.pod.namespace: kube-system
+            k8s-app: kube-dns
+      toPorts:
+        - ports:
+            - { port: "53", protocol: UDP }
+            - { port: "53", protocol: TCP }
+    # The shared RabbitMQ broker. The broker side allows this via its `messaging-client: "true"` ingress rule,
+    # and the pod carries that label.
+    - toEndpoints:
+        - matchLabels:
+            k8s:io.kubernetes.pod.namespace: rabbitmq
+            app.kubernetes.io/name: rabbitmq
+      toPorts:
+        - ports:
+            - { port: "5672", protocol: TCP }

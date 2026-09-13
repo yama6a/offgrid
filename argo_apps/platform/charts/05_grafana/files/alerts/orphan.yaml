@@ -1,0 +1,356 @@
+apiVersion: 1
+groups:
+  # A workload's manifests leaving git ORPHANS every CR carrying deletionProtection instead of deleting it: it
+  # keeps running, unmanaged, so the data survives a restore. These alerts make that silent state loud.
+  # Vector 1 (CR removed from a live app, app stays OutOfSync) is covered in argocd-health.yaml. Here are
+  # vector 2 (owning app gone), the untracked guard, and the exporter deadman. Fed by 05_orphan_exporter.
+  - orgId: 1
+    name: orphan
+    folder: offgrid
+    interval: 1m
+    rules:
+      - uid: cnpg-cluster-orphaned
+        title: CNPG cluster orphaned
+        condition: C
+        for: 10m
+        labels: {severity: warning}
+        annotations:
+          summary: 'CNPG {{ $labels.res_namespace }}/{{ $labels.res_cluster }} is orphaned (owning Argo app {{ $labels.res_app }} gone)'
+          description: |
+            - the DB is running but no ArgoCD app manages it: its manifests were pruned from git (data is safe)
+            - restore the workload files in git to re-adopt it, OR if the removal was intentional finish it:
+            - kubectl -n {{ $labels.res_namespace }} get cluster {{ $labels.res_cluster }} ; then delete once data is elsewhere
+        noDataState: OK
+        execErrState: KeepLast
+        data:
+          - refId: A
+            relativeTimeRange: {from: 600, to: 0}
+            datasourceUid: VictoriaMetrics
+            model:
+              refId: A
+              instant: true
+              expr: 'max by (res_namespace, res_cluster, res_app) (orphaned_cnpg_cluster)'
+          - refId: B
+            relativeTimeRange: {from: 600, to: 0}
+            datasourceUid: __expr__
+            model: {refId: B, type: reduce, expression: A, reducer: last, datasource: {type: __expr__, uid: __expr__}}
+          - refId: C
+            relativeTimeRange: {from: 600, to: 0}
+            datasourceUid: __expr__
+            model:
+              refId: C
+              type: threshold
+              expression: B
+              datasource: {type: __expr__, uid: __expr__}
+              conditions:
+                - type: query
+                  evaluator: {type: gt, params: [0]}
+      # No tracking metadata means the exporter cannot tell whether it is orphaned, so it says so loudly
+      # rather than letting unknown read as healthy.
+      - uid: cnpg-cluster-untracked
+        title: CNPG cluster untracked by ArgoCD
+        condition: C
+        for: 15m
+        labels: {severity: warning}
+        annotations:
+          summary: 'CNPG {{ $labels.res_namespace }}/{{ $labels.res_cluster }} carries no ArgoCD tracking metadata'
+          description: |
+            - the orphan detector cannot resolve this Cluster to an Argo app, so orphan state is unknown
+            - if Argo-managed: check why the tracking annotation/label is missing (manual kubectl apply? SSA field drop?)
+            - if a deliberate manual/test cluster, move it out of an Argo-managed namespace
+        noDataState: OK
+        execErrState: KeepLast
+        data:
+          - refId: A
+            relativeTimeRange: {from: 600, to: 0}
+            datasourceUid: VictoriaMetrics
+            model:
+              refId: A
+              instant: true
+              expr: 'max by (res_namespace, res_cluster) (cnpg_cluster_untracked)'
+          - refId: B
+            relativeTimeRange: {from: 600, to: 0}
+            datasourceUid: __expr__
+            model: {refId: B, type: reduce, expression: A, reducer: last, datasource: {type: __expr__, uid: __expr__}}
+          - refId: C
+            relativeTimeRange: {from: 600, to: 0}
+            datasourceUid: __expr__
+            model:
+              refId: C
+              type: threshold
+              expression: B
+              datasource: {type: __expr__, uid: __expr__}
+              conditions:
+                - type: query
+                  evaluator: {type: gt, params: [0]}
+      # Deadman: with the exporter silent, no orphaned_* metric can fire, so silence would look like health.
+      # noDataState: Alerting makes an ABSENT heartbeat alert; a scan error emits 0 and trips the same threshold.
+      - uid: orphan-exporter-down
+        title: Orphan exporter down
+        condition: C
+        for: 15m
+        labels: {severity: warning}
+        annotations:
+          summary: 'orphan-exporter is not reporting (orphan detection is blind)'
+          description: |
+            - no heartbeat from the exporter, so the orphaned_* alerts cannot fire and orphans go undetected
+            - kubectl -n orphan-exporter get pods ; kubectl -n orphan-exporter logs deploy/orphan-exporter
+            - check the ClusterRole/binding (get,list on clusters + redis + vm/vl stores + applications) and the PodMonitor scrape
+        noDataState: Alerting
+        execErrState: KeepLast
+        data:
+          - refId: A
+            relativeTimeRange: {from: 600, to: 0}
+            datasourceUid: VictoriaMetrics
+            model:
+              refId: A
+              instant: true
+              expr: 'max(orphan_exporter_up)'
+          - refId: B
+            relativeTimeRange: {from: 600, to: 0}
+            datasourceUid: __expr__
+            model: {refId: B, type: reduce, expression: A, reducer: last, datasource: {type: __expr__, uid: __expr__}}
+          - refId: C
+            relativeTimeRange: {from: 600, to: 0}
+            datasourceUid: __expr__
+            model:
+              refId: C
+              type: threshold
+              expression: B
+              datasource: {type: __expr__, uid: __expr__}
+              conditions:
+                - type: query
+                  evaluator: {type: lt, params: [1]}
+      # Same two vectors for Redis. The label key is `redis`, not `instance`, which the scrape already owns.
+      # A durable instance has a daily S3 dump, so an orphan is recoverable; this just makes it visible.
+      - uid: redis-instance-orphaned
+        title: Redis instance orphaned
+        condition: C
+        for: 10m
+        labels: {severity: warning}
+        annotations:
+          summary: 'Redis {{ $labels.res_namespace }}/{{ $labels.res_redis }} is orphaned (owning Argo app {{ $labels.res_app }} gone)'
+          description: |
+            - the instance is running but no ArgoCD app manages it: its manifests were pruned from git (data is safe)
+            - restore the workload files in git to re-adopt it, OR if the removal was intentional finish it:
+            - kubectl -n {{ $labels.res_namespace }} get redis {{ $labels.res_redis }} ; then delete once data is elsewhere
+        noDataState: OK
+        execErrState: KeepLast
+        data:
+          - refId: A
+            relativeTimeRange: {from: 600, to: 0}
+            datasourceUid: VictoriaMetrics
+            model:
+              refId: A
+              instant: true
+              expr: 'max by (res_namespace, res_redis, res_app) (orphaned_redis_instance)'
+          - refId: B
+            relativeTimeRange: {from: 600, to: 0}
+            datasourceUid: __expr__
+            model: {refId: B, type: reduce, expression: A, reducer: last, datasource: {type: __expr__, uid: __expr__}}
+          - refId: C
+            relativeTimeRange: {from: 600, to: 0}
+            datasourceUid: __expr__
+            model:
+              refId: C
+              type: threshold
+              expression: B
+              datasource: {type: __expr__, uid: __expr__}
+              conditions:
+                - type: query
+                  evaluator: {type: gt, params: [0]}
+      # As above: unknown must not read as healthy.
+      - uid: redis-instance-untracked
+        title: Redis instance untracked by ArgoCD
+        condition: C
+        for: 15m
+        labels: {severity: warning}
+        annotations:
+          summary: 'Redis {{ $labels.res_namespace }}/{{ $labels.res_redis }} carries no ArgoCD tracking metadata'
+          description: |
+            - cannot tell whether this instance is orphaned; it is unmanaged as far as the exporter can see
+            - kubectl -n {{ $labels.res_namespace }} get redis {{ $labels.res_redis }} -o yaml | grep -A3 'annotations:'
+            - expected argocd.argoproj.io/tracking-id or the app.kubernetes.io/instance label
+        noDataState: OK
+        execErrState: KeepLast
+        data:
+          - refId: A
+            relativeTimeRange: {from: 600, to: 0}
+            datasourceUid: VictoriaMetrics
+            model:
+              refId: A
+              instant: true
+              expr: 'max by (res_namespace, res_redis) (redis_instance_untracked)'
+          - refId: B
+            relativeTimeRange: {from: 600, to: 0}
+            datasourceUid: __expr__
+            model: {refId: B, type: reduce, expression: A, reducer: last, datasource: {type: __expr__, uid: __expr__}}
+          - refId: C
+            relativeTimeRange: {from: 600, to: 0}
+            datasourceUid: __expr__
+            model:
+              refId: C
+              type: threshold
+              expression: B
+              datasource: {type: __expr__, uid: __expr__}
+              conditions:
+                - type: query
+                  evaluator: {type: gt, params: [0]}
+      # Same two vectors for the VM/VL stores, which share one metric pair with a `kind` label. Both have a
+      # daily S3 export, so an orphan is recoverable.
+      - uid: vm-resource-orphaned
+        title: VM/VL store orphaned
+        condition: C
+        for: 10m
+        labels: {severity: warning}
+        annotations:
+          summary: '{{ $labels.res_kind }} {{ $labels.res_namespace }}/{{ $labels.res_name }} is orphaned (owning Argo app {{ $labels.res_app }} gone)'
+          description: |
+            - the store is running but no ArgoCD app manages it: its manifests were pruned from git (data is safe)
+            - restore the app files in git to re-adopt it, OR if the removal was intentional finish it:
+            - kubectl -n {{ $labels.res_namespace }} delete {{ $labels.res_kind }} {{ $labels.res_name }} ; then its PVC
+        noDataState: OK
+        execErrState: KeepLast
+        data:
+          - refId: A
+            relativeTimeRange: {from: 600, to: 0}
+            datasourceUid: VictoriaMetrics
+            model:
+              refId: A
+              instant: true
+              expr: 'max by (res_namespace, res_kind, res_name, res_app) (orphaned_vm_resource)'
+          - refId: B
+            relativeTimeRange: {from: 600, to: 0}
+            datasourceUid: __expr__
+            model: {refId: B, type: reduce, expression: A, reducer: last, datasource: {type: __expr__, uid: __expr__}}
+          - refId: C
+            relativeTimeRange: {from: 600, to: 0}
+            datasourceUid: __expr__
+            model:
+              refId: C
+              type: threshold
+              expression: B
+              datasource: {type: __expr__, uid: __expr__}
+              conditions:
+                - type: query
+                  evaluator: {type: gt, params: [0]}
+      # As above: unknown must not read as healthy.
+      - uid: vm-resource-untracked
+        title: VM/VL store untracked by ArgoCD
+        condition: C
+        for: 15m
+        labels: {severity: warning}
+        annotations:
+          summary: '{{ $labels.res_kind }} {{ $labels.res_namespace }}/{{ $labels.res_name }} carries no ArgoCD tracking metadata'
+          description: |
+            - cannot tell whether this store is orphaned; it is unmanaged as far as the exporter can see
+            - kubectl -n {{ $labels.res_namespace }} get {{ $labels.res_kind }} {{ $labels.res_name }} -o yaml | grep -A3 'annotations:'
+            - expected argocd.argoproj.io/tracking-id or the app.kubernetes.io/instance label
+        noDataState: OK
+        execErrState: KeepLast
+        data:
+          - refId: A
+            relativeTimeRange: {from: 600, to: 0}
+            datasourceUid: VictoriaMetrics
+            model:
+              refId: A
+              instant: true
+              expr: 'max by (res_namespace, res_kind, res_name) (vm_resource_untracked)'
+          - refId: B
+            relativeTimeRange: {from: 600, to: 0}
+            datasourceUid: __expr__
+            model: {refId: B, type: reduce, expression: A, reducer: last, datasource: {type: __expr__, uid: __expr__}}
+          - refId: C
+            relativeTimeRange: {from: 600, to: 0}
+            datasourceUid: __expr__
+            model:
+              refId: C
+              type: threshold
+              expression: B
+              datasource: {type: __expr__, uid: __expr__}
+              conditions:
+                - type: query
+                  evaluator: {type: gt, params: [0]}
+      # 24h, not minutes: a chart that renames a PVC leaves the old PV Released for the length of the rollout,
+      # and paging through a normal migration would train you to ignore this. A Grafana restart resets the
+      # pending timer, so a PV abandoned right before one takes another 24h to surface.
+      - uid: pv-abandoned
+        title: PersistentVolume abandoned
+        condition: C
+        for: 24h
+        labels: {severity: warning}
+        annotations:
+          summary: 'PV {{ $labels.res_pv }} is {{ $labels.res_phase }} and nothing will bind it ({{ $labels.res_claim }})'
+          description: |
+            - its claim {{ $labels.res_claim }} is gone and the class reclaims {{ $labels.res_reclaim }}, so the PV and its data are still on disk
+            - a Longhorn PV also leaves the volume behind, which keeps failing its recurring backup: longhorn-backup-stale is the second symptom
+            - list and clean up: make cleanup-abandoned-pvs
+            - inspect first: kubectl describe pv {{ $labels.res_pv }}
+        noDataState: OK
+        execErrState: KeepLast
+        data:
+          - refId: A
+            relativeTimeRange: {from: 600, to: 0}
+            datasourceUid: VictoriaMetrics
+            model:
+              refId: A
+              instant: true
+              expr: 'max by (res_pv, res_phase, res_storageclass, res_reclaim, res_claim) (abandoned_pv)'
+          - refId: B
+            relativeTimeRange: {from: 600, to: 0}
+            datasourceUid: __expr__
+            model: {refId: B, type: reduce, expression: A, reducer: last, datasource: {type: __expr__, uid: __expr__}}
+          - refId: C
+            relativeTimeRange: {from: 600, to: 0}
+            datasourceUid: __expr__
+            model:
+              refId: C
+              type: threshold
+              expression: B
+              datasource: {type: __expr__, uid: __expr__}
+              conditions:
+                - type: query
+                  evaluator: {type: gt, params: [0]}
+      # The S3 backup of a volume that no longer exists. Nothing deletes it on its own: a recurring job's
+      # `retain` only prunes volumes that still exist, and the bucket lifecycle expires nothing under
+      # longhorn/ on purpose (terraform/main.tf). So this is the only thing that will ever tell you.
+      # 30d because keeping a dead volume's backup for a month is the point; keeping it for a year is not.
+      # `> 0` so a backupvolume that never completed a backup stays quiet rather than reading as ancient.
+      - uid: backupvolume-orphaned
+        title: Backup of a deleted volume kept
+        condition: C
+        for: 1h
+        labels: {severity: warning}
+        annotations:
+          summary: 'S3 backup {{ $labels.res_backupvolume }} has outlived its volume by >30d'
+          description: |
+            - volume {{ $labels.res_volume }} is gone, its backup is still in the bucket and still being paid for
+            - nothing will prune it: the recurring job retains per volume, and the longhorn/ prefix has no lifecycle expiry
+            - deleting the BackupVolume also deletes the S3 data, and it is the only correct way to remove it:
+            - kubectl -n longhorn-system delete backupvolume {{ $labels.res_backupvolume }}
+            - to keep the data instead, move its folder out of longhorn/backupstore/volumes/ in the bucket
+        noDataState: OK
+        execErrState: KeepLast
+        data:
+          - refId: A
+            relativeTimeRange: {from: 600, to: 0}
+            datasourceUid: VictoriaMetrics
+            model:
+              refId: A
+              instant: true
+              expr: 'time() - max by (res_backupvolume, res_volume) (orphaned_backupvolume_last_backup_seconds > 0)'
+          - refId: B
+            relativeTimeRange: {from: 600, to: 0}
+            datasourceUid: __expr__
+            model: {refId: B, type: reduce, expression: A, reducer: last, datasource: {type: __expr__, uid: __expr__}}
+          - refId: C
+            relativeTimeRange: {from: 600, to: 0}
+            datasourceUid: __expr__
+            model:
+              refId: C
+              type: threshold
+              expression: B
+              datasource: {type: __expr__, uid: __expr__}
+              conditions:
+                - type: query
+                  evaluator: {type: gt, params: [2592000]}

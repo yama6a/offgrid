@@ -1,0 +1,34 @@
+{{- /*
+Default-deny both ways for the orphan exporter. Its whole job is reading the kube API and serving /metrics,
+so the surface is tiny: apiserver and DNS out, vmagent in. No S3, no other pods.
+*/ -}}
+apiVersion: cilium.io/v2
+kind: CiliumNetworkPolicy
+metadata:
+  name: orphan-exporter
+  namespace: {{ .Release.Namespace }}
+spec:
+  endpointSelector:
+    matchLabels:
+      app.kubernetes.io/name: orphan-exporter
+  ingress:
+    # The scrape. vmagent is the only thing that talks to this pod at all.
+    - fromEndpoints:
+        - matchLabels:
+            k8s:io.kubernetes.pod.namespace: monitoring
+            app.kubernetes.io/name: vmagent
+      toPorts:
+        - ports:
+            - { port: "{{ .Values.port }}", protocol: TCP }
+  egress:
+    # DNS, to resolve the in-cluster apiserver Service.
+    - toEndpoints:
+        - matchLabels:
+            k8s:io.kubernetes.pod.namespace: kube-system
+            k8s-app: kube-dns
+      toPorts:
+        - ports:
+            - { port: "53", protocol: UDP }
+            - { port: "53", protocol: TCP }
+    # The kube API. Nothing else outbound: it holds no S3 credentials and reads backup state from a ConfigMap.
+    - toEntities: [kube-apiserver]

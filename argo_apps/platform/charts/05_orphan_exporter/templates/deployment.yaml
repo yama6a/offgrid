@@ -1,0 +1,62 @@
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: orphan-exporter
+  namespace: {{ .Release.Namespace }}
+  labels:
+    app.kubernetes.io/name: orphan-exporter
+spec:
+  replicas: 1
+  revisionHistoryLimit: 0  # recovery is a git revert, never a rollback, so kept history is dead weight
+  selector:
+    matchLabels:
+      app.kubernetes.io/name: orphan-exporter
+  template:
+    metadata:
+      annotations:
+        # exporter.py lives in the ConfigMap and is mounted, so editing it does NOT restart the running python
+        # process (a mounted ConfigMap updates in place). Without this the script silently keeps running the old
+        # code after a sync. The checksum rolls the pod whenever the ConfigMap changes.
+        checksum/config: {{ include (print $.Template.BasePath "/configmap.yaml") . | sha256sum }}
+      labels:
+        app.kubernetes.io/name: orphan-exporter
+    spec:
+      serviceAccountName: orphan-exporter
+      securityContext:
+        runAsNonRoot: true
+        runAsUser: 65534
+        seccompProfile:
+          type: RuntimeDefault
+      containers:
+        - name: exporter
+          image: "{{ .Values.image.repository }}:{{ .Values.image.tag }}"
+          command: ["python3", "/app/exporter.py"]
+          env:
+            - name: INTERVAL
+              value: "{{ .Values.intervalSeconds }}"
+            - name: PORT
+              value: "{{ .Values.port }}"
+            - name: PYTHONDONTWRITEBYTECODE  # /app is read-only; skip .pyc rather than error
+              value: "1"
+          ports:
+            - name: metrics
+              containerPort: {{ .Values.port }}
+          securityContext:
+            allowPrivilegeEscalation: false
+            readOnlyRootFilesystem: true
+            capabilities:
+              drop: ["ALL"]
+          resources:
+            requests:
+              cpu: {{ .Values.resources.requests.cpu }}
+              memory: {{ .Values.resources.requests.memory }}
+            limits:
+              memory: {{ .Values.resources.limits.memory }}
+          volumeMounts:
+            - name: app
+              mountPath: /app
+              readOnly: true
+      volumes:
+        - name: app
+          configMap:
+            name: orphan-exporter

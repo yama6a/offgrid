@@ -1,0 +1,167 @@
+cilium:
+  # CLUSTER-WIDE log-only mode: every CiliumNetworkPolicy reports a would-be drop (Hubble verdict AUDIT) but
+  # STILL FORWARDS the packet. NOTHING is enforced anywhere while this is true. Flip when this project is stable.
+  policyAuditMode: true
+  # Agents read config at startup. Without force-rolling pods like this, a GitOps config edit does nothing until a human
+  # rolls the DaemonSet by hand.
+  rollOutCiliumPods: true
+  # Opt out of Reloader (02_reloader runs with auto-reload-all). rollOutCiliumPods above already rolls the agents
+  # on a config edit, and the hubble cert CronJob rewrites hubble-server-certs every few months, which would
+  # otherwise restart the CNI on every node unattended.
+  podAnnotations: {reloader.stakater.com/auto: "false"}
+  priorityClassName: system-node-critical
+  ipam:
+    mode: kubernetes
+  kubeProxyReplacement: true
+  # Where the agent reaches the API before pod networking exists. Written by 04_values.sh from KUBE_API_HOST
+  # and KUBE_API_PORT in .env, so do not hand-edit: the default pair is Talos's KubePrism.
+  k8sServiceHost: localhost
+  k8sServicePort: 7445
+  # Rewrites pod source IPs to the node IP (needed for pod-to-internet traffic) inside Cilium's in-kernel datapath
+  # instead of using the older iptables rules. Keeps the outbound path consistent with kubeProxyReplacement above,
+  # which already handles service routing the same way.
+  bpf:
+    masquerade: true
+    # An explicit size opts this map out of mapDynamicSizeRatio, which floors at 131072 on the 8GB control planes.
+    # The qbittorrent torrent LoadBalancer alone holds ~112k entries on whichever node announces its IP.
+    ctTcpMax: 262144
+  extraConfig:
+    # Service CT entries idle out after 2h13m20s by default, so every short-lived BitTorrent peer keeps a slot for
+    # hours. Regular pod-to-pod CT keeps the long default: idle Postgres and AMQP connections depend on it.
+    bpf-ct-timeout-service-tcp: "15m"
+  encryption:
+    enabled: true
+    type: wireguard # transparent node-to-node encryption (within-same-node traffic is unencrypted, but that's fine)
+  l2announcements:
+    enabled: true # LoadBalancer IPs announced via ARP, replaces MetalLB
+  gatewayAPI:
+    enabled: false # Off: We use Envoy Gateway instead (see 01_envoy_gateway), Cilium stays CNI + LB-IPAM only.
+  prometheus:
+    enabled: true
+    serviceMonitor:
+      enabled: true
+  envoy:
+    podAnnotations: {reloader.stakater.com/auto: "false"} # per-node L7 proxy: a restart drops proxied connections
+  operator:
+    rollOutPods: true
+    podAnnotations: {reloader.stakater.com/auto: "false"} # rollOutPods above already restarts it on a config edit
+    priorityClassName: system-cluster-critical
+    podDisruptionBudget:
+      enabled: true # keeps the LB-IPAM/L2 leader through a node reboot
+    prometheus:
+      enabled: true
+      serviceMonitor:
+        enabled: true
+  hubble:
+    enabled: true
+    relay:
+      enabled: true
+      affinity:
+        podAffinity:
+          requiredDuringSchedulingIgnoredDuringExecution: # relay must co-locate with an agent
+            - topologyKey: kubernetes.io/hostname
+              labelSelector:
+                matchLabels:
+                  k8s-app: cilium
+        podAntiAffinity:
+          preferredDuringSchedulingIgnoredDuringExecution: # spread relays across nodes if possible
+            - weight: 100
+              podAffinityTerm:
+                labelSelector:
+                  matchLabels:
+                    k8s-app: hubble-relay
+                topologyKey: kubernetes.io/hostname
+    ui:
+      enabled: true
+      affinity:
+        podAntiAffinity:
+          preferredDuringSchedulingIgnoredDuringExecution: # spread hubble-ui across nodes if possible
+            - weight: 100
+              podAffinityTerm:
+                labelSelector:
+                  matchLabels:
+                    k8s-app: hubble-ui
+                topologyKey: kubernetes.io/hostname
+    tls:
+      auto:
+        # By default, ArgoCD's repo-server would mint new certs on each push, causing out-of-sync on cilium-ca and
+        # hubble-*-certs every time. It self-heals but is unnecessary. Using `cronJob` renders a stable manifest instead.
+        # We cannot use cert-manager, which is wave 2.
+        method: cronJob
+    metrics:
+      # A lean set of handlers, but each one needs its context options spelled out: a bare `dns` emits NO
+      # source/destination/*_namespace labels at all, so a counter cannot be split by who sent the traffic,
+      # and every per-namespace or per-workload panel has nothing to group on.
+      # Fallback chain, first hit wins: a Deployment/StatefulSet/DaemonSet pod gives its workload name; a pod owned
+      # by an operator CRD instead (longhorn's InstanceManager, which carries most of the cluster's traffic) has NO
+      # workload, so without `pod-name` it lands in the metric with an EMPTY source and every top-N panel draws one
+      # nameless bar; `reserved-identity` then catches the peers that are not pods at all: world, host, remote-node.
+      # No `dns` handler on purpose: hubble only sees the DNS that went through its own proxy, and that proxy only
+      # engages for pods under a toFQDNs policy, which here is two nightly CronJobs. It read 0 all day and only
+      # cluttered the metric list. Add it back when toFQDNs covers something long-running.
+      enabled:
+        - "drop:labelsContext=source_namespace,destination_namespace;sourceContext=workload-name|pod-name|reserved-identity;destinationContext=workload-name|pod-name|reserved-identity"
+        - "tcp:labelsContext=source_namespace,destination_namespace;sourceContext=workload-name|pod-name|reserved-identity;destinationContext=workload-name|pod-name|reserved-identity"
+        - "flow:labelsContext=source_namespace,destination_namespace;sourceContext=workload-name|pod-name|reserved-identity;destinationContext=workload-name|pod-name|reserved-identity"
+        - "icmp:labelsContext=source_namespace,destination_namespace;sourceContext=workload-name|pod-name|reserved-identity;destinationContext=workload-name|pod-name|reserved-identity"
+        - "port-distribution:labelsContext=source_namespace,destination_namespace;sourceContext=workload-name|pod-name|reserved-identity;destinationContext=workload-name|pod-name|reserved-identity"
+      serviceMonitor:
+        enabled: true
+        # Thrown away at scrape so it never reaches the metrics store: pods run IPv6 autoconfig on startup and
+        # send a router solicitation that an IPv4-only datapath cannot forward. It is the only drop reason most
+        # days, so it outranks real policy gaps in every top-N panel. Same event is already excluded from the
+        # drop log below. To see them anyway: `hubble observe --verdict DROPPED --protocol icmpv6`.
+        metricRelabelings:
+          - sourceLabels: [__name__, reason]
+            regex: hubble_drop_total;UNSUPPORTED_L3_PROTOCOL
+            action: drop
+      dashboards:
+        # Off: the chart's four dashboards group every panel by cilium-agent pod but never PRINT it, so each
+        # one draws three identical-looking lines. Replaced by our own single `hubble` dashboard in
+        # 05_grafana/files/dashboards, which aggregates across agents and filters by node instead.
+        enabled: false
+    export:
+      # Writes one JSON line per policy-denied flow to a file on the node, which the log collector tails into
+      # VictoriaLogs (see 05_victoria_logs). The `drop` metric above only counts drops; this says WHICH pod,
+      # port and identity, which is what turns a mystery timeout into a named CiliumNetworkPolicy gap.
+      # `dynamic` (not `static`) so editing the filters below reloads in the running agents, no DaemonSet roll.
+      dynamic:
+        enabled: true
+        config:
+          createConfigMap: true
+          content:
+            - name: drops
+              filePath: /var/run/cilium/hubble/drops.log
+              # AUDIT as well as DROPPED: while policyAuditMode is on, a policy gap is forwarded and reported as
+              # AUDIT, never DROPPED, so a DROPPED-only filter writes nothing about the gaps this file exists for.
+              includeFilters:
+                - verdict: [DROPPED, AUDIT]
+              # Pods run IPv6 autoconfig on startup and send a router solicitation, which an IPv4-only datapath
+              # drops. Harmless and unfixable from here, but each one still ships a ~1KB JSON line, and it is the
+              # only thing in this file most days, which buries the policy gaps the file exists to catch.
+              excludeFilters:
+                - drop_reason_desc: [UNSUPPORTED_L3_PROTOCOL]
+              # Caps what a policy mistake can cost: a drop storm rotates in place instead of filling the
+              # node's /var/run and taking the node with it. The collector ships what it reads before rotation.
+              fileMaxSizeMb: 10
+              fileMaxBackups: 1
+  cgroup:
+    # The host already mounts the unified cgroup v2 tree at /sys/fs/cgroup, so cilium need not mount its own.
+    # True on Talos and on any systemd distro booted with cgroup v2; flip autoMount back on if yours does not.
+    # (which would double-mount and fail). Instead, we point the agent at the host's tree.
+    autoMount: {enabled: false}
+    hostRoot: /sys/fs/cgroup
+  securityContext:
+    capabilities: # Since the agent isn't fully privileged, it needs the caps spelled out to load eBPF and read the cgroup tree.
+      ciliumAgent: [CHOWN, KILL, NET_ADMIN, NET_RAW, IPC_LOCK, SYS_ADMIN, SYS_RESOURCE, DAC_OVERRIDE, FOWNER, SETGID, SETUID]
+      cleanCiliumState: [NET_ADMIN, SYS_ADMIN, SYS_RESOURCE]
+
+# LB-IPAM pool + L2 announcement policy (templates/cilium-lb.yaml). These reference CRDs the operator only
+# registers at runtime, so 01_cilium.sh installs with this OFF first, waits for the operator, then re-applies
+# with it ON. ArgoCD just leaves it true.
+loadBalancer:
+  enabled: true
+  # Written here by 01_cilium.sh from .env, don't hand-edit: change it in the .env and re-run the script.
+  ipPool:
+    start: ""
+    stop: ""

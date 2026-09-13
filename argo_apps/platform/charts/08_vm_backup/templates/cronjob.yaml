@@ -1,0 +1,124 @@
+{{- /*
+The central VM/VL backup CronJob, rendered only when a bucket is configured. One container streams every dump
+straight through gzip into `aws s3 cp -`, so a 50Gi store needs no matching emptyDir.
+Each run backs up ONLY the previous full UTC day, because a growing full-store dump OOM'd the source stores:
+metrics as one object, logs as 24 hourly ones. A full DR replays every slice in key order, which
+recover_vm_from_s3.sh's `all` target does.
+`set -o pipefail` makes a failed curl OR upload fail the stage; a partial S3 object is deleted, the rest of the
+run continues, and any failure at all fails the Job so the alert fires.
+*/ -}}
+{{- if .Values.bucket }}
+apiVersion: batch/v1
+kind: CronJob
+metadata:
+  name: vm-backup
+  namespace: {{ .Release.Namespace }}
+  labels:
+    app.kubernetes.io/name: vm-backup
+    app.kubernetes.io/component: vm-backup
+spec:
+  schedule: {{ .Values.schedule | quote }}
+  concurrencyPolicy: Forbid          # never overlap runs
+  startingDeadlineSeconds: 300        # skip (don't stampede) a run the scheduler missed by >5m
+  successfulJobsHistoryLimit: 3
+  failedJobsHistoryLimit: 3
+  jobTemplate:
+    spec:
+      backoffLimit: 1
+      activeDeadlineSeconds: 3600     # a full metrics+logs export+upload that runs >1h is wedged, fail it
+      ttlSecondsAfterFinished: 86400  # GC finished jobs after a day
+      template:
+        metadata:
+          labels:
+            app.kubernetes.io/name: vm-backup
+            app.kubernetes.io/component: vm-backup
+        spec:
+          restartPolicy: Never
+          securityContext:
+            runAsNonRoot: true
+            runAsUser: 1000
+            runAsGroup: 1000
+            fsGroup: 1000
+            seccompProfile: { type: RuntimeDefault }
+          containers:
+            - name: backup
+              # renovate: datasource=docker
+              image: "alpine/k8s:1.36.2"
+              command: ["/bin/sh", "-c"]
+              args:
+                - |
+                  set -u
+                  # Default window is yesterday. DAY=YYYYMMDD on a one-off Job backfills THAT day instead,
+                  # which is how a gap from a failed run gets filled; see docs/10_backups.md.
+                  day="${DAY:-}"
+                  if [ -n "$day" ]; then
+                    start="$(date -u -D %Y%m%d -d "$day" +%s)"
+                    # busybox date does not fail on a malformed -d, it guesses, so round-trip it instead.
+                    [ "$(date -u -d "@${start}" +%Y%m%d)" = "$day" ] || { echo "DAY must be YYYYMMDD, got '${day}'"; exit 2; }
+                  else
+                    now="$(date -u +%s)"
+                    start=$(( now - now % 86400 - 86400 ))   # yesterday 00:00 UTC
+                    day="$(date -u -d "@${start}" +%Y%m%d)"
+                  fi
+                  end=$(( start + 86400 ))
+                  echo "window ${day}: ${start} -> ${end}"
+                  failed=""
+
+                  # stream <url> <curl-data-arg> <s3-key>: export, gzip, upload; delete a partial on failure.
+                  stream() {
+                    url="$1"; data="$2"; key="$3"
+                    dst="s3://${BUCKET}/${key}"
+                    echo "backing up ${url} -> ${dst}"
+                    if ( set -o pipefail; curl -sf --max-time 3000 "$url" $data | gzip | aws s3 cp - "$dst" ); then
+                      echo "  ok"
+                    else
+                      echo "  FAILED ${url}"; failed="${failed} ${key}"
+                      aws s3 rm "$dst" >/dev/null 2>&1 || true   # drop any truncated object
+                    fi
+                  }
+
+                  # export/native honours start/end, and the whole day fits one request. One file per UTC day,
+                  # so a re-run just overwrites that day's slice.
+                  stream "${VMSINGLE}/api/v1/export/native" "--data-urlencode match[]={__name__!=\"\"} --data-urlencode start=${start} --data-urlencode end=${end}" "${PREFIX}metrics/${day}.native.gz"
+
+                  # Logs go HOURLY, 24 objects a day, because a whole day is ~1.4GB and gzip on an arm64 node
+                  # is slower than vlsingle streams: the response stays open past -search.maxQueryDuration and
+                  # vlsingle hangs up mid-stream with a 200 already sent. The `timeout=` URL arg does NOT raise
+                  # that ceiling, whatever it looks like. An hour is ~60MB and ~1-2s, nowhere near it.
+                  # Keys stay FLAT and lexically sortable, which is what recover_vm_from_s3.sh lists and orders.
+                  h=0
+                  while [ "$h" -lt 24 ]; do
+                    hs=$(( start + h * 3600 ))
+                    stream "${VLSINGLE}/select/logsql/query" "--data-urlencode query=_time:[${hs},$(( hs + 3600 )))" "${PREFIX}logs/${day}T$(printf '%02d' "$h").jsonl.gz"
+                    h=$(( h + 1 ))
+                  done
+
+                  if [ -n "$failed" ]; then echo "FAILURES:${failed}"; exit 1; fi
+                  echo "all backups ok"
+              env:
+                - { name: HOME,   value: /tmp }   # aws-cli config/cache under the writable /tmp mount (root fs is read-only)
+                - { name: TMPDIR, value: /tmp }
+                - { name: BUCKET, value: {{ .Values.bucket | quote }} }
+                - { name: PREFIX, value: {{ .Values.prefix | quote }} }
+                - { name: VMSINGLE, value: {{ .Values.vmsingle | quote }} }
+                - { name: VLSINGLE, value: {{ .Values.vlsingle | quote }} }
+                - { name: AWS_DEFAULT_REGION, value: {{ .Values.region | quote }} }
+                - name: AWS_ACCESS_KEY_ID
+                  valueFrom:
+                    secretKeyRef: { name: {{ .Values.secretName }}, key: AWS_ACCESS_KEY_ID }
+                - name: AWS_SECRET_ACCESS_KEY
+                  valueFrom:
+                    secretKeyRef: { name: {{ .Values.secretName }}, key: AWS_SECRET_ACCESS_KEY }
+              securityContext:
+                allowPrivilegeEscalation: false
+                capabilities: { drop: ["ALL"] }
+                readOnlyRootFilesystem: true
+              resources:
+                requests: { cpu: 50m, memory: 64Mi }
+                limits:   { memory: 256Mi }
+              volumeMounts:
+                - { name: tmp, mountPath: /tmp }   # HOME + aws-cli scratch (root fs is read-only)
+          volumes:
+            - name: tmp
+              emptyDir: {}
+{{- end }}

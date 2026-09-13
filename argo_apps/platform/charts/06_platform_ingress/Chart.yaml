@@ -1,0 +1,10 @@
+apiVersion: v2
+name: platform-ingress
+description: The one platform ingress, a per-host Gateway and route for argocd, grafana, vmui and vlogs. Renders nothing itself, it wraps the shared ingress chart and supplies values.
+type: application
+version: 0.1.0 # local chart, never bump version
+
+dependencies:
+  - name: ingress
+    version: "*"
+    repository: "file://../../../../lib/helm/ingress"

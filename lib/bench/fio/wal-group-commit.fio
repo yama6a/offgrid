@@ -1,0 +1,20 @@
+# wal-fsync with one committer per core. Group commit is the strongest case FOR Longhorn: if the
+# per-op replication cost amortizes under concurrency, the serialized number overstates the real cost.
+
+[global]
+filename=/data/fio-wal-gc
+ioengine=psync
+direct=0
+fdatasync=1
+rw=write
+bs=8k
+size=512m
+numjobs=4             # Pi 5 has 4 cores
+iodepth=1
+time_based=1
+ramp_time=10
+runtime=60
+group_reporting=1
+percentile_list=50:95:99:99.9:100
+
+[wal-gc]

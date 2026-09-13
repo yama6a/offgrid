@@ -1,0 +1,26 @@
+# Read every node, and write only their taints. Nothing else: the built-in pod GC and the CSI attach-detach
+# controllers do the actual pod deletion and volume detach once the taint is on.
+apiVersion: rbac.authorization.k8s.io/v1
+kind: ClusterRole
+metadata:
+  name: dead-node-watcher
+rules:
+  - apiGroups: [""]
+    resources: ["nodes"]
+    verbs: ["get", "list", "watch"]
+  - apiGroups: [""]
+    resources: ["nodes"]
+    verbs: ["patch"] # `kubectl taint` patches .spec.taints; there is no narrower resource for it
+---
+apiVersion: rbac.authorization.k8s.io/v1
+kind: ClusterRoleBinding
+metadata:
+  name: dead-node-watcher
+roleRef:
+  apiGroup: rbac.authorization.k8s.io
+  kind: ClusterRole
+  name: dead-node-watcher
+subjects:
+  - kind: ServiceAccount
+    name: dead-node-watcher
+    namespace: {{ .Release.Namespace }}

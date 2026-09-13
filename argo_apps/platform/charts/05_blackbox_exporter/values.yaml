@@ -1,0 +1,73 @@
+# Probed hosts, grouped by what the edge is expected to answer an anonymous GET with, and the module that
+# asserts exactly that. Every URL is the PUBLIC name, so a probe covers DNS, the router's hairpin, the
+# LoadBalancer, the TLS cert and the route in one request. A group takes any FQDN and any path: 04_values.sh
+# fills in the targets of `sso` and `open` and nothing else, so a host off the ops./app. tiers goes in a group
+# of its own, written by hand. A group key becomes the VMProbe name and its job name, so keep it kebab-case.
+probes:
+  sso:
+    module: http_sso_302
+    targets:
+      - https://argocd.ops.example.com/
+      - https://grafana.ops.example.com/
+      - https://vmui.ops.example.com/
+      - https://vlogs.ops.example.com/
+      - https://hubble.ops.example.com/
+      - https://longhorn.ops.example.com/
+      - https://rabbitmq.ops.example.com/
+      - https://sample-user-manager-sso.app.example.com/
+  open:
+    module: http_open_200
+    targets:
+      - https://ntfy.ops.example.com/v1/health
+      - https://sample-user-manager.app.example.com/users
+
+interval: 60s # a probe is a real request against a real backend, so this is a rate as much as a resolution
+
+prometheus-blackbox-exporter:
+  fullnameOverride: blackbox-exporter # the VMProbe below addresses this Service by name
+
+  config:
+    modules:
+      # follow_redirects is OFF in both: following the SSO redirect would leave us grading Google's login page,
+      # and on an open host it would hide a wrong redirect behind whatever it lands on.
+
+      # For a host behind google-sso. The SecurityPolicy answers before the request ever reaches the backend,
+      # so a pass asserts the edge and that SSO is still attached, and NOTHING about the app behind it. There
+      # is no way to check that backend from here without a Google login; cover those with their own alerts.
+      http_sso_302:
+        prober: http
+        timeout: 5s
+        http:
+          valid_http_versions: ["HTTP/1.1", "HTTP/2.0"]
+          valid_status_codes: [302]
+          follow_redirects: false
+          preferred_ip_protocol: ip4
+          # Any 302 would pass without this. A route that lost its SecurityPolicy could redirect anywhere,
+          # so pin the destination to Google's consent screen.
+          fail_if_header_not_matches:
+            - header: Location
+              regexp: '^https://accounts\.google\.com/'
+      # For a host with no SSO in front, so the app itself answers and the probe is end-to-end. Point it at a
+      # path that returns 200: a host serving 404 at `/` looks identical to a broken route.
+      http_open_200:
+        prober: http
+        timeout: 5s
+        http:
+          valid_http_versions: ["HTTP/1.1", "HTTP/2.0"]
+          valid_status_codes: [200]
+          follow_redirects: false
+          preferred_ip_protocol: ip4
+
+  serviceMonitor:
+    selfMonitor:
+      enabled: true # so a dead exporter trips `target-down`, instead of silently ending every probe alert
+
+  # A passing SSO probe logs TWO WARN lines, "Received redirect" and "Not following redirect", because
+  # follow_redirects is off and a 302 is the expected answer. That success path is 99.8% of this exporter's
+  # output (15118 of 15152 lines in 6h) and ~25MB a day. A real failure logs at ERROR, so it still surfaces.
+  extraArgs:
+    - --log.level=error
+
+  resources:
+    requests: {cpu: 10m, memory: 38Mi}
+    limits: {memory: 62Mi}
