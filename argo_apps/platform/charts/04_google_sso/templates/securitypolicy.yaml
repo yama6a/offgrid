@@ -68,6 +68,15 @@ spec:
         extractFrom:
           cookies:
             - {{ $oidc.idTokenCookie | quote }}
+        {{- with $d.claimToHeaders }}
+        # Hands the logged-in identity to the backend as a request header, so an app that can trust a header
+        # needs no login of its own. Envoy sets it after verifying the token, overwriting whatever the client
+        # sent. It applies to EVERY host on this domain, not just the one that reads it; the rest ignore it.
+        # A backend that trusts this MUST be unreachable except through the edge, or anything that can open
+        # its port can send the header itself.
+        claimToHeaders:
+          {{- toYaml . | nindent 10 }}
+        {{- end }}
 
   authorization:
     # Deny by default: the callback host and any unlisted host are denied. /oauth2/callback is handled by the

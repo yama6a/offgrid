@@ -8,4 +8,6 @@ policies:
     group_by: ['...']
     group_wait: 30s
     group_interval: 5m
-    repeat_interval: 4h
+    # A firing alert is pushed once and then stays quiet. 8760h is a year, Grafana's way of saying never:
+    # the field has no "off" value and an empty one falls back to the 4h default.
+    repeat_interval: 8760h

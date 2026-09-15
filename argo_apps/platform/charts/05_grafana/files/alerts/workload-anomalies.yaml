@@ -186,7 +186,8 @@ groups:
               conditions:
                 - type: query
                   evaluator: {type: gt, params: [0]}
-      # Some but not all replicas failing readiness, excluding completed Job pods. A full outage is caught by
+      # Job-owned pods are excluded outright: a finished Job pod is never ready, so it would alert until its
+      # ttlSecondsAfterFinished expires. Broken Jobs go to job-failed. A full outage is caught by
       # workload-outages instead.
       - uid: pod-not-ready
         title: Pod not ready
@@ -208,7 +209,7 @@ groups:
             model:
               refId: A
               instant: true
-              expr: 'max by (namespace, pod) (kube_pod_status_ready{condition="false"} == 1) unless on(namespace, pod) (kube_pod_status_phase{phase="Succeeded"} == 1)'
+              expr: 'max by (namespace, pod) (kube_pod_status_ready{condition="false"} == 1) unless on(namespace, pod) (kube_pod_owner{owner_kind="Job"} == 1)'
           - refId: B
             relativeTimeRange: {from: 600, to: 0}
             datasourceUid: __expr__
@@ -224,6 +225,83 @@ groups:
               conditions:
                 - type: query
                   evaluator: {type: gt, params: [0]}
+      # Only failures from the last hour, because a failed Job sticks around for its ttlSecondsAfterFinished
+      # and would otherwise re-alert for as long as that is for one broken run.
+      - uid: job-failed
+        title: Job failed
+        condition: C
+        for: 5m
+        labels: {severity: warning}
+        annotations:
+          summary: 'Job {{ $labels.namespace }}/{{ $labels.job_name }} failed'
+          description: |
+            - job ran and exited non-zero, past its backoffLimit
+            - logs: kubectl -n {{ $labels.namespace }} logs job/{{ $labels.job_name }}
+            - events: kubectl -n {{ $labels.namespace }} describe job {{ $labels.job_name }}
+        noDataState: OK
+        execErrState: KeepLast
+        data:
+          - refId: A
+            relativeTimeRange: {from: 600, to: 0}
+            datasourceUid: VictoriaMetrics
+            model:
+              refId: A
+              instant: true
+              expr: 'max by (namespace, job_name) ((kube_job_status_failed > 0) and on(namespace, job_name) (time() - kube_job_status_start_time < 3600))'
+          - refId: B
+            relativeTimeRange: {from: 600, to: 0}
+            datasourceUid: __expr__
+            model: {refId: B, type: reduce, expression: A, reducer: last, datasource: {type: __expr__, uid: __expr__}}
+          - refId: C
+            relativeTimeRange: {from: 600, to: 0}
+            datasourceUid: __expr__
+            model:
+              refId: C
+              type: threshold
+              expression: B
+              datasource: {type: __expr__, uid: __expr__}
+              conditions:
+                - type: query
+                  evaluator: {type: gt, params: [0]}
+      # Threshold is missed runs, not wall-clock, so one rule covers a */7 crawler and a weekly trim without a
+      # per-CronJob list: next minus last schedule IS the schedule period. `last_successful_time > 0` keeps it
+      # quiet before the first ever run, when the series is absent and reads NoData.
+      - uid: cronjob-stale
+        title: CronJob has no recent success
+        condition: C
+        for: 30m
+        labels: {severity: warning}
+        annotations:
+          summary: 'CronJob {{ $labels.namespace }}/{{ $labels.cronjob }} has missed >3 runs since its last success'
+          description: |
+            - every run since has failed, or the CronJob stopped scheduling (suspended, or startingDeadlineSeconds keeps skipping)
+            - state: kubectl -n {{ $labels.namespace }} get cronjob {{ $labels.cronjob }}
+            - last runs: kubectl -n {{ $labels.namespace }} get jobs --sort-by=.metadata.creationTimestamp
+        noDataState: OK
+        execErrState: KeepLast
+        data:
+          - refId: A
+            relativeTimeRange: {from: 600, to: 0}
+            datasourceUid: VictoriaMetrics
+            model:
+              refId: A
+              instant: true
+              expr: '(time() - max by (namespace, cronjob) (kube_cronjob_status_last_successful_time > 0)) / on(namespace, cronjob) (max by (namespace, cronjob) (kube_cronjob_next_schedule_time) - max by (namespace, cronjob) (kube_cronjob_status_last_schedule_time))'
+          - refId: B
+            relativeTimeRange: {from: 600, to: 0}
+            datasourceUid: __expr__
+            model: {refId: B, type: reduce, expression: A, reducer: last, datasource: {type: __expr__, uid: __expr__}}
+          - refId: C
+            relativeTimeRange: {from: 600, to: 0}
+            datasourceUid: __expr__
+            model:
+              refId: C
+              type: threshold
+              expression: B
+              datasource: {type: __expr__, uid: __expr__}
+              conditions:
+                - type: query
+                  evaluator: {type: gt, params: [3]}
       - uid: replicaset-degraded
         title: ReplicaSet missing ready replicas
         condition: C

@@ -4,8 +4,8 @@ app:
   command: ["/signup"]
   replicas: 1
   resources:
-    requests: { cpu: 10m, memory: 24Mi }
-    limits:   { memory: 48Mi }
+    requests: { cpu: 10m, memory: 16Mi }
+    limits:   { memory: 32Mi }
 
 rabbitmq-topology:
   user: sample-user-signup         # == app.name; the pod reads <user>-user-credentials

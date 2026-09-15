@@ -47,6 +47,9 @@ hosts:
 extraDomains: []
 # - domain: example.edu
 #   issuer: letsencrypt-staging       # OPTIONAL: defaults to `issuer` above
+#   claimToHeaders:                   # OPTIONAL: copy a verified token claim onto the request to the backend,
+#     - {claim: email, header: x-user}  # for an app that can trust a header instead of running its own login.
+#                                       # Domain-wide. Only for backends the edge is the sole route into.
 #   hosts:
 #     - subdomain: www
 #     - subdomain: api

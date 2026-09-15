@@ -12,9 +12,16 @@ contactPoints:
           authorization_credentials: ${GF_NTFY_TOKEN}           # sealed write token, env-interpolated; never committed
           maxAlerts: 0                                          # no cap on alerts bundled per notification
           payload:
-            # title is the alert's `summary`, message its `description`. Reads per-alert `.Annotations`, NOT
-            # `.CommonAnnotations`, which is empty whenever grouped alerts differ. policies.yaml groups by all
-            # labels, so each notification is one resource and `index .Alerts 0` is it; the range is a fallback.
+            # Two shapes, picked by how many alerts the policy grouped together.
+            #
+            # One alert: title is its `summary`, message its `description`. Reads per-alert `.Annotations`,
+            # NOT `.CommonAnnotations`, which is empty whenever grouped alerts differ.
+            #
+            # Many alerts that carry a `groupSummary`: title is that string with the count substituted into
+            # its %d, message is `groupDescription` followed by every alert's `groupItem` on one line. This is
+            # what keeps a rule that evaluates per instance from turning into one push per instance. A rule without
+            # those annotations falls through to the single-alert shape, so nothing else has to change.
+            #
             # Built as a dict plus `data.ToJSON` so it escapes the multi-line description and any quotes for us.
             # Hand-writing that JSON string would break on the newlines.
             # The `$$` on the Go-template vars is not a typo. Grafana expands environment variables in
@@ -24,11 +31,21 @@ contactPoints:
               {{- $$sev := index .CommonLabels "severity" -}}
               {{- $$prio := 3 -}}
               {{- if eq $$sev "critical" }}{{ $$prio = 5 }}{{ else if eq $$sev "warning" }}{{ $$prio = 4 }}{{ end -}}
+              {{- $$first := index .Alerts 0 -}}
+              {{- $$n := len .Alerts -}}
+              {{- $$title := printf "%s: %s" (.Status | toUpper) $$first.Annotations.summary -}}
               {{- $$msg := "" -}}
-              {{- range .Alerts }}{{ $$msg = printf "%s%s" $$msg .Annotations.description }}{{ end -}}
+              {{- if and (gt $$n 1) $$first.Annotations.groupSummary -}}
+                {{- $$items := "" -}}
+                {{- range $$i, $$a := .Alerts }}{{ if $$i }}{{ $$items = printf "%s, %s" $$items $$a.Annotations.groupItem }}{{ else }}{{ $$items = $$a.Annotations.groupItem }}{{ end }}{{ end -}}
+                {{- $$title = printf "%s: %s" (.Status | toUpper) (printf $$first.Annotations.groupSummary $$n) -}}
+                {{- $$msg = printf "%s%s\n" $$first.Annotations.groupDescription $$items -}}
+              {{- else -}}
+                {{- range .Alerts }}{{ $$msg = printf "%s%s" $$msg .Annotations.description }}{{ end -}}
+              {{- end -}}
               {{ coll.Dict
                    "topic" "cluster-alerts"
-                   "title" (printf "%s: %s" (.Status | toUpper) (index .Alerts 0).Annotations.summary)
+                   "title" $$title
                    "message" $$msg
                    "priority" $$prio
                    "tags" (coll.Slice $$sev)

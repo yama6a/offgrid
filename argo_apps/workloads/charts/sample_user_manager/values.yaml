@@ -13,8 +13,8 @@ app:
   # REDIS_<NAME>_ADDR only. Names must match the redis-instance `name` values below.
   redises: [sample-user-manager-redis-cache, sample-user-manager-redis-sessions]
   resources:
-    requests: { cpu: 10m, memory: 32Mi }
-    limits:   { memory: 48Mi }
+    requests: { cpu: 10m, memory: 18Mi }
+    limits:   { memory: 32Mi }
 
 # Two hosts on the same Service. Neither configures SSO: sample-user-manager-sso is gated centrally by
 # 04_google_sso, sample-user-manager is deliberately left out of it and stays open.
@@ -88,8 +88,8 @@ redis-cache:
   deletionProtection: true
   initialFixedDiskSize: 1Gi   # create-time ONLY, changing this does NOT resize a live instance
   resources:
-    requests: { cpu: 25m, memory: 64Mi }
-    limits:   { memory: 96Mi }
+    requests: { cpu: 12m, memory: 16Mi }
+    limits:   { memory: 32Mi }
   allowedClients:
     - matchLabels: { app: sample-user-manager }
 
@@ -102,7 +102,7 @@ redis-sessions:
   deletionProtection: true
   initialFixedDiskSize: 1Gi   # create-time ONLY, changing this does NOT resize a live instance
   resources:
-    requests: { cpu: 25m, memory: 64Mi }
-    limits:   { memory: 96Mi }
+    requests: { cpu: 23m, memory: 16Mi }
+    limits:   { memory: 36Mi }
   allowedClients:
     - matchLabels: { app: sample-user-manager }

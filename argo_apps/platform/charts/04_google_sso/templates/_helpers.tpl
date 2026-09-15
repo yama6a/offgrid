@@ -4,12 +4,14 @@
 {{- $out := list (dict
       "domain" (required "domain is required (04_values.sh writes it from .env BASE_DOMAIN)" .Values.domain)
       "issuer" .Values.issuer
-      "hosts" (.Values.hosts | default (list))) -}}
+      "hosts" (.Values.hosts | default (list))
+      "claimToHeaders" (.Values.claimToHeaders | default (list))) -}}
 {{- range $d := (.Values.extraDomains | default (list)) -}}
 {{- $out = append $out (dict
       "domain" ($d.domain | default "")
       "issuer" ($d.issuer | default $.Values.issuer)
-      "hosts" ($d.hosts | default (list))) -}}
+      "hosts" ($d.hosts | default (list))
+      "claimToHeaders" ($d.claimToHeaders | default (list))) -}}
 {{- end -}}
 {{- $out | toYaml -}}
 {{- end -}}

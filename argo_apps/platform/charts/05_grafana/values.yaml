@@ -129,3 +129,14 @@ grafana:
               matchLabels:
                 app.kubernetes.io/name: grafana
             topologyKey: kubernetes.io/hostname
+
+# Restarts grafana after a sync that changed files/alerts/, which is what removes a rule that was deleted
+# from those files. See templates/alerts-reload-hook.yaml for why a restart is the mechanism.
+alertsReloadHook:
+  image: "alpine/k8s:1.37.0" # needs kubectl; renovate-annotated in templates/alerts-reload-hook.yaml
+  rolloutTimeout: 5m
+  backoffLimit: 1
+  activeDeadlineSeconds: 600 # rolloutTimeout plus room for the image pull
+  resources:
+    requests: {cpu: 25m, memory: 64Mi}
+    limits: {memory: 128Mi}

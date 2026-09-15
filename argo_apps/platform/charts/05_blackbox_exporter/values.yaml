@@ -58,6 +58,14 @@ prometheus-blackbox-exporter:
           follow_redirects: false
           preferred_ip_protocol: ip4
 
+      # For a plain TCP listener with no HTTP on it. Asserts only that something accepts a connection on the
+      # port, which for something like an NFS server is the difference between "up" and "the data is gone".
+      tcp_connect:
+        prober: tcp
+        timeout: 5s
+        tcp:
+          preferred_ip_protocol: ip4
+
   serviceMonitor:
     selfMonitor:
       enabled: true # so a dead exporter trips `target-down`, instead of silently ending every probe alert
