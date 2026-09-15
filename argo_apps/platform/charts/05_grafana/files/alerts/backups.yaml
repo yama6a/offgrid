@@ -1,9 +1,4 @@
 apiVersion: 1
-# Dropping a rule from `groups` leaves it live in Grafana; only this removes it. The alerts sidecar reloads
-# provisioning in place, so nothing restarts the pod to clear it out.
-deleteRules:
-  - {orgId: 1, uid: redis-backup-failed}
-  - {orgId: 1, uid: vm-backup-failed}
 groups:
   # Staleness and recoverability only. A single failed backup Job is caught cluster-wide by job-failed in
   # workload-anomalies, so it does not get a per-backup rule here. See docs/10_backups.md.
