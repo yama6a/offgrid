@@ -1,51 +1,19 @@
 apiVersion: 1
+# Dropping a rule from `groups` leaves it live in Grafana; only this removes it. The alerts sidecar reloads
+# provisioning in place, so nothing restarts the pod to clear it out.
+deleteRules:
+  - {orgId: 1, uid: redis-backup-failed}
+  - {orgId: 1, uid: vm-backup-failed}
 groups:
-  # Job-level, not per-instance: which instance failed is in the job's stdout. The per-instance gap is covered
-  # by redis-backup-unrecoverable at the bottom of this group. See docs/10_backups.md.
+  # Staleness and recoverability only. A single failed backup Job is caught cluster-wide by job-failed in
+  # workload-anomalies, so it does not get a per-backup rule here. See docs/10_backups.md.
   - orgId: 1
     name: backups
     folder: offgrid
     interval: 1m
     rules:
-      - uid: redis-backup-failed
-        title: Redis backup job failed
-        condition: C
-        for: 15m
-        labels: {severity: warning}
-        annotations:
-          summary: 'Redis backup job {{ $labels.namespace }}/{{ $labels.job_name }} failed'
-          description: |
-            - redis backup Job {{ $labels.namespace }}/{{ $labels.job_name }} failed
-            - which instance failed is in the job stdout
-            - check: kubectl -n {{ $labels.namespace }} logs job/{{ $labels.job_name }}
-        noDataState: OK
-        execErrState: KeepLast
-        data:
-          - refId: A
-            relativeTimeRange: {from: 600, to: 0}
-            datasourceUid: VictoriaMetrics
-            model:
-              refId: A
-              instant: true
-              expr: 'max by (namespace, job_name) (kube_job_status_failed{namespace="redis-backup", job_name=~"redis-backup-.+"})'  # kube-state-metrics here has no kube_job_failed{condition=...}, so count failed pods instead
-          - refId: B
-            relativeTimeRange: {from: 600, to: 0}
-            datasourceUid: __expr__
-            model: {refId: B, type: reduce, expression: A, reducer: last, datasource: {type: __expr__, uid: __expr__}}
-          - refId: C
-            relativeTimeRange: {from: 600, to: 0}
-            datasourceUid: __expr__
-            model:
-              refId: C
-              type: threshold
-              expression: B
-              datasource: {type: __expr__, uid: __expr__}
-              conditions:
-                - type: query
-                  evaluator: {type: gt, params: [0]}
       # `last_successful_time > 0` keeps this quiet before the first run: an absent series reads NoData, so OK.
       # 129600s is 36h, daily plus slack. Raise it if you slow the schedule in the 07_redis_backup values.
-      # VERIFY kube_cronjob_status_last_successful_time exists in the running kube-state-metrics at apply time.
       - uid: redis-backup-stale
         title: Redis backup is stale
         condition: C
@@ -160,44 +128,6 @@ groups:
               conditions:
                 - type: query
                   evaluator: {type: gt, params: [172800]}
-      # CNPG and VM/VL backup health. Metric names lifted verbatim from the chart PrometheusRules these
-      # replace, which never fired because vmalert is off.
-      - uid: vm-backup-failed
-        title: VM/VL backup job failed
-        condition: C
-        for: 15m
-        labels: {severity: warning}
-        annotations:
-          summary: 'VM/VL backup Job {{ $labels.namespace }}/{{ $labels.job_name }} failed'
-          description: |
-            - VM/VL backup Job {{ $labels.namespace }}/{{ $labels.job_name }} failed
-            - check: kubectl -n {{ $labels.namespace }} logs job/{{ $labels.job_name }}
-            - verify the S3 target creds + bucket
-        noDataState: OK
-        execErrState: KeepLast
-        data:
-          - refId: A
-            relativeTimeRange: {from: 600, to: 0}
-            datasourceUid: VictoriaMetrics
-            model:
-              refId: A
-              instant: true
-              expr: 'max by (namespace, job_name) (kube_job_status_failed{namespace="monitoring", job_name=~"vm-backup.*"})'  # kube-state-metrics here has no kube_job_failed{condition=...}, so count failed pods instead
-          - refId: B
-            relativeTimeRange: {from: 600, to: 0}
-            datasourceUid: __expr__
-            model: {refId: B, type: reduce, expression: A, reducer: last, datasource: {type: __expr__, uid: __expr__}}
-          - refId: C
-            relativeTimeRange: {from: 600, to: 0}
-            datasourceUid: __expr__
-            model:
-              refId: C
-              type: threshold
-              expression: B
-              datasource: {type: __expr__, uid: __expr__}
-              conditions:
-                - type: query
-                  evaluator: {type: gt, params: [0]}
       # 129600s is 36h, daily plus slack. `> 0` guards the metric being absent or zero before the first
       # success, so a suspended or never-scheduled job is what actually trips this.
       - uid: vm-backup-stale

@@ -27,8 +27,9 @@ spec:
   interfaces:
     - ^en
   # Every node is a candidate, deliberately. Announcing is independent of both the node's role and where the
-  # backend runs: the service is externalTrafficPolicy Cluster, so whichever node answers the ARP forwards
-  # through the eBPF datapath to Envoy wherever it is. More candidates means the lease survives more node losses.
+  # backend runs, so whichever node answers the ARP forwards through the eBPF datapath to the pod wherever it
+  # is, and more candidates means the lease survives more node losses. Correct ONLY while every service is
+  # externalTrafficPolicy Cluster, which upstream requires. See docs/01_networking.md.
   nodeSelector:
     matchLabels:
       kubernetes.io/os: linux

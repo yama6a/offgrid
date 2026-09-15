@@ -136,7 +136,7 @@ External egress (argocd to GitHub, cert-manager to ACME, grafana to a plugin dow
 selectors (CoreDNS `k8s-app: kube-dns`, vmagent, the Envoy edge, the stores) are repeated verbatim across the
 manifests, so if a platform component is relabelled you grep and update each one.
 
-Three Cilium subtleties to know:
+Four Cilium subtleties to know:
 
 - An admission webhook needs `remote-node` on its ingress rule, not just `kube-apiserver`. When the apiserver on
   node A dials a pod on node B, the packet's source is node A's `cilium_host` router IP (a `10.244.x.y` address),
@@ -148,6 +148,10 @@ Three Cilium subtleties to know:
   only. To reach a managed pod in another namespace (cnpg-operator to its instances, redis-operator to its
   redises) use `matchExpressions: [{key: k8s:io.kubernetes.pod.namespace, operator: Exists}]`, NOT the empty `{}`
   selector, which is also same-namespace.
+- Ingress through a `type: LoadBalancer` service is not `world` on its own. `externalTrafficPolicy: Cluster`
+  SNATs the client to the IP of whichever node answered the ARP, so the identity the policy sees is
+  `remote-node`, or `host` when that node also runs the pod. A pod behind its own LoadBalancer service needs
+  `[world, remote-node, host]` on its ingress rule for this reason.
 - The RabbitMQ operator subchart ships bundled vanilla `NetworkPolicy`s that default to allow-all-egress. Cilium
   UNIONs those with our CNP and would blow the default-deny open, so we pin `...networkPolicy.enabled: false`.
   Same move as argocd's `global.networkPolicy.create: false`. See [02_gitops.md](02_gitops.md) and
@@ -202,6 +206,12 @@ mechanism. The `CoreDNS replica down` alert is what catches the failure now.
 - L2 announcements is Beta and leans on leader-election leases. If you grow the pool and see operator API
   throttling, raise `k8sClientRateLimit`.
 - LB pool placement must sit outside the router's DHCP lease range and clear of the VIP, or you get IP conflicts.
+- Every `type: LoadBalancer` service MUST be `externalTrafficPolicy: Cluster`. Upstream documents L2
+  announcements as incompatible with `Local`: the lease is elected from the `nodeSelector` alone, so a node
+  with no backend answers the ARP and drops what it answers for. Leases are sticky, so a bad draw reads as a
+  permanent outage and a good one holds until the next agent restart, reboot or upgrade reshuffles it.
+  `Cluster` costs the client source IP, which changes the policy identity: see the `world` note under Network
+  policy above.
 - Circular dependency once Argo owns it: ArgoCD runs on Cilium's network, so a bad Cilium change synced through
   Argo can cut Argo off. Upgrades are normally non-disruptive (per-node agent restart, the eBPF datapath
   persists). The Cilium Application auto-syncs with full `selfHeal` + `prune`, chosen for convenience, so
@@ -219,7 +229,9 @@ mechanism. The `CoreDNS replica down` alert is what catches the failure now.
   `proxy.disabled` and `kubePrism` landed in the machine config.
 - `type: LoadBalancer` stuck `<pending>`: no pool, or it is exhausted or overlapping. `kubectl get
   ciliumloadbalancerippool`, and confirm the range is outside the DHCP lease and clear of the VIP.
-- LB IP assigned but unreachable: L2 is not announcing. Cilium picks the announcing node from the policy's
+- LB IP assigned but unreachable: check the service's `externalTrafficPolicy` first. `Local` is incompatible
+  with L2 announcements and produces exactly this, per service and intermittently. See Caveats above.
+  Otherwise L2 is not announcing at all. Cilium picks the announcing node from the policy's
   `nodeSelector` ALONE and applies the `interfaces` regex only afterwards, so a node that matches the selector
   but matches no device takes the lease and programs nothing. `interfaces` is therefore the ethernet CLASS
   (`^en`, matching `end0` on a Pi and `eno1`/`enp0s31f6` on x86) rather than one device name, which is what lets

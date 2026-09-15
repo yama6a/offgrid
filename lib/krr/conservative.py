@@ -3,7 +3,7 @@
 # what the scheduler RESERVES. So the two are split:
 #
 #   memory REQUEST = max(AVERAGE working set, 16Mi)   scheduler packs on typical use, not peak
-#   memory LIMIT   = max(PEAK * 1.2, 32Mi)            per-pod safety ceiling
+#   memory LIMIT   = max(PEAK * 1.5, 32Mi)            per-pod safety ceiling
 #   CPU            unchanged from `simple` (CPU is compressible)
 #
 # The two floors are ASYMMETRIC, which KRR's single --mem-min cannot express, so they live here and krr.sh runs
@@ -65,7 +65,7 @@ class AvgMemoryLoader(PrometheusMetric):
 class ConservativeStrategySettings(StrategySettings):
     cpu_percentile: float = pd.Field(95, gt=0, le=100, description="The percentile to use for the CPU request.")
     memory_limit_buffer_percentage: float = pd.Field(
-        20, gt=0, description="Percent buffer added to PEAK memory usage for the memory LIMIT."
+        50, gt=0, description="Percent buffer added to PEAK memory usage for the memory LIMIT."
     )
     memory_request_min: int = pd.Field(
         16, ge=0, description="Floor for the memory REQUEST in Mi: request = max(average usage, this)."

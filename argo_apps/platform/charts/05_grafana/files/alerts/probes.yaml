@@ -1,5 +1,5 @@
-# Synthetic HTTPS probes from 05_blackbox_exporter. Unlike the ingress-http group, which reads Envoy's own
-# counters and therefore needs real traffic, these fire on a host nobody has visited.
+# Synthetic probes from 05_blackbox_exporter. Unlike the ingress-http group, which reads Envoy's own
+# counters and therefore needs real traffic, these fire on a target nobody has visited.
 apiVersion: 1
 groups:
   - orgId: 1
@@ -28,7 +28,9 @@ groups:
             model:
               refId: A
               instant: true
-              expr: 'max by (instance) (probe_success == bool 0)'
+              # instance=~"https://.*" keeps this to the HTTP probe groups. A tcp_connect target is a bare
+              # host:port and wants its own rule, with a description that is actually about that target.
+              expr: 'max by (instance) (probe_success{instance=~"https://.*"} == bool 0)'
           - refId: B
             relativeTimeRange: {from: 600, to: 0}
             datasourceUid: __expr__

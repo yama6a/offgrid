@@ -61,7 +61,11 @@ jobs:
           find argo_apps lib/helm -name Chart.yaml -print0 \
             | xargs -0 grep -hoE 'repository:[[:space:]]*"?https://[^" ]+' \
             | sed -E 's/repository:[[:space:]]*"?//' | sort -u | while read -r url; do
-                helm repo add "r$(printf '%s' "$url" | cksum | cut -d' ' -f1)" "$url" >/dev/null 2>&1 || true
+                for i in 1 2 3; do
+                  helm repo add "r$(printf '%s' "$url" | cksum | cut -d' ' -f1)" "$url" >/dev/null && break
+                  [ "$i" = 3 ] && { echo "::error::helm repo add failed: $url"; exit 1; }
+                  sleep $((i * 3))
+                done
               done
       - name: helm dependency build
         # Reproduces ArgoCD's repo-server: rebuilds charts/ from the COMMITTED Chart.lock, so a missing or stale

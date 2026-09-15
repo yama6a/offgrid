@@ -215,6 +215,11 @@ Consequences worth knowing:
 - **A group can hold any FQDN**, not just the `ops.` and `app.` tiers. `04_values.sh` composes the targets of
   `sso` and `open` from those two domains and touches nothing else, so a host on another domain goes in a
   group you add by hand, naming its module and listing full URLs.
+- **A group does not have to be HTTP.** The module decides the prober, so a group can point at a bare
+  `host:port` with the `tcp_connect` module. The case for it is a NAS behind an NFS PV: such a PV has no
+  Longhorn metrics, no replica health and no capacity series, so without a probe nothing in the stack notices
+  the export going away. Give it its own alert rule: `ingress-probe-failing` is scoped to
+  `instance=~"https://.*"` so a bare host does not fire an alert whose text is about DNS and certificates.
 
 ### SMART, because node-exporter reads none of it
 
@@ -683,7 +688,7 @@ permanently books rarely-used memory and tanks pod density. `conservative` split
 
 - Memory request = max(average working-set, 16Mi). The scheduler packs on typical use, not peak, and the 16Mi
   floor reflects the idle working set so it does not overcommit.
-- Memory limit = max(peak x 1.2, 32Mi), raised further to the OOMKilled limit plus 25% for any workload OOMKilled
+- Memory limit = max(peak x 1.5, 32Mi), raised further to the OOMKilled limit plus 25% for any workload OOMKilled
   during the window (`--use-oomkill-data`, on by default). An OOMKill proves the ceiling was too low, and the
   bump lands on the limit, not the request.
 - CPU unchanged from `simple`: request is the 95th percentile, no limit, because CPU is compressible.

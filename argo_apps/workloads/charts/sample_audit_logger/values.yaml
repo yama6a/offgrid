@@ -4,8 +4,8 @@ app:
   command: ["/auditor"]
   replicas: 1
   resources:
-    requests: { cpu: 10m, memory: 24Mi }
-    limits:   { memory: 48Mi }
+    requests: { cpu: 10m, memory: 16Mi }
+    limits:   { memory: 32Mi }
 
 rabbitmq-topology:
   user: sample-audit-logger        # == app.name; the pod reads <user>-user-credentials
