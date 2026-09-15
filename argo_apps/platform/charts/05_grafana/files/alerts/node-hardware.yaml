@@ -55,7 +55,7 @@ groups:
       - uid: node-soc-temp-high
         title: Node SoC temperature high
         condition: C
-        for: 10m
+        for: 30m
         labels: {severity: warning}
         annotations:
           summary: 'Node {{ $labels.instance }} SoC above 80C'
@@ -71,12 +71,12 @@ groups:
             datasourceUid: VictoriaMetrics
             model:
               refId: A
-              instant: true
+              range: true
               expr: 'max by (instance) (node_thermal_zone_temp{type=~"cpu-thermal|cpu_thermal|soc.*"})'
           - refId: B
             relativeTimeRange: {from: 600, to: 0}
             datasourceUid: __expr__
-            model: {refId: B, type: reduce, expression: A, reducer: last, datasource: {type: __expr__, uid: __expr__}}
+            model: {refId: B, type: reduce, expression: A, reducer: mean, datasource: {type: __expr__, uid: __expr__}}
           - refId: C
             relativeTimeRange: {from: 600, to: 0}
             datasourceUid: __expr__
