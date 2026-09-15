@@ -29,6 +29,10 @@ spec:
   oidc:
     provider:
       issuer: "https://accounts.google.com"
+      # Google only hands out a refresh token when the auth request says access_type=offline, and only while the
+      # consent screen is shown, so prompt=consent keeps it coming back on every login. Without both, no refresh
+      # token is ever stored and the session ends when Google's 1h id token does. Envoy keeps the query string.
+      authorizationEndpoint: "https://accounts.google.com/o/oauth2/v2/auth?access_type=offline&prompt=consent"
     clientID: {{ $oidc.clientID | quote }}
     clientSecret:
       name: {{ $oidc.clientSecretName | quote }}
