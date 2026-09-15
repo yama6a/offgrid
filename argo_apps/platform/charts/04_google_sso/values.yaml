@@ -8,8 +8,8 @@ oidc:
   authSubdomain: google-sso        # callback host = <authSubdomain>.<domain>; register it as the redirect URI
   idTokenCookie: "google-id-token"
   logoutPath: "/oauth2/sign_out"   # off the default /logout so it doesn't swallow a backend's own /logout
-  refreshToken: true               # renew silently so a session outlives Google's ~1h token...
-  sessionTTL: "24h"                # ...capped here (needs access_type=offline)
+  refreshToken: true               # renew silently so a session outlives Google's 1h id token...
+  sessionTTL: "24h"                # ...capped here; Google refresh tokens carry no expiry, so this is the session
   csrfTokenTTL: "5m"               # short, so orphaned per-flow cookies drain fast
   # XHR/websocket requests get 401 instead of a 302 to Google, else a logged-out SPA leaks cookies until Envoy
   # resets the stream (ERR_HTTP2_PROTOCOL_ERROR). Empty disables.

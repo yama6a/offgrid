@@ -362,6 +362,12 @@ argocd.D (with cookie)-> [sso-D: oidc] pass -> [jwt] validate -> [authz] :author
 Google needs exactly ONE redirect URI per domain (`google-sso.<domain>/oauth2/callback`). One OAuth client, a
 `clientID` plus one sealed `client-secret`, serves everything.
 
+A session lasts `sessionTTL` (24h), not Google's 1h id token. Envoy renews the id token with a refresh token, and
+Google only issues one when the auth request carries `access_type=offline` and the consent screen was shown, so the
+policy pins `authorizationEndpoint` with `access_type=offline&prompt=consent`. The cost is one confirm click per
+login. Drop `prompt=consent` and the first login after a session expires silently comes back without a refresh
+token, and you are on 1h sessions until you revoke the app under myaccount.google.com/permissions.
+
 ### Workloads configure nothing SSO
 
 A chart declares only its ingress: domain, hosts and backends. Plain edges. Which hosts are protected, and by
