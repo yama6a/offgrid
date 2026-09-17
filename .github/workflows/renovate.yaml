@@ -3,10 +3,8 @@ name: Renovate
 
 on:
   schedule:
-    # Two runs a night, 30 min apart: the first opens PRs, the second merges the ones whose CI went green.
-    # Renovate never merges on the run that opened a PR, so a single nightly run would add a day of lag.
+    # Opens PRs. Non-majors arm GitHub's auto-merge and land on green; majors get a Copilot BC check.
     - cron: "13 5 * * *"
-    - cron: "43 5 * * *"
   workflow_dispatch:
     inputs:
       logLevel:
@@ -24,13 +22,10 @@ jobs:
     uses: yama6a/gha/.github/workflows/renovate.yaml@v2
     permissions:
       contents: read  # Renovate acts through RENOVATE_TOKEN, not GITHUB_TOKEN
+      copilot-requests: write  # the BC check's Copilot CLI is the one thing on GITHUB_TOKEN
     with:
       log-level: ${{ inputs.logLevel || 'info' }}
       dry-run: ${{ inputs.dryRun || false }}
-      # Admin-only allowlist for renovate.json5's postUpgradeTasks: this input is what actually
-      # authorizes running that command, not the repo config alone. Kept in the workflow, not in
-      # renovate.json5, so a routine config PR cannot smuggle in an arbitrary command to execute.
-      # Exact match to the Chart.lock normalizer, nothing else.
       allowed-commands: '["^find \\. -name Chart\\.lock -exec sed -i "]'
     secrets:
       RENOVATE_TOKEN: ${{ secrets.RENOVATE_TOKEN }}
