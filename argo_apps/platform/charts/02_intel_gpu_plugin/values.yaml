@@ -4,7 +4,7 @@
 # it comes from the siderolabs/i915 Talos extension. See docs/14_igpu.md.
 
 # renovate: datasource=docker depName=docker.io/intel/intel-gpu-plugin
-image: "intel/intel-gpu-plugin:0.36.0"
+image: "intel/intel-gpu-plugin:0.37.0"
 
 sharedDevNum: 2 # pods that may hold the iGPU at once. Slots are time-sliced with NO isolation, so this is a
                 # contention cap, not a partition: 2 lets two consumers run at once, a third goes Pending
