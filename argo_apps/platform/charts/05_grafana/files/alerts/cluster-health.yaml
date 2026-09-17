@@ -262,8 +262,9 @@ groups:
               conditions:
                 - type: query
                   evaluator: {type: gt, params: [85]}
-      # Predictive, for a disk already under 50% free: A yields the predicted free bytes at the last 6h trend,
-      # and `lt 0` means it will run out inside 24h.
+      # Predictive, for a disk already under 50% free: A yields the predicted free bytes at the last 24h trend,
+      # and `lt 0` means it will run out inside 24h. A 24h window so a few GiB of image pulls landing in one
+      # step (a deploy day) is not extrapolated into a fill; a leak of 1 GiB/h still trips it.
       - uid: node-disk-fill-predict
         title: Node disk will fill within 24h
         condition: C
@@ -279,18 +280,18 @@ groups:
         execErrState: KeepLast
         data:
           - refId: A
-            relativeTimeRange: {from: 21600, to: 0}
+            relativeTimeRange: {from: 86400, to: 0}
             datasourceUid: VictoriaMetrics
             model:
               refId: A
               instant: true
-              expr: 'predict_linear(node_filesystem_avail_bytes{fstype=~"ext4|xfs"}[6h], 86400) < 0 and (node_filesystem_avail_bytes{fstype=~"ext4|xfs"} / node_filesystem_size_bytes{fstype=~"ext4|xfs"}) < 0.5'
+              expr: 'predict_linear(node_filesystem_avail_bytes{fstype=~"ext4|xfs"}[1d], 86400) < 0 and (node_filesystem_avail_bytes{fstype=~"ext4|xfs"} / node_filesystem_size_bytes{fstype=~"ext4|xfs"}) < 0.5'
           - refId: B
-            relativeTimeRange: {from: 21600, to: 0}
+            relativeTimeRange: {from: 86400, to: 0}
             datasourceUid: __expr__
             model: {refId: B, type: reduce, expression: A, reducer: last, datasource: {type: __expr__, uid: __expr__}}
           - refId: C
-            relativeTimeRange: {from: 21600, to: 0}
+            relativeTimeRange: {from: 86400, to: 0}
             datasourceUid: __expr__
             model:
               refId: C
