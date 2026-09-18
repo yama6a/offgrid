@@ -16,21 +16,21 @@ permissions:
 jobs:
   shell:
     name: shell
-    runs-on: ubuntu-24.04-arm
+    runs-on: ubuntu-26.04-arm
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
       - uses: yama6a/gha/.github/actions/shell-checks@v2
 
   yaml:
     name: yaml
-    runs-on: ubuntu-24.04-arm
+    runs-on: ubuntu-26.04-arm
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
       - uses: yama6a/gha/.github/actions/yaml-checks@v2
 
   renovate-config:
     name: renovate-config
-    runs-on: ubuntu-24.04-arm
+    runs-on: ubuntu-26.04-arm
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
       # A broken config silently halts ALL dependency updates.
@@ -40,7 +40,7 @@ jobs:
 
   helm:
     name: helm
-    runs-on: ubuntu-24.04-arm
+    runs-on: ubuntu-26.04-arm
     env:
       JOBS: 8 # parallel helm workers. The work is part network, part CPU, so above the core count still pays.
     steps:
@@ -124,7 +124,7 @@ jobs:
   # render on a missing required value, so it needs a fixture to be linted or templated at all.
   chart-tests:
     name: chart-tests
-    runs-on: ubuntu-24.04-arm
+    runs-on: ubuntu-26.04-arm
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
       - uses: yama6a/gha/.github/actions/helm-chart-checks@v2
