@@ -27,8 +27,10 @@ groups:
               queryType: stats
               # Matches structured (level:error) AND logfmt text (level=error) so text-format loggers count,
               # but NOT bare `error`, which substring-matched info logs merely mentioning the word.
-              # The NOT-list mutes benign lines misclassed as error: cert-manager informer, argocd cache race.
-              expr: '(level:error OR level:ERROR OR "level=error" OR "level=ERROR") AND NOT ("OnUpdate missing ObjectOld" OR "DiffFromCache" OR "cache: key is missing") | stats count() as logs'
+              # The NOT-list mutes benign lines misclassed as error: cert-manager informer, argocd cache race,
+              # and argocd repo-server's first `helm template` attempt, which it always lets fail to detect
+              # unvendored deps before running `helm dependency build` and retrying.
+              expr: '(level:error OR level:ERROR OR "level=error" OR "level=ERROR") AND NOT ("OnUpdate missing ObjectOld" OR "DiffFromCache" OR "cache: key is missing" OR "but missing in charts/ directory") | stats count() as logs'
           - refId: B
             relativeTimeRange: {from: 300, to: 0}
             datasourceUid: __expr__
