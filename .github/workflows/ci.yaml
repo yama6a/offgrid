@@ -5,6 +5,11 @@ name: CI
 on:
   pull_request:
     branches: [main]
+  # A cache every PR can read is written only off a PR, and only these paths feed its key.
+  push:
+    branches: [main]
+    paths: ['**/Chart.yaml', '**/Chart.lock', 'lib/helm/**']
+  workflow_dispatch: # seeds the cache once without waiting for a chart change
 
 concurrency:
   group: ci-${{ github.workflow }}-${{ github.ref }}
@@ -53,7 +58,16 @@ jobs:
         with:
           strict: 'false'
           parallelism: ${{ env.JOBS }}
+      # lib/helm is in the key because file:// deps are packaged into charts/*.tgz from it.
+      # No restore-keys: helm dependency build re-downloads everything anyway, so a partial hit buys nothing.
+      - name: restore chart dependencies
+        id: helm-deps
+        uses: actions/cache/restore@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v6.1.0
+        with:
+          path: '**/charts/*.tgz'
+          key: helm-deps-v1-${{ hashFiles('**/Chart.yaml', '**/Chart.lock', 'lib/helm/**') }}
       - name: add upstream helm repos
+        if: steps.helm-deps.outputs.cache-hit != 'true'
         # helm dependency build needs classic (https) repos registered locally, exactly as ArgoCD's repo-server
         # does. OCI deps need none. Derive them from every Chart.yaml so this never needs a hardcoded list.
         # Serial and up front, so the parallel workers below only READ the index cache, never race writing it.
@@ -68,6 +82,8 @@ jobs:
                 done
               done
       - name: helm dependency build
+        # An exact hit means this same Chart.yaml, Chart.lock and lib/helm set already built green.
+        if: steps.helm-deps.outputs.cache-hit != 'true'
         # Reproduces ArgoCD's repo-server: rebuilds charts/ from the COMMITTED Chart.lock, so a missing or stale
         # lock fails here rather than on sync.
         # --skip-refresh: without it helm re-downloads every registered repo index (~30MB across 12 repos) once
@@ -90,6 +106,13 @@ jobs:
             if [ -e "$f.fail" ]; then echo "::error::dependency build failed: $d"; fail=1; fi
           done < "$out/dirs"
           exit $fail
+      # Never from a pull_request: that scope is readable by the one PR and nothing after it.
+      - name: save chart dependencies
+        if: github.event_name != 'pull_request' && steps.helm-deps.outputs.cache-hit != 'true'
+        uses: actions/cache/save@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v6.1.0
+        with:
+          path: '**/charts/*.tgz'
+          key: ${{ steps.helm-deps.outputs.cache-primary-key }}
       - name: helm lint + template + kubeconform
         # The ArgoCD-delivered wrappers plus the two apps/ charts that render the Application manifests
         # themselves. The lib/helm/ shared charts are validated transitively as their deps.
