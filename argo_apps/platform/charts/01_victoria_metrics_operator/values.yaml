@@ -38,7 +38,7 @@ victoria-metrics-operator:
     vm: true
 
   # Soft + hostname: bare Pi nodes have no zone label, and soft means raising replicaCount never wedges a pod
-  # Pending on 3 nodes. No-op at the default single replica.
+  # Pending on 3 nodes.
   affinity:
     podAntiAffinity:
       preferredDuringSchedulingIgnoredDuringExecution:
@@ -47,4 +47,5 @@ victoria-metrics-operator:
             labelSelector:
               matchLabels:
                 app.kubernetes.io/name: victoria-metrics-operator
+            matchLabelKeys: [pod-template-hash] # compare within one revision, so a rollout's old pod never repels the new one
             topologyKey: kubernetes.io/hostname

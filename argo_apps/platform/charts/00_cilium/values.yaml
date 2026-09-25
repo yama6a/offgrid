@@ -81,6 +81,7 @@ cilium:
                 labelSelector:
                   matchLabels:
                     k8s-app: hubble-relay
+                matchLabelKeys: [pod-template-hash] # compare within one revision, so a rollout's old pod never repels the new one
                 topologyKey: kubernetes.io/hostname
     ui:
       enabled: true
@@ -100,6 +101,7 @@ cilium:
                 labelSelector:
                   matchLabels:
                     k8s-app: hubble-ui
+                matchLabelKeys: [pod-template-hash] # compare within one revision, so a rollout's old pod never repels the new one
                 topologyKey: kubernetes.io/hostname
     tls:
       auto:

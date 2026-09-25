@@ -31,6 +31,7 @@ spec:
                 labelSelector:
                   matchLabels:
                     app: {{ .Values.app.name }}
+                matchLabelKeys: [pod-template-hash] # compare within one revision, so a rollout's old pod never repels the new one
                 topologyKey: kubernetes.io/hostname
       # PodSecurity `restricted` baseline, the same block on every first-party pod here. 65532 matches the
       # distroless nonroot uid the sample-app image declares.

@@ -32,7 +32,7 @@ redis-operator:
       memory: 92Mi
 
   # Soft + hostname: bare Pi nodes have no zone label, and soft means raising replicas never wedges a pod
-  # Pending on 3 nodes. No-op at the chart's default single replica.
+  # Pending on 3 nodes.
   affinity:
     podAntiAffinity:
       preferredDuringSchedulingIgnoredDuringExecution:
@@ -40,7 +40,8 @@ redis-operator:
           podAffinityTerm:
             labelSelector:
               matchLabels:
-                app.kubernetes.io/name: redis-operator
+                name: redis-operator # the chart labels its pod only with `name`
+            matchLabelKeys: [pod-template-hash] # compare within one revision, so a rollout's old pod never repels the new one
             topologyKey: kubernetes.io/hostname
 
 # No StorageClasses here. Every redis-instance PVC uses longhorn-r2-ephemeral, owned by 02_longhorn.

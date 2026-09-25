@@ -44,4 +44,5 @@ cloudnative-pg:
             labelSelector:
               matchLabels:
                 app.kubernetes.io/name: cloudnative-pg
+            matchLabelKeys: [pod-template-hash] # compare within one revision, so a rollout's old pod never repels the new one
             topologyKey: kubernetes.io/hostname
