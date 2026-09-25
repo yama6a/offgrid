@@ -40,7 +40,7 @@ redis-operator:
           podAffinityTerm:
             labelSelector:
               matchLabels:
-                app.kubernetes.io/name: redis-operator
+                name: redis-operator # the chart labels its pod only with `name`
             matchLabelKeys: [pod-template-hash] # compare within one revision, so a rollout's old pod never repels the new one
             topologyKey: kubernetes.io/hostname
 
