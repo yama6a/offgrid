@@ -667,7 +667,8 @@ concrete number to set.
 prints, per workload, the current request next to a recommended one for CPU and memory. Run it on demand with
 `make krr` (table), `make krr-json`, or `make krr-yaml`. The script passes `"$@"` straight to KRR, so for any other
 flag run it directly, e.g. `bash lib/shell/krr.sh -n <ns>`. It runs our custom `conservative` strategy by default;
-the upstream `simple` and `simple-limit` still work.
+the upstream `simple` and `simple-limit` still work. It scans every namespace, including `kube-system`, which KRR
+skips on its own.
 
 ### Why on-demand, not automated
 

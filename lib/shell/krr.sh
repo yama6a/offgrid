@@ -65,7 +65,13 @@ wait_for_port_forward() {
 # --mem-min 0 disables KRR's built-in memory floor, which applies to request AND limit alike, so the strategy
 # owns the asymmetric floors instead.
 run_krr() {
-  local tty=""
+  local tty="" arg
+  # KRR drops kube-system when it scans all namespaces, which hides Cilium. A match-all regex scans every
+  # namespace instead. A -n from the caller replaces it.
+  local ns_args=(--namespace '.*')
+  for arg in "$@"; do
+    case "$arg" in -n | --namespace | --namespace=*) ns_args=() ;; esac
+  done
   say "running KRR (conservative) against http://host.docker.internal:${PORT}"
   [ -t 1 ] && tty="-t"
   docker run --rm ${tty} \
@@ -76,7 +82,7 @@ run_krr() {
     "$KRR_IMAGE" krr.py conservative \
     -p "http://host.docker.internal:${PORT}" \
     --memory_request_min 16 --memory_limit_min 32 \
-    --mem-min 0 --use-oomkill-data "$@"
+    --mem-min 0 --use-oomkill-data "${ns_args[@]}" "$@"
 }
 
 # ---- main ----
