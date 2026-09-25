@@ -33,5 +33,10 @@ spec:
       secretAccessKey:
         name: {{ include "pg-cluster.backupSecretName" . }}
         key: ACCESS_SECRET_KEY
-  instanceSidecarConfiguration: {}
+  # The plugin injects this sidecar into every instance pod. Sized from its usage across all clusters, since KRR
+  # cannot see pods owned by a CNPG Cluster.
+  instanceSidecarConfiguration:
+    resources:
+      requests: {cpu: 76m, memory: 63Mi}
+      limits: {memory: 262Mi}
 {{- end }}
