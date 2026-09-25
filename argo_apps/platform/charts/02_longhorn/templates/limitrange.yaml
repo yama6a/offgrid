@@ -1,0 +1,18 @@
+{{- /*
+Longhorn exposes no resources for engine-image, longhorn-driver-deployer, longhorn-ui, the manager's
+pre-pull sidecar, or the memory of instance-manager and share-manager (longhorn#8332, planned for 1.14).
+Unset, the scheduler scores each as 100m/200Mi. This gives every container without a request a small one.
+It sizes the small containers and under-counts instance-manager (about 250Mi real). Drop it once the chart
+exposes these.
+*/ -}}
+apiVersion: v1
+kind: LimitRange
+metadata:
+  name: default-requests
+  namespace: {{ .Release.Namespace }}
+spec:
+  limits:
+    - type: Container
+      defaultRequest: # requests only: no `default` key, so no limits get injected
+        cpu: 20m
+        memory: 16Mi

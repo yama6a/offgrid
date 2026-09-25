@@ -30,6 +30,16 @@ longhorn:
     # Leases an RWX volume's share-manager pod, so its loss costs seconds instead of a pod-eviction timeout.
     # An RWX volume created before this was on adopts it only after its workload is scaled to zero and back.
     rwxVolumeFastFailover: true
+    # Requests only, from `make krr`. Unset, the scheduler scores each sidecar as 100m/200Mi, far above their real
+    # use. No limits: an OOM kill here fails volume attach and detach. A change restarts the CSI components.
+    # csi-snapshotter is left out, it runs 0 replicas (see csi below).
+    systemManagedCSIComponentsResourceLimits: >-
+      {"csi-attacher":{"requests":{"cpu":"10m","memory":"39Mi"}},
+      "csi-provisioner":{"requests":{"cpu":"10m","memory":"47Mi"}},
+      "csi-resizer":{"requests":{"cpu":"10m","memory":"31Mi"}},
+      "longhorn-csi-plugin":{"requests":{"cpu":"33m","memory":"32Mi"}},
+      "node-driver-registrar":{"requests":{"cpu":"10m","memory":"16Mi"}},
+      "longhorn-liveness-probe":{"requests":{"cpu":"10m","memory":"20Mi"}}}
   # 10d_longhorn_backup.sh fills these from .env/terraform; empty = backups off. Longhorn owns retention via the
   # RecurringJob retain counts, the S3 longhorn/ prefix has no lifecycle rule.
   defaultBackupStore:
@@ -58,9 +68,7 @@ longhorn:
     # `{{- if .snapshotterReplicaCount }}` guard, which drops the var and falls back to 3.
     # The deployer sets replicas only at CREATE, so after a change here delete the live deploy once.
     snapshotterReplicaCount: "0"
-  # Ships with no resources set, so the scheduler treats a real per-node consumer as free. (The tiny CSI
-  # sidecars are settable via defaultSettings.systemManagedCSIComponentsResourceLimits, left unset on purpose:
-  # fiddly JSON, storage-critical, and it only ADDS reservations.)
+  # Ships with no resources set, so the scheduler treats a real per-node consumer as free.
   longhornManager:
     resources:
       requests: {cpu: 90m, memory: 248Mi}   # p90 of the steady working set; below this the scheduler under-counts it
