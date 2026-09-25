@@ -13,11 +13,16 @@ argo-cd:
     logging:
       level: warn
     # maxSkew 1 + DoNotSchedule over 3 nodes puts the 2-replica components on distinct nodes. The chart fills
-    # in each component's labelSelector; singletons satisfy it trivially.
+    # in each component's labelSelector.
     topologySpreadConstraints:
       - maxSkew: 1
         topologyKey: kubernetes.io/hostname
         whenUnsatisfiable: DoNotSchedule
+        matchLabelKeys: [pod-template-hash] # compare within one revision, so a rollout's old pod never repels the new one
+    # The spread constraint above already separates replicas. The chart's soft anti-affinity preset cannot take
+    # matchLabelKeys, so during a rollout it would push every singleton off its node.
+    affinity:
+      podAntiAffinity: none
   dex:
     enabled: false
   notifications:

@@ -21,7 +21,7 @@ cert-manager:
     requests: { cpu: 10m, memory: 49Mi }
     limits:   { memory: 95Mi }
   # Soft + hostname on all three: bare Pi nodes carry no zone label, and soft means raising replicaCount
-  # never wedges a pod Pending on a 3-node cluster. No-op at the default single replica.
+  # never wedges a pod Pending on a 3-node cluster.
   affinity:
     podAntiAffinity:
       preferredDuringSchedulingIgnoredDuringExecution:
@@ -31,6 +31,7 @@ cert-manager:
               matchLabels:
                 app.kubernetes.io/name: cert-manager
                 app.kubernetes.io/component: controller
+            matchLabelKeys: [pod-template-hash] # compare within one revision, so a rollout's old pod never repels the new one
             topologyKey: kubernetes.io/hostname
   webhook:
     resources:
@@ -45,6 +46,7 @@ cert-manager:
                 matchLabels:
                   app.kubernetes.io/name: webhook
                   app.kubernetes.io/component: webhook
+              matchLabelKeys: [pod-template-hash] # compare within one revision, so a rollout's old pod never repels the new one
               topologyKey: kubernetes.io/hostname
   cainjector:
     resources:
@@ -59,6 +61,7 @@ cert-manager:
                 matchLabels:
                   app.kubernetes.io/name: cainjector
                   app.kubernetes.io/component: cainjector
+              matchLabelKeys: [pod-template-hash] # compare within one revision, so a rollout's old pod never repels the new one
               topologyKey: kubernetes.io/hostname
 
   # HTTP-01 through Gateway API. Not a feature gate, it only exists in this controller config file.

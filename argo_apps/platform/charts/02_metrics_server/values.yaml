@@ -18,7 +18,7 @@ metrics-server:
       memory: 200Mi
 
   # Soft + hostname: bare Pi nodes have no zone label, and soft means raising replicas never wedges a pod
-  # Pending on 3 nodes. No-op at the single replica above.
+  # Pending on 3 nodes.
   affinity:
     podAntiAffinity:
       preferredDuringSchedulingIgnoredDuringExecution:
@@ -27,6 +27,7 @@ metrics-server:
             labelSelector:
               matchLabels:
                 app.kubernetes.io/name: metrics-server
+            matchLabelKeys: [pod-template-hash] # compare within one revision, so a rollout's old pod never repels the new one
             topologyKey: kubernetes.io/hostname
 
   metrics:

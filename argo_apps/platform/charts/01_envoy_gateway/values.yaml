@@ -26,6 +26,7 @@ envoyProxy:
                 app.kubernetes.io/name: envoy
                 app.kubernetes.io/component: proxy
                 app.kubernetes.io/managed-by: envoy-gateway
+            matchLabelKeys: [pod-template-hash] # compare within one revision, so a rollout's old pod never repels the new one
             topologyKey: kubernetes.io/hostname
 
   # Envoy's default cluster stats already carry envoy_cluster_name="httproute/<ns>/<route>/rule/N", so the
@@ -59,6 +60,7 @@ gateway-helm:
                 labelSelector:
                   matchLabels:
                     control-plane: envoy-gateway
+                matchLabelKeys: [pod-template-hash] # compare within one revision, so a rollout's old pod never repels the new one
                 topologyKey: kubernetes.io/hostname
   # Injects topology.kubernetes.io/zone for zone-aware routing. Bare Pi nodes have no zone label and we use no
   # zoneAware traffic policies, so it is a webhook round-trip plus cert plumbing for nothing.

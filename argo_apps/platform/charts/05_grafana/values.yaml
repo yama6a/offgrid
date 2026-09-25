@@ -128,6 +128,7 @@ grafana:
             labelSelector:
               matchLabels:
                 app.kubernetes.io/name: grafana
+            matchLabelKeys: [pod-template-hash] # compare within one revision, so a rollout's old pod never repels the new one
             topologyKey: kubernetes.io/hostname
 
 # Restarts grafana after a sync that changed files/alerts/, which is what removes a rule that was deleted
