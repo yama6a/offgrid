@@ -10,6 +10,10 @@ cilium:
   # otherwise restart the CNI on every node unattended.
   podAnnotations: {reloader.stakater.com/auto: "false"}
   priorityClassName: system-node-critical
+  # Requests from `make krr`, so the scheduler stops counting each agent as the 100m/200Mi it assumes for a
+  # container with none. No memory limit on any datapath container here: an OOM kill cuts the node's networking.
+  resources:
+    requests: {cpu: 230m, memory: 290Mi}
   ipam:
     mode: kubernetes
   kubeProxyReplacement: true
@@ -42,7 +46,11 @@ cilium:
       enabled: true
   envoy:
     podAnnotations: {reloader.stakater.com/auto: "false"} # per-node L7 proxy: a restart drops proxied connections
+    resources:
+      requests: {cpu: 10m, memory: 24Mi}
   operator:
+    resources:
+      requests: {cpu: 22m, memory: 135Mi}
     rollOutPods: true
     podAnnotations: {reloader.stakater.com/auto: "false"} # rollOutPods above already restarts it on a config edit
     priorityClassName: system-cluster-critical
@@ -56,6 +64,9 @@ cilium:
     enabled: true
     relay:
       enabled: true
+      resources:
+        requests: {cpu: 10m, memory: 57Mi}
+        limits: {memory: 87Mi}
       affinity:
         podAffinity:
           requiredDuringSchedulingIgnoredDuringExecution: # relay must co-locate with an agent
@@ -73,6 +84,14 @@ cilium:
                 topologyKey: kubernetes.io/hostname
     ui:
       enabled: true
+      frontend:
+        resources:
+          requests: {cpu: 10m, memory: 16Mi}
+          limits: {memory: 32Mi}
+      backend:
+        resources:
+          requests: {cpu: 10m, memory: 20Mi}
+          limits: {memory: 85Mi}
       affinity:
         podAntiAffinity:
           preferredDuringSchedulingIgnoredDuringExecution: # spread hubble-ui across nodes if possible
