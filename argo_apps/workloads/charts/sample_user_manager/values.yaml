@@ -1,6 +1,6 @@
 app:
   name: sample-user-manager
-  image: "ghcr.io/yama6a/pi5-k8s-sample-app:24"   # one image with three binaries: /manager, /signup, /auditor
+  image: "ghcr.io/yama6a/pi5-k8s-sample-app:25"   # one image with three binaries: /manager, /signup, /auditor
   command: ["/manager"]
   port: 8080
   replicas: 1
