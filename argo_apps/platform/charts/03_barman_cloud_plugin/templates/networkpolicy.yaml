@@ -1,6 +1,4 @@
-# Default-deny both ways for the Barman Cloud plugin pods only. The cnpg-operator in cnpg-system has its own policy.
-# No ingress from Postgres pods to 9090. Their sidecar does its own S3 work and talks to its instance manager
-# over localhost.
+# Selects only the plugin pods. No ingress from Postgres pods, because their sidecar does its own S3 work.
 apiVersion: cilium.io/v2
 kind: CiliumNetworkPolicy
 metadata:
@@ -11,14 +9,12 @@ spec:
     matchLabels:
       app: barman-cloud
   ingress:
-    # The CNPG operator drives the plugin over gRPC, in the same namespace.
     - fromEndpoints:
         - matchLabels:
             app.kubernetes.io/name: cloudnative-pg
       toPorts:
         - ports:
             - { port: "9090", protocol: TCP }
-    # Kubelet readiness probe from the node.
     - fromEntities: [host, remote-node]
       toPorts:
         - ports:
@@ -32,10 +28,8 @@ spec:
         - ports:
             - { port: "53", protocol: UDP }
             - { port: "53", protocol: TCP }
-    # Watches ObjectStore and Backup CRs, writes Secrets and RBAC, and holds leader election leases.
     - toEntities: [kube-apiserver]
-    # S3, so the plugin can read the backup catalog. All of world:443, like the pg-cluster rule, because the
-    # S3 address set is large and changes often.
+    # S3 for the backup catalog. All of world:443, because the S3 address set is large and changes often.
     - toEntities: [world]
       toPorts:
         - ports:

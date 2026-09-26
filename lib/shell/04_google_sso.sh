@@ -112,7 +112,7 @@ Next:
     The host must be under that domain. Otherwise the login cookie never reaches it, and the login loops forever.
   - for a host on a new registrable domain, add an \`extraDomains\` entry. Then run this script again to get
     the URIs to register. No new seal is needed, because the client and its sealed Secret are shared.
-    See docs/04_ingress.md.
+    See docs/runbooks/04_ingress.md.
   - to change who can log in, set SSO_ALLOWLIST in .env, run \`make configure-values\` again, then commit and push.
     A single host can override it with its own \`allowlist\`.
   - run this script again to rotate the client secret.

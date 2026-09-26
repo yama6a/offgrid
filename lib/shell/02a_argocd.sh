@@ -62,6 +62,7 @@ seed_argocd_secret() {
       && ok "argocd-secret seeded empty. argocd-server fills server.secretkey on boot." \
       || bad "could not seed argocd-secret. argocd-server crashloops without it."
   fi
+  # Argo CD watches only Secrets labelled part-of=argocd.
   kubectl -n "$NS" label secret argocd-secret app.kubernetes.io/part-of=argocd --overwrite > /dev/null 2>&1 || true
   kubectl -n "$NS" annotate secret argocd-secret sealedsecrets.bitnami.com/patch=true --overwrite > /dev/null 2>&1 \
     && ok "argocd-secret labelled part-of=argocd and annotated for patch merge" \
@@ -173,7 +174,6 @@ print_access() {
      kubectl -n ${NS} port-forward svc/argocd-server 8080:80
      open http://localhost:8080
    Day to day: https://argocd.<domain> behind Google SSO.
-   All apps adopt their running releases. Nothing to click.
 EOF
 }
 

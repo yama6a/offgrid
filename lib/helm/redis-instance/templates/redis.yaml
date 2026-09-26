@@ -20,40 +20,36 @@ metadata:
     redis-backup.offgrid/enabled: "true"   # the central 07_redis_backup job finds durable instances by this label
     {{- end }}
 spec:
-  # Under node memory pressure, a durable store outranks the stateless app pods it serves. This has no effect
-  # on a cgroup OOM kill. The kernel picks that victim by oom_score_adj, which comes from QoS class and memory
-  # request. So priority does not protect this pod when it exceeds its own memory limit.
+  # Outranks stateless apps under node memory pressure. It does not protect against the pod's own OOM kill.
   priorityClassName: data-critical
   kubernetesConfig:
     image: "quay.io/opstree/redis:{{ .Values.redisVersion }}"
     imagePullPolicy: IfNotPresent
     resources:
       {{- toYaml .Values.resources | nindent 6 }}
-    # No auth. The CiliumNetworkPolicy is the access control, so there is no secret to commit or generate.
-    # To add a password, put a `redisSecret: { name, key }` here that points at a sealed Secret.
+    # No auth. The CiliumNetworkPolicy is the access control. A password needs `redisSecret: { name, key }`.
+  # The OpsTree chart's default exporter tag is amd64 only, so this pins a multi-arch tag.
+  # Check that a new tag has an arm64 image before a bump.
   redisExporter:
     enabled: true
     # renovate: datasource=docker
     image: "quay.io/opstree/redis-exporter:v1.89.0"
     imagePullPolicy: IfNotPresent
-    # Not a value, because the exporter's footprint does not grow with the Redis size. Without these, the
-    # scheduler counts the container as free.
+    # Fixed, because the exporter does not grow with the Redis size.
     resources:
       requests: {cpu: 10m, memory: 16Mi}
       limits: {memory: 32Mi}
   redisConfig:
-    # Extra redis.conf from templates/configmap.yaml. The ConfigMap always exists, so this is unconditional.
-    # Only the AOF lines inside it depend on persistence.
     additionalRedisConfig: {{ .Values.name }}-ext-config
     # The operator computes the byte value at reconcile, so Redis cannot OOM its own cgroup. It needs
     # resources.limits.memory. Eviction stays at the Redis default noeviction, so writes fail at the cap.
+    # The other 20% covers pages copied during an RDB save or AOF rewrite, and client buffers.
     maxMemoryPercentOfLimit: 80
   storage:
     volumeClaimTemplate:
       spec:
         accessModes: ["ReadWriteOnce"]
-        # One class for both persistence modes. deletionProtection stops an accidental prune, and an intended
-        # delete falls back to the S3 dump. A Retain class would only leak PVs.
+        # deletionProtection guards against prune, so a Retain class would only leak PVs.
         storageClassName: longhorn-r2-ephemeral
         resources:
           requests:

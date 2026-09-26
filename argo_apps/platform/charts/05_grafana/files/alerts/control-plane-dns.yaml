@@ -16,7 +16,7 @@ groups:
         annotations:
           summary: 'kube-apiserver returns 5xx for more than 5% of requests'
           description: |
-            - kube-apiserver returns 5xx for more than 5% of requests. API calls, controllers and kubectl fail
+            - API calls, controllers and kubectl fail
             - check: kubectl get --raw /healthz?verbose
             - read the apiserver static pod logs on the control-plane nodes
         noDataState: OK
@@ -44,7 +44,6 @@ groups:
               conditions:
                 - type: query
                   evaluator: {type: gt, params: [0.05]}
-  # Nearly everything depends on DNS, so a CoreDNS failure looks like breakage everywhere.
   - orgId: 1
     name: dns
     folder: offgrid
@@ -58,7 +57,7 @@ groups:
         annotations:
           summary: 'Fewer than 2 CoreDNS replicas are up'
           description: |
-            - fewer than 2 CoreDNS replicas are up, so cluster DNS resolution is at risk
+            - cluster DNS resolution is at risk
             - check: kubectl -n kube-system get pods -l k8s-app=kube-dns
             - logs: kubectl -n kube-system logs -l k8s-app=kube-dns
         noDataState: OK
@@ -94,7 +93,7 @@ groups:
         annotations:
           summary: 'CoreDNS returns SERVFAIL for more than 2% of queries'
           description: |
-            - CoreDNS returns SERVFAIL for more than 2% of queries. Lookups fail across the cluster
+            - lookups fail across the cluster
             - check: kubectl -n kube-system logs -l k8s-app=kube-dns
             - check the upstream resolvers and the network policy that lets pods reach CoreDNS
         noDataState: OK

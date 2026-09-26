@@ -1,6 +1,5 @@
 apiVersion: 1
 groups:
-  # longhorn-replica-affinity schedules pods onto a node that holds their Longhorn replica.
   # All warnings. A miss is not an outage, only IO that crosses the network without need.
   - orgId: 1
     name: replica-affinity
@@ -80,7 +79,6 @@ groups:
               conditions:
                 - type: query
                   evaluator: {type: lt, params: [60]}
-      # The reconciler will not move this volume, so a person has to decide.
       - uid: lra-unfixable
         title: Longhorn volume stuck off its data
         condition: C

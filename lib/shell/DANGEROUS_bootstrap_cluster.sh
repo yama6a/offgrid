@@ -11,7 +11,7 @@ set -uo pipefail
 
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 source "${SCRIPT_DIR}/common.sh"
-cd "$REPO_ROOT" || exit 1 # the git commands and relative paths below need the repo root
+cd "$REPO_ROOT" || exit 1
 
 # ---- knobs ----
 STEP=0
@@ -215,7 +215,7 @@ Notes:
     failed, set the .env password, run 'make configure-ntfy-auth', commit and push, and restart Grafana.
   - The ArgoCD git poll is now a slow fallback for the webhook. Finish the GitHub webhook: paste
     ${CLUSTER_DIR}/argocd-github-webhook-secret.txt into the repo's webhook, with Payload URL
-    https://argocd.<domain>/api/webhook, content type application/json and the push event. See docs/02_gitops.md.
+    https://argocd.<domain>/api/webhook, content type application/json and the push event. See docs/runbooks/02_gitops.md.
   - TLS certs come from HTTP-01, and the first issuance takes a few minutes. The platform ingress uses
     letsencrypt-prod, because GitHub webhook SSL verification needs a trusted cert. Mind the prod rate limits.
 EOF

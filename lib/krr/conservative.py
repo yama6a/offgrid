@@ -1,22 +1,12 @@
-# KRR strategy for nodes with little RAM. It sets the memory request below the limit.
-# The built-in `simple` strategy sets both memory request and limit to peak usage.
-# The scheduler reserves the full request, so on scarce RAM that books memory that is rarely used.
-# Pod density drops.
+# KRR strategy for nodes with little RAM. docs/06_monitoring.md holds the reasons and the trade-off.
 #
 #   memory request = max(average working set, 16Mi)   the scheduler packs on typical use, not peak
 #   memory limit   = max(peak * 1.5, 32Mi)            the safety ceiling per pod
 #   CPU            as in `simple`, because CPU is compressible
 #
-# The two floors differ, and the single KRR --mem-min flag cannot express that.
-# So they live here, and krr.sh runs with --mem-min 0.
-# The request floor is the idle working set. The limit floor is headroom for cold start and GC.
-#
-# Trade-off: requests no longer cover peak. Several pods at peak together can exhaust physical RAM.
-# The kernel then OOM-kills a pod that is under its own limit. This buys density.
-# Keep node eviction headroom and watch for OOMKills.
-#
-# Written against KRR v1.28.0 internals. It copies upstream simple.py, so the CPU path, the data guards and the
-# HPA guards behave the same. Check it again on every image bump.
+# The single KRR --mem-min flag cannot express two floors, so they live here and krr.sh passes --mem-min 0.
+# It copies upstream simple.py, so the CPU path and the data and HPA guards behave the same. Check it again on
+# every KRR image bump.
 
 import textwrap
 

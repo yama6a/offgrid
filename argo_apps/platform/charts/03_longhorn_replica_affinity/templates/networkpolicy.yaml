@@ -1,4 +1,3 @@
-{{- /* Upstream ships no network policy, because it cannot know which policy engine runs. */ -}}
 {{- $lra := index .Values "longhorn-replica-affinity" -}}
 apiVersion: cilium.io/v2
 kind: CiliumNetworkPolicy

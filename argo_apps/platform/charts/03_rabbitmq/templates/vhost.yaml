@@ -1,9 +1,5 @@
 {{- /*
-The shared vhost that every workload uses, created in one place. The topology operator declares it as the
-broker's admin default user, whose `administrator` tag can manage any vhost. Each workload User gets an
-explicit Permission on this vhost. The default `/` vhost stays admin-only.
-SkipDryRunOnMissingResource: this app's operator subchart ships the CRD, so on a first install the dry-run
-would run before the CRD exists.
+SkipDryRunOnMissingResource: the same app ships the CRD, so a first install dry-runs this before it exists.
 */ -}}
 apiVersion: rabbitmq.com/v1beta1
 kind: Vhost

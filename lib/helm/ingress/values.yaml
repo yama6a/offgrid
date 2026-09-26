@@ -1,4 +1,6 @@
 # The templates hardcode the gateway namespace, the `eg` gateway class and the fallback issuer. They are not knobs.
+# On a domain not on Cloudflare, `name` must be unique across every consumer chart. Its <name>-tls Secret
+# lands in the shared gateway namespace.
 # One entry per ingress. Example:
 #   - name: platform                 # unique. Names the SAN Certificate and its <name>-tls Secret
 #     domain: example.com            # required. Exactly one registrable domain
@@ -8,16 +10,13 @@
 #         targetService: argocd-server
 #         targetNamespace: argocd      # optional. Defaults to the consumer's release namespace
 #         targetPort: 80
-#         requestTimeout: "0s"         # optional. Unset keeps Envoy's 15s default, "0s" turns it off.
-#                                      # Set it for streaming backends only. Envoy cuts them at 15s with a 504.
-#         requestHeaders:              # optional. Set on the request to the backend, never on the response
-#           X-Forwarded-Port: "443"    # Envoy omits this header. Frameworks that build absolute URLs from it
-#                                      # otherwise fall back to the pod's listen port.
+#         requestTimeout: "0s"         # optional. Default 15s, then a 504. "0s" turns it off for streaming backends
+#         requestHeaders:              # optional. Set on the request to the backend only
+#           X-Forwarded-Port: "443"    # Envoy omits it, and some frameworks build absolute URLs from it
 #       - subdomain: "@"               # a redirect host. Answers with a 301 to redirectTo, keeps path and query
 #         redirectTo: www.example.com  # set this or targetService, never both. No pod serves this host
 ingresses: []
 
-# Domains that use the shared Cloudflare DNS-01 wildcard cert from 03_gateway. An ingress on a listed domain
-# uses the `wildcard-<domain-dashed>-tls` Secret and gets no Certificate of its own. Other domains get a
-# per-ingress HTTP-01 cert. 04_values.sh writes this list from CLOUDFLARE_WILDCARD_DOMAINS in .env.
+# Domains on the shared DNS-01 wildcard cert from 03_gateway. Other domains get a per-ingress HTTP-01 cert.
+# 04_values.sh writes it from CLOUDFLARE_WILDCARD_DOMAINS.
 cloudflareZones: []

@@ -42,7 +42,6 @@ PG_IMAGE="$(yq -r ".\"${PG_MAJOR}\"" "${REPO_ROOT}/lib/helm/pg-cluster/files/pos
 
 # Fields: id|storageClass|label. The id becomes part of Kubernetes object names, so it is lowercase.
 # The two arms differ only in replica placement: one replica under the pod, or both over the network.
-# That is the choice between longhorn-r2-ephemeral and longhorn-r2-ephemeral-local.
 ARMS=(
   "b-lh-remote|${BENCH_SC_REMOTE}|longhorn r2, both replicas remote, every read and write over the network"
   "c-lh-local|${BENCH_SC_LOCAL}|longhorn r2 best-effort, one replica local, only the 2nd write crosses"
@@ -124,7 +123,6 @@ node_free_mem_mi() {
   echo $((alloc / 1024 - used))
 }
 
-# Longhorn nodes holding a replica of a bound PVC, one per line.
 replica_nodes() {
   local pvc="$1" vol
   vol="$(kb get pvc "$pvc" -o jsonpath='{.spec.volumeName}' 2> /dev/null)"
@@ -153,7 +151,7 @@ kb_exec_retry() {
   return 1
 }
 
-# Mean p99 of one pgsync arm and pgbench run across the repeats. Empty if the arm has no cell, as when it was skipped.
+# Empty if the arm has no cell, as when it was skipped.
 mean_p99() {
   local dir="$1" arm="$2" run="$3" f v t=0 n=0
   for f in "${dir}"/pgsync/"${arm}"/r*/"${run}".pctl; do
@@ -218,7 +216,6 @@ wait_for() {
   return 1
 }
 
-# True when the volume is healthy with 2 replicas, and the bench node holds a replica or not, as asked.
 # best-effort adds the local replica on attach, which is a rebuild. A measurement during it measures the rebuild.
 volume_settled() {
   local pvc="$1" want_local="$2" vol rob cnt
@@ -553,7 +550,8 @@ pg_arm_up() {
 
   # One instance runs on BENCH_NODE, so storage is the only variable. Several instances must run on
   # different nodes, or the synchronous ack never crosses the network. Required anti-affinity spreads them.
-  # Each cell records the primary node. See the threats section in docs/12_storage_bench.md.
+  # CNPG picks the primary of a 3-instance cluster, so each cell records its node. The client shares a node
+  # with one instance, and `any 1` waits for the faster standby, so sync results run a little optimistic.
   local placement="    nodeSelector: { kubernetes.io/hostname: ${BENCH_NODE} }"
   [ "$instances" -gt 1 ] && placement="    podAntiAffinityType: required
     topologyKey: kubernetes.io/hostname"
@@ -690,7 +688,8 @@ pgbench_arm() {
     awk -v warmup="$PGBENCH_WARMUP" -f "${BENCH_LIB}/pctl.awk" "${out}/${run}.log" > "${out}/${run}.pctl" 2> /dev/null
   done
 
-  # Read-only control. Reads come from cache, so it must match across arms. If not, the arms are not comparable.
+  # Read-only control. At PGBENCH_SCALE=20 the data exceeds shared_buffers, so these reads reach storage
+  # and differ by arm. A CPU-bound query that never touches storage would be a real control.
   kb exec pgclient -- "${bin}/pgbench" -S -c 4 -j 4 -T 60 -P 10 "$conn" \
     > "${out}/select.txt" 2>&1 && ok "${arm} r${rep} pgbench -S control" || bad "${arm} r${rep} -S control failed"
 
@@ -1100,6 +1099,7 @@ PY
     echo
     echo '#### validity gates'
     echo '- [ ] pgbench -S read-only control within 10% across arms. See select.txt per arm.'
+    # max/min grows with the repeat count, so more repeats fail it more often. An interquartile spread would not.
     echo '- [ ] max/min of p99 across repeats under 1.5x in every cell'
     echo '- [ ] pg_test_fsync and fio sync p50 within 2x, and both rank the arms the same way'
     echo '- [ ] no cell flagged by the CPU drift check. See fio/load.txt and pgbench/load.txt.'

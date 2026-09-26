@@ -252,7 +252,7 @@ HINT
             kubectl -n cert-manager get challenges                       # dns-01 for Cloudflare zones, else http-01
   - when wildcard issuance works on staging, set acme.cloudflare.wildcardIssuer to letsencrypt-prod and push.
     To test one new zone on staging while the others stay on prod, use acme.cloudflare.wildcardIssuerOverrides.
-    See docs/04_ingress.md.
+    See docs/runbooks/04_ingress.md.
 EOF
 }
 

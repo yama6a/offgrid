@@ -1,4 +1,3 @@
-# longhorn-replica-affinity schedules a pod onto a node that already holds a Longhorn replica of its data.
 apiVersion: argoproj.io/v1alpha1
 kind: Application
 metadata:

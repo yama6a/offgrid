@@ -1,4 +1,3 @@
-# Provider config for every Gateway of the `eg` class. The GatewayClass parametersRef points here.
 apiVersion: gateway.envoyproxy.io/v1alpha1
 kind: EnvoyProxy
 metadata:
@@ -21,8 +20,7 @@ spec:
           labels:
             alert-criticality: critical
           annotations:
-            # Opts out of Reloader, which 02_reloader runs with auto-reload-all. This pod carries all ingress,
-            # and a restart drops every live connection. TLS certs arrive over xDS, so a renewal needs no restart.
+            # Opts out of Reloader. A restart drops every live connection, and certs arrive over xDS anyway.
             reloader.stakater.com/auto: "false"
           {{- with .Values.envoyProxy.affinity }}
           affinity:

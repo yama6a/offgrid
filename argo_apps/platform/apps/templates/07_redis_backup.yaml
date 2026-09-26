@@ -1,4 +1,3 @@
-# One CronJob that finds every durable Redis in the cluster by label and dumps each one to S3 as an RDB file.
 apiVersion: argoproj.io/v1alpha1
 kind: Application
 metadata:

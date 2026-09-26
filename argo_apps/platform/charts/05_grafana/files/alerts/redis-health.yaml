@@ -3,7 +3,7 @@ groups:
   # redis-down takes its severity from the alert-criticality pod label, set by the redis-instance alertCritical knob.
   # The other rules are warnings, except the second level of the memory rule.
   # Instances run noeviction with maxmemory at 80% of the container limit. At maxmemory, writes fail instead of
-  # evicting keys, so the rules watch memory percent, not eviction rate. Instances are standalone by design.
+  # evicting keys, so the rules watch memory percent, not eviction rate.
   - orgId: 1
     name: redis-health
     folder: offgrid
@@ -92,7 +92,7 @@ groups:
         annotations:
           summary: 'Redis {{ $labels.namespace }}/{{ $labels.pod }} is above 98% of maxmemory: writes are about to fail'
           description: |
-            - above 98% of maxmemory. With noeviction, writes fail at 100%
+            - with noeviction, writes fail at 100%
             - fix now: raise resources.limits.memory in the workload values.yaml
             - or shed keys now. Look for missing TTLs: redis-cli info keyspace
         noDataState: OK
@@ -129,7 +129,7 @@ groups:
         annotations:
           summary: 'Redis {{ $labels.namespace }}/{{ $labels.pod }} rejected connections: maxclients reached'
           description: |
-            - Redis hit maxclients. It refuses new connections and clients see errors
+            - clients see connection errors
             - check connected_clients against maxclients: redis-cli info clients
             - likely a connection leak in the client. Check the pool size and that the app closes connections
         noDataState: OK

@@ -5,9 +5,8 @@ metadata:
   name: sealed-secrets
   namespace: {{ .Release.Namespace }}
 spec:
-  endpointSelector: {}          # every pod in the sealed-secrets namespace
+  endpointSelector: {}
   ingress:
-    # vmagent scrapes the controller.
     - fromEndpoints:
         - matchLabels:
             k8s:io.kubernetes.pod.namespace: monitoring
@@ -30,5 +29,4 @@ spec:
         - ports:
             - { port: "53", protocol: UDP }
             - { port: "53", protocol: TCP }
-    # Watches SealedSecret CRs and writes the decrypted Secrets.
     - toEntities: [kube-apiserver]

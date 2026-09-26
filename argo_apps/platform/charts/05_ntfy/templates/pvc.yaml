@@ -5,8 +5,6 @@ metadata:
   namespace: {{ .Release.Namespace }}
   {{- if .Values.deletionProtection }}
   annotations:
-    # Argo CD never prunes or deletes this PVC. A removed app leaves ntfy running on it, and restoring the files
-    # adopts it again. See `deletionProtection` in values.yaml for how to remove it.
     argocd.argoproj.io/sync-options: Prune=false,Delete=false
   {{- end }}
   labels:

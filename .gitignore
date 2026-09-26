@@ -1,33 +1,24 @@
-# Per-deployment config and secrets: your real IPs, domains, usernames and tokens. They must stay out of git.
-# Copy the committed template and edit it:  cp .env.example .env
-# Only the bare `.env` is ignored, so `.env.example` stays tracked.
+# Per-deployment config and secrets. Copy the template:  cp .env.example .env
 .env
 .env.bak
 .env.bak.*
 
-# This repo's own credentials: the sealed-secrets master key and the plaintext Argo CD webhook secret. The
-# scripts write them into `secrets/`, a symlink to a store outside the repo such as a synced drive. No
-# kubeconfig goes here. kubectl uses the context that KUBE_CONTEXT in .env pins.
-# Never commit the symlink or anything it points at.
+# The sealed-secrets master key and the webhook secret. `secrets/` is a symlink to a store outside the repo.
 /secrets
 
-# Scratch: benchmark runs and other throwaway output.
 /.cache/
 
-# Editor and OS files. They are listed here, not left to a personal global gitignore, so a fork on someone
-# else's machine does not commit them.
+# Listed here, not in a personal global gitignore, so a fork on another machine does not commit them.
 .idea/
 .vscode/
 .DS_Store
 __pycache__/
 
-# Packaged Helm dependencies. `helm dependency build` pulls each chart's deps into its own charts/ dir.
-# Chart.yaml and any committed Chart.lock reproduce them, so they are never committed.
+# Packaged Helm dependencies. Chart.yaml and any committed Chart.lock reproduce them.
 **/charts/*.tgz
 
-# Chart.lock for the charts whose deps are all file://. The git commit already fixes those deps, so a lock
-# pins nothing. It breaks Argo CD's `helm dependency build` as soon as a lib chart's version drifts from it.
-# Charts with a remote dep commit their lock, so this lists the file://-only charts by path.
+# A lock on file://-only deps pins nothing and breaks Argo CD's build once it drifts. Charts with a remote dep
+# commit their lock, so this lists the file://-only charts by path.
 argo_apps/platform/charts/04_google_sso/Chart.lock
 argo_apps/platform/charts/06_platform_ingress/Chart.lock
 argo_apps/workloads/charts/*/Chart.lock

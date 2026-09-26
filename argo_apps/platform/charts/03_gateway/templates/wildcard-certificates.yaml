@@ -1,7 +1,6 @@
 {{- /*
-One wildcard cert per Cloudflare zone, issued here and not per ingress. Every listener in the zone uses the same
-Secret, and no two Argo CD apps own one Certificate. Wildcards need DNS-01. Empty zones render nothing.
-The Secret name matches what the ingress chart expects.
+One wildcard cert per zone, here and not per ingress, so no two Argo CD apps own one Certificate.
+The Secret name must match what the ingress chart expects.
 */}}
 {{- $issuerNames := list }}
 {{- range .Values.acme.issuers }}{{ $issuerNames = append $issuerNames .name }}{{ end }}

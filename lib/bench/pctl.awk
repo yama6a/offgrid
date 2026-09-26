@@ -4,7 +4,7 @@
 # pgbench log line: client_id transaction_no time script_no time_epoch time_us
 # $3 is the transaction latency in microseconds. $5 is the commit epoch in seconds.
 #
-# Prints one line of KEY=value pairs that a shell can eval. Latencies are in ms:
+# Prints one line of KEY=value pairs. Latencies are in ms:
 #   n=23901 p50=4.312 p95=9.880 p99=18.441 max=132.006 tps=199.18 window=120
 
 function qsort(a, lo, hi,   i, j, p, t) {

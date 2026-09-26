@@ -76,10 +76,9 @@ collect_pod_images() {
   say "$(printf '%s\n' "$IMAGES" | grep -c .) distinct images"
 }
 
-# --verbose returns a list with Descriptor.platform for an index and a single image alike.
-# So a digest that pins one platform, not the index, fails here too. The os filter drops attestation entries.
-# Retries, because a transient failure returns nothing and looks like a missing platform.
-# Stops at a rate limit: Docker Hub's window is hours, and each retry cycle sleeps 43s for nothing.
+# --verbose lists Descriptor.platform for an index and a single image alike, so a digest pinned to one platform
+# fails too. The os filter drops attestation entries. It retries, because a transient failure looks like a
+# missing platform, but stops at a rate limit, because Docker Hub's window is hours.
 read_image_arches() {
   local img="$1" s raw
   HAVE=""

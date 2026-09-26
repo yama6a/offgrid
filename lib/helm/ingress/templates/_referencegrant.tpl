@@ -1,5 +1,4 @@
-{{/* ingress.referencegrant: one per host, in the backend namespace. It lets the HTTPRoute in the gateway
-     namespace reach its Service. Argument: the per-host dict from ingress.renderIngress. */}}
+{{/* Argument: the per-host dict. */}}
 {{- define "ingress.referencegrant" -}}
 apiVersion: gateway.networking.k8s.io/v1beta1
 kind: ReferenceGrant

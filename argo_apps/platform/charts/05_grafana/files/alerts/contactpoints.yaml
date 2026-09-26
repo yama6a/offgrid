@@ -12,17 +12,10 @@ contactPoints:
           authorization_credentials: ${GF_NTFY_TOKEN}           # sealed write token, read from the environment
           maxAlerts: 0                                          # no cap on alerts bundled per notification
           payload:
-            # One alert: the title is its `summary` and the message its `description`.
-            # It reads per-alert `.Annotations`. `.CommonAnnotations` is empty whenever grouped alerts differ.
-            #
-            # Several alerts with a `groupSummary`: the title is that string with the count in its %d.
-            # The message is `groupDescription`, then every alert's `groupItem` on one line.
-            # So a rule that fires per instance sends one push, not one per instance.
-            # A rule without these annotations falls through to the one-alert shape.
-            #
-            # `data.ToJSON` escapes the newlines and quotes in the description. Hand-written JSON breaks on them.
-            # `$$` is not a typo. Grafana expands environment variables here at provision time.
-            # A bare `$sev` would arrive empty, so `$$` escapes it to a literal `$`.
+            # Per-alert `.Annotations`, because `.CommonAnnotations` is empty when grouped alerts differ.
+            # A rule with `groupSummary` sends one push for all its instances: the title fills %d with the count,
+            # and the message is `groupDescription` plus each alert's `groupItem`.
+            # `$$` escapes Grafana's provision-time env expansion. A bare `$sev` would arrive empty.
             template: |
               {{- $$sev := index .CommonLabels "severity" -}}
               {{- $$prio := 3 -}}

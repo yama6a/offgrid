@@ -37,13 +37,11 @@ spec:
   affinity:
     topologyKey: kubernetes.io/hostname # the default is zone, and this cluster has no zones
     podAntiAffinityType: required # never two instances on one node, not only a preference
-  priorityClassName: data-critical # under node memory pressure, evicted after the platform control plane and before stateless apps
+  priorityClassName: data-critical # evicted after the control plane and before stateless apps
   primaryUpdateMethod: {{ if .Values.highAvailability }}switchover{{ else }}restart{{ end }} # a single instance restarts in place, with a short downtime
   primaryUpdateStrategy: unsupervised
   enablePDB: {{ if .Values.highAvailability }}true{{ else }}false{{ end }} # a PDB on a single instance would block a rolling node upgrade
-  # Shutdown stage 1 refuses new connections and waits for open ones. An app with an idle pooled connection
-  # never closes it, so the 180s default stalls each planned switchover for the full 180s. After 15s CNPG
-  # terminates the connections, which keeps a node drain quick.
+  # Idle pooled connections never close, so the 180s default stalls every switchover for the full 180s.
   smartShutdownTimeout: 15
   switchoverDelay: 60 # limits the time with no primary while the old one archives WAL. The default is 3600
   stopDelay: 1800
@@ -74,6 +72,8 @@ spec:
   bootstrap:
   {{- if .Values.restore.enabled }}
     # Disaster recovery through values.yaml `restore`: rebuild this instance from its own S3 catalog.
+    # CNPG reads bootstrap once, so turning restore off changes nothing. Left on, a re-create restores again.
+    # database and owner make CNPG set the app role's password from the new <name>-app Secret.
     recovery:
       source: barman-origin
       database: app

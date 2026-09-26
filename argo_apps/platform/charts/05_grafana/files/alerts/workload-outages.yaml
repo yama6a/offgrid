@@ -18,7 +18,6 @@ groups:
         annotations:
           summary: 'Deployment {{ $labels.namespace }}/{{ $labels.deployment }} has no available replicas'
           description: |
-            - full outage: zero replicas available, so the Deployment serves nothing
             - status: kubectl -n {{ $labels.namespace }} rollout status deploy/{{ $labels.deployment }}
             - events and pods: kubectl -n {{ $labels.namespace }} describe deploy {{ $labels.deployment }}
             - logs: kubectl -n {{ $labels.namespace }} logs deploy/{{ $labels.deployment }}
@@ -56,7 +55,7 @@ groups:
         annotations:
           summary: 'StatefulSet {{ $labels.namespace }}/{{ $labels.statefulset }} has no ready replicas'
           description: |
-            - full outage: zero ready replicas. Check storage and PVCs before you assume a crash
+            - check storage and PVCs before you assume a crash
             - events and pods: kubectl -n {{ $labels.namespace }} describe statefulset {{ $labels.statefulset }}
             - PVCs: kubectl -n {{ $labels.namespace }} get pvc
             - logs: kubectl -n {{ $labels.namespace }} logs statefulset/{{ $labels.statefulset }}
@@ -94,7 +93,6 @@ groups:
         annotations:
           summary: 'DaemonSet {{ $labels.namespace }}/{{ $labels.daemonset }} has no available pods'
           description: |
-            - full outage: no pods available on any scheduled node
             - events and pods: kubectl -n {{ $labels.namespace }} describe daemonset {{ $labels.daemonset }}
             - check node readiness and taints: kubectl get nodes
             - logs: kubectl -n {{ $labels.namespace }} logs daemonset/{{ $labels.daemonset }}
@@ -134,7 +132,7 @@ groups:
         annotations:
           summary: 'Container {{ $labels.namespace }}/{{ $labels.pod }}/{{ $labels.container }} stuck: {{ $labels.reason }}'
           description: |
-            - the container cannot start: {{ $labels.reason }}. Causes: a crashloop, a bad image or bad config
+            - usual causes: a crashloop, a bad image or bad config
             - events: kubectl -n {{ $labels.namespace }} describe pod {{ $labels.pod }}
             - for a crashloop, read the logs: kubectl -n {{ $labels.namespace }} logs {{ $labels.pod }} -c {{ $labels.container }} --previous
             - for an image or config error: verify the image tag and that the referenced ConfigMap or Secret exists

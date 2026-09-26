@@ -1,4 +1,4 @@
-# Default-deny both ways for the CNPG operator pods only. The barman-cloud plugin in cnpg-system has its own policy.
+# Selects only the operator pods. The barman-cloud plugin has its own policy.
 apiVersion: cilium.io/v2
 kind: CiliumNetworkPolicy
 metadata:
@@ -9,7 +9,6 @@ spec:
     matchLabels:
       app.kubernetes.io/name: cloudnative-pg
   ingress:
-    # vmagent scrapes the controller.
     - fromEndpoints:
         - matchLabels:
             k8s:io.kubernetes.pod.namespace: monitoring
@@ -36,10 +35,8 @@ spec:
         - ports:
             - { port: "53", protocol: UDP }
             - { port: "53", protocol: TCP }
-    # Reconciles the Cluster, Backup and ScheduledBackup CRs.
     - toEntities: [kube-apiserver]
-    # The instance manager API on every Postgres pod. These pods are in workload namespaces. Without a namespace
-    # label, Cilium matches only the policy's own namespace, so the Exists expression is needed.
+    # Postgres pods live in workload namespaces, so the rule needs the namespace Exists expression.
     - toEndpoints:
         - matchLabels:
             cnpg.io/podRole: instance
@@ -48,7 +45,6 @@ spec:
       toPorts:
         - ports:
             - { port: "8000", protocol: TCP }
-    # The barman-cloud CNPG-I plugin over gRPC, in the same namespace.
     - toEndpoints:
         - matchLabels:
             app: barman-cloud

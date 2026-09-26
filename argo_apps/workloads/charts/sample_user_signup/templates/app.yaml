@@ -1,5 +1,3 @@
-# Deployment for the /signup binary, in place of the image's default /manager entrypoint. No HTTP, Service or
-# Postgres. The topology names are constants in the binary. Env vars carry only connection details.
 apiVersion: apps/v1
 kind: Deployment
 metadata:
@@ -7,7 +5,7 @@ metadata:
   namespace: {{ .Release.Namespace }}
   labels:
     app: {{ .Values.app.name }}
-    alert-criticality: critical   # the outage rules page as critical when this is down. See docs/06_monitoring.md.
+    alert-criticality: critical   # an outage pages as critical, see docs/06_monitoring.md
 spec:
   replicas: {{ .Values.app.replicas }}
   revisionHistoryLimit: 0  # recovery is a git revert, never a rollback
@@ -18,11 +16,10 @@ spec:
     metadata:
       labels:
         app: {{ .Values.app.name }}
-        alert-criticality: critical   # on the pods too, for the container-waiting-fatal outage rule. See docs/06_monitoring.md.
-        messaging-client: "true"   # lets this pod reach the broker on 5672. See docs/08_messaging.md.
+        alert-criticality: critical   # the crashloop rule reads it from the pod
+        messaging-client: "true"   # admits this pod to the broker, see docs/08_messaging.md
     spec:
-      # Soft spread by hostname. The Pi nodes have no zone label. With more replicas than nodes, or with a node
-      # down, pods share a node and do not stay Pending.
+      # Soft, so with a node down the pods share a node instead of staying Pending.
       affinity:
         podAntiAffinity:
           preferredDuringSchedulingIgnoredDuringExecution:
@@ -31,10 +28,9 @@ spec:
                 labelSelector:
                   matchLabels:
                     app: {{ .Values.app.name }}
-                matchLabelKeys: [pod-template-hash] # match one revision only, so a rollout's old pod never repels the new one
+                matchLabelKeys: [pod-template-hash] # so a rollout's old pod does not repel the new one
                 topologyKey: kubernetes.io/hostname
-      # Pod Security `restricted`, the same block on every first-party pod here. 65532 is the distroless
-      # nonroot uid that the sample-app image declares.
+      # Pod Security `restricted`. 65532 is the distroless nonroot uid.
       securityContext:
         runAsNonRoot: true
         runAsUser: 65532
@@ -45,8 +41,7 @@ spec:
           image: {{ .Values.app.image | quote }}
           command: {{ .Values.app.command | toJson }}
           env:
-            # The broker's client Service and the shared `apps` vhost. The operator generates the username and
-            # password into `<user>-user-credentials`. The binary builds the AMQP URI itself.
+            # The topology operator generates the credentials Secret.
             - name: RABBITMQ_HOST
               value: "rabbitmq.rabbitmq.svc.cluster.local"
             - name: RABBITMQ_PORT
@@ -63,8 +58,7 @@ spec:
                 secretKeyRef:
                   name: {{ .Values.app.name }}-user-credentials
                   key: password
-            # The `sender` field on each message and the prefix of its queue names. The exchange and routing
-            # key names are constants in the binary.
+            # The message `sender` and queue name prefix. Topic names are constants in the binary.
             - name: WORKLOAD_NAME
               value: {{ .Values.app.name | quote }}
           securityContext:

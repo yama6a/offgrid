@@ -16,7 +16,6 @@ groups:
         annotations:
           summary: 'RabbitMQ broker has no reachable nodes: no node reports metrics'
           description: |
-            - no RabbitMQ node reports metrics, so the broker is down or unreachable
             - check the cluster: kubectl -n rabbitmq get rabbitmqcluster,pods
             - pod events: kubectl -n rabbitmq describe pod <pod>
             - pod logs: kubectl -n rabbitmq logs <pod>
@@ -53,7 +52,7 @@ groups:
         annotations:
           summary: 'RabbitMQ has fewer than 2 nodes up: quorum queues lose their majority'
           description: |
-            - fewer than 2 broker nodes report, so quorum queues lost their majority and go read-only
+            - quorum queues go read-only
             - check node and pod state: kubectl -n rabbitmq get rabbitmqcluster,pods -o wide
             - recover the down pods. Check their PVC and node scheduling before anything drastic
         noDataState: OK
@@ -89,7 +88,7 @@ groups:
         annotations:
           summary: 'RabbitMQ has fewer than 3 nodes up: a broker node is down'
           description: |
-            - a broker node is missing. The cluster runs degraded but keeps quorum with 2 nodes
+            - the cluster runs degraded but keeps quorum with 2 nodes
             - find the down pod: kubectl -n rabbitmq get pods -o wide
             - inspect its events, logs, PVC and node, then restore the full replica count
         noDataState: OK
@@ -125,7 +124,6 @@ groups:
         annotations:
           summary: 'RabbitMQ memory high-watermark alarm active on a node: publishers are blocked'
           description: |
-            - a node crossed the memory high-watermark, so RabbitMQ has already blocked all publishers
             - usual cause: a queue with no consumer or a backlog grows in memory. See the queue backlog and no-consumer alerts
             - drain the backlog by restarting or scaling consumers, or raise the memory
             - check: kubectl -n rabbitmq logs <pod> | grep -i memory
@@ -162,7 +160,6 @@ groups:
         annotations:
           summary: 'RabbitMQ free-disk alarm active on a node: publishers are blocked'
           description: |
-            - a node's free disk dropped below the limit, so RabbitMQ has already blocked all publishers
             - free disk on the node's PVC: drain the queue backlog or expand the RabbitMQ PVC
             - check that the Longhorn volume under it is not full. See the storage alerts
         noDataState: OK
@@ -190,7 +187,6 @@ groups:
               conditions:
                 - type: query
                   evaluator: {type: gt, params: [0]}
-      # Early warning before the disk alarm blocks publishers: the lowest node free disk is under 2x the limit.
       - uid: rabbitmq-disk-low
         title: RabbitMQ free disk low
         condition: C
@@ -242,7 +238,7 @@ groups:
         annotations:
           summary: 'RabbitMQ queue {{ $labels.queue }} in vhost {{ $labels.vhost }} has no consumers: messages pile up'
           description: |
-            - queue {{ $labels.queue }} in vhost {{ $labels.vhost }} has zero consumers. Messages pile up until a memory or disk alarm
+            - messages pile up until a memory or disk alarm
             - usual cause: the consuming workload is down or crash-looping. Check its pods
             - confirm the consumer connection in the RabbitMQ management UI, or:
             - kubectl -n rabbitmq exec <pod> -- rabbitmqctl list_consumers
@@ -279,7 +275,7 @@ groups:
         annotations:
           summary: 'RabbitMQ queue {{ $labels.queue }} has over 100 ready messages: consumers fall behind'
           description: |
-            - queue {{ $labels.queue }} has over 100 undelivered messages. Consumers cannot keep up with publishers
+            - consumers cannot keep up with publishers
             - check consumer health and count. Scale consumers up if the load is real
             - a spike drains by itself. The threshold of 100 is a homelab default, so tune it to real traffic
         noDataState: OK
@@ -315,7 +311,7 @@ groups:
         annotations:
           summary: 'RabbitMQ queue {{ $labels.queue }} has over 100 unacked messages: consumers take but do not ack'
           description: |
-            - queue {{ $labels.queue }} has over 100 unacked messages. Consumers took them but never sent ack or nack
+            - consumers took them but never sent ack or nack
             - usual causes: a consumer stuck mid-processing, a prefetch that is too high, or a bug in the ack logic
             - check the consumer logs for stuck processing. A consumer restart requeues the unacked messages
         noDataState: OK
@@ -343,7 +339,6 @@ groups:
               conditions:
                 - type: query
                   evaluator: {type: gt, params: [100]}
-      # A message in a DLQ is a poison or undeliverable message. Investigate it, then replay or drop it.
       - uid: rabbitmq-dlq-not-empty
         title: RabbitMQ DLQ not empty
         condition: C

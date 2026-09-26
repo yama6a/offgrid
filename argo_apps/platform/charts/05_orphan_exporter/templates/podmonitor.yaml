@@ -1,5 +1,3 @@
-# This scrape sets namespace, pod, instance, container and job, and vmagent adds cluster. They override the
-# exporter's own labels, so those start with res_. See configmap.yaml.
 apiVersion: monitoring.coreos.com/v1
 kind: PodMonitor
 metadata:

@@ -1,4 +1,3 @@
-# dead-node-watcher marks a NotReady node as dead, so its volumes detach in seconds, not about 6 minutes.
 apiVersion: argoproj.io/v1alpha1
 kind: Application
 metadata:

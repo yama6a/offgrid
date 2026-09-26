@@ -120,7 +120,6 @@ groups:
               conditions:
                 - type: query
                   evaluator: {type: gt, params: [2000]}
-      # A route whose backend has zero healthy hosts returns 503.
       - uid: ingress-no-healthy-upstream
         title: Ingress route has no healthy upstream
         condition: C

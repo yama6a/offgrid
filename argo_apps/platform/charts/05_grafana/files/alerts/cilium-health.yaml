@@ -46,7 +46,6 @@ groups:
               conditions:
                 - type: query
                   evaluator: {type: lt, params: [0]}   # one agent short of the node count
-      # A full BPF map makes new endpoints, policies and connections fail. Act before it fills.
       - uid: cilium-bpf-map-pressure
         title: Cilium BPF map pressure high
         condition: C
@@ -83,7 +82,6 @@ groups:
               conditions:
                 - type: query
                   evaluator: {type: gt, params: [0.8]}
-      # Cross-node pod traffic and service routing break between the affected peers.
       - uid: cilium-unreachable-nodes
         title: Cilium unreachable nodes
         condition: C

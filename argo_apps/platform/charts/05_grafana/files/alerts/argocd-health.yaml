@@ -13,9 +13,8 @@ groups:
         for: 15m
         labels: {severity: warning}
         annotations:
-          summary: 'ArgoCD app {{ $labels.name }} is {{ $labels.health_status }}'
+          summary: 'Argo CD app {{ $labels.name }} is {{ $labels.health_status }}'
           description: |
-            - ArgoCD app {{ $labels.name }} is {{ $labels.health_status }}. GitOps is not converging
             - check: argocd app get {{ $labels.name }}, or open the Argo CD UI
             - read the events and logs of the failing resource
         noDataState: OK
@@ -52,9 +51,8 @@ groups:
         for: 30m
         labels: {severity: warning}
         annotations:
-          summary: 'ArgoCD app {{ $labels.name }} has been OutOfSync for >30m'
+          summary: 'Argo CD app {{ $labels.name }} is OutOfSync for more than 30m'
           description: |
-            - ArgoCD app {{ $labels.name }} is OutOfSync for more than 30m. Auto-sync is not converging
             - usual causes: a bad manifest, a failed hook, or a missing dependency
             - check: argocd app get {{ $labels.name }}, then read its sync result
         noDataState: OK
@@ -90,9 +88,9 @@ groups:
         for: 15m
         labels: {severity: warning}
         annotations:
-          summary: 'ArgoCD app {{ $labels.name }} sync status Unknown (cannot render manifests)'
+          summary: 'Argo CD app {{ $labels.name }} cannot render its manifests. Sync status is Unknown'
           description: |
-            - ArgoCD app {{ $labels.name }} fails to render its manifests, so it stays on its last good state
+            - the app stays on its last good state
             - usual causes: a Chart.lock out of date with the chart's dependencies, a missing path, or an unreachable repo
             - check: argocd app get {{ $labels.name }}, then read the ComparisonError message in .status.conditions
             - run helm dependency build on that chart to reproduce the failure locally

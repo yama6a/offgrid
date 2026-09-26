@@ -14,7 +14,7 @@ set -uo pipefail
 
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 source "${SCRIPT_DIR}/common.sh"
-cd "$REPO_ROOT" || exit 1 # the git commands below need the repo root
+cd "$REPO_ROOT" || exit 1
 
 # ---- knobs ----
 STEP=0

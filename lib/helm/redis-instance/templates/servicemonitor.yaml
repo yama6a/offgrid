@@ -19,9 +19,7 @@ spec:
       app: {{ .Values.name }}
       redis_setup_type: standalone
       role: standalone
-      # The operator creates two Services with the three labels above, and both expose redis-exporter.
-      # Without this label every metric lands twice under two job names. The operator sets `metrics` on one,
-      # and _helpers.tpl sets `cache` on the other, so this selects exactly one.
+      # Two Services match the labels above and both expose the exporter. This picks one, or every metric doubles.
       app.kubernetes.io/component: metrics
   endpoints:
     - port: redis-exporter

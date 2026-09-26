@@ -1,6 +1,5 @@
-# The shared backup bucket and a scoped IAM writer. Four consumers, one prefix each: cnpg/, redis/, longhorn/
-# and vm/. Each prefix has its own lifecycle rule, because the consumers need different retention. S3 must never
-# expire longhorn/ objects, see its rule below.
+# One bucket, one prefix per consumer: cnpg/, redis/, longhorn/ and vm/. Each prefix has its own lifecycle rule,
+# because the consumers need different retention.
 
 resource "aws_s3_bucket" "backups" {
   bucket = var.bucket
@@ -18,8 +17,7 @@ resource "aws_s3_bucket_public_access_block" "backups" {
   restrict_public_buckets = true
 }
 
-# SSE-S3, not SSE-KMS, because it needs no key management. Barman requests AES256 on upload in the pg-cluster
-# ObjectStore, so the two agree.
+# SSE-S3, because it needs no key management. The pg-cluster ObjectStore requests the same AES256.
 resource "aws_s3_bucket_server_side_encryption_configuration" "backups" {
   bucket = aws_s3_bucket.backups.id
   rule {
@@ -29,8 +27,7 @@ resource "aws_s3_bucket_server_side_encryption_configuration" "backups" {
   }
 }
 
-# Off. The backup objects never change, so noncurrent versions would only add cost and complicate the
-# age-based expiry below.
+# Off. Backup objects never change, so versions would only add cost.
 resource "aws_s3_bucket_versioning" "backups" {
   bucket = aws_s3_bucket.backups.id
   versioning_configuration {
@@ -94,10 +91,8 @@ resource "aws_s3_bucket_lifecycle_configuration" "backups" {
     }
   }
 
-  # No transition and no expiration. Longhorn backups are incremental, deduplicated block chains. A newer
-  # backup references older blocks, so an age-based expiry would delete blocks still in use and corrupt
-  # restores. Only Longhorn's RecurringJob `retain` deletes backups. This rule only removes the parts of an
-  # aborted upload.
+  # Never expire: newer Longhorn backups reference older blocks, so age-based expiry corrupts restores.
+  # Longhorn's RecurringJob `retain` deletes backups. This rule only removes aborted uploads.
   rule {
     id     = "longhorn-abort-incomplete"
     status = "Enabled"
@@ -111,8 +106,7 @@ resource "aws_s3_bucket_lifecycle_configuration" "backups" {
   depends_on = [aws_s3_bucket_versioning.backups]
 }
 
-# The in-cluster backup clients get this identity, never the .env deployer creds that run this Terraform.
-# Its access key is a Terraform output that the 10b to 10e scripts seal into the cluster.
+# The in-cluster backup identity, so the .env deployer creds never enter the cluster.
 resource "aws_iam_user" "backup_writer" {
   name = "${var.bucket}-writer"
   # IAM tag values allow only [\p{L}\p{Z}\p{N}_.:/=+\-@], so no parentheses and no commas.
@@ -123,8 +117,7 @@ resource "aws_iam_access_key" "backup_writer" {
   user = aws_iam_user.backup_writer.name
 }
 
-# Least privilege. Barman needs all four verbs. It lists, uploads, reads on restore, and deletes during its
-# own catalog operations even though S3 owns retention.
+# Barman needs all four verbs. It deletes during its own catalog operations, even though S3 owns retention.
 resource "aws_iam_user_policy" "backup_writer" {
   name = "backups-rw"
   user = aws_iam_user.backup_writer.name

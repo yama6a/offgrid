@@ -1,4 +1,3 @@
-{{- /* Default-deny both ways. The watcher only reads and patches nodes, so it needs only DNS and the apiserver. */ -}}
 apiVersion: cilium.io/v2
 kind: CiliumNetworkPolicy
 metadata:
@@ -10,7 +9,6 @@ spec:
       app.kubernetes.io/name: dead-node-watcher
   ingress: [] # nothing connects to it, not even a scrape
   egress:
-    # DNS, for the in-cluster apiserver Service name.
     - toEndpoints:
         - matchLabels:
             k8s:io.kubernetes.pod.namespace: kube-system

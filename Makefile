@@ -1,8 +1,4 @@
-# A thin dispatcher over the numbered runbook scripts. It holds no logic, versions or values. Each target runs
-# the step script it names, so `make install-cilium` does the same as running lib/shell/01_cilium.sh by hand.
-# `make help` lists every target. bootstrap-cluster and rebuild-cluster are the one-shot orchestrators.
-# Every target needs a Kubernetes cluster that already exists and meets the README section "What this expects
-# of your cluster".
+# A thin dispatcher over lib/shell. It holds no logic, versions or values.
 
 .DEFAULT_GOAL := help
 
@@ -35,7 +31,7 @@ configure-argocd-webhook: ## 02b: generate the Argo CD GitHub webhook secret int
 	bash lib/shell/02b_argocd_webhook.sh
 
 .PHONY: configure-values
-configure-values: ## 04: write every per-deployment value from .env into the chart values: repo URL, domains, SSO allowlist, ingress IP, ACME, scrape endpoints.
+configure-values: ## 04: write every per-deployment value from .env into the chart values.
 	bash lib/shell/04_values.sh
 
 .PHONY: configure-cloudflare-token
@@ -90,16 +86,16 @@ restore-secrets-key: ## 03: restore the sealed-secrets master key, so the commit
 
 ##@ Node lifecycle: the platform steps before and after your node tooling acts
 .PHONY: reconcile-storage
-reconcile-storage: ## After your node tooling rejoins a replaced machine: drop its stale replicas and reset its Longhorn disk record. NODE=<hostname>. Add YES=1 to skip the prompt.
+reconcile-storage: ## After a replaced machine rejoins: drop its stale replicas and reset its Longhorn disk. NODE=<hostname>, YES=1 skips the prompt.
 	@test -n "$(NODE)" || { echo "usage: make reconcile-storage NODE=<hostname> [YES=1]"; exit 1; }
 	bash lib/shell/reconcile_storage_after_rejoin.sh $(NODE) $(if $(YES),--yes,)
 
 .PHONY: check-replication-health
-check-replication-health: ## Check that Longhorn, CNPG and RabbitMQ are healthy and in sync. Exits non-zero if not. Use it as your node tooling's pre-drain gate.
+check-replication-health: ## Check that Longhorn, CNPG and RabbitMQ are healthy and in sync. Use it as a pre-drain gate.
 	bash lib/shell/check_replication_health.sh
 
 .PHONY: evacuate-node
-evacuate-node: ## Move any CNPG primary off a node before a drain, so no primary is force-killed. NODE=<hostname>. Use it as your node tooling's pre-drain evacuate hook.
+evacuate-node: ## Move any CNPG primary off a node before a drain. NODE=<hostname>.
 	@test -n "$(NODE)" || { echo "usage: make evacuate-node NODE=<hostname>"; exit 1; }
 	NODE=$(NODE) bash lib/shell/evacuate_node.sh
 
@@ -131,11 +127,11 @@ cleanup-abandoned-pvs: ## List the PVs that nothing will bind again, Released or
 
 ##@ Health and inspection: read-only
 .PHONY: view-credentials
-view-credentials: ## Print the login URLs and credentials for RabbitMQ, the ntfy phone user and the GitHub webhook, and the SSO-only UI URLs.
+view-credentials: ## Print the login URLs and credentials.
 	bash lib/shell/view_credentials.sh
 
 .PHONY: krr
-krr: ## Rightsizing: run KRR in Docker against vmsingle through a port-forward. Prints the current request and the recommendation per workload as a table.
+krr: ## Rightsizing: run KRR against vmsingle and print request and recommendation per workload.
 	bash lib/shell/krr.sh
 
 .PHONY: krr-json

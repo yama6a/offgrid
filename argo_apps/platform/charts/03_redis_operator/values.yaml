@@ -1,16 +1,13 @@
 redis-operator:
   redisOperator:
-    # Only guards the RedisReplication anti-affinity feature, which is not used here. With it off, there is no
-    # webhook cert and no cert-manager dependency.
+    # Guards only RedisReplication anti-affinity, which is unused. Off means no cert-manager dependency.
     webhook: false
-    # The endpoint only. Upstream has no PodMonitor toggle. The redis-instance ServiceMonitor scrapes the
-    # redis-exporter of each instance, which carries the useful metrics.
+    # The endpoint only. The useful metrics come from each instance's redis-exporter.
     metrics:
       enabled: true
     imagePullPolicy: IfNotPresent # the tag is immutable, so Always only wastes bandwidth
 
-  # Top-level keys for the chart's pod and container contexts, not under redisOperator. readOnlyRootFilesystem
-  # stays off, because it is not known whether the controller writes scratch files.
+  # readOnlyRootFilesystem stays off. It is unknown whether the controller writes scratch files.
   podSecurityContext:
     runAsNonRoot: true
   securityContext:
@@ -21,8 +18,7 @@ redis-operator:
     seccompProfile:
       type: RuntimeDefault
 
-  # Every key is set, because Helm merges this map and a missing key gets the chart's 500m default. An explicit
-  # null removes a key.
+  # Helm merges this map, so every key is set. A missing key gets the chart's 500m default.
   resources:
     requests:
       cpu: 10m
@@ -31,8 +27,6 @@ redis-operator:
       cpu: null # no CPU limits in this cluster. CFS throttling stalls a burst even on an idle node.
       memory: 92Mi
 
-  # Soft spread by hostname. The Pi nodes have no zone label, and a soft rule never leaves a pod Pending on 3
-  # nodes.
   affinity:
     podAntiAffinity:
       preferredDuringSchedulingIgnoredDuringExecution:
@@ -41,5 +35,5 @@ redis-operator:
             labelSelector:
               matchLabels:
                 name: redis-operator # the chart labels its pod only with `name`
-            matchLabelKeys: [pod-template-hash] # match one revision only, so a rollout's old pod never repels the new one
+            matchLabelKeys: [pod-template-hash] # so a rollout's old pod does not repel the new one
             topologyKey: kubernetes.io/hostname

@@ -11,7 +11,7 @@ alertCritical: false # optional, bool. true sends this database's alerts as crit
 backupsEnabled: true # optional, bool. Off-cluster S3 backups: a daily base backup plus WAL archiving at CNPG_BACKUP_RPO
 
 # Restore from the S3 backup catalog, a base backup plus WAL replay, instead of initdb.
-# See `make restore-cnpg` and docs/10_backups.md.
+# See `make restore-cnpg` and docs/runbooks/10_backups.md.
 restore:
   enabled: false  # set back to false once the restore completes
   serverName: ""  # the catalog to read. Empty reads this instance's own, `<name>-pg<postgresVersion>`. Name another to read a previous major's

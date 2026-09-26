@@ -4,37 +4,34 @@ app:
   command: ["/manager"]
   port: 8080
   replicas: 1
-  # Names must match the pg-cluster `name` values below. app.yaml sets PG_<NAME>_* for each entry. dbs[0] also
-  # gets the bare PG_* that the binary reads, so list the used database first. The others exist but are unused.
-  # Each database's allowedClients renders the egress.
+  # Names match the pg-cluster `name` values below. dbs[0] also gets the bare PG_* that the binary reads, so
+  # list the used database first.
   dbs: [sample-user-manager-db, sample-user-manager-analytics]
-  # Like dbs, but the manager uses both. redises[0] is REDIS_ADDR, the audit cache. redises[1] is
-  # REDIS_SESSIONS_ADDR, the session store. A further entry gets only an unused REDIS_<NAME>_ADDR.
-  # Names must match the redis-instance `name` values below.
+  # redises[0] becomes REDIS_ADDR, the audit cache. redises[1] becomes REDIS_SESSIONS_ADDR, the session store.
+  # Names match the redis-instance `name` values below.
   redises: [sample-user-manager-redis-cache, sample-user-manager-redis-sessions]
   resources:
     requests: { cpu: 10m, memory: 18Mi }
     limits:   { memory: 32Mi }
 
-# Two hosts on the same Service, neither with its own SSO. 04_google_sso gates sample-user-manager-sso.
-# sample-user-manager is not in 04_google_sso and stays open.
+# Both hosts reach the same Service. Only sample-user-manager-sso is gated, by 04_google_sso.
 ingress:
   ingresses:
     - name: sample-user-manager
       domain: app.example.com          # workloads are under *.app.<base>, platform UIs under *.ops.<base>
       issuer: letsencrypt-prod
-      hosts:                           # no targetNamespace, so the release namespace
-        - subdomain: sample-user-manager       # open, not in google-sso
+      hosts:
+        - subdomain: sample-user-manager
           targetService: sample-user-manager
           targetPort: 8080
-        - subdomain: sample-user-manager-sso   # gated by google-sso
+        - subdomain: sample-user-manager-sso
           targetService: sample-user-manager
           targetPort: 8080
 
-# The hub owns all three exchanges, one of each type, to show the three patterns. The names and routing keys
-# are constants in the app's internal/messages package and must match.
+# One exchange of each type, to show the three patterns. Names and routing keys must match the app's
+# internal/messages package.
 rabbitmq-topology:
-  user: sample-user-manager        # same as app.name. The pod reads <user>-user-credentials.
+  user: sample-user-manager        # same as app.name
   consumeCommands:
     - { name: create-user-command }   # always a direct exchange. sample-user-signup publishes to it.
   publishEvents:
@@ -76,8 +73,6 @@ analyticsdb:
   allowedClients:
     - matchLabels: { app: sample-user-manager }
 
-# The two Redis instances show both persistence modes.
-
 # The manager's audit log store. It uses RPUSH per user UUID with a 1h TTL, and GET /audit reads it back.
 redis-cache:
   name: sample-user-manager-redis-cache
@@ -93,8 +88,7 @@ redis-cache:
   allowedClients:
     - matchLabels: { app: sample-user-manager }
 
-# Shows more than one instance per workload and the durable mode. It holds one session hash per user and
-# sessions:active.
+# Shows a second instance and the durable mode. It holds the user sessions.
 redis-sessions:
   name: sample-user-manager-redis-sessions
   # renovate: datasource=docker depName=quay.io/opstree/redis

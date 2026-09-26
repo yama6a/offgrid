@@ -1,37 +1,31 @@
 longhorn:
-  # Pod annotations on the longhorn-manager DaemonSet. Opts out of Reloader, which 02_reloader runs with
-  # auto-reload-all. The managers are in the volume data path, and a roll during a replica rebuild is risky.
+  # Opts the manager DaemonSet out of Reloader. It is in the volume data path, and a roll during a rebuild
+  # is risky.
   annotations: {reloader.stakater.com/auto: "false"}
 
   defaultSettings:
-    # Where replica data lives on each node. 04_values.sh writes it from LONGHORN_DATA_PATH in .env, so do not
-    # edit it by hand. It must exist on every node. With a containerized kubelet it must be bind-mounted rshared,
-    # so the replica mounts reach the host. Longhorn's own default is /var/lib/longhorn.
+    # 04_values.sh writes it from .env. With a containerized kubelet it must be bind-mounted rshared.
     defaultDataPath: /var/mnt/storage
-    # Survives the loss of one node and leaves a spare node to rebuild on. At the node count there is no spare,
-    # so a volume stays degraded until the dead node returns.
+    # Survives one node loss and leaves a spare node to rebuild on. A count equal to the node count leaves
+    # no spare, so a volume stays degraded until the dead node returns.
     defaultReplicaCount: 2
     storageMinimalAvailablePercentage: 15 # headroom on the one small disk per node
-    # Force-deletes StatefulSet pods on a down node, so they reschedule. The NICs on this cluster are flaky,
-    # so node loss happens often.
+    # Reschedules StatefulSet pods off a down node. The NICs here are flaky, so node loss happens often.
     nodeDownPodDeletionPolicy: delete-statefulset-pod
-    # A dedicated volume, not a shared root filesystem, so the default 30% reserve for the OS is not needed.
+    # A dedicated volume, so the default 30% reserve for the OS is not needed.
     storageReservedPercentageForDefaultDisk: 5
-    # One rebuild at a time. Parallel rebuilds saturate a returning node's single NVMe and NIC. Rebuilds are
-    # slower but the node stays stable.
+    # Parallel rebuilds saturate a returning node's single NVMe and NIC. Slower, but the node stays stable.
     concurrentReplicaRebuildPerNodeLimit: 1
-    # Seconds to wait before a full rebuild over the network. A node with a flaky NIC often returns within
-    # minutes, and Longhorn then reuses its replica data.
+    # A flaky NIC often brings a node back within minutes. Waiting lets Longhorn reuse its replica data.
     replicaReplenishmentWaitInterval: 1800
-    orphanResourceAutoDeletion: "replica-data" # stale replica data from node flaps would fill the NVMe
-    # CPU reserved per instance manager, down from the 12% default, to free scheduling room on a small node.
+    orphanResourceAutoDeletion: "replica-data" # stale replica data from node flaps would fill the disk
+    # Down from 12%, to free scheduling room on small nodes.
     guaranteedInstanceManagerCPU: '{"v1":"8","v2":"8"}'
-    # Leases an RWX volume's share-manager pod, so its loss costs seconds, not a pod eviction timeout. An RWX
-    # volume that existed before this setting uses it only after its workload scales to zero and back.
+    # Leases the share-manager pod, so losing it costs seconds, not an eviction timeout. An older RWX volume
+    # adopts this only after its workload scales to zero and back.
     rwxVolumeFastFailover: true
-    # Requests only, from `make krr`. With no request, the scheduler counts each sidecar as 100m and 200Mi.
-    # No limits, because an OOM kill here fails volume attach and detach. A change restarts the CSI components.
-    # csi-snapshotter is not listed, because it runs 0 replicas, see csi below.
+    # Requests only. Without them the scheduler counts each sidecar as 100m and 200Mi. No limits, because an OOM
+    # kill fails volume attach and detach. csi-snapshotter runs 0 replicas, see csi below.
     systemManagedCSIComponentsResourceLimits: >-
       {"csi-attacher":{"requests":{"cpu":"10m","memory":"39Mi"}},
       "csi-provisioner":{"requests":{"cpu":"10m","memory":"47Mi"}},
@@ -39,41 +33,36 @@ longhorn:
       "longhorn-csi-plugin":{"requests":{"cpu":"33m","memory":"32Mi"}},
       "node-driver-registrar":{"requests":{"cpu":"10m","memory":"16Mi"}},
       "longhorn-liveness-probe":{"requests":{"cpu":"10m","memory":"20Mi"}}}
-  # 10d_longhorn_backup.sh fills these from .env and Terraform. Empty turns backups off. The RecurringJob retain
-  # counts are the only retention. The S3 longhorn/ prefix has no lifecycle rule.
+  # 10d_longhorn_backup.sh fills these. Empty turns backups off. The RecurringJob retain counts are the only
+  # retention, because the S3 longhorn/ prefix has no lifecycle rule.
   defaultBackupStore:
     backupTarget: ""
-    backupTargetCredentialSecret: "longhorn-backup-s3" # 10d_longhorn_backup.sh seals it into templates/backup-s3-sealedsecret.yaml
-    pollInterval: 300 # seconds. A rebuilt cluster finds the backups in the bucket within this time.
+    backupTargetCredentialSecret: "longhorn-backup-s3" # sealed by 10d_longhorn_backup.sh
+    pollInterval: 300 # seconds. A rebuilt cluster finds existing backups within this time.
   persistence:
-    # No default class. Each workload names a class from templates/storageclasses.yaml. A PVC with no class
-    # stays Pending and does not land on Longhorn by accident.
+    # Each workload names a class, so a PVC without one stays Pending instead of landing here by accident.
     defaultClass: false
   preUpgradeChecker:
-    jobEnabled: false # a Helm pre-upgrade hook Job, which can stall an Argo CD sync until it completes
+    jobEnabled: false # a pre-upgrade hook Job can stall an Argo CD sync
   networkPolicies:
-    # Chart 1.12.1 defaults this to true, and six policy templates check only this key. The policies block
-    # vmagent from longhorn-manager:9500, which silences metrics and every longhorn-health alert. They also
-    # leave out the CSI sidecars, which fails volume attach and detach. Upstream fixes both in 1.12.2:
-    # longhorn#13740 and longhorn#13802. Remove this line on 1.12.2.
+    # 1.12.1 defaults this to true. Its policies block vmagent from longhorn-manager:9500 and leave out the CSI
+    # sidecars, which breaks attach. Fixed in 1.12.2 by longhorn#13740 and #13802. Remove this line then.
     restrictInternalTraffic: false
   metrics:
     serviceMonitor:
       enabled: true
   csi:
-    # No CSI VolumeSnapshots are used, and the sidecar logs "failed to watch VolumeSnapshotClass" nonstop. No
-    # toggle exists, so set 0 replicas. It must be the string "0". The chart's
-    # `{{- if .snapshotterReplicaCount }}` treats int 0 as false and falls back to 3.
-    # The deployer sets replicas only at creation, so after a change delete the live Deployment once.
+    # Nothing uses CSI VolumeSnapshots, and the sidecar logs watch errors nonstop. It must be the string "0",
+    # because the chart treats int 0 as unset and runs 3. After a change, delete the live Deployment once.
     snapshotterReplicaCount: "0"
   # The chart sets no resources, so the scheduler would count this per-node pod as free.
   longhornManager:
     resources:
       requests: {cpu: 90m, memory: 248Mi}   # p90 of the steady working set
-      limits: {memory: 472Mi}   # it bursts far above the request, so a limit near it causes OOM kills
+      limits: {memory: 472Mi}   # it bursts far above the request
   longhornUI:
-    replicas: 1 # a dashboard that mostly reads. The chart default of 2 wastes memory here.
-    # The chart's default rule, plus matchLabelKeys.
+    replicas: 1 # a read-mostly dashboard. The chart default of 2 wastes memory.
+    # The chart's default rule plus matchLabelKeys.
     affinity:
       podAntiAffinity:
         preferredDuringSchedulingIgnoredDuringExecution:
@@ -82,5 +71,5 @@ longhorn:
               labelSelector:
                 matchExpressions:
                   - {key: app, operator: In, values: [longhorn-ui]}
-              matchLabelKeys: [pod-template-hash] # match one revision only, so a rollout's old pod never repels the new one
+              matchLabelKeys: [pod-template-hash] # so a rollout's old pod does not repel the new one
               topologyKey: kubernetes.io/hostname

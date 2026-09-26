@@ -1,11 +1,6 @@
 {{- /*
-Extra redis.conf, added on top of the base config that the operator generates. The operator fixes the key
-name `redis-additional.conf`.
-
-Active defrag: jemalloc does not return freed memory, so a workload with many writes and deletes leaves
-used_memory_rss too high. The upstream thresholds never trigger on a Pi-sized instance. The default
-ignore-bytes is 100mb, and maxmemory is about 77Mi. So the values below are lower.
-redis.conf reads a `#` after a value as an argument, so these reasons stay up here.
+The operator fixes the key name `redis-additional.conf`. Active defrag thresholds are lowered, because the
+upstream 100mb ignore-bytes never triggers under a maxmemory of about 77Mi.
 */ -}}
 apiVersion: v1
 kind: ConfigMap

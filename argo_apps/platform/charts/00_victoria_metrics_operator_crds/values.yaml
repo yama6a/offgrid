@@ -1,3 +1,2 @@
-# The upstream chart always installs every VM* and VL* CRD and has no per-CRD toggle. Its only knob is
-# crds.annotations.
+# The upstream chart installs every VM* and VL* CRD and has no per-CRD toggle.
 victoria-metrics-operator-crds: {}

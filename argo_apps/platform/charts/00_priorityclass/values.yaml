@@ -1,6 +1,4 @@
-# Priority sets kubelet node-pressure eviction order and scheduler preemption. The kernel OOM killer ignores it.
-# It uses oom_score_adj, which the kubelet derives from QoS class and memory request only.
-# Consumers name these as priorityClassName, so a rename means editing every consumer.
+# Priority sets eviction order and preemption. The kernel OOM killer ignores it and uses QoS class instead.
 classes:
   - name: platform-critical
     value: 1000000000 # above workloads at 0, below the built-in system-* classes at 2000000000 and up

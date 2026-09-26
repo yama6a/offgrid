@@ -7,17 +7,15 @@ argo-cd:
     # CiliumNetworkPolicy, and the union opens the namespace.
     networkPolicy:
       create: false
-    # At info, Argo CD writes most of the cluster's log volume. Sync and compare failures still log at warn
-    # or error, and the audit trail is in the UI and API.
+    # At info, Argo CD writes most of the cluster's log volume. Failures still log at warn or error.
     logging:
       level: warn
-    # On 3 nodes this puts the two replicas of each component on different nodes. The chart fills in each
-    # component's labelSelector.
+    # Spreads each two-replica component over two nodes. The chart fills in the labelSelector.
     topologySpreadConstraints:
       - maxSkew: 1
         topologyKey: kubernetes.io/hostname
         whenUnsatisfiable: DoNotSchedule
-        matchLabelKeys: [pod-template-hash] # match one revision only, so a rollout's old pod never repels the new one
+        matchLabelKeys: [pod-template-hash] # so a rollout's old pod does not repel the new one
     # The chart's anti-affinity preset cannot take matchLabelKeys, so a rollout would push each single-replica
     # component off its node.
     affinity:
@@ -54,13 +52,10 @@ argo-cd:
       # Unset means no limit. Every app shares one repoURL, so one push refreshes all apps at once. That load
       # OOM-killed both repo-server replicas. With this cap, a full refresh queues and takes longer.
       reposerver.parallelism.limit: "4"
-    # The GitHub webhook secret is merged into argocd-secret outside the chart. If the chart owned the Secret,
-    # self-heal would undo that merge. argocd-server exits without argocd-secret, so 02a_argocd.sh creates an
-    # empty one before the first install. The SealedSecret is the separate wave 3 app 03_argocd_webhook_secret.
+    # The webhook key merges into argocd-secret from outside the chart, see docs/02_gitops.md.
     secret:
       createSecret: false
-    # Git pushes reach /api/webhook, so this poll is only a fallback for a missed webhook. 02b_argocd_webhook.sh
-    # writes it from POLL_SYNC_ENABLED in .env, so do not edit it by hand.
+    # A fallback for a missed webhook. 02b_argocd_webhook.sh writes it from .env.
     cm:
       timeout.reconciliation: 300s
       timeout.reconciliation.jitter: 2s
@@ -74,8 +69,7 @@ argo-cd:
       resource.ignoreResourceUpdatesEnabled: "true"
       # The default label allows 63 characters and clashes with the argocd.argoproj.io/instance label some apps set.
       application.resourceTrackingMethod: annotation
-      # No argoproj.io_Application health check. Waves order creation only, and unbounded syncPolicy.retry
-      # converges each child app.
+      # No argoproj.io_Application health check on purpose. Waves order creation only, see CONTRIBUTING.md.
     # Every request comes from the anonymous user, and Google SSO at the edge already decides who gets in.
     rbac:
       policy.default: role:admin

@@ -1,9 +1,8 @@
 cloudnative-pg:
   crds:
-    create: true # no wave 0 CRD app. A Cluster applied before the CRD exists retries until it does.
+    create: true # a Cluster applied before its CRD retries until it exists
 
-  # CNPG copies only these labels onto the Postgres pods. The outage alert reads alert-criticality from
-  # kube_pod_labels, because a database has no Deployment for the rules to see.
+  # CNPG copies only these labels onto Postgres pods. The outage alert reads alert-criticality from the pod.
   config:
     data:
       INHERITED_LABELS: alert-criticality
@@ -11,17 +10,14 @@ cloudnative-pg:
   monitoring:
     podMonitorEnabled: true
     grafanaDashboard:
-      # 05_grafana/files/dashboards/cnpg.json is a copy with the same uid and a few queries fixed for this
-      # cluster. Copy it again on a chart bump, see docs/06_monitoring.md.
+      # 05_grafana ships a fixed copy. Copy it again on a chart bump, see docs/runbooks/06_monitoring.md.
       create: false
 
-  # The operator moves the primary label in a switchover, and the -rw Service selects on it. With the operator
-  # down there is no writable endpoint. A drain that evicted a single operator pod added 33s to a 10s switchover.
-  # Both pods use leader election, so the second one takes over.
+  # The operator moves the primary label that the -rw Service selects on. With one replica, a drain that
+  # evicted it added 33s to a 10s switchover. The second replica is a leader-election standby.
   replicaCount: 2
 
-  # Opts out of Reloader, which 02_reloader runs with auto-reload-all. The only mounted Secret is a webhook cert
-  # the operator rotates itself, and a restart during a switchover costs the 33s above.
+  # Opts out of Reloader. The operator rotates its own webhook cert, and a restart mid-switchover costs 33s.
   podAnnotations: {reloader.stakater.com/auto: "false"}
 
   priorityClassName: platform-critical
@@ -33,8 +29,6 @@ cloudnative-pg:
     limits:
       memory: 142Mi
 
-  # Soft spread by hostname. The Pi nodes have no zone label, and a soft rule never leaves the second replica
-  # Pending on 3 nodes. A drain can still put both replicas on one node.
   affinity:
     podAntiAffinity:
       preferredDuringSchedulingIgnoredDuringExecution:
@@ -43,5 +37,5 @@ cloudnative-pg:
             labelSelector:
               matchLabels:
                 app.kubernetes.io/name: cloudnative-pg
-            matchLabelKeys: [pod-template-hash] # match one revision only, so a rollout's old pod never repels the new one
+            matchLabelKeys: [pod-template-hash] # so a rollout's old pod does not repel the new one
             topologyKey: kubernetes.io/hostname

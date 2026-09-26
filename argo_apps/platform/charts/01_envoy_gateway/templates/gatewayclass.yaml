@@ -1,5 +1,3 @@
-# The cluster's only Gateway API class. Through parametersRef, every Gateway of this class gets the EnvoyProxy
-# config: one merged proxy on the pinned LoadBalancer IP.
 apiVersion: gateway.networking.k8s.io/v1
 kind: GatewayClass
 metadata:

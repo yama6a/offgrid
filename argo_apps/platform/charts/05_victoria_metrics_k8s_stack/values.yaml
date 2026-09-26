@@ -1,7 +1,6 @@
-# Resources fit small nodes of about 8 GB that also run etcd, the control plane, Cilium and Longhorn.
-# Raise them on bigger hardware. Nothing here breaks if you do.
+# Resources fit nodes of about 8 GB that also run the control plane, Cilium and Longhorn.
 victoria-metrics-k8s-stack:
-  # 01_victoria_metrics_operator runs the operator on its own. It reconciles the CRs this chart renders.
+  # 01_victoria_metrics_operator runs the operator.
   victoria-metrics-operator:
     enabled: false
   crds:
@@ -22,7 +21,7 @@ victoria-metrics-k8s-stack:
       retentionPeriod: "180d" # raise it together with the PVC size below
       replicaCount: 1
       extraArgs:
-        dedup.minScrapeInterval: 60s # half the samples of 30s. The lost resolution does not matter here.
+        dedup.minScrapeInterval: 60s
       storage:
         storageClassName: longhorn-r2-ephemeral # the annotation above guards against prune. Retain would only leak PVs.
         accessModes: ["ReadWriteOnce"]
@@ -30,14 +29,12 @@ victoria-metrics-k8s-stack:
           requests:
             storage: 50Gi
       resources:
-        # Matches the measured working set of about 844Mi. Under node memory pressure, the kubelet evicts the
-        # pods that use most above their request first.
+        # The measured working set is about 844Mi.
         requests: {cpu: 50m, memory: 896Mi}
         # Sized for the daily vm-backup export of all series, not steady state. A lower limit OOMs during the
         # export. No CPU limit, so merges and queries are never throttled.
         limits: {memory: 2Gi}
-      # Reschedule fast on node loss. Longhorn's nodeDownPodDeletionPolicy force-deletes a StatefulSet pod on a
-      # down node, which frees the volume for the new pod.
+      # Reschedule fast on node loss. Longhorn force-deletes the pod on the down node, which frees the volume.
       tolerations:
         - key: node.kubernetes.io/unreachable
           operator: Exists
@@ -57,8 +54,7 @@ victoria-metrics-k8s-stack:
       # changes, and vmagent reloads it without a restart. With Reloader, every platform sync would restart it.
       podMetadata: {labels: {longhorn-replica-affinity/enabled: "true"}, annotations: {reloader.stakater.com/auto: "false"}}
       revisionHistoryLimitCount: 0
-      # Finds every VMServiceScrape, VMPodScrape and VMProbe in every namespace, whatever their labels.
-      # That includes the ServiceMonitors the operator converts.
+      # Scrape every VM scrape object in every namespace, including converted ServiceMonitors, whatever the labels.
       selectAllByDefault: true
       scrapeInterval: 60s
       # vmsingle failover relies on vmagent to buffer scrapes while the volume reattaches. An emptyDir buffer
@@ -76,18 +72,14 @@ victoria-metrics-k8s-stack:
         cluster: offgrid
       extraArgs:
         promscrape.streamParse: "true"
-      # Runs on every scrape after collection, so it can match the metric name in `__name__`.
-      # It drops unwanted series, whichever job emits them.
       globalScrapeMetricRelabelConfigs:
-        # gRPC server counters from argocd-server, Hubble, Cilium and others, through converted ServiceMonitors.
-        # This also drops grpc_server_handled_total and its grpc_code, the RPC error rate. To keep RPC health,
-        # narrow the regex to (started|msg_received|msg_sent).
+        # gRPC server counters from many jobs. This also drops the RPC error rate. To keep it, narrow the regex
+        # to (started|msg_received|msg_sent).
         - sourceLabels: [__name__]
           action: drop
           regex: "grpc_server_(handled|started|msg_received|msg_sent)_total"
-        # Config dumps with one series per setting and a constant value of 1: VM flags, VM operator config,
-        # Grafana feature toggles and k8s feature gates. Also per-pod tolerations, which kubectl shows, and
-        # container_tasks_state, because kube_pod_status_* already has pod health.
+        # Config dumps with one constant series per setting, per-pod tolerations, and container_tasks_state,
+        # which kube_pod_status_* already covers.
         - sourceLabels: [__name__]
           action: drop
           regex: "flag|config_parameter|grafana_feature_toggles_info|kubernetes_feature_enabled|kube_pod_tolerations|container_tasks_state"
@@ -110,27 +102,22 @@ victoria-metrics-k8s-stack:
         - sourceLabels: [__name__]
           action: drop
           regex: "cilium_.*_bucket"
-        # Generic controller queue and REST histograms from many jobs. Keeps workqueue_depth,
-        # rest_client_requests_total, rest_client_request_duration_seconds_bucket and
-        # controller_runtime_reconcile_total and _errors_total. So the reconcile error rate stays, only timing goes.
+        # Controller queue and REST timing histograms. Depth, request totals and reconcile error rates stay.
         - sourceLabels: [__name__]
           action: drop
           regex: "workqueue_(queue|work)_duration_seconds_(bucket|count|sum)|controller_runtime_reconcile_time_seconds_(bucket|count|sum)|rest_client_request_size_bytes_bucket|rest_client_response_size_bytes_bucket|rest_client_rate_limiter_duration_seconds_bucket"
-        # cAdvisor detail that nothing charts. usage_bytes counts reclaimable page cache, so working_set is the
-        # real number. spec_* limits repeat kube_pod_container_resource_limits. Keeps cpu_usage, working_set,
-        # memory_{rss,swap,cache}, fs_* and oom_events for ad hoc queries in vmui.
+        # cAdvisor detail that nothing charts. usage_bytes counts page cache, so working_set is the real number.
+        # spec_* limits repeat kube-state-metrics.
         - sourceLabels: [__name__]
           action: drop
           regex: "container_memory_(failures_total|failcnt|kernel_usage|mapped_file|max_usage_bytes|usage_bytes|total_active_file_bytes|total_inactive_file_bytes)|container_cpu_(load_average_10s|load_d_average_10s|system_seconds_total|user_seconds_total)|container_spec_(cpu_period|cpu_shares|memory_reservation_limit_bytes|memory_swap_limit_bytes)|container_pressure_.*|container_(processes|sockets|threads|threads_max|ulimits_soft|file_descriptors|health_state|last_seen|start_time_seconds)|container_blkio_device_usage_total"
-        # cAdvisor reads a host-network pod's stats from the host netns. So every such pod repeats about 70 lxc
-        # veths and the node NICs, 9k series against 568 real ones. eth0 is the pod's own NIC, and node NICs
-        # come from node_network_*. RE2 has no negative lookahead, so the regex lists the names instead.
+        # A host-network pod repeats every node veth and NIC, 9k series against 568 real ones. RE2 has no
+        # negative lookahead, so the regex lists the names.
         - sourceLabels: [__name__, interface]
           action: drop
           regex: "container_network_.+;(lxc.*|cilium_.*|bond0|end0|dummy0|ip6tnl0|sit0|teql0|tunl0)"
-        # One series per bucket per label set, and nothing charts API latency. Global, not on the kubeApiServer
-        # scrape below, because metrics-server and Grafana each embed an apiserver with the same metrics.
-        # apiserver_request_duration_seconds_{count,sum} stay, because the api-server dashboard uses them.
+        # Nothing charts API latency buckets. Global, because metrics-server and Grafana embed an apiserver too.
+        # The dashboard's _count and _sum stay.
         - sourceLabels: [__name__]
           action: drop
           regex: "(grafana_)?apiserver_.+_bucket"
@@ -175,18 +162,13 @@ victoria-metrics-k8s-stack:
   grafana:
     enabled: false               # Grafana is its own app, 05_grafana
 
-  # The chart renders its default alerting and recording rules through a sync job that Argo CD does not track,
-  # so a prune would not remove leftovers. vmalert is off, so nothing evaluates them.
-  # The key is `defaultRules.enabled`. The chart ignores `.create` without an error, so check this on a chart bump.
+  # vmalert is off, so these rules would be inert. The chart silently ignores `.create`, so check the key on bumps.
   defaultRules:
     enabled: false
 
   defaultDashboards:
     enabled: true
-    # Keys are dashboard source names, the <key> in the sync job's ...-dashboard-<key> ConfigMaps. The list
-    # turns off dashboards for Windows, AIX, macOS and multi-cluster, and those that repeat the Views and
-    # System set. Kept: Kubernetes Views and System, kubelet, Networking Cluster and Namespace (Pods),
-    # node-exporter Full and Nodes, and the VictoriaMetrics dashboards.
+    # Off: other operating systems, multi-cluster, and dashboards that repeat the Kubernetes Views and System set.
     dashboards:
       persistentvolumesusage: {enabled: false} # 05_grafana ships its own persistent-volumes.json
       etcd: {enabled: false}
@@ -219,13 +201,11 @@ victoria-metrics-k8s-stack:
   prometheus-node-exporter:
     enabled: true
     revisionHistoryLimit: 0
-    # Cilium names each pod's veth lxc<random>. So every pod restart creates about 36 new node_network_* series
-    # that stay in the index for the whole retention. netdev holds the traffic counters and netclass the
-    # carrier, mtu, speed and up gauges, so both need the exclude. Keeps cilium_*, bond0, end0 and lo.
+    # Every pod restart adds a new lxc veth, about 36 series that stay for the whole retention.
+    # netdev and netclass both expose them.
     extraArgs:
       - --collector.netdev.device-exclude=^(lxc.*|dummy0|ip6tnl0|sit0|teql0|tunl0)$
       - --collector.netclass.ignored-devices=^(lxc.*|dummy0|ip6tnl0|sit0|teql0|tunl0)$
-    # Collect node metrics from every node, whatever its role or condition, so tolerate every taint.
     tolerations:
       - operator: Exists
     resources:
@@ -235,9 +215,8 @@ victoria-metrics-k8s-stack:
   kube-state-metrics:
     enabled: true
     revisionHistoryLimit: 0
-    # kube-state-metrics emits no kube_*_labels series unless this list allows a label. Allowing
-    # alert-criticality creates kube_<obj>_labels with a label_alert_criticality label. The outage rules join
-    # it with `group_left` to tell critical workloads from normal ones.
+    # The outage rules join label_alert_criticality to tell critical workloads apart. kube-state-metrics
+    # exports no label that is not listed here.
     metricLabelsAllowlist:
       - deployments=[alert-criticality]
       - statefulsets=[alert-criticality]
@@ -270,11 +249,8 @@ victoria-metrics-k8s-stack:
       # kube_pod_status_* and in events.
       probes: {enabled: false}
 
-  # Many distributions bind controller-manager, scheduler and etcd metrics to localhost. Exposing them is a
-  # host-level change outside Argo CD, in the machine config on Talos. `endpoints` holds only the control-plane
-  # node IPs, because workers run none of the three. Do not edit them by hand. 04_values.sh reads them from the
-  # cluster and rewrites the list, so a new control-plane node appears on the next run.
-  # If your control plane does not expose these metrics, set enabled: false on all three.
+  # Many distributions bind these metrics to localhost, so exposing them is a machine config change.
+  # 04_values.sh writes the control-plane node IPs into `endpoints`. If they are not exposed, disable all three.
   kubeControllerManager:
     enabled: true
     endpoints: []
@@ -325,8 +301,6 @@ victoria-metrics-k8s-stack:
         endpoints:
           - port: http-metrics
             scheme: http
-            # etcd_request_duration_seconds_bucket comes from the apiserver job, not from here. So the
-            # kubeApiServer scrape below drops it.
             metricRelabelConfigs:
               - source_labels: [__name__]
                 action: drop

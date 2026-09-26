@@ -17,7 +17,6 @@ groups:
         annotations:
           summary: 'Redis backup {{ $labels.namespace }}/{{ $labels.cronjob }} has no success in more than 36h'
           description: |
-            - no successful Redis backup in more than 36h for {{ $labels.namespace }}/{{ $labels.cronjob }}
             - the CronJob may be suspended or may never schedule
             - check: kubectl -n {{ $labels.namespace }} get cronjob {{ $labels.cronjob }}
         noDataState: OK
@@ -45,7 +44,6 @@ groups:
               conditions:
                 - type: query
                   evaluator: {type: gt, params: [129600]}
-      # Longhorn's own backups, scraped through its ServiceMonitor. One alert per volume.
       - uid: longhorn-backup-failed
         title: Longhorn backup failed
         condition: C
@@ -54,7 +52,6 @@ groups:
         annotations:
           summary: 'Longhorn backup for volume {{ $labels.volume }} is in Error state'
           description: |
-            - Longhorn backup for volume {{ $labels.volume }} is in Error state
             - check the volume's backups in the Longhorn UI
             - check the credentials of the S3 backup target and that the cluster can reach it
         noDataState: OK
@@ -94,7 +91,6 @@ groups:
         annotations:
           summary: 'Longhorn volume {{ $labels.volume }} has no successful backup in more than 48h'
           description: |
-            - volume {{ $labels.volume }} has no successful backup in more than 48h. The RecurringJob may have stopped
             - a stopped RecurringJob emits no Error, so this is the only signal
             - check the Longhorn RecurringJob schedule and the backup target
         noDataState: OK
@@ -132,7 +128,6 @@ groups:
         annotations:
           summary: 'VictoriaMetrics or VictoriaLogs backup {{ $labels.namespace }}/{{ $labels.cronjob }} has no success in more than 36h'
           description: |
-            - no successful VictoriaMetrics or VictoriaLogs backup in more than 36h for {{ $labels.namespace }}/{{ $labels.cronjob }}
             - the CronJob may be suspended or may never schedule
             - check: kubectl -n {{ $labels.namespace }} get cronjob {{ $labels.cronjob }}
         noDataState: OK
@@ -208,7 +203,6 @@ groups:
         annotations:
           summary: 'CNPG {{ $labels.res_namespace }}/{{ $labels.res_cluster }} has no base backup newer than 36h'
           description: |
-            - the last CNPG base backup for {{ $labels.res_namespace }}/{{ $labels.res_cluster }} is more than 36h old
             - check: kubectl -n {{ $labels.res_namespace }} get objectstore {{ $labels.res_cluster }}-backups -o yaml
             - the times are under status.serverRecoveryWindow. The plugin creates no Backup CRs to list
             - read the barman-cloud sidecar logs on the standby
@@ -292,7 +286,6 @@ groups:
         annotations:
           summary: 'CNPG {{ $labels.res_namespace }}/{{ $labels.res_cluster }} has no recovery point in its object store'
           description: |
-            - no base backup in the catalog for {{ $labels.res_namespace }}/{{ $labels.res_cluster }}, so you cannot restore it
             - WAL archiving may still look OK. WAL alone gives no recovery point
             - check the path it writes to: kubectl -n {{ $labels.res_namespace }} get objectstore {{ $labels.res_cluster }}-backups -o jsonpath='{.spec.configuration.destinationPath}{"\n"}{.status.serverRecoveryWindow}'
             - expected right after a major version bump. The prefix becomes <cluster>-pg<major> and holds only WAL until the next base backup

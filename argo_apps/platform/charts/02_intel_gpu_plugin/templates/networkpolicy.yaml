@@ -1,7 +1,4 @@
-{{- /*
-Default-deny both ways, with no exceptions. The plugin talks to the kubelet over a unix socket and reads
-sysfs. It has no network peers, not even DNS.
-*/ -}}
+{{- /* No exceptions. The plugin uses only a unix socket and sysfs. */ -}}
 apiVersion: cilium.io/v2
 kind: CiliumNetworkPolicy
 metadata:

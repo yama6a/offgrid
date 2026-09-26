@@ -52,13 +52,11 @@ wait_for_port_forward() {
   exec 3>&- 3<&-
 }
 
-# Uses the bridge network. On Docker Desktop only the bridge reaches the host port-forward, via host.docker.internal.
-# The image has no ENTRYPOINT, so arguments would replace its whole command. Hence --entrypoint python.
-# KRR finds a strategy only after its module is imported. So the mounts add `conservative` and an __init__.py
-# that imports it.
+# Bridge network, because on Docker Desktop only the bridge reaches the host port-forward via host.docker.internal.
+# The image has no ENTRYPOINT, so --entrypoint python keeps the arguments from replacing its command.
+# KRR finds a strategy only once imported, so the mounts add `conservative` and an __init__.py that imports it.
+# --mem-min 0 turns off the KRR memory floor for request and limit alike. The strategy sets its own floors.
 # The vmagent drop list keeps every series this strategy reads. Keep them when you prune metrics.
-# --mem-min 0 turns off the KRR memory floor, which applies to request and limit alike.
-# The strategy sets separate floors for each instead.
 run_krr() {
   local tty="" arg
   # A scan of all namespaces skips kube-system, which hides Cilium. A match-all regex scans every namespace.

@@ -7,7 +7,6 @@ metadata:
 spec:
   endpointSelector: {}          # controller, webhook and cainjector
   ingress:
-    # vmagent scrapes metrics. All three pods serve them on 9402.
     - fromEndpoints:
         - matchLabels:
             k8s:io.kubernetes.pod.namespace: monitoring
@@ -30,7 +29,6 @@ spec:
         - ports:
             - { port: "53", protocol: UDP }
             - { port: "53", protocol: TCP }
-    # Certificates, Orders, Secrets and the HTTP-01 HTTPRoutes.
     - toEntities: [kube-apiserver]
     # Let's Encrypt ACME and the Cloudflare API at api.cloudflare.com for DNS-01.
     - toEntities: [world]

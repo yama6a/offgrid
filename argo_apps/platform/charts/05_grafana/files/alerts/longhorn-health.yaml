@@ -17,7 +17,6 @@ groups:
         annotations:
           summary: 'Longhorn reports no metrics. The manager is down or not scraped, so no storage alert can fire'
           description: |
-            - longhorn-manager metrics are gone, so no other Longhorn alert can fire
             - check pods: kubectl -n longhorn-system get pods -l app=longhorn-manager
             - check the ServiceMonitor scrape target on the vmagent targets page
         noDataState: OK
@@ -122,7 +121,6 @@ groups:
               conditions:
                 - type: query
                   evaluator: {type: gt, params: [0]}
-      # A disk that takes no new replicas makes new volumes and rebuilds after a node loss fail.
       # This fires for any cause, including a not-ready disk. disk-not-ready above tells the two apart.
       - uid: longhorn-disk-unschedulable
         title: Longhorn disk unschedulable
@@ -132,7 +130,7 @@ groups:
         annotations:
           summary: 'Longhorn disk {{ $labels.disk }} on node {{ $labels.node }} is unschedulable'
           description: |
-            - disk {{ $labels.disk }} on {{ $labels.node }} takes no new replicas. New volumes and rebuilds will fail
+            - new volumes and replica rebuilds fail
             - if disk-not-ready fired for the same disk, that is the cause. Fix that and ignore this alert
             - otherwise the disk is full or above storage-reserved. Check the Node page in the Longhorn UI
             - free space or raise the disk's storage-reserved: kubectl -n longhorn-system get nodes.longhorn.io {{ $labels.node }} -o yaml
@@ -163,7 +161,6 @@ groups:
                   evaluator: {type: gt, params: [0]}
       # Longhorn's own accounting, tied to storageMinimalAvailablePercentage.
       # node-disk-space covers the raw partition.
-      # A full disk blocks replica rebuilds after a node loss.
       - uid: longhorn-node-storage-high
         title: Longhorn node storage high
         condition: C
@@ -172,7 +169,7 @@ groups:
         annotations:
           summary: 'Longhorn storage on node {{ $labels.node }} is more than 85% used'
           description: |
-            - Longhorn storage on node {{ $labels.node }} is more than 85% used. A full disk blocks replica rebuilds after a node loss
+            - a full disk blocks replica rebuilds after a node loss
             - check usage per disk on the Node page of the Longhorn UI, or in nodes.longhorn.io {{ $labels.node }}
             - delete volumes or snapshots, or add disk capacity on that node
         noDataState: OK
@@ -200,7 +197,6 @@ groups:
               conditions:
                 - type: query
                   evaluator: {type: gt, params: [85]}
-      # Fewer healthy replicas than desired, but the volume is still available.
       - uid: longhorn-volume-degraded
         title: Longhorn volume degraded
         condition: C
@@ -209,7 +205,7 @@ groups:
         annotations:
           summary: 'Longhorn volume {{ $labels.volume }} (pvc {{ $labels.pvc_namespace }}/{{ $labels.pvc }}) is degraded'
           description: |
-            - volume {{ $labels.volume }} ({{ $labels.pvc_namespace }}/{{ $labels.pvc }}) has fewer healthy replicas than desired. It is available with less redundancy
+            - the volume stays available with less redundancy
             - check: kubectl -n longhorn-system get volumes.longhorn.io {{ $labels.volume }} -o yaml
             - find the failed replica on the Volume page of the Longhorn UI, then check its node and disk
             - it usually heals once a schedulable disk is available. Watch it rebuild
@@ -238,7 +234,6 @@ groups:
               conditions:
                 - type: query
                   evaluator: {type: gt, params: [0]}
-      # Zero healthy replicas, so data is at risk.
       - uid: longhorn-volume-faulted
         title: Longhorn volume faulted
         condition: C
@@ -247,7 +242,7 @@ groups:
         annotations:
           summary: 'Longhorn volume {{ $labels.volume }} (pvc {{ $labels.pvc_namespace }}/{{ $labels.pvc }}) is faulted. No replica is healthy and data is at risk'
           description: |
-            - volume {{ $labels.volume }} ({{ $labels.pvc_namespace }}/{{ $labels.pvc }}) has zero healthy replicas. I/O fails and data is at risk
+            - I/O to the volume fails
             - check now: kubectl -n longhorn-system get volumes.longhorn.io {{ $labels.volume }} -o yaml
             - check the node and disk of every replica in the Longhorn UI. Bring a node back to recover. Do not delete replicas
             - if you cannot recover it, restore from a backup or snapshot
@@ -276,7 +271,6 @@ groups:
               conditions:
                 - type: query
                   evaluator: {type: gt, params: [0]}
-      # Writes fail when a volume reaches its provisioned capacity.
       - uid: longhorn-volume-near-full
         title: Longhorn volume near full
         condition: C
@@ -285,7 +279,7 @@ groups:
         annotations:
           summary: 'Longhorn volume {{ $labels.volume }} (pvc {{ $labels.pvc_namespace }}/{{ $labels.pvc }}) is more than 90% full'
           description: |
-            - volume {{ $labels.volume }} ({{ $labels.pvc_namespace }}/{{ $labels.pvc }}) is more than 90% full. Writes fail at 100%
+            - writes fail at 100%
             - check usage from inside the pod that uses it: kubectl -n {{ $labels.pvc_namespace }} exec ... -- df -h
             - delete data, or grow the PVC in its spec.resources.requests.storage. Longhorn expands volumes online
         noDataState: OK

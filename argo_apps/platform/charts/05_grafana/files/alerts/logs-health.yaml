@@ -15,7 +15,6 @@ groups:
         annotations:
           summary: 'More than 100 error logs in the last 5m across the cluster'
           description: |
-            - more than 100 error logs in 5m across the cluster. Something is failing and logging it
             - open VictoriaLogs (vlogs), filter on level:error and find the source
             - open the namespace and pod with the most error lines
         noDataState: OK

@@ -1,9 +1,6 @@
 {{- /*
-Longhorn has no resources knob for engine-image, longhorn-driver-deployer, longhorn-ui, the manager's pre-pull
-sidecar, or the memory of instance-manager and share-manager. See longhorn#8332, planned for 1.14.
-With no request, the scheduler counts each as 100m and 200Mi. This gives each such container a small request.
-It fits the small containers but under-counts instance-manager, which uses about 250Mi.
-Remove it when the chart exposes these.
+Several Longhorn containers have no resources knob, see longhorn#8332. Without a request the scheduler counts
+each as 100m and 200Mi. Remove this once the chart exposes them.
 */ -}}
 apiVersion: v1
 kind: LimitRange

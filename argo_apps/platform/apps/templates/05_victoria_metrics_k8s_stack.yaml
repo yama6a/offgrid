@@ -1,5 +1,4 @@
-# The monitoring core: VMSingle, VMAgent, node-exporter and kube-state-metrics. The bundled operator, vmalert,
-# Alertmanager and Grafana are off.
+# The bundled operator, vmalert, Alertmanager and Grafana are off. Grafana owns alerting.
 apiVersion: argoproj.io/v1alpha1
 kind: Application
 metadata:

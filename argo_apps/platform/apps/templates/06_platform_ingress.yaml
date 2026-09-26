@@ -1,4 +1,4 @@
-# The edges for the platform UIs: argocd, grafana, vmui and vlogs. 04_google_sso applies SSO to them.
+# 04_google_sso gates these edges.
 apiVersion: argoproj.io/v1alpha1
 kind: Application
 metadata:

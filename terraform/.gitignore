@@ -7,9 +7,7 @@
 .terraform/
 .terraform.tfstate.lock.info
 
-# A *.tfvars file would hold real values. The values come from .env as TF_VAR_*, so none should exist. The
-# ignore stops a stray one from leaking.
+# Values come from .env as TF_VAR_*. This stops a stray tfvars file from leaking.
 *.tfvars
 *.tfvars.json
 
-# *.tf and .terraform.lock.hcl stay committed. The lock file is the provider version pin and holds no secret.

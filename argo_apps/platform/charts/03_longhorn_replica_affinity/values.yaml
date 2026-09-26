@@ -1,5 +1,4 @@
-# See docs/15_replica_affinity.md. Only set values that differ from upstream or that another part of this repo
-# depends on.
+# See docs/15_replica_affinity.md.
 
 longhorn-replica-affinity:
   weight: 30 # below a workload's own weight 100 nodeAffinity, so the workload's placement still wins
@@ -13,8 +12,7 @@ longhorn-replica-affinity:
   podMonitor:
     enabled: true
 
-  # The reconciler and webhook share this knob. It fits the webhook, which needs a 23Mi request and 45Mi limit.
-  # The reconciler needs less.
+  # The reconciler and webhook share this knob. It is sized for the webhook, which needs more.
   resources:
     requests: {cpu: 10m, memory: 24Mi}
     limits: {memory: 48Mi}

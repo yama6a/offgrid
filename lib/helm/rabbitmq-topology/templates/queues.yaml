@@ -22,7 +22,7 @@ metadata:
   namespace: {{ $ns }}
 spec:
   name: {{ $q.name }}
-  type: quorum           # replicates by majority vote, not to one mirror
+  type: quorum
   durable: true
   autoDelete: false
   vhost: apps

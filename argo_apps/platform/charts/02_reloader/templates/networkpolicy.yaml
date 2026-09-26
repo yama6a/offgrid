@@ -5,9 +5,8 @@ metadata:
   name: reloader
   namespace: {{ .Release.Namespace }}
 spec:
-  endpointSelector: {}          # every pod in the reloader namespace
+  endpointSelector: {}
   ingress:
-    # vmagent scrapes the controller.
     - fromEndpoints:
         - matchLabels:
             k8s:io.kubernetes.pod.namespace: monitoring
@@ -24,5 +23,4 @@ spec:
         - ports:
             - { port: "53", protocol: UDP }
             - { port: "53", protocol: TCP }
-    # Watches ConfigMaps and Secrets and patches the workloads that mount them.
     - toEntities: [kube-apiserver]

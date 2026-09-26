@@ -7,15 +7,14 @@ metadata:
     app.kubernetes.io/name: orphan-exporter
 spec:
   replicas: 1
-  revisionHistoryLimit: 0  # recovery is a git revert, never a rollback, so old ReplicaSets have no use
+  revisionHistoryLimit: 0
   selector:
     matchLabels:
       app.kubernetes.io/name: orphan-exporter
   template:
     metadata:
       annotations:
-        # A ConfigMap edit updates the mounted exporter.py but does not restart python, so the old code keeps
-        # running. This checksum rolls the pod whenever the ConfigMap changes.
+        # Python does not reload the mounted script, so a ConfigMap change rolls the pod.
         checksum/config: {{ include (print $.Template.BasePath "/configmap.yaml") . | sha256sum }}
       labels:
         app.kubernetes.io/name: orphan-exporter

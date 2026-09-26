@@ -20,15 +20,12 @@ oidc:
 domain: example.com        # written by 04_values.sh from .env BASE_DOMAIN
 issuer: letsencrypt-prod   # callback cert issuer: letsencrypt-staging or letsencrypt-prod
 
-# Emails that may log in, the default for every gated host on every domain.
-# An empty list denies everyone, including you.
+# The default for every gated host. An empty list denies everyone, including you.
 allowlist:                 # written by 04_values.sh from .env SSO_ALLOWLIST
   - you@example.com
 
-# SSO-gated hosts. The chart appends `domain` to `subdomain` to build the host and the route name the policy
-# targets. A host may set its own `allowlist` to override the one above.
-# This list is policy, not per-deployment config, so 04_values.sh does not write it. sample-user-manager is
-# open on purpose and sample-user-manager-sso is gated, to demo the difference.
+# SSO-gated hosts, as <subdomain>.<domain>. A host may set its own `allowlist`. This list is policy, so
+# 04_values.sh does not write it. sample-user-manager stays open on purpose, next to the gated -sso demo.
 hosts:
   - subdomain: argocd.ops
   - subdomain: grafana.ops
@@ -39,15 +36,12 @@ hosts:
   - subdomain: rabbitmq.ops   # edge SSO, then RabbitMQ's own login
   - subdomain: sample-user-manager-sso.app
 
-# Other registrable domains, edited by hand. Each gets its own policy, cookie scope and google-sso.<domain>
-# callback. Register each callback as a redirect URI on the same Google client. 04_google_sso.sh prints them.
-# See docs/04_ingress.md.
+# Other registrable domains, edited by hand. Register each google-sso.<domain> callback on the same Google client.
 extraDomains: []
 # - domain: example.edu
 #   issuer: letsencrypt-staging       # optional, defaults to `issuer` above
-#   claimToHeaders:                   # optional. Copies a verified token claim into a request header, so the
-#     - {claim: email, header: x-user}  # backend needs no login of its own. Applies to the whole domain.
-#                                       # Use it only for backends that the edge is the only route into.
+#   claimToHeaders:                   # optional, for the whole domain. Only for backends reachable solely
+#     - {claim: email, header: x-user}  # through the edge, or any caller can forge the header.
 #   hosts:
 #     - subdomain: www
 #     - subdomain: api

@@ -20,8 +20,6 @@ cert-manager:
   resources:
     requests: { cpu: 10m, memory: 49Mi }
     limits:   { memory: 95Mi }
-  # Soft spread by hostname for all three. The Pi nodes have no zone label, and a soft rule never leaves a pod
-  # Pending on 3 nodes.
   affinity:
     podAntiAffinity:
       preferredDuringSchedulingIgnoredDuringExecution:
@@ -31,7 +29,7 @@ cert-manager:
               matchLabels:
                 app.kubernetes.io/name: cert-manager
                 app.kubernetes.io/component: controller
-            matchLabelKeys: [pod-template-hash] # match one revision only, so a rollout's old pod never repels the new one
+            matchLabelKeys: [pod-template-hash] # so a rollout's old pod does not repel the new one
             topologyKey: kubernetes.io/hostname
   webhook:
     resources:
@@ -46,7 +44,7 @@ cert-manager:
                 matchLabels:
                   app.kubernetes.io/name: webhook
                   app.kubernetes.io/component: webhook
-              matchLabelKeys: [pod-template-hash] # match one revision only, so a rollout's old pod never repels the new one
+              matchLabelKeys: [pod-template-hash] # so a rollout's old pod does not repel the new one
               topologyKey: kubernetes.io/hostname
   cainjector:
     resources:
@@ -61,13 +59,14 @@ cert-manager:
                 matchLabels:
                   app.kubernetes.io/name: cainjector
                   app.kubernetes.io/component: cainjector
-              matchLabelKeys: [pod-template-hash] # match one revision only, so a rollout's old pod never repels the new one
+              matchLabelKeys: [pod-template-hash] # so a rollout's old pod does not repel the new one
               topologyKey: kubernetes.io/hostname
 
   # HTTP-01 through the Gateway API. This is not a feature gate. Only this controller config file can set it.
   config:
     apiVersion: controller.config.cert-manager.io/v1alpha1
     kind: ControllerConfiguration
+    # The Gateway API CRDs must exist when the controller starts. If they land after it, restart cert-manager.
     enableGatewayAPI: true
 
   # Resolvers for the DNS-01 self-check, used only by a dns01 solver. They are public because a split-horizon

@@ -39,19 +39,16 @@ spec:
         - ports:
             - { port: "6379", protocol: TCP }
     {{- end }}
-    # The OpsTree operator reconciles and health-checks the instance.
     - fromEndpoints:
         - matchLabels:
             k8s:io.kubernetes.pod.namespace: redis-operator
       toPorts:
         - ports:
             - { port: "6379", protocol: TCP }
-    # Kubelet TCP probes from the node.
     - fromEntities: [host, remote-node]
       toPorts:
         - ports:
             - { port: "6379", protocol: TCP }
-    # vmagent scrapes the redis-exporter sidecar.
     - fromEndpoints:
         - matchLabels:
             k8s:io.kubernetes.pod.namespace: monitoring
@@ -60,7 +57,6 @@ spec:
         - ports:
             - { port: "9121", protocol: TCP }
   egress:
-    # DNS.
     - toEndpoints:
         - matchLabels:
             k8s:io.kubernetes.pod.namespace: kube-system

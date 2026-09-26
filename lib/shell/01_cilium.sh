@@ -28,7 +28,6 @@ check_prerequisites() {
   ok "kubectl, helm and yq present, chart and values found"
 }
 
-# The API can take a minute or two to answer after a node-level change or a reboot.
 wait_for_api() {
   local deadline
   say "waiting for the Kubernetes API to answer (up to ${API_WAIT}s)"
@@ -152,7 +151,7 @@ verify_cilium() {
       pool_ok=0
       break
     fi
-    kubectl api-resources > /dev/null 2>&1 || true # refreshes the discovery cache
+    kubectl api-resources > /dev/null 2>&1 || true
     sleep 5
   done
   [ "$pool_ok" -eq 0 ] && ok "LB-IPAM pool present" || bad "LB-IPAM pool missing"
@@ -167,7 +166,6 @@ print_result() {
   fi
   cat << EOF
 Cilium is the CNI. WireGuard encryption, LB-IPAM, L2 announcements and Hubble are live.
-Envoy Gateway, not Cilium, serves the Gateway API.
 All Cilium config lives in argo_apps/platform/charts/00_cilium/.
 
 Next:

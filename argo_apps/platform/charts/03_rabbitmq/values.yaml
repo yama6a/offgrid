@@ -1,11 +1,6 @@
-# `rabbitmq-cluster-operator` configures the upstream subchart, which also installs the CRDs. The other
-# top-level keys configure this chart's own templates, which render the broker.
-
 rabbitmq-cluster-operator:
-  # The self-signed path creates the webhook cert with Helm genSignedCert at render time. Argo CD renders a new
-  # cert on every reconcile, so the Secret and caBundle stay OutOfSync and topology CR writes fail at times.
-  # The cost: this wave 3 app depends on cert-manager in wave 2. On a first install the Certificate can stay
-  # pending until the unbounded retry converges.
+  # The self-signed path mints a new webhook cert on every Argo CD render, so topology CR writes fail at
+  # times. The cost is a dependency on cert-manager from wave 2.
   useCertManager: true
 
   clusterOperator:
@@ -20,8 +15,8 @@ rabbitmq-cluster-operator:
     metrics:
       podMonitor:
         enabled: true
-    # The policy is templates/networkpolicy-cluster-operator.yaml. The subchart's NetworkPolicy allows all
-    # egress, and Cilium merges it with the default-deny policy.
+    # templates/networkpolicy-cluster-operator.yaml replaces it. The subchart's policy allows all egress, and
+    # Cilium would merge it with ours.
     networkPolicy:
       enabled: false
 
@@ -47,21 +42,19 @@ rabbitmq-cluster-operator:
 
 # ---- the shared broker, rendered by this chart's own templates ----
 
-# Also the name of the Service that clients reach on 5672 and the management UI on 15672. The rabbitmq-topology
-# chart hardcodes it, so a change here needs a change there too.
+# Also the Service name. The rabbitmq-topology chart hardcodes it, so change both together.
 name: rabbitmq
 
-# Quorum queues use Raft and need a majority, so 3 brokers survive the loss of 1. Two brokers survive no loss.
-# The count does not follow the node count. Anti-affinity needs 3 nodes, and more nodes are spare capacity.
+# Quorum queues need a Raft majority, so 3 brokers survive the loss of 1. More nodes do not need more brokers.
 replicas: 3
 
-# `-management` includes the UI on 15672, and `-alpine` is the small image. Keep the version the operator
-# subchart is tested with.
+# Keep the version the operator subchart is tested with.
 image: rabbitmq:4.3.6-management-alpine
 
-# RabbitMQ blocks publishers as it nears its memory limit, so the request must equal the limit. With a smaller
-# request, the scheduler overpacks the node and the kernel OOM-kills the broker before it throttles.
-# KRR suggests a 234Mi request and a 479Mi limit, but a lower request breaks that rule.
+# RabbitMQ throttles publishers only near its memory limit. With a request below the limit, the scheduler
+# overpacks the node and the kernel OOM-kills the broker first. So request equals limit, whatever KRR says.
+# Idle RSS swings from 105Mi to 280Mi from allocator slack, while live data is about 75Mi. Do not switch
+# vm_memory_calculation_strategy to allocated. It reads the 75Mi and never blocks, while the kernel kills on RSS.
 resources:
   requests:
     cpu: 200m
@@ -69,10 +62,8 @@ resources:
   limits:
     memory: 480Mi # must be in Mi, because the memory override parses it. See additionalConfig for the 0.85 block point.
 
-# The -local class keeps one replica on the broker's node, so fsync stays on that SSD. A drained queue holds
-# almost nothing, so moving the copy after a reschedule is cheap.
-# Raft already copies each message to 3 brokers. Longhorn is still needed, because a node-local volume cannot
-# follow its broker to another node. See docs/05_storage.md.
+# The -local class keeps one replica on the broker's node, so fsync stays local. Why Longhorn under Raft:
+# docs/05_storage.md.
 storage:
   className: longhorn-r2-ephemeral-local
   size: 10Gi # a ceiling, not a reservation. The operator sets a 2GB disk_free_limit, so publishers block when
@@ -82,8 +73,7 @@ storage:
 # The rabbitmq-topology chart hardcodes this name too.
 vhost: apps
 
-# Scrapes each broker pod on /metrics and /metrics/detailed. The queue and DLQ alerts need the `queue` label
-# that only the detailed endpoint has. Only the node with a queue's leader reports that queue.
+# The queue and DLQ alerts need the `queue` label, which only /metrics/detailed has.
 metrics:
   podMonitor:
     enabled: true

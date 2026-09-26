@@ -1,6 +1,4 @@
-# The kubelet device plugin. It finds the /dev/dri render nodes and reports them as an allocatable resource, so
-# a pod that requests gpu.intel.com/i915 lands on the iGPU node. The siderolabs/i915 Talos extension supplies
-# the driver. See docs/14_igpu.md.
+# Reports the iGPU as the resource gpu.intel.com/i915. See docs/14_igpu.md.
 
 # renovate: datasource=docker depName=docker.io/intel/intel-gpu-plugin
 image: "intel/intel-gpu-plugin:0.37.0"

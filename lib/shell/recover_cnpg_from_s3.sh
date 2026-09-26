@@ -356,11 +356,9 @@ resolve_owning_chart() {
   APP_NAME="$(basename "$(dirname "$VALUES")" | tr '_' '-')"
 }
 
-# RECOVERED=yes means the restore already rebuilt the Cluster. Two signals, because neither covers the whole run:
-#   - the `-full-recovery-` job exists while the restore runs. CNPG deletes it when the restore completes.
-#   - the Cluster is newer than the commit that turned the restore on. This stays true afterwards.
-# format-local with TZ=UTC prints the commit time in UTC, so a string compare works. Plain `format:` uses the
-# commit's own zone, which makes a fresh Cluster look older than the commit.
+# RECOVERED=yes means the restore already rebuilt the Cluster. The `-full-recovery-` job marks a running restore,
+# and a Cluster newer than the restore commit marks a finished one. The commit time is formatted in UTC, because
+# plain `format:` uses the commit's own zone and makes a fresh Cluster look older than the commit.
 resolve_state() {
   GIT_RESTORE="$(yq -r ".${ALIAS}.restore.enabled // false" "$VALUES")"
   GIT_PROTECT="$(yq -r ".${ALIAS}.deletionProtection // false" "$VALUES")"

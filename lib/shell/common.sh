@@ -1,5 +1,4 @@
 #!/usr/bin/env bash
-#
 # Shared helpers for every script here. It finds the repo root, loads .env, and derives paths and host tiers.
 # It sets no shell options. Each script keeps its own `set` line.
 
@@ -20,43 +19,42 @@ source "$ENV_FILE"
 
 # Scripts run under `set -u`, so every key gets a default here. An older .env that lacks a key still works.
 # Empty skips the feature that the key enables. See each key's comment in .env.example.
-: "${KUBE_API_HOST:=localhost}"              # Cilium reaches the API here before pod networking exists. Talos KubePrism.
-: "${KUBE_API_PORT:=7445}"                   # port of KUBE_API_HOST
-: "${KUBELET_TLS_INSECURE:=true}"            # metrics-server skips kubelet cert checks: self-signed certs, no CSR approver
-: "${ETCD_METRICS_PORT:=2381}"               # etcd metrics port, scraped for the control-plane dashboards
-: "${LONGHORN_DATA_PATH:=/var/mnt/storage}"  # where Longhorn stores replica data on each node
-: "${KUBE_CONTEXT:=}"                        # the one kubectl context these scripts may touch. Empty: ask once, save to .env.
-: "${GITHUB_GHCR_PULL_TOKEN_SECRET:=}"       # docker login token only. Configure node-level pull auth on the nodes.
-: "${GHCR_SERVER:=ghcr.io}"                  # registry that check_multiarch.sh logs in to when the token is set
-: "${ARGOCD_GITHUB_PAT_SECRET:=}"            # 02a puts it into the Argo CD repo-creds Secret
-: "${NTFY_PHONE_PASSWORD_SECRET:=}"          # 06 creates the ntfy 'phone' user with it. The phone subscribes to alerts.
-: "${GOOGLE_SSO_CLIENT_ID:=}"                # 04_google_sso writes it into the google-sso values
-: "${GOOGLE_SSO_CLIENT_SECRET:=}"            # 04_google_sso seals it for Envoy Gateway OIDC
-: "${CLOUDFLARE_API_TOKEN_SECRET:=}"         # 04_cloudflare_token seals it for cert-manager DNS-01. Empty: HTTP-01 only.
-: "${AWS_DEPLOY_ACCESS_KEY_ID:=}"            # 10a runs Terraform with it. Empty: no S3 backups, and 10a to 10e do nothing.
-: "${AWS_DEPLOY_SECRET_ACCESS_KEY_SECRET:=}" # 10a Terraform deployer secret. Never sealed into the cluster.
-# Not secrets. They get a default for the same `set -u` reason.
-: "${BASE_DOMAIN:=}"                 # 04_values writes it into the SSO and ingress values. Every public host sits under it.
-: "${SSO_ALLOWLIST:=}"               # 04_values writes it into the google-sso allowlist. Space-separated accounts.
-: "${INGRESS_LB_IP:=}"               # 04_values writes it into the envoy-gateway values. Every ingress answers on it.
-: "${POLL_SYNC_ENABLED:=false}"      # 02b sets timeout.reconciliation from it: false is 300s, true is 60s
-: "${CLOUDFLARE_WILDCARD_DOMAINS:=}" # 04_values writes it into the gateway and ingress values. Empty: no wildcards.
-: "${AWS_REGION:=}"                  # 10a Terraform region and 10b CNPG S3 endpoint region
-: "${S3_BACKUP_BUCKET:=}"            # 10a Terraform bucket name. 10b writes it into the pg-cluster values.
-: "${S3_BACKUP_TRANSITION_DAYS:=30}" # 10a lifecycle: days until objects move to Glacier Instant Retrieval
-: "${S3_BACKUP_RETENTION_DAYS:=180}" # 10a lifecycle: days until objects expire. This is the recovery window.
-: "${CNPG_BACKUP_RPO:=15min}"        # 10b writes it as archive_timeout into the pg-cluster values
+: "${KUBE_API_HOST:=localhost}"
+: "${KUBE_API_PORT:=7445}"
+: "${KUBELET_TLS_INSECURE:=true}"
+: "${ETCD_METRICS_PORT:=2381}"
+: "${LONGHORN_DATA_PATH:=/var/mnt/storage}"
+: "${KUBE_CONTEXT:=}" # the one kubectl context these scripts may touch. Empty: ask once, save to .env.
+: "${GITHUB_GHCR_PULL_TOKEN_SECRET:=}"
+: "${GHCR_SERVER:=ghcr.io}" # registry that check_multiarch.sh logs in to when the token is set
+: "${ARGOCD_GITHUB_PAT_SECRET:=}"
+: "${NTFY_PHONE_PASSWORD_SECRET:=}"
+: "${GOOGLE_SSO_CLIENT_ID:=}"
+: "${GOOGLE_SSO_CLIENT_SECRET:=}"
+: "${CLOUDFLARE_API_TOKEN_SECRET:=}"
+: "${AWS_DEPLOY_ACCESS_KEY_ID:=}"
+: "${AWS_DEPLOY_SECRET_ACCESS_KEY_SECRET:=}"
+: "${BASE_DOMAIN:=}"
+: "${SSO_ALLOWLIST:=}"
+: "${INGRESS_LB_IP:=}"
+: "${POLL_SYNC_ENABLED:=false}"
+: "${CLOUDFLARE_WILDCARD_DOMAINS:=}"
+: "${AWS_REGION:=}"
+: "${S3_BACKUP_BUCKET:=}"
+: "${S3_BACKUP_TRANSITION_DAYS:=30}"
+: "${S3_BACKUP_RETENTION_DAYS:=180}"
+: "${CNPG_BACKUP_RPO:=15min}"
 
-SS_CONTROLLER_NS="sealed-secrets"                           # kubeseal --controller-namespace, same as 02_sealed_secrets
-SS_CONTROLLER_NAME="sealed-secrets"                         # kubeseal --controller-name
-SS_POD_SELECTOR="app.kubernetes.io/name=sealed-secrets"     # selects the controller pods for the readiness check
+SS_CONTROLLER_NS="sealed-secrets" # must match the 02_sealed_secrets namespace
+SS_CONTROLLER_NAME="sealed-secrets"
+SS_POD_SELECTOR="app.kubernetes.io/name=sealed-secrets"
 SS_KEY_LABEL="sealedsecrets.bitnami.com/sealed-secrets-key" # label on the key Secrets that step 03 backs up and restores
-MONITORING_NS="monitoring"                                  # the monitoring namespace, for the ntfy seal and KRR
-WORKLOAD_CHARTS="${REPO_ROOT}/argo_apps/workloads/charts"   # the workloads tree that the recover_* scripts edit
-PLATFORM_CHARTS="${REPO_ROOT}/argo_apps/platform/charts"    # the platform tree that the step scripts write values into
-TF_DIR="${REPO_ROOT}/terraform"                             # the Terraform root. 10a applies it, 10b to 10e read its outputs.
+MONITORING_NS="monitoring"
+WORKLOAD_CHARTS="${REPO_ROOT}/argo_apps/workloads/charts"
+PLATFORM_CHARTS="${REPO_ROOT}/argo_apps/platform/charts"
+TF_DIR="${REPO_ROOT}/terraform" # the Terraform root. 10a applies it, 10b to 10e read its outputs.
 
-# The two host tiers. They interpolate, so they cannot live in .env. They are fixed, not knobs.
+# They interpolate, so they cannot live in .env.
 # The SSO cookie covers BASE_DOMAIN and its subdomains only, so a tier outside it could never log in.
 OPS_DOMAIN="ops.${BASE_DOMAIN}" # platform UIs:  <sub>.ops.<base>
 APP_DOMAIN="app.${BASE_DOMAIN}" # workloads:     <sub>.app.<base>
@@ -78,7 +76,6 @@ bad() {
   printf '  \033[31m[FAIL]\033[0m %s\n' "$1"
   FAIL=$((FAIL + 1))
 }
-# Returns non-zero if anything failed, so a caller can `summary || exit 1`.
 summary() {
   printf '\n=============== summary: %d passed, %d failed ===============\n' "$PASS" "$FAIL"
   [ "$FAIL" -eq 0 ]
@@ -375,10 +372,8 @@ read_backup_creds() {
   ok "got the writer access key id and secret from terraform"
 }
 
-# kubeseal_to <outfile> [kubeseal args]: seal stdin. The default output is a strict-scope SealedSecret.
+# kubeseal_to <outfile> [kubeseal args]: seal stdin, strict scope by default. It retries while the controller starts.
 # Feed it with `<<<` or `< <(...)`. In a pipe it runs in a subshell, so its die would not stop the caller.
-# It retries, because a bootstrap often reaches it while the controller still starts up.
-# It dies on failure, because <outfile> then still holds the old ciphertext, which a caller could commit.
 SEAL_BACKOFF="4 8 16 32 64" # seconds between tries: 6 tries, about 2 minutes in total
 kubeseal_to() {
   local out="$1"
@@ -410,8 +405,7 @@ kubeseal_to() {
        A rebuilt cluster cannot decrypt the old ciphertext, and its app starts with no Secret."
 }
 
-# seal_secret <name> <ns> <outfile> <key=value>...: build a Secret on the client, seal it strict-scope, and
-# check the result.
+# seal_secret <name> <ns> <outfile> <key=value>...: seal a client-built Secret strict-scope and check the result.
 seal_secret() {
   local name="$1" ns="$2" out="$3"
   shift 3
@@ -459,10 +453,8 @@ run_step() {
   die "${hint:-${script} failed. Fix it, then resume from ${script%.sh} by hand.}"
 }
 
-# _ingress_serves_ok <host> <lbip>: return 0 for an HTTPS response with a Let's Encrypt cert.
-# It connects to the LB IP directly, so DNS and router hairpinning are not in the path.
-# It skips CA trust, because Let's Encrypt staging certs are untrusted.
-# It does not require HTTP/2. Envoy Gateway negotiates HTTP/1.1 by default.
+# _ingress_serves_ok <host> <lbip>: true for an HTTPS response with a Let's Encrypt cert. It dials the LB IP, so
+# DNS and router hairpinning are not in the path. No CA check, because staging certs are untrusted.
 _ingress_serves_ok() {
   local host="$1" ip="$2" issuer code
   issuer="$(printf '' | openssl s_client -connect "${ip}:443" -servername "$host" 2> /dev/null \

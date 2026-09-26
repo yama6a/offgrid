@@ -2,7 +2,6 @@ apiVersion: 1
 groups:
   # If vmagent, vmsingle or VictoriaLogs fail, every other alert goes NoData, which reads as OK.
   # pvc-nearly-full also covers their PVCs.
-  # These rules catch the failures specific to VictoriaMetrics and VictoriaLogs.
   - orgId: 1
     name: monitoring-health
     folder: offgrid
@@ -57,7 +56,6 @@ groups:
         annotations:
           summary: 'vmsingle free disk is close to its reserved limit. It will stop accepting metrics'
           description: |
-            - vmsingle free disk is close to its reserved limit. It will go read-only and drop metrics
             - check: kubectl -n monitoring get pvc, then df on the vmsingle volume
             - grow the vmsingle PVC or lower retention
         noDataState: OK
@@ -94,7 +92,7 @@ groups:
         annotations:
           summary: 'vmagent drops samples on remote-write. Metrics are lost'
           description: |
-            - vmagent drops remote-write samples. Usually vmsingle rejects them or the queue is full
+            - usually vmsingle rejects them or the queue is full
             - check: kubectl -n monitoring logs deploy/vmagent
             - check vmsingle health and free disk
         noDataState: OK
@@ -130,7 +128,6 @@ groups:
         annotations:
           summary: 'VictoriaLogs reports internal errors in ingestion or storage'
           description: |
-            - VictoriaLogs has internal errors in ingestion or storage
             - check: kubectl -n monitoring logs deploy/victoria-logs
             - check that its PVC has free space and is writable
         noDataState: OK

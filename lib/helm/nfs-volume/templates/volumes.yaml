@@ -11,21 +11,17 @@ metadata:
   labels:
     app: {{ $v.name }}
 spec:
-  # Nothing enforces this size. NFS reports no size to the kubelet and nothing applies a quota. The value
-  # exists so the PVC below has something to request and match.
+  # Nothing enforces it. The PVC needs a matching request to bind.
   capacity:
     storage: {{ $v.capacity }}
   accessModes:
     {{- $modes | toYaml | nindent 4 }}
-  # Retain by default. Delete removes only the PV object and leaves every byte on the server, so it frees
-  # no space.
   persistentVolumeReclaimPolicy: {{ $v.reclaimPolicy | default "Retain" }}
-  # Empty, not omitted. When the field is omitted, the DefaultStorageClass admission plugin sets a class.
+  # Empty, not omitted, or the DefaultStorageClass admission plugin sets one.
   storageClassName: ""
   mountOptions:
     {{- $v.mountOptions | default (list "nfsvers=4.1" "hard" "noatime") | toYaml | nindent 4 }}
-  # Binds the PV to exactly one PVC in advance. Without it, any other PVC that this PV satisfies can bind
-  # first, and the intended claim then stays Pending.
+  # Reserved in advance, or another PVC can bind first and leave the intended one Pending.
   claimRef:
     namespace: {{ $.Release.Namespace }}
     name: {{ $v.name }}
@@ -43,7 +39,7 @@ metadata:
     app: {{ $v.name }}
 spec:
   storageClassName: ""
-  volumeName: {{ $pv }} # so this claim binds to this PV and no other
+  volumeName: {{ $pv }}
   accessModes:
     {{- $modes | toYaml | nindent 4 }}
   resources:

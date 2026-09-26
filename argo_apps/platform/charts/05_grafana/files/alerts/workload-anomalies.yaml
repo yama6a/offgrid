@@ -347,7 +347,7 @@ groups:
         annotations:
           summary: 'Deployment {{ $labels.namespace }}/{{ $labels.deployment }} has fewer available replicas than desired'
           description: |
-            - running but degraded. Some replicas are unavailable, so capacity is partial
+            - capacity is partial
             - status: kubectl -n {{ $labels.namespace }} rollout status deploy/{{ $labels.deployment }}
             - inspect pods: kubectl -n {{ $labels.namespace }} describe deploy {{ $labels.deployment }}
         noDataState: OK
@@ -411,7 +411,6 @@ groups:
               conditions:
                 - type: query
                   evaluator: {type: gt, params: [0]}
-      # The HPA rules stay quiet until an HPA exists.
       - uid: hpa-at-max
         title: HPA at max replicas
         condition: C
@@ -420,7 +419,6 @@ groups:
         annotations:
           summary: 'HPA {{ $labels.namespace }}/{{ $labels.horizontalpodautoscaler }} is at max replicas: it cannot scale further'
           description: |
-            - the autoscaler is at maxReplicas, with no room for more load
             - inspect: kubectl -n {{ $labels.namespace }} describe hpa {{ $labels.horizontalpodautoscaler }}
             - raise maxReplicas in values.yaml if the sustained load is legitimate
         noDataState: OK
@@ -492,7 +490,6 @@ groups:
         annotations:
           summary: 'HPA {{ $labels.namespace }}/{{ $labels.horizontalpodautoscaler }} runs below its min replicas'
           description: |
-            - current replicas are under minReplicas. The controller cannot hold the floor
             - conditions: kubectl -n {{ $labels.namespace }} describe hpa {{ $labels.horizontalpodautoscaler }}
             - check that the target pods are not stuck Pending or unschedulable
         noDataState: OK

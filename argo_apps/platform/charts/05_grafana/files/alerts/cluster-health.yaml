@@ -123,7 +123,7 @@ groups:
         annotations:
           summary: 'PVC {{ $labels.namespace }}/{{ $labels.persistentvolumeclaim }} above 85% used'
           description: |
-            - volume {{ $labels.namespace }}/{{ $labels.persistentvolumeclaim }} is more than 85% full. Writes fail at 100%
+            - writes fail at 100%
             - check: kubectl -n {{ $labels.namespace }} get pvc {{ $labels.persistentvolumeclaim }}
             - grow the PVC or delete data on the volume. Longhorn supports volume expansion
         noDataState: OK
@@ -189,8 +189,7 @@ groups:
                 - type: query
                   evaluator: {type: gt, params: [0]}
       # Node capacity rules are all warnings, because no workload is down yet.
-      # The fstype filter keeps real disks only. An immutable OS can expose a dozen or more tmpfs and rootfs mounts.
-      # Edit the regex if your nodes use something other than ext4 or xfs.
+      # The fstype filter keeps ext4 and xfs disks only. Extend it if your nodes use another filesystem.
       # `instance` is the node IP:9100. node-exporter has no `node` label.
       - uid: node-disk-space
         title: Node disk almost full
@@ -200,7 +199,6 @@ groups:
         annotations:
           summary: 'Disk {{ $labels.mountpoint }} on {{ $labels.instance }} above 85% used'
           description: |
-            - filesystem {{ $labels.mountpoint }} on {{ $labels.instance }} is more than 85% full
             - check disk usage on {{ $labels.instance }}. Start with the Longhorn data path
             - prune images and logs, or expand the disk
         noDataState: OK
@@ -228,7 +226,6 @@ groups:
               conditions:
                 - type: query
                   evaluator: {type: gt, params: [85]}
-      # Many small files can use up all inodes on a disk that still has free bytes.
       - uid: node-disk-inodes
         title: Node disk inodes almost exhausted
         condition: C
@@ -237,7 +234,7 @@ groups:
         annotations:
           summary: 'Inodes on {{ $labels.mountpoint }} / {{ $labels.instance }} above 85% used'
           description: |
-            - more than 85% of inodes on {{ $labels.mountpoint }} ({{ $labels.instance }}) are used. Free bytes may remain
+            - free bytes may remain, so df -h looks fine
             - check inode usage on {{ $labels.instance }}, then find the directory with the most files
             - delete stale small files, for example caches, tmp and old logs
         noDataState: OK
@@ -275,7 +272,6 @@ groups:
         annotations:
           summary: 'Disk {{ $labels.mountpoint }} on {{ $labels.instance }} will fill within 24h at the current rate'
           description: |
-            - at the current rate, {{ $labels.mountpoint }} on {{ $labels.instance }} has no free space within 24h
             - find the writer. Check disk usage on {{ $labels.instance }}, then run du on the mount
             - before it fills, prune or rotate data, or expand the disk
         noDataState: OK
@@ -343,7 +339,6 @@ groups:
               conditions:
                 - type: query
                   evaluator: {type: gt, params: [80]}
-      # The node is short of memory, disk or PIDs, so evictions come next.
       - uid: node-pressure
         title: Node under resource pressure
         condition: C
@@ -352,7 +347,7 @@ groups:
         annotations:
           summary: 'Node {{ $labels.node }} reports {{ $labels.condition }}'
           description: |
-            - the kubelet reports {{ $labels.condition }} on {{ $labels.node }}. Evictions come next
+            - evictions come next
             - run kubectl describe node {{ $labels.node }} and read Conditions and recent events
             - free memory, disk or PIDs, whichever is short, fast
         noDataState: OK
@@ -390,7 +385,6 @@ groups:
         annotations:
           summary: 'Cluster memory requests exceed capacity minus one node. Its pods would not fit after a node loss'
           description: |
-            - if the largest node fails, the other nodes cannot fit its pods
             - usage: kubectl top nodes
             - requests: kubectl describe nodes | grep -A5 Allocated
             - lower memory requests or add capacity until one node can fail

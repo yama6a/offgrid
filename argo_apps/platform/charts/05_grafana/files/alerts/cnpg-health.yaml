@@ -90,7 +90,6 @@ groups:
         annotations:
           summary: 'CNPG {{ $labels.namespace }}/{{ $labels.pod }} physical replication lag is more than 1s'
           description: |
-            - the standby of {{ $labels.namespace }}/{{ $labels.pod }} is more than 1s behind the primary
             - run kubectl cnpg status <cluster> -n {{ $labels.namespace }} and read the Streaming Replication section
             - check standby CPU, disk and network. Write bursts often cause short lag
         noDataState: OK
@@ -194,9 +193,7 @@ groups:
               conditions:
                 - type: query
                   evaluator: {type: gt, params: [0]}
-      # Autovacuum resets transaction ID age. If it falls behind, Postgres shuts down at about 2.1B.
-      # The shutdown prevents wraparound.
-      # Normal age here is about 50k, so 300M is an early warning.
+      # Normal xid age here is about 50k, so 300M is an early warning.
       - uid: cnpg-txid-wraparound-warning
         title: CNPG transaction-ID age high
         condition: C
@@ -269,7 +266,6 @@ groups:
               conditions:
                 - type: query
                   evaluator: {type: gt, params: [1000000000]}
-      # An inactive slot retains WAL, which fills pg_wal and makes the primary read-only.
       - uid: cnpg-replication-slot-inactive
         title: CNPG replication slot inactive
         condition: C
@@ -278,7 +274,7 @@ groups:
         annotations:
           summary: 'CNPG {{ $labels.namespace }}/{{ $labels.pod }} physical slot {{ $labels.slot_name }} is inactive and retains WAL'
           description: |
-            - slot {{ $labels.slot_name }} is inactive. It retains WAL, which fills pg_wal and makes the primary read-only
+            - it fills pg_wal, which makes the primary read-only
             - psql: select slot_name,active,wal_status from pg_replication_slots
             - recover the standby, or drop the dead slot: select pg_drop_replication_slot('{{ $labels.slot_name }}')
         noDataState: OK
@@ -308,7 +304,6 @@ groups:
               conditions:
                 - type: query
                   evaluator: {type: gt, params: [0]}
-      # A long transaction holds locks and blocks autovacuum.
       - uid: cnpg-long-running-transaction
         title: CNPG long-running transaction
         condition: C
@@ -425,7 +420,7 @@ groups:
         annotations:
           summary: 'CNPG operator asks for a manual switchover of {{ $labels.namespace }}/{{ $labels.pod }}'
           description: |
-            - the operator needs a manual switchover for {{ $labels.namespace }}/{{ $labels.pod }}, for example for a pending restart
+            - usually for a pending restart
             - find the reason: kubectl cnpg status <cluster> -n {{ $labels.namespace }}
             - when a healthy standby exists, run kubectl cnpg promote <cluster> <newPrimary> -n {{ $labels.namespace }}
         noDataState: OK
@@ -461,7 +456,7 @@ groups:
         annotations:
           summary: 'CNPG {{ $labels.namespace }}/{{ $labels.pod }} is fenced. Its I/O is paused'
           description: |
-            - {{ $labels.namespace }}/{{ $labels.pod }} is fenced, so Postgres I/O is paused. Usually operator maintenance
+            - usually operator maintenance
             - run kubectl cnpg status <cluster> -n {{ $labels.namespace }} and read Fencing
             - if nobody meant it, unfence: kubectl cnpg fencing off <cluster> -n {{ $labels.namespace }}
         noDataState: OK

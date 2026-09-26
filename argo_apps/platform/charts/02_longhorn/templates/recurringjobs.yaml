@@ -1,8 +1,6 @@
 {{- /*
-Trim runs on every volume. The backup jobs exist only when a backupTarget is set. They act only on volumes that
-their StorageClass's recurringJobSelector puts in the `backup` group.
-`retain` is the only backup retention. The S3 longhorn/ prefix has no lifecycle rule.
-No snapshot job, because local snapshots use the small Pi NVMe.
+`retain` is the only backup retention, because the S3 longhorn/ prefix has no lifecycle rule.
+No snapshot job, because local snapshots would fill the small NVMe.
 */ -}}
 ---
 apiVersion: longhorn.io/v1beta2

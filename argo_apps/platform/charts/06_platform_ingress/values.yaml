@@ -8,7 +8,7 @@ ingress:
           targetNamespace: argocd
           targetService: argocd-server
           targetPort: 80
-          requestTimeout: "0s"           # the UI holds /api/v1/stream/* open for live updates. Envoy's 15s default ends it with a 504.
+          requestTimeout: "0s"           # the UI holds /api/v1/stream/* open for live updates
 
         - subdomain: grafana
           targetNamespace: monitoring
@@ -34,11 +34,10 @@ ingress:
           targetNamespace: rabbitmq
           targetService: rabbitmq          # management UI, gated by google-sso and then RabbitMQ's own login
           targetPort: 15672
-        # Not in 04_google_sso on purpose, so this host stays open. A mobile app cannot do a human OAuth login.
-        # ntfy's own deny-all and token auth is the only gate. Keep this ingress on letsencrypt-prod, because
-        # the Android app rejects a staging cert.
+        # Not behind SSO, because a mobile app cannot do an OAuth login. ntfy's own auth is the gate.
+        # Keep letsencrypt-prod, because the Android app rejects a staging cert.
         - subdomain: ntfy
           targetNamespace: monitoring
           targetService: ntfy
           targetPort: 8080
-          requestTimeout: "0s"           # the app holds a long-poll stream. 15s would force 4 reconnects a minute.
+          requestTimeout: "0s"           # the app holds a long-poll stream

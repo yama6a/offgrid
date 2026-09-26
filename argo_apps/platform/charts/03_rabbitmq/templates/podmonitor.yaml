@@ -1,7 +1,5 @@
 {{- /*
-Scrapes every broker pod on two paths. /metrics has node and cluster health with no `queue` label.
-/metrics/detailed has the per-queue metrics that the queue, DLQ and no-consumer alerts need.
-It scrapes each pod, not the Service, because only the node with a queue's leader reports that queue.
+The queue alerts need /metrics/detailed. Each pod, not the Service, because only a queue's leader reports it.
 */ -}}
 {{- if .Values.metrics.podMonitor.enabled }}
 apiVersion: monitoring.coreos.com/v1

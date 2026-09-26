@@ -1,11 +1,7 @@
-# Grafana owns alerting. Alertmanager and vmalert are off, so the contact point, notification policy and rules
-# are provisioned as code, like the datasources.
 grafana:
   revisionHistoryLimit: 0
-  # Grafana re-provisions datasources, dashboards and rules on every start. A restart loses alert state,
-  # silences and dashboards created in the UI.
   persistence:
-    enabled: false
+    enabled: false # a restart loses alert state and UI-made dashboards. See docs/06_monitoring.md
 
   initChownData:
     enabled: false # the data dir is an emptyDir, and the pod already sets fsGroup 472
@@ -18,11 +14,8 @@ grafana:
   adminUser: admin
   adminPassword: offgrid
 
-  # The Google SSO policy on the edge is the only gate. Grafana serves every request as an anonymous Admin.
-  # Dotted keys below are grafana.ini section names.
   grafana.ini:
     # At info, a "Plugin Request Completed" line per datasource poll fills the log.
-    # The Envoy gateway still logs every inbound request at info.
     log:
       level: warn
     # Stops usage reports and update checks. log.level above only hides their log lines.
@@ -57,7 +50,6 @@ grafana:
         key: token
         optional: true   # Grafana starts before the token exists. ntfy publishing fails until then.
 
-  # The plugin is signed, so it needs no allow-unsigned setting.
   # grafana-cli pins the version only in the space-separated form.
   plugins:
     - victoriametrics-logs-datasource 0.29.0
@@ -94,7 +86,6 @@ grafana:
     datasources:
       enabled: false # provisioned directly above instead
 
-    # Loads files/alerts/*.yaml, which templates/alerts-configmaps.yaml ships as ConfigMaps.
     # With no searchNamespace, the sidecar watches this release's namespace only.
     alerts:
       enabled: true

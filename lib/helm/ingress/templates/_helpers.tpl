@@ -5,22 +5,19 @@
 {{/* Staging is the default, so a new ingress cannot use up the prod rate limits before someone checks it. */}}
 {{- define "ingress.defaultIssuer" -}}letsencrypt-staging{{- end -}}
 
-{{/* Full host: the subdomain joined to the ingress domain. "@" means the apex. */}}
+{{/* "@" is the apex. */}}
 {{- define "ingress.host" -}}
 {{- if eq .host.subdomain "@" -}}{{ .ingress.domain }}{{- else -}}{{ printf "%s.%s" .host.subdomain .ingress.domain }}{{- end -}}
 {{- end -}}
 
-{{/* Per-host resource name: the full host with dots turned into dashes. It is unique in the gateway namespace. */}}
 {{- define "ingress.hostName" -}}
 {{- include "ingress.host" . | replace "." "-" -}}
 {{- end -}}
 
-{{/* Non-empty when the ingress's domain is served by a shared Cloudflare wildcard cert. */}}
 {{- define "ingress.isCloudflare" -}}
 {{- if has .ingress.domain (.cloudflareZones | default (list)) -}}true{{- end -}}
 {{- end -}}
 
-{{/* The ingress's TLS Secret: the shared wildcard for a Cloudflare domain, else its own. */}}
 {{- define "ingress.tlsSecret" -}}
 {{- if include "ingress.isCloudflare" . -}}
 {{- printf "wildcard-%s-tls" (.ingress.domain | replace "." "-") -}}

@@ -2,7 +2,6 @@
 # Lists PVs that nothing will bind again, and deletes the ones you pick together with their Longhorn volume.
 # On a Retain class, deleting only the PV leaves the Longhorn volume and its data in place.
 # Its recurring backups then fail, and longhorn-backup-stale fires days later for a PVC that no longer exists.
-# The S3 backup is the last copy, so this never deletes it. backupvolume-orphaned alerts on it after 30 days.
 set -uo pipefail
 
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"

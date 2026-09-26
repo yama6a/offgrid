@@ -5,16 +5,15 @@ metadata:
   namespace: {{ .Release.Namespace }}
   {{- if .Values.deletionProtection }}
   annotations:
-    # Argo CD never prunes or deletes this. See `deletionProtection` in values.yaml for how to remove it.
     argocd.argoproj.io/sync-options: Prune=false,Delete=false
   {{- end }}
   labels:
     app.kubernetes.io/name: ntfy
 spec:
   replicas: 1
-  revisionHistoryLimit: 0  # recovery is a git revert, never a rollback, so old ReplicaSets have no use
+  revisionHistoryLimit: 0
   strategy:
-    type: Recreate            # RWO PVC. The old pod must release the volume before the new one mounts it.
+    type: Recreate            # the RWO volume must be released first
   selector:
     matchLabels:
       app.kubernetes.io/name: ntfy
@@ -24,10 +23,9 @@ spec:
         app.kubernetes.io/name: ntfy
         longhorn-replica-affinity/enabled: "true"
       annotations:
-        # Roll the pod whenever server.yml changes.
         checksum/config: {{ include (print $.Template.BasePath "/configmap.yaml") . | sha256sum | quote }}
     spec:
-      automountServiceAccountToken: false      # never talks to the k8s API
+      automountServiceAccountToken: false
       securityContext:
         runAsNonRoot: true
         runAsUser: 2121
@@ -37,7 +35,7 @@ spec:
       containers:
         - name: ntfy
           image: {{ .Values.image | quote }}
-          args: ["serve"]                      # the entrypoint is `ntfy`, which reads /etc/ntfy/server.yml by default
+          args: ["serve"]
           securityContext:
             allowPrivilegeEscalation: false
             capabilities: { drop: ["ALL"] }

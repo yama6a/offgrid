@@ -1,7 +1,4 @@
-{{/*
-One Google OIDC SecurityPolicy per domain. It attaches to the callback route and every gated app route of that
-domain, so one OAuth flow on the callback host sets one cookie for all of them.
-*/}}
+{{/* One policy per domain on the callback and every gated route, so one login sets one cookie for all. */}}
 {{- $oidc := .Values.oidc -}}
 {{- range $d := fromYamlArray (include "google-sso.domains" $) }}
 {{- $slug := $d.domain | replace "." "-" }}
@@ -27,8 +24,7 @@ spec:
   oidc:
     provider:
       issuer: "https://accounts.google.com"
-      # Google issues a refresh token only with access_type=offline and prompt=consent. Envoy keeps this query.
-      # Without a refresh token, the session ends when Google's 1h id token expires.
+      # Google issues a refresh token only with these two, so without them sessions end after 1h.
       authorizationEndpoint: "https://accounts.google.com/o/oauth2/v2/auth?access_type=offline&prompt=consent"
     clientID: {{ $oidc.clientID | quote }}
     clientSecret:
@@ -66,9 +62,7 @@ spec:
           cookies:
             - {{ $oidc.idTokenCookie | quote }}
         {{- with $d.claimToHeaders }}
-        # Passes the verified identity to the backend as a request header, so the app needs no login of its own.
-        # Envoy overwrites any value the client sent. Every host on this domain gets the header.
-        # A backend that trusts it must be reachable only through the edge. Otherwise any caller can forge it.
+        # Envoy overwrites any client value. A backend that trusts it must be reachable only through the edge.
         claimToHeaders:
           {{- toYaml . | nindent 10 }}
         {{- end }}
@@ -83,7 +77,6 @@ spec:
       - name: allow-{{ $fqdn | replace "." "-" }}
         action: Allow
         principal:
-          # Both must match: the request host and an email on that host's allowlist.
           headers:
             - name: ":authority"
               values:

@@ -8,6 +8,6 @@ app:
     limits:   { memory: 32Mi }
 
 rabbitmq-topology:
-  user: sample-audit-logger        # same as app.name. The pod reads <user>-user-credentials.
+  user: sample-audit-logger        # same as app.name
   subscribeEvents:
-    - { exchange: user-audit-logger }   # a fanout ignores routingKey. Its queue is sample-audit-logger.user-audit-logger.
+    - { exchange: user-audit-logger }   # a fanout ignores routingKey

@@ -17,16 +17,12 @@ spec:
       cnpg.io/podRole: instance
   podMetricsEndpoints:
     - port: metrics
-      # The exporter's own `cluster` label holds the CNPG cluster name. vmagent adds a global
-      # cluster=<k8s cluster> external label and, without honorLabels, renames the exporter's label to
-      # exported_cluster. The CNPG dashboard finds its instances by `cluster`, so it would show "No data".
-      # A metricRelabelings rule cannot fix this, because vmagent adds its external labels after those rules
-      # run. `cluster` is the only label these pods export that collides with a target label.
+      # Keeps the exporter's `cluster` label, the CNPG cluster name, over vmagent's external one. The CNPG
+      # dashboard needs it. Relabeling cannot fix it, because external labels are added after relabeling.
       honorLabels: true
       metricRelabelings:
-        # Keep only the cnpg_pg_settings_setting series that something reads. max_connections drives the
-        # connection saturation alert. The others fill one tile each in the CNPG dashboard's Configuration row.
-        # RE2 has no negative lookahead, so the first rule marks the kept series and the second drops the rest.
+        # Keeps only the cnpg_pg_settings_setting series an alert or the dashboard reads. RE2 has no negative
+        # lookahead, so the first rule marks the kept series and the second drops the rest.
         - sourceLabels: [__name__, name]
           regex: "cnpg_pg_settings_setting;(max_connections|shared_buffers|effective_cache_size|work_mem|maintenance_work_mem|random_page_cost|seq_page_cost|block_size)"
           targetLabel: __tmp_keep_pgsetting

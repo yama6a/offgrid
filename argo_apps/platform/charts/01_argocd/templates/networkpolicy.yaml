@@ -16,7 +16,6 @@ spec:
       toPorts:
         - ports:
             - { port: "8080", protocol: TCP }
-    # vmagent scrapes the server, repo-server, controller and applicationset.
     - fromEndpoints:
         - matchLabels:
             k8s:io.kubernetes.pod.namespace: monitoring
@@ -33,7 +32,6 @@ spec:
       toPorts:
         - ports:
             - { port: "8080", protocol: TCP }
-    # Traffic between Argo CD components, such as repo-server on 8081 and redis on 6379.
     - fromEndpoints:
         - {}
     # Watch replies from the apiserver arrive on ephemeral ports. Conntrack allows them until its entry expires.
@@ -48,13 +46,11 @@ spec:
         - ports:
             - { port: "53", protocol: UDP }
             - { port: "53", protocol: TCP }
-    # application-controller reconciles the cluster as cluster-admin.
     - toEntities: [kube-apiserver]
     # repo-server and applicationset clone from GitHub.
     - toEntities: [world]
       toPorts:
         - ports:
             - { port: "443", protocol: TCP }
-    # Traffic between Argo CD components.
     - toEndpoints:
         - {}

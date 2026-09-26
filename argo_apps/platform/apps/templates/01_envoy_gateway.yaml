@@ -1,5 +1,3 @@
-# Envoy Gateway: the controller, the Gateway API and Envoy Gateway CRDs, the `eg` GatewayClass, and the EnvoyProxy
-# that pins the LoadBalancer IP.
 apiVersion: argoproj.io/v1alpha1
 kind: Application
 metadata:

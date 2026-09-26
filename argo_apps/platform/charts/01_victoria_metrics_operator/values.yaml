@@ -1,21 +1,17 @@
 victoria-metrics-operator:
-  # The CRDs come from 00_victoria_metrics_operator_crds. The chart needs `plain: false` for `enabled: false`
-  # to take effect.
+  # 00_victoria_metrics_operator_crds installs the CRDs. `enabled: false` works only with `plain: false`.
   crds:
     enabled: false
     plain: false
 
   operator:
-    disable_prometheus_converter: false # keep converting ServiceMonitor to VMServiceScrape and the other kinds
-    # Sets IgnoreExtraneous and Prune=false on each converted object. Argo CD then never flags or prunes these
-    # objects that are not in git, and the monitoring apps stay Synced.
+    disable_prometheus_converter: false # converts ServiceMonitors and PodMonitors to VM kinds
+    # Keeps the converted objects, which are not in git, from showing OutOfSync or being pruned.
     prometheus_converter_add_argocd_ignore_annotations: true
     enable_converter_ownership: true # deleting a ServiceMonitor then deletes its VMServiceScrape
 
-  # This operator is wave 1 and cert-manager is wave 2, so no issued webhook cert exists yet. The fallback
-  # creates the cert with Helm genCA at render time. Argo CD renders on every sync, so the cert and caBundle
-  # drift apart, and CR creation fails with "x509: certificate signed by unknown authority".
-  # The webhook only checks syntax. Reconcile still catches a bad CR.
+  # cert-manager arrives only in wave 2, and the fallback cert changes on every render, so CR creation fails
+  # with x509 errors. The webhook only checks syntax, and reconcile still catches a bad CR.
   admissionWebhooks:
     enabled: false
 
@@ -23,8 +19,7 @@ victoria-metrics-operator:
     requests: {cpu: 73m, memory: 103Mi}
     limits: {memory: 176Mi}
 
-  # The Go runtime ignores the cgroup limit and collects garbage only on heap growth. A spike during a large
-  # conversion can then OOM-kill the operator. Keep this below the limit above.
+  # Go ignores the cgroup limit, so a conversion spike can OOM-kill the operator. Keep this below the limit.
   env:
     - name: GOMEMLIMIT
       value: "110MiB"
@@ -35,8 +30,6 @@ victoria-metrics-operator:
     enabled: true
     vm: true
 
-  # Soft spread by hostname. The Pi nodes have no zone label, and a soft rule never leaves a pod Pending on 3
-  # nodes.
   affinity:
     podAntiAffinity:
       preferredDuringSchedulingIgnoredDuringExecution:
@@ -45,5 +38,5 @@ victoria-metrics-operator:
             labelSelector:
               matchLabels:
                 app.kubernetes.io/name: victoria-metrics-operator
-            matchLabelKeys: [pod-template-hash] # match one revision only, so a rollout's old pod never repels the new one
+            matchLabelKeys: [pod-template-hash] # so a rollout's old pod does not repel the new one
             topologyKey: kubernetes.io/hostname

@@ -1,5 +1,3 @@
-# Central Google SSO: one SecurityPolicy per domain with an allowlist per host, the callback edges, and the
-# sealed OAuth secret.
 apiVersion: argoproj.io/v1alpha1
 kind: Application
 metadata:

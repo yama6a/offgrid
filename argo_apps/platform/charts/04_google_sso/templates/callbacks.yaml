@@ -1,5 +1,4 @@
-# Backend for every domain's google-sso.<domain> callback host. Envoy handles /oauth2/callback itself,
-# so this whoami answers only other paths, and only to users who passed the SSO gate.
+# Envoy answers /oauth2/callback itself. This whoami answers other paths on the callback host.
 apiVersion: apps/v1
 kind: Deployment
 metadata:
@@ -9,7 +8,7 @@ metadata:
     app: gateway-sso-callback
 spec:
   replicas: 1
-  revisionHistoryLimit: 0  # recovery is a git revert, never a rollback, so old ReplicaSets have no use
+  revisionHistoryLimit: 0
   selector:
     matchLabels:
       app: gateway-sso-callback
@@ -18,7 +17,6 @@ spec:
       labels:
         app: gateway-sso-callback
     spec:
-      # PodSecurity `restricted` level. Every first-party pod in the repo uses this block.
       securityContext:
         runAsNonRoot: true
         runAsUser: 65532          # the whoami image sets no USER, so runAsNonRoot needs a numeric uid

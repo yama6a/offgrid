@@ -27,7 +27,6 @@ spec:
           rules:
             dns:
               - matchPattern: "*"
-    # VMSingle metrics export.
     - toEndpoints:
         - matchLabels:
             k8s:io.kubernetes.pod.namespace: monitoring
@@ -36,7 +35,6 @@ spec:
       toPorts:
         - ports:
             - { port: "8428", protocol: TCP }
-    # VLSingle logs export.
     - toEndpoints:
         - matchLabels:
             k8s:io.kubernetes.pod.namespace: monitoring

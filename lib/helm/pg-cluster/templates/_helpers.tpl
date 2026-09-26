@@ -2,9 +2,6 @@
 {{- .Values.name -}}
 {{- end -}}
 
-{{/*
-Maps postgresVersion, a major such as "18", to its pinned image tag@digest in files/postgres-images.yaml.
-*/}}
 {{- define "pg-cluster.image" -}}
 {{- $images := .Files.Get "files/postgres-images.yaml" | fromYaml -}}
 {{- $v := .Values.postgresVersion | toString -}}
@@ -16,10 +13,8 @@ Maps postgresVersion, a major such as "18", to its pinned image tag@digest in fi
 {{- end -}}
 
 {{/*
-The barman archive prefix under the ObjectStore's destinationPath. It carries the major, because pg_upgrade
-resets the timeline to 1 and creates a new system ID. With one prefix per major, new WAL cannot overwrite old
-segments of the same name. Such an overwrite would make every base backup from before the upgrade
-unrestorable. A version change starts a new catalog, and restore.serverName can still read the old one.
+Carries the major, because pg_upgrade resets the timeline and new WAL would overwrite old segments of the same
+name. That would make every earlier base backup unrestorable.
 */}}
 {{- define "pg-cluster.serverName" -}}
 {{- printf "%s-pg%s" (include "pg-cluster.name" .) (.Values.postgresVersion | toString) -}}
@@ -36,17 +31,11 @@ alert-criticality: {{ if .Values.alertCritical }}critical{{ else }}warning{{ end
 {{- include "pg-cluster.name" . }}-backup-s3
 {{- end -}}
 
-{{/*
-true when backupsEnabled is true and files/backup.yaml has a bucket.
-*/}}
 {{- define "pg-cluster.backupsEnabled" -}}
 {{- $b := .Files.Get "files/backup.yaml" | fromYaml -}}
 {{- if and .Values.backupsEnabled $b.bucket -}}true{{- else -}}false{{- end -}}
 {{- end -}}
 
-{{/*
-These annotations stop Argo CD from pruning or deleting the resources.
-*/}}
 {{- define "pg-cluster.protectAnnotations" -}}
 {{- if .Values.deletionProtection -}}
 argocd.argoproj.io/sync-options: Prune=false,Delete=false

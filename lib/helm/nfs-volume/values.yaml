@@ -1,27 +1,19 @@
-# Storage that already exists on an NFS server. Each entry points at one export. This chart does not
-# provision, resize or back up the export, and deleting the PV leaves every byte on the server.
-# The kubelet mounts the export in the host network namespace and bind-mounts it into the pod. The traffic is
-# not the pod's, so no CiliumNetworkPolicy applies to it and a consumer needs no egress rule.
+# Existing NFS exports. The chart never provisions, resizes or backs them up.
+# The kubelet mounts the export from the host network, so a consumer needs no egress rule.
 #
 # One entry per export. Example:
 #   - name: media-library            # required. The PVC name, which a pod's claimName uses. Unique per namespace
 #     server: 192.168.10.220         # required. The NFS server, as an IP or a resolvable name
 #     path: /mnt/pool/media          # required. The export path on that server
-#     capacity: 50Ti                 # required, for bookkeeping only. NFS reports no size and nothing enforces it.
-#                                    # The API needs a number, and the PVC request must match it to bind.
+#     capacity: 50Ti                 # required. Nothing enforces it, but the PVC request must match it
 #     accessModes: [ReadWriteMany]   # optional. Default ReadWriteMany, the usual reason for a shared export
-#     reclaimPolicy: Retain          # optional. Retain (default) or Delete. Delete removes only the PV and
-#                                    # nothing on the server, so it frees no space
+#     reclaimPolicy: Retain          # optional. Retain (default) or Delete. Neither frees space on the server
 #     readOnly: true                 # optional. Default false. Read-only at the PV, so no consumer can write
 #     mountOptions: [nfsvers=4.1, hard, noatime]   # optional. This is the default. See below
+# The pod uid reaches the server unchanged. The export must be writable by that uid, or squash it to one that is.
+# Set no fsGroup on pods that mount these volumes, or use fsGroupChangePolicy: OnRootMismatch with the export
+# root already owned right. Otherwise the kubelet chowns the whole export and a large one never finishes.
 volumes: []
 
-# The mountOptions default trades one risk for another:
-#   `hard`     retries forever. A pod doing IO when the server goes away blocks until it returns, then goes on
-#              with nothing lost. The pod blocks in uninterruptible sleep, so SIGKILL has no effect and the
-#              kubelet can fail to remove the pod until the server is back.
-#   `softerr,timeo=600,retrans=5`  returns EIO after a few minutes. Pods stay killable and the node never
-#              hangs, but a write in flight at that moment can be torn. Longhorn uses these options for its
-#              own RWX volumes.
-# `hard` is the default because silent corruption is worse than a stuck pod. A consumer that prefers the error
-# sets the second option set.
+# `hard` is the default, because a stuck pod beats a torn write. While the server is gone, a pod doing IO
+# blocks and cannot be killed. `softerr,timeo=600,retrans=5` returns EIO after minutes instead.

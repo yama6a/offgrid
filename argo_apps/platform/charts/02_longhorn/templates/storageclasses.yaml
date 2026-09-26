@@ -1,6 +1,5 @@
-# Every class keeps 2 replicas, so a volume survives the loss of one node.
-# A volume's size is only a ceiling. It uses disk only for what is written. The weekly trim job in
-# templates/recurringjobs.yaml returns freed blocks to the SSD.
+# The full size still counts against Longhorn's per-node scheduling budget and the 90%-full alert, so set a
+# real ceiling, not a generous one.
 # `parameters` cannot change once a class exists. To add a key, delete the class by hand first.
 # A class with no `recurringJobSelector` gets the `trim` job through Longhorn's `default` group.
 

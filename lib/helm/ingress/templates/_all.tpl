@@ -1,6 +1,4 @@
-{{/* ingress.renderIngress: renders one ingress. Per host a Gateway, an HTTPRoute, and a ReferenceGrant when
-     the backend is in another namespace. Per ingress one SAN Certificate. google-sso applies SSO once per
-     domain, so this renders none. Argument: a dict with ingress, release and cloudflareZones. */}}
+{{/* Argument: a dict with ingress, release and cloudflareZones. SSO comes from google-sso, once per domain. */}}
 {{- define "ingress.renderIngress" -}}
 {{- $ing := .ingress -}}
 {{- $release := .release -}}
@@ -28,7 +26,6 @@
 {{- end }}
 {{- end -}}
 
-{{/* ingress.render: the entry point templates/edge.yaml calls. */}}
 {{- define "ingress.render" -}}
 {{- $zones := .Values.cloudflareZones | default (list) -}}
 {{- range $ing := .Values.ingresses }}

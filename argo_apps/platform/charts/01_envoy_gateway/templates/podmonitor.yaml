@@ -1,7 +1,4 @@
-{{- /*
-Scrapes the Prometheus stats of the Envoy proxy pods. Envoy serves them by default. The ingress-http alerts
-group the envoy_cluster_* series by envoy_cluster_name, one per route.
-*/ -}}
+{{- /* The ingress-http alerts group these stats by envoy_cluster_name, one per route. */ -}}
 {{- if .Values.envoyProxy.podMonitor.enabled }}
 apiVersion: monitoring.coreos.com/v1
 kind: PodMonitor

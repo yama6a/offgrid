@@ -1,7 +1,4 @@
-{{/*
-Per domain, render the callback host google-sso.<domain> with the ingress chart, in front of the shared whoami.
-The SecurityPolicy attaches to this route and to the domain's app routes, so one login flow completes here.
-*/}}
+{{/* The google-sso.<domain> callback host per domain, in front of the shared whoami. */}}
 {{- $zones := (.Values.ingress | default (dict)).cloudflareZones | default (list) -}}
 {{- range $d := fromYamlArray (include "google-sso.domains" $) }}
 {{- $ing := dict

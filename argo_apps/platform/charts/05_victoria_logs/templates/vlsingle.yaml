@@ -1,5 +1,3 @@
-# The VictoriaLogs store. The VM operator creates a Deployment, a `vlsingle-<name>` Service on :9428 and a
-# VMServiceScrape for it.
 apiVersion: operator.victoriametrics.com/v1
 kind: VLSingle
 metadata:
@@ -7,12 +5,10 @@ metadata:
   namespace: {{ .Values.vlsingle.namespace }}
   {{- if .Values.deletionProtection }}
   annotations:
-    # Argo CD never prunes or deletes this. See `deletionProtection` in values.yaml for how to remove it.
     argocd.argoproj.io/sync-options: Prune=false,Delete=false
   {{- end }}
 spec:
-  # Opts out of 02_reloader, which reloads every workload by default. A restart of this store stops log intake
-  # and forces a detach and reattach of its RWO volume.
+  # Opts out of 02_reloader. A restart stops log intake and reattaches the RWO volume.
   podMetadata:
     labels:
       longhorn-replica-affinity/enabled: "true"

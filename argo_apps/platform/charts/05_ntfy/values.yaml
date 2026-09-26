@@ -1,8 +1,7 @@
 image: "binwiederhier/ntfy:v2.28.0@sha256:6ef4b819f722fccdc036af611c4774cfdc2de821ab74fdd48bbf4c9d6f8973da"
 baseUrl: "https://ntfy.ops.example.com" # must match the ntfy host in 06_platform_ingress
 
-# Stops Argo CD from pruning or deleting ntfy's resources. ntfy is the one store with no backup. To rebuild it,
-# run `make configure-ntfy-auth` again, then commit the resealed token.
+# ntfy has no backup. To rebuild it, run `make configure-ntfy-auth` and commit the resealed token.
 deletionProtection: true # to remove ntfy, set false in one commit, then delete the app in the next
 
 storage:

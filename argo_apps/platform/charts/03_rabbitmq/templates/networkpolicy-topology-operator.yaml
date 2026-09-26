@@ -1,6 +1,3 @@
-# Default-deny both ways for the Messaging Topology Operator. It reconciles the topology CRs through the
-# broker's HTTP management API. The broker's policy selects only broker pods.
-# values.yaml turns off the subchart's NetworkPolicy. It allows all egress, and Cilium merges it with this policy.
 apiVersion: cilium.io/v2
 kind: CiliumNetworkPolicy
 metadata:
@@ -18,7 +15,6 @@ spec:
       toPorts:
         - ports:
             - { port: "9443", protocol: TCP }
-    # Kubelet /healthz and /readyz probes from the node.
     - fromEntities: [host, remote-node]
       toPorts:
         - ports:
@@ -32,10 +28,8 @@ spec:
         - ports:
             - { port: "53", protocol: UDP }
             - { port: "53", protocol: TCP }
-    # Watches the topology CRs in all namespaces and reports their status.
     - toEntities: [kube-apiserver]
-    # Declares topology over the broker's management API. The broker is in this namespace, so a plain selector
-    # matches it.
+    # The broker's management API, in this namespace.
     - toEndpoints:
         - matchLabels:
             app.kubernetes.io/name: rabbitmq

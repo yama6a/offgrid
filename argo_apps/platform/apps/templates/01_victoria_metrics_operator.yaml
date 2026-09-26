@@ -1,4 +1,3 @@
-# VictoriaMetrics operator. It reconciles the VM* and VL* CRs and converts ServiceMonitors to their VM kinds.
 apiVersion: argoproj.io/v1alpha1
 kind: Application
 metadata:

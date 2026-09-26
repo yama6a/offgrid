@@ -47,7 +47,7 @@ jobs:
     name: helm
     runs-on: ubuntu-26.04-arm
     env:
-      JOBS: 8 # parallel helm workers. The work is part network and part CPU, so more workers than cores still helps.
+      JOBS: 8 # more workers than cores, because the work is part network
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
       - uses: azure/setup-helm@9bc31f4ebc9c6b171d7bfbaa5d006ae7abdb4310 # v5.0.1
@@ -68,9 +68,8 @@ jobs:
           key: helm-deps-v1-${{ hashFiles('**/Chart.yaml', '**/Chart.lock', 'lib/helm/**') }}
       - name: add upstream helm repos
         if: steps.helm-deps.outputs.cache-hit != 'true'
-        # helm dependency build needs the classic https repos registered locally, as Argo CD's repo-server does.
-        # OCI deps need none. The list comes from every Chart.yaml, so it is never hardcoded.
-        # This runs serially first, so the parallel workers below only read the index cache and never race.
+        # helm dependency build needs the https repos registered, as Argo CD's repo-server has them.
+        # Serial and first, so the parallel workers below only read the index cache.
         run: |
           find argo_apps lib/helm -name Chart.yaml -print0 \
             | xargs -0 grep -hoE 'repository:[[:space:]]*"?https://[^" ]+' \
@@ -82,14 +81,9 @@ jobs:
                 done
               done
       - name: helm dependency build
-        # An exact cache hit means the same Chart.yaml, Chart.lock and lib/helm files already built green.
         if: steps.helm-deps.outputs.cache-hit != 'true'
-        # Does what Argo CD's repo-server does: rebuilds charts/ from the committed Chart.lock. A missing or
-        # stale lock fails here, not on sync.
-        # --skip-refresh stops helm from downloading every registered repo index again for each chart, about
-        # 30MB across 12 repos. The step above fetched them seconds ago.
-        # No lib/helm chart has dependencies of its own, so the file:// sources stay read-only while workers run.
-        # Each worker writes to its own file, so the per-chart groups below print in a stable order.
+        # Rebuilds charts/ from the committed Chart.lock as Argo CD does, so a stale lock fails here, not on sync.
+        # --skip-refresh, because the step above just fetched every repo index.
         run: |
           out="$(mktemp -d)"; export out
           grep -rl --include=Chart.yaml '^dependencies:' argo_apps lib/helm \
@@ -114,10 +108,7 @@ jobs:
           path: '**/charts/*.tgz'
           key: ${{ steps.helm-deps.outputs.cache-primary-key }}
       - name: helm lint + template + kubeconform
-        # The wrapper charts that Argo CD delivers, plus the two apps/ charts that render the Application
-        # manifests. The lib/helm/ shared charts get checked through the wrappers that depend on them.
-        # Render every chart first, then validate. One kubeconform run over all of them downloads each CRD
-        # schema once. 37 separate runs would each fetch the same schemas again.
+        # Render every chart first, then validate. One kubeconform run downloads each CRD schema only once.
         run: |
           out="$(mktemp -d)"; render="$(mktemp -d)"; export out render
           find argo_apps \( -path '*/charts/*/Chart.yaml' -o -path '*/apps/Chart.yaml' \) \

@@ -24,6 +24,7 @@ spec:
     - ^en
   # Every node is a candidate. The announcing node forwards to the pod on any node, and more candidates keep
   # the lease through more node losses. This needs externalTrafficPolicy Cluster, see docs/01_networking.md.
+  # Every node is a control-plane node, so the upstream selector `control-plane: DoesNotExist` matches none.
   nodeSelector:
     matchLabels:
       kubernetes.io/os: linux

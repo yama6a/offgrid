@@ -1,6 +1,4 @@
-# Kubernetes waits about 6 minutes before another node may take the disks of an unreachable node. Kubernetes
-# never sets the out-of-service taint itself. This watcher sets it once a node is NotReady for long enough.
-# See docs/13_node_loss.md.
+# Sets the out-of-service taint, which Kubernetes never sets itself. See docs/13_node_loss.md.
 
 image: "alpine/k8s:1.37.0" # needs kubectl and jq. Renovate reads the annotation in templates/deployment.yaml.
 

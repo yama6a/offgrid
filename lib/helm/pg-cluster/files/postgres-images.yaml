@@ -1,5 +1,4 @@
-# Renovate updates these digests. Minor and patch updates roll out to all instances on their own, with little
-# or no downtime.
+# Renovate updates the digests, so minor and patch updates roll out on their own.
 
 # 16 is the lowest major. `pg_create_subscription`, which the cluster template grants to `app`, exists from 16.
 "16": "ghcr.io/cloudnative-pg/postgresql:16-minimal-trixie@sha256:0b3082c00f138c3d859bf495bccf77785a61ca03f876a72ca6826a6d9df5f528"

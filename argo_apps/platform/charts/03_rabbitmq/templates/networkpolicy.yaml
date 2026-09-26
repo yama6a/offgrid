@@ -1,9 +1,6 @@
 {{- /*
-Default-deny both ways for the broker pods, then only what RabbitMQ needs. A label decides who may open an
-AMQP connection, so a new messaging workload needs no change here. The workload sets the label
-`messaging-client: true` and adds a matching egress rule of its own.
-Brokers may reach each other on all ports, such as 4369 for epmd and 25672 between nodes. A missed clustering
-port then cannot break quorum formation.
+A new messaging workload needs no change here. It sets `messaging-client: true` and adds its own egress rule.
+Brokers reach each other on all ports, so a missed clustering port cannot break quorum formation.
 */ -}}
 apiVersion: cilium.io/v2
 kind: CiliumNetworkPolicy
@@ -24,7 +21,6 @@ spec:
       toPorts:
         - ports:
             - { port: "5672", protocol: TCP }
-    # Broker peers, on all ports.
     - fromEndpoints:
         - matchLabels:
             app.kubernetes.io/name: {{ .Values.name }}
@@ -38,12 +34,10 @@ spec:
       toPorts:
         - ports:
             - { port: "15672", protocol: TCP }
-    # Kubelet TCP probes on the AMQP port from the node.
     - fromEntities: [host, remote-node]
       toPorts:
         - ports:
             - { port: "5672", protocol: TCP }
-    # vmagent scrapes the broker's Prometheus endpoint.
     - fromEndpoints:
         - matchLabels:
             k8s:io.kubernetes.pod.namespace: monitoring
@@ -61,7 +55,6 @@ spec:
         - ports:
             - { port: "53", protocol: UDP }
             - { port: "53", protocol: TCP }
-    # Broker peers, on all ports.
     - toEndpoints:
         - matchLabels:
             app.kubernetes.io/name: {{ .Values.name }}

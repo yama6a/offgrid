@@ -1,5 +1,4 @@
-# ntfy server.yml for a private instance: deny-all, plus per-topic ACLs. ntfy has no declarative user or token
-# config, so lib/shell/06_ntfy_auth.sh creates them.
+# ntfy has no declarative user or token config, so lib/shell/06_ntfy_auth.sh creates them.
 apiVersion: v1
 kind: ConfigMap
 metadata:
@@ -7,7 +6,6 @@ metadata:
   namespace: {{ .Release.Namespace }}
   {{- if .Values.deletionProtection }}
   annotations:
-    # Argo CD never prunes or deletes this. See `deletionProtection` in values.yaml for how to remove it.
     argocd.argoproj.io/sync-options: Prune=false,Delete=false
   {{- end }}
   labels:
@@ -15,13 +13,13 @@ metadata:
 data:
   server.yml: |
     base-url: {{ .Values.baseUrl | quote }}
-    listen-http: ":8080"                 # non-root port. The Service, network policy and edge use it too.
+    listen-http: ":8080"                 # non-root port
     metrics-listen-http: ":9091"         # separate listener, so the internet-facing :8080 does not serve /metrics
     behind-proxy: true                   # trust X-Forwarded-For from the Envoy edge, for the real client IP
-    auth-file: "/var/lib/ntfy/user.db"   # SQLite users, tokens and ACLs, on the Longhorn PVC
+    auth-file: "/var/lib/ntfy/user.db"
     auth-default-access: "deny-all"      # deny every topic unless an ACL from 06_ntfy_auth.sh grants it
-    enable-login: true                   # the phone user logs in through the Android app
-    enable-signup: false                 # 06_ntfy_auth.sh creates the users
-    cache-file: "/var/lib/ntfy/cache.db" # message cache, safe to lose
-    cache-duration: "168h"               # 1 week of phone history. Go durations have no "d" unit.
+    enable-login: true
+    enable-signup: false
+    cache-file: "/var/lib/ntfy/cache.db"
+    cache-duration: "168h"
     # Android only. upstream-base-url and firebase stay unset, because they only serve iOS push.

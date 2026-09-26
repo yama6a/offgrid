@@ -1,8 +1,5 @@
-# Only the HTTP listener on port 80. cert-manager's HTTP-01 solver routes and the HTTPS redirect attach here.
-# With no 443 listener and no cert, it is Programmed at once and no app cert affects it. Each app has its own
-# Gateway with its own 443 listener.
-# No spec.addresses. With mergeGateways, only the EnvoyProxy annotation sets the IP, and a per-Gateway address
-# would conflict on the shared Service.
+# Port 80 only, for the HTTP-01 solver routes. With no cert of its own, no app cert can block it.
+# No spec.addresses. With mergeGateways, a per-Gateway address would conflict on the shared Service.
 apiVersion: gateway.networking.k8s.io/v1
 kind: Gateway
 metadata:

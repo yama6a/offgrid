@@ -1,5 +1,3 @@
-# sample-user-signup runs the sample-app /signup binary. It publishes create-user-command and consumes
-# users.created and the audit fanout.
 apiVersion: argoproj.io/v1alpha1
 kind: Application
 metadata:

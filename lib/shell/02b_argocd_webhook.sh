@@ -37,7 +37,6 @@ check_prerequisites() {
   ok "kubeseal, kubectl, yq and openssl present. API and sealed-secrets controller reachable."
 }
 
-# The poll is the fallback for a dropped webhook.
 resolve_poll_cadence() {
   say "poll interval from .env POLL_SYNC_ENABLED=${POLL_SYNC_ENABLED}"
   case "$POLL_SYNC_ENABLED" in
@@ -126,7 +125,7 @@ ArgoCD webhook set up. Finish in two places:
    Then push a small commit. The apps refresh within seconds: kubectl -n argocd get applications -w
 
 To rotate the secret: delete ${WEBHOOK_FILE}, run this script again, commit and push, then update the secret in GitHub.
-See docs/02_gitops.md.
+See docs/runbooks/02_gitops.md.
 EOF
 }
 

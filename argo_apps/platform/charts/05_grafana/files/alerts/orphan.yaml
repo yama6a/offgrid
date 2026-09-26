@@ -162,7 +162,6 @@ groups:
               conditions:
                 - type: query
                   evaluator: {type: gt, params: [0]}
-      # Without tracking metadata, orphan state is unknown. Unknown must not read as healthy.
       - uid: redis-instance-untracked
         title: Redis instance untracked by ArgoCD
         condition: C
@@ -238,7 +237,6 @@ groups:
               conditions:
                 - type: query
                   evaluator: {type: gt, params: [0]}
-      # Without tracking metadata, orphan state is unknown. Unknown must not read as healthy.
       - uid: vm-resource-untracked
         title: VM/VL store untracked by ArgoCD
         condition: C

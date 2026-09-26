@@ -8,7 +8,7 @@ app:
     limits:   { memory: 32Mi }
 
 rabbitmq-topology:
-  user: sample-user-signup         # same as app.name. The pod reads <user>-user-credentials.
+  user: sample-user-signup         # same as app.name
   sendCommands: [create-user-command]                          # publish only. The manager owns the exchange.
   subscribeEvents:
     - { exchange: user-events, routingKey: "users.created" }   # no queue binds users.deleted

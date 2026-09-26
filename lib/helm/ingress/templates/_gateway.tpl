@@ -1,6 +1,4 @@
-{{/* ingress.gateway: one Gateway per host, with a single HTTPS listener on :443. It terminates TLS with the
-     ingress's shared cert. mergeGateways puts every Gateway on the one Envoy.
-     Argument: the per-host dict from ingress.renderIngress. */}}
+{{/* mergeGateways puts every Gateway on the one Envoy. Argument: the per-host dict. */}}
 {{- define "ingress.gateway" -}}
 {{- $name := include "ingress.hostName" . -}}
 apiVersion: gateway.networking.k8s.io/v1

@@ -18,15 +18,15 @@ metadata:
     app.kubernetes.io/component: vm-backup
 spec:
   schedule: {{ .Values.schedule | quote }}
-  concurrencyPolicy: Forbid          # never overlap runs
-  startingDeadlineSeconds: 300        # skip a run the scheduler missed by over 5m, so late runs do not pile up
+  concurrencyPolicy: Forbid
+  startingDeadlineSeconds: 300
   successfulJobsHistoryLimit: 3
   failedJobsHistoryLimit: 3
   jobTemplate:
     spec:
       backoffLimit: 1
-      activeDeadlineSeconds: 3600     # a full export and upload that runs over 1h is stuck, so fail it
-      ttlSecondsAfterFinished: 86400  # delete finished Jobs after a day
+      activeDeadlineSeconds: 3600
+      ttlSecondsAfterFinished: 86400
       template:
         metadata:
           labels:
@@ -48,8 +48,7 @@ spec:
               args:
                 - |
                   set -u
-                  # The default window is yesterday. DAY=YYYYMMDD on a one-off Job backs up that day instead,
-                  # to fill the gap from a failed run. See docs/10_backups.md.
+                  # DAY=YYYYMMDD on a one-off Job backs up that day instead of yesterday.
                   day="${DAY:-}"
                   if [ -n "$day" ]; then
                     start="$(date -u -D %Y%m%d -d "$day" +%s)"
@@ -77,15 +76,10 @@ spec:
                     fi
                   }
 
-                  # export/native honours start and end, and a whole day fits in one request. One file per UTC
-                  # day, so a rerun overwrites that day's slice.
                   stream "${VMSINGLE}/api/v1/export/native" "--data-urlencode match[]={__name__!=\"\"} --data-urlencode start=${start} --data-urlencode end=${end}" "${PREFIX}metrics/${day}.native.gz"
 
-                  # Logs go in 24 hourly objects. A whole day is about 1.4GB, and gzip on an arm64 node is slower
-                  # than vlsingle streams. The response then stays open past -search.maxQueryDuration, and
-                  # vlsingle hangs up mid-stream after it sent a 200. The `timeout=` URL argument does not raise
-                  # that limit. An hour is about 60MB and takes 1 to 2s.
-                  # Keys stay flat and sort by name, because recover_vm_from_s3.sh lists and orders them that way.
+                  # Hourly, because a whole day of logs outlasts -search.maxQueryDuration and vlsingle hangs up
+                  # mid-stream after a 200. Flat keys, because recover_vm_from_s3.sh sorts them by name.
                   h=0
                   while [ "$h" -lt 24 ]; do
                     hs=$(( start + h * 3600 ))
@@ -117,7 +111,7 @@ spec:
                 requests: { cpu: 50m, memory: 64Mi }
                 limits:   { memory: 256Mi }
               volumeMounts:
-                - { name: tmp, mountPath: /tmp }   # HOME and aws-cli scratch space
+                - { name: tmp, mountPath: /tmp }
           volumes:
             - name: tmp
               emptyDir: {}

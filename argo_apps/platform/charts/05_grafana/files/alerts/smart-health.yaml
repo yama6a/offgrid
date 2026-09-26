@@ -83,7 +83,6 @@ groups:
               conditions:
                 - type: query
                   evaluator: {type: gt, params: [0]}
-      # A drive remaps failed blocks onto spare blocks. Below its own threshold, the next bad block is data loss.
       # The query subtracts instead of comparing, so one series decides.
       - uid: smart-spare-low
         title: Disk spare blocks below threshold

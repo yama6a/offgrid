@@ -1,5 +1,3 @@
-# Default-deny both ways for the RabbitMQ Cluster Operator. The broker's policy selects only broker pods.
-# values.yaml turns off the subchart's NetworkPolicy. It allows all egress, and Cilium merges it with this policy.
 apiVersion: cilium.io/v2
 kind: CiliumNetworkPolicy
 metadata:
@@ -11,7 +9,6 @@ spec:
       app.kubernetes.io/component: rabbitmq-operator
       app.kubernetes.io/part-of: rabbitmq
   ingress:
-    # vmagent scrapes the operator.
     - fromEndpoints:
         - matchLabels:
             k8s:io.kubernetes.pod.namespace: monitoring
@@ -19,7 +16,6 @@ spec:
       toPorts:
         - ports:
             - { port: "9782", protocol: TCP }
-    # Kubelet /healthz and /readyz probes from the node.
     - fromEntities: [host, remote-node]
       toPorts:
         - ports:
@@ -33,7 +29,6 @@ spec:
         - ports:
             - { port: "53", protocol: UDP }
             - { port: "53", protocol: TCP }
-    # Reconciles the RabbitmqCluster's StatefulSet, Service, Secrets and pod status.
     - toEntities: [kube-apiserver]
     # Calls the broker management API after the cluster forms, to enable feature flags and finish setup.
     - toEndpoints:

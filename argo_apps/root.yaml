@@ -1,4 +1,4 @@
-# The top root. 02a_argocd.sh applies it once. It reads argo_apps/roots/ and manages the two child roots.
+# 02a_argocd.sh applies this once. Everything else follows from git.
 apiVersion: argoproj.io/v1alpha1
 kind: Application
 metadata:

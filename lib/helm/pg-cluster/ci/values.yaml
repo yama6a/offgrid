@@ -1,5 +1,4 @@
-# CI fixture, not a deployment. It sets every required value, because templates/validate.yaml fails the render
-# without them.
+# CI fixture with every required value set.
 name: ci-pg
 postgresVersion: "18"
 highAvailability: true

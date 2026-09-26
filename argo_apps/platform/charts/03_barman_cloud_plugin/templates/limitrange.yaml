@@ -1,7 +1,6 @@
 {{- /*
-The vendored manifest sets no resources on the barman-cloud Deployment, and it stays unchanged. With no
-request, the scheduler counts it as 100m and 200Mi. `make krr` sized these. The other cnpg-system pods set
-their own.
+The vendored manifest sets no resources on the plugin, and it stays unedited. Without a request the scheduler
+counts it as 100m and 200Mi.
 */ -}}
 apiVersion: v1
 kind: LimitRange

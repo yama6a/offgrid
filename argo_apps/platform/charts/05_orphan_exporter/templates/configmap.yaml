@@ -46,10 +46,7 @@ data:
     def esc(v):
         return v.replace("\\", "\\\\").replace('"', '\\"')
 
-    # Every emitted label must start with res_. The scrape sets namespace, pod, instance, container and job from
-    # this pod, and vmagent adds cluster. Those win and rename a clashing label to exported_*. That mislabels
-    # the alerts and merges every orphaned cluster into one by(namespace,cluster) series.
-    # The VM and VL stores share one metric pair with a res_kind label, so the alert file needs only two rules.
+    # Emitted labels start with res_. The scrape's own namespace, pod and job labels win and rename a clash.
     #   (api path, label key, orphaned metric, untracked metric, extra static labels)
     KINDS = [
         ("/apis/postgresql.cnpg.io/v1/clusters",                    "res_cluster", "orphaned_cnpg_cluster",   "cnpg_cluster_untracked",   {}),
@@ -72,10 +69,8 @@ data:
         except ValueError:
             return 0
 
-    # Backup recoverability per Barman server, read from each ObjectStore's status and not from the Cluster.
-    # With the Barman Cloud plugin, Cluster.status.firstRecoverabilityPoint stays empty even after a base backup
-    # in S3, so cnpg-backup-too-old cannot fire. This catches what WAL archive health misses: archiving works,
-    # but the catalog is empty and a restore is impossible.
+    # Read from each ObjectStore, because under the Barman plugin Cluster.status.firstRecoverabilityPoint stays
+    # empty. Catches a working WAL archive with an empty catalog, which no restore can use.
     def collect_recoverability():
         out = [
             "# HELP cnpg_backup_recoverable 1 = the object store has a recovery point for this server (restorable)",
@@ -87,10 +82,7 @@ data:
         ]
         for store in items("/apis/barmancloud.cnpg.io/v1/objectstores"):
             ns = store["metadata"]["namespace"]
-            # res_cluster is the chart's cnpg.io/cluster label, not the Barman server. The server name carries
-            # the Postgres major, such as mydb-pg18, and changes on a major upgrade. That would rename the series
-            # under the alerts and break their `kubectl get objectstore <res_cluster>-backups` hint. The server
-            # goes in res_server, which also keeps the old and new server apart during the change.
+            # Not the Barman server name, which carries the Postgres major and would rename the series on upgrade.
             cluster = (store["metadata"].get("labels") or {}).get("cnpg.io/cluster")
             window = ((store.get("status") or {}).get("serverRecoveryWindow") or {})
             if not window:
@@ -110,9 +102,8 @@ data:
                 out.append("cnpg_backup_first_recoverability_seconds{%s} %d" % (lb, rfc3339(frp)))
         return out
 
-    # Redis has no in-cluster object for backup state, so the 07_redis_backup CronJob writes one ConfigMap key
-    # per instance. `_` is a safe separator because k8s names cannot contain it. The list of instances comes
-    # from the CRs, not the ConfigMap. The job writes no entry for an instance it missed, and still exits 0.
+    # Instances come from the CRs, not the ConfigMap, because the backup job writes no key for one it missed.
+    # `_` separates namespace and name, because k8s names cannot contain it.
     def collect_redis_recoverability():
         out = [
             "# HELP redis_backup_recoverable 1 = a non-empty RDB dump was uploaded for this instance",
@@ -146,10 +137,8 @@ data:
             out.append("redis_backup_last_size_bytes{%s} %d" % (lb, size))
         return out
 
-    # A PV nothing will bind again. That is Released, because its PVC is gone and the class retains, or
-    # Available with no claimRef. An Available PV with a claimRef is a static PV from lib/helm/nfs-volume that
-    # waits for its own PVC. kube_persistentvolume_status_phase is no use here: kube-state-metrics stops
-    # exporting a PV once it is Released.
+    # Released, or Available with no claimRef. A claimRef marks a static nfs-volume PV that waits for its PVC.
+    # kube-state-metrics stops exporting a PV once it is Released, so it cannot cover this.
     def collect_abandoned_pvs():
         out = [
             "# HELP abandoned_pv PV no PVC will bind again: Released, or Available and never claimed",
@@ -171,10 +160,8 @@ data:
             ]))
         return out
 
-    # A BackupVolume whose Longhorn Volume is gone, so the S3 backup outlived its volume. Nothing prunes it.
-    # A recurring job's `retain` counts only live volumes. The bucket lifecycle expires nothing under longhorn/,
-    # and terraform/main.tf says why. The age comes from lastBackupAt, which stops a little before the deletion.
-    # Nothing records the deletion time itself.
+    # An S3 backup that outlived its volume. Nothing prunes it: `retain` counts only live volumes, and the bucket
+    # lifecycle skips longhorn/. The age is lastBackupAt, because nothing records the deletion time.
     def collect_orphaned_backupvolumes():
         out = [
             "# HELP orphaned_backupvolume_last_backup_seconds unix ts of the last backup of a volume that no longer exists",
