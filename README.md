@@ -23,12 +23,10 @@ A self-hosted Kubernetes platform for a cluster you already have. [Cilium](https
 
 ## Contents
 
-- [Overview](#overview)
 - [The stack](#the-stack)
 - [What this expects of your cluster](#what-this-expects-of-your-cluster)
 - [What this does not do](#what-this-does-not-do)
 - [Architecture](#architecture)
-- [Repository layout](#repository-layout)
 - [Getting started](#getting-started)
 - [Make it your own](#make-it-your-own)
 - [Day-2 operations](#day-2-operations)
@@ -37,21 +35,10 @@ A self-hosted Kubernetes platform for a cluster you already have. [Cilium](https
 - [Contributing](CONTRIBUTING.md)
 - [License](#license) and [Credits](#credits)
 
-## Overview
-
-- Starts from a Kubernetes cluster that already exists. Another tool builds it. See
-  [What this expects of your cluster](#what-this-expects-of-your-cluster).
-- Two imperative steps only: `01_cilium.sh` installs the CNI, then `02a_argocd.sh` installs Argo CD.
-- Everything after that is GitOps. Argo CD reconciles `argo_apps/` and delivers the platform and the workloads.
-- Config is one gitignored file, `.env`, copied from the committed `.env.example`. `make configure-values` writes
-  it into every chart value that Argo CD renders. No script holds a hardcoded value.
-- Every app is a thin Helm wrapper chart that pins its upstream version. `docs/` holds the reasons behind each
-  step.
-
 ## The stack
 
-Argo CD delivers everything after steps `01` and `02a`. Each app is a wrapper chart that pins its upstream version
-in its own `Chart.yaml`. That file is the only place that states the version.
+`01_cilium.sh` and `02a_argocd.sh` are the only imperative steps. Argo CD delivers everything after them. Each app
+is a thin wrapper chart that pins its upstream version in its own `Chart.yaml`.
 
 | Layer             | Component                      | Role                                                                                                         |
 |-------------------|--------------------------------|--------------------------------------------------------------------------------------------------------------|
@@ -129,12 +116,9 @@ None of them is required. Without them, node maintenance still works, but withou
 
 ## Architecture
 
-The shell bootstrap only gets the cluster to Argo CD. From there, git is the source of truth.
-
-The root-of-roots is the Argo CD Application that creates the other roots. It creates the platform root first,
-then the workloads root about 5s later. It does not wait for platform health, because there is deliberately no
-health gate on `argoproj.io/Application`. So the order is advisory. A workload can sync before a platform CRD it
-needs exists. That sync fails, and unbounded retry converges it later.
+The shell bootstrap only gets the cluster to Argo CD. From there, git is the source of truth. Sync-waves order
+creation only, with no health gate, and unbounded retry converges an app that started too early. See
+[02_gitops](docs/02_gitops.md).
 
 ```mermaid
 flowchart LR
@@ -158,46 +142,14 @@ flowchart LR
     end
 ```
 
-## Repository layout
-
-```
-.
-|-- Makefile            # thin dispatcher over lib/shell. Run `make help`
-|-- .env.example        # template for config and secrets. Copy it to .env
-|-- .env                # your config and secrets (gitignored)
-|-- docs/               # the numbered runbook and decision records (01 to 15)
-|-- terraform/          # the S3 backup bucket and its scoped IAM writer
-|-- lib/
-|   |-- shell/          # bootstrap shell scripts and helpers
-|   |-- krr/            # the custom KRR rightsizing strategy
-|   `-- helm/           # the 5 shared charts, used as file:// dependencies
-|-- argo_apps/          # everything Argo CD delivers (two-tree GitOps)
-|   |-- root.yaml       #   root-of-roots, applied once by 02a_argocd.sh
-|   |-- roots/          #   0_platform, then 1_workloads
-|   |-- platform/{apps,charts}/   # apps/ is a chart: Applications in templates/, repoURL in values.yaml
-|   `-- workloads/{apps,charts}/
-`-- secrets/            # gitignored: the sealed-secrets key and webhook secret of this repo (off-repo store)
-```
-
-The `NN_` prefix of an app matches its sync-wave. The wave is the order in which Argo CD creates the apps, about 5s
-apart. There is no health gate. A later app that starts before a dependency exists retries until it syncs. See
-[02_gitops](docs/02_gitops.md).
-
 ## Getting started
 
 Prerequisite: a running Kubernetes cluster that meets
 [What this expects of your cluster](#what-this-expects-of-your-cluster), and a kubectl context for it.
 
-- Any tooling can build the cluster. This repo never talks to that tooling. Only the context in your
-  `~/.kube/config` crosses over.
-- Nothing else is shared on disk. The sealed-secrets key that this repo creates stays in its own off-repo
-  `secrets/` store.
-- `KUBE_CONTEXT` in `.env` pins the cluster this repo may touch. It is not your currently selected context.
-- The pin exists because your `~/.kube/config` can hold work clusters too, and nothing here is read-only. So you
-  state the target once. The scripts never inherit it from the last `kubectl config use-context`.
-- Leave `KUBE_CONTEXT` empty and the first run lists your contexts, asks you to pick one, and writes it to `.env`.
-- Every script then writes a kubeconfig with only that context to gitignored `.cache/kubeconfig`. No other
-  cluster is reachable while the script runs.
+`KUBE_CONTEXT` in `.env` pins the cluster this repo may touch, never your currently selected context. Your
+`~/.kube/config` can hold work clusters too, and nothing here is read-only. Leave it empty, and the first run asks
+you to pick a context and saves it.
 
 The scripts were only tested on macOS, so Linux or WSL can need changes. They expect bash or zsh, GNU `make`, and
 a POSIX-like environment. Install `git`, `kubectl`, `helm`, `yq` and `kubeseal` on your machine.
@@ -217,9 +169,8 @@ kubectl get applications -n argocd  # watch Argo CD deliver the platform, then t
 make view-credentials               # login URLs and credentials
 ```
 
-Instead of `make bootstrap-cluster`, you can run the steps one by one in runbook order. Every target maps to a
-script in `lib/shell/`. `make help` lists them all. [The docs](#documentation) hold the reasons and the
-verification for each phase.
+Instead of `make bootstrap-cluster`, you can run the steps one by one. `make help` lists every target in step
+order.
 
 ## Make it your own
 
@@ -231,36 +182,10 @@ make configure-values                # writes it into every chart value that Arg
 git add -A && git commit && git push # Argo CD reconciles the remote, never your working tree
 ```
 
-`make configure-values` handles all per-deployment config. It writes:
+`make configure-values` is idempotent. Run it again after any change to `.env`.
 
-- your repo URL into all five places that carry it
-- your `BASE_DOMAIN` into every public hostname
-- the SSO allowlist, the ingress IP, the ACME email and the Cloudflare zones
-
-It is idempotent. After any change to `.env`, run it again to apply the config. A fork only edits `.env`, so a
-rebase on upstream causes no conflicts.
-
-What to put in `.env`:
-
-- **Git remote:** `REPO_URL` is your fork. No other file holds a hand-written repo URL.
-- **Domains:** `BASE_DOMAIN` is a registrable domain you own. Platform UIs get `*.ops.<base>` and workloads get
-  `*.app.<base>`. Both tiers must stay under the base domain, because one SSO cookie covers them all. A workload
-  on its own domain goes in `extraDomains` of `04_google_sso` (see `docs/04_ingress.md`).
-- **Ingress IP:** `INGRESS_LB_IP` is the one IP that every host resolves to. It must be between `LB_RANGE_START`
-  and `LB_RANGE_STOP`.
-- **TLS and login:** `LE_EMAIL`, `SSO_ALLOWLIST`, and your Google OAuth app (`GOOGLE_SSO_CLIENT_ID` and
-  `GOOGLE_SSO_CLIENT_SECRET`). The list of gated hosts is policy, so it lives in
-  `argo_apps/platform/charts/04_google_sso`.
-- **Registry:** `GHCR_USER`, and the GHCR tokens if you use private images.
-- **Alerting:** alerts reach your phone through self-hosted ntfy. There is no email. Set
-  `NTFY_PHONE_PASSWORD_SECRET`. After the platform is up, run `make configure-ntfy-auth`. See
-  `docs/06_monitoring.md`.
-- **Backups:** off-cluster S3 needs the `AWS_DEPLOY_*` credentials and `S3_BACKUP_BUCKET`. See
-  `docs/10_backups.md`.
-- **Secrets:** every secret is optional. An empty secret disables the feature that it enables.
-
-Node topology, machine addresses and the Kubernetes version are not in `.env`. The tooling that built the cluster
-owns them.
+`.env.example` explains every key. Every secret is optional: an empty one turns off the feature it enables. The
+list of SSO-gated hosts is policy, not config, so it lives in `argo_apps/platform/charts/04_google_sso`.
 
 ## Day-2 operations
 
@@ -275,9 +200,8 @@ owns them.
 | Redeliver the whole platform| `make rebuild-cluster`                                                 |
 | Credentials and login URLs  | `make view-credentials`                                                |
 
-The tooling that built the nodes owns all node work: OS or Kubernetes upgrades, adding or recovering a node,
-resetting the cluster. [What this does not do](#what-this-does-not-do) lists the targets where that tooling and
-this repo meet.
+The tooling that built the nodes owns all node work. [What this does not do](#what-this-does-not-do) lists the
+targets where that tooling and this repo meet.
 
 ## Troubleshooting
 
@@ -295,7 +219,8 @@ this repo meet.
 
 ## Documentation
 
-Each doc gives the reasons behind a step, with commands to verify it:
+Each doc records the decisions behind one area. Procedures live in `docs/runbooks/`, under the same `NN` as the
+decision doc.
 
 | Doc                                                | Covers                                                                          |
 |----------------------------------------------------|---------------------------------------------------------------------------------|
@@ -315,8 +240,7 @@ Each doc gives the reasons behind a step, with commands to verify it:
 | [14_igpu](docs/14_igpu.md)                         | The Intel iGPU: what the driver needs, how a pod claims it, and why no NFD.     |
 | [15_replica_affinity](docs/15_replica_affinity.md) | Scheduling pods onto the node that already holds their Longhorn replica.        |
 
-[CONTRIBUTING.md](CONTRIBUTING.md) holds the conventions for the whole repo: layout, where a value lives, and the
-rules for charts and Argo CD.
+[CONTRIBUTING.md](CONTRIBUTING.md) holds the repository layout and the conventions for the whole repo.
 
 ## Credits
 
