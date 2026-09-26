@@ -1,3 +1,18 @@
-# Empty on purpose: upstream already enables every CRD and we want all of them. This is where you would
-# disable one, e.g. `crds: { enabled: { Probe: false } }`.
-prometheus-operator-crds: {}
+# Only the two kinds charts here actually create. Every CRD costs kube-apiserver memory for its schemas and
+# validators, and these ten were a quarter of all CRD schema bytes. VictoriaMetrics owns alerting, recording
+# rules and probes, so nothing creates the rest.
+# Turning one back on: its CRD appears on sync, then restart victoria-metrics-operator, which decides at
+# startup which Prometheus kinds to convert. Turning one off: the ArgoCD app does not prune, so delete the
+# CRD by hand (`kubectl delete crd <plural>.monitoring.coreos.com`), which deletes every object of that kind.
+prometheus-operator-crds:
+  crds:
+    servicemonitors: {enabled: true}
+    podmonitors: {enabled: true}
+    alertmanagerconfigs: {enabled: false}
+    alertmanagers: {enabled: false}
+    probes: {enabled: false}
+    prometheusagents: {enabled: false}
+    prometheuses: {enabled: false}
+    prometheusrules: {enabled: false}
+    scrapeconfigs: {enabled: false}
+    thanosrulers: {enabled: false}
