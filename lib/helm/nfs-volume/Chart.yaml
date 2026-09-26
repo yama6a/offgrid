@@ -1,5 +1,5 @@
 apiVersion: v2
 name: nfs-volume
-description: Shared chart that renders a static PersistentVolume + its bound PVC per entry in volumes[], for NFS exports that already exist off-cluster. Provisions nothing, resizes nothing, backs up nothing.
+description: Shared chart that renders a static PersistentVolume and its bound PVC for each entry in the volumes list. It is for NFS exports that already exist off-cluster. It does not provision, resize or back up anything.
 type: application
-version: 0.1.0 # local chart, never bump version
+version: 0.1.0 # nothing publishes this chart, so never bump it

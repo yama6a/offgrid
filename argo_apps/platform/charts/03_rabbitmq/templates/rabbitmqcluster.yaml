@@ -1,16 +1,9 @@
 {{- /*
-The single shared broker. The operators reconcile it into a 3-node StatefulSet, its Services, and the
-operator-generated admin and erlang-cookie Secrets, none of which are committed to git.
-
-`topology-allowed-namespaces: "*"` lets workloads in ANY namespace point their topology CRs at this broker, so
-the generated <user>-user-credentials Secret lands in the workload's OWN namespace where its pod can mount it.
-Without it, only same-namespace topology is allowed.
-
-SkipDryRunOnMissingResource: the CRD ships with this app's own operator subchart, so on a cold boot it may not
-be registered when ArgoCD dry-runs this CR. ArgoCD applies CRDs before CRs and selfHeal converges after.
+`topology-allowed-namespaces: "*"` lets each workload keep its topology CRs and credentials in its own namespace.
+SkipDryRunOnMissingResource: the same app ships the CRD, so a first install dry-runs this before it exists.
 */ -}}
 {{- $memMi := .Values.resources.limits.memory | trimSuffix "Mi" | int }}
-{{- if eq $memMi 0 }}{{ fail "resources.limits.memory must be an Mi value: total_memory_available_override_value is derived from it" }}{{ end }}
+{{- if eq $memMi 0 }}{{ fail "resources.limits.memory must be an Mi value, because total_memory_available_override_value is derived from it" }}{{ end }}
 apiVersion: rabbitmq.com/v1beta1
 kind: RabbitmqCluster
 metadata:
@@ -27,8 +20,7 @@ spec:
   persistence:
     storageClassName: {{ .Values.storage.className | quote }}
     storage: {{ .Values.storage.size | quote }}
-  # One broker per node, so a node loss drops exactly one quorum member however many nodes there are.
-  # Bare nodes have no zone label, so spread by hostname.
+  # One broker per node, so a node loss removes exactly one quorum member.
   affinity:
     podAntiAffinity:
       requiredDuringSchedulingIgnoredDuringExecution:
@@ -36,7 +28,7 @@ spec:
             matchLabels:
               app.kubernetes.io/name: {{ .Values.name }}
           topologyKey: kubernetes.io/hostname
-  # The only way to reach the generated StatefulSet's pod template.
+  # The only way to set fields on the generated StatefulSet's pod template.
   override:
     statefulSet:
       spec:
@@ -45,9 +37,8 @@ spec:
             labels:
               longhorn-replica-affinity/enabled: "true"
             annotations:
-              # Opt out of Reloader (02_reloader runs with auto-reload-all). Rolling 3 brokers costs a quorum
-              # leader election each plus ~2min catch-up per broker, and the operator already rolls them itself
-              # when the config below changes, so Reloader would only add a second uncoordinated trigger.
+              # Opts out of Reloader. Each broker restart costs a leader election and about 2 minutes of
+              # catch-up, and the operator already rolls the brokers on a config change.
               reloader.stakater.com/auto: "false"
   rabbitmq:
     additionalConfig: |

@@ -1,4 +1,3 @@
-# VictoriaMetrics operator: reconciles the VM*/VL* CRs and converts prometheus-operator ServiceMonitors to VM equivalents.
 apiVersion: argoproj.io/v1alpha1
 kind: Application
 metadata:

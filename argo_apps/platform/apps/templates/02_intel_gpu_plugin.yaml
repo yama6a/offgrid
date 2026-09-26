@@ -1,4 +1,3 @@
-# Intel GPU device plugin: turns the amd64 node's iGPU into a schedulable gpu.intel.com/i915 resource.
 apiVersion: argoproj.io/v1alpha1
 kind: Application
 metadata:
@@ -19,7 +18,7 @@ spec:
     server: https://kubernetes.default.svc
     namespace: inteldeviceplugins-system
   syncPolicy:
-    managedNamespaceMetadata: # the plugin mounts /dev/dri and the kubelet socket dir, and Pod Security forbids hostPath from `baseline` up
+    managedNamespaceMetadata: # the plugin mounts /dev/dri and the kubelet socket dir. Pod Security `baseline` forbids hostPath.
       labels:
         pod-security.kubernetes.io/enforce: privileged
         pod-security.kubernetes.io/warn: privileged

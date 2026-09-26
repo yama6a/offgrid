@@ -1,4 +1,3 @@
-# blackbox-exporter: probes every ingress host over its public name, so a broken edge is caught without traffic.
 apiVersion: argoproj.io/v1alpha1
 kind: Application
 metadata:

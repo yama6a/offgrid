@@ -1,8 +1,8 @@
 {{- /*
-Egress lockdown for the central backup pod, under the same bucket gate as the CronJob. Egress-only, the pod
-exposes nothing. Each durable instance's own policy separately allows this pod inbound on 6379.
-Redis egress is port-scoped to any endpoint rather than a label: the job only dials instances it discovered
-via the API, and this avoids depending on an operator pod label. S3 is reached by FQDN, hence the L7 DNS rule.
+Egress lockdown for the backup pod. Like the CronJob, it renders only when a bucket is set. The pod accepts no
+traffic. Each durable instance's own policy lets this pod in on 6379.
+Redis egress allows port 6379 on any endpoint, not by label. The job dials only instances it found through the
+API, and this avoids a dependency on an operator pod label.
 */ -}}
 {{- if .Values.bucket }}
 apiVersion: cilium.io/v2
@@ -30,8 +30,8 @@ spec:
           rules:
             dns:
               - matchPattern: "*"
-    # redis-cli --rdb to any instance, in any namespace. The ns-Exists expression is what makes it cluster-wide:
-    # a bare `{}` selector would match this namespace only, which holds no Redis at all.
+    # redis-cli --rdb to any instance in any namespace. The namespace Exists expression makes it cluster-wide.
+    # A bare `{}` selector matches only this namespace, which holds no Redis.
     - toEndpoints:
         - matchExpressions:
             - { key: k8s:io.kubernetes.pod.namespace, operator: Exists }

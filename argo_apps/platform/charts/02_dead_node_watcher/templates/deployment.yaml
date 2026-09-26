@@ -6,8 +6,8 @@ metadata:
   labels:
     app.kubernetes.io/name: dead-node-watcher
 spec:
-  replicas: 1 # tainting is idempotent, so a second replica would only duplicate the same patch
-  revisionHistoryLimit: 0  # recovery is a git revert, never a rollback, so kept history is dead weight
+  replicas: 1 # a second replica would only send the same taint patch again
+  revisionHistoryLimit: 0  # recovery is a git revert, never a rollback
   selector:
     matchLabels:
       app.kubernetes.io/name: dead-node-watcher
@@ -16,15 +16,13 @@ spec:
       labels:
         app.kubernetes.io/name: dead-node-watcher
       annotations:
-        # A mounted ConfigMap updates in place, so editing the loop does NOT restart the running sh. Roll it.
+        # A mounted ConfigMap updates in place and the running sh keeps the old loop. This rolls the pod.
         checksum/config: {{ include (print $.Template.BasePath "/configmap.yaml") . | sha256sum | quote }}
     spec:
       serviceAccountName: dead-node-watcher
       priorityClassName: platform-critical
-      # Kubernetes would otherwise give this pod the default 300s grace on both of these, so the one thing
-      # meant to shorten a node outage would itself sit on the dead node for 5 minutes. At 0 the taint
-      # manager evicts it the moment its node goes NotReady, and the ReplicaSet, which ignores a terminating
-      # pod, starts a replacement elsewhere at once. Cost: a pod restart on any brief node blip.
+      # The default is 300s on both, so the watcher would wait 5 minutes on the dead node. At 0 it is evicted
+      # as soon as its node is NotReady, and a replacement starts on another node. A short node blip restarts it.
       tolerations:
         - { key: node.kubernetes.io/not-ready, operator: Exists, effect: NoExecute, tolerationSeconds: 0 }
         - { key: node.kubernetes.io/unreachable, operator: Exists, effect: NoExecute, tolerationSeconds: 0 }

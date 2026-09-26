@@ -1,6 +1,5 @@
-# Disk health straight off the drive's own SMART data, from 05_smartctl_exporter. node-exporter reads none of
-# this: it reports a drive's temperature and nothing about wear, spare blocks or media errors, so without
-# these a disk dies with no warning at all. `device` is the kernel name (nvme0n1, sda) on that `instance`.
+# Disk health from the SMART data of each drive, through 05_smartctl_exporter. node-exporter reports only
+# temperature, not wear, spare blocks or media errors. `device` is the kernel name, such as nvme0n1 or sda.
 apiVersion: 1
 groups:
   - orgId: 1
@@ -8,19 +7,19 @@ groups:
     folder: offgrid
     interval: 1m
     rules:
-      # The drive's own overall verdict. It only flips once the firmware has decided the disk is failing, so
-      # it is late by design and never a false alarm.
+      # The overall verdict of the drive firmware. It flips only once the firmware decides the disk is failing.
+      # So it is late by design, and never a false alarm.
       - uid: smart-device-failing
         title: Disk SMART status failing
         condition: C
         for: 5m
         labels: {severity: critical}
         annotations:
-          summary: 'Disk {{ $labels.device }} on {{ $labels.instance }} reports SMART FAILING'
+          summary: 'Disk {{ $labels.device }} on {{ $labels.instance }} reports SMART status failing'
           description: |
-            - the drive itself says it is failing: replace it, do not wait for a reason
-            - move Longhorn replicas off this node FIRST, then drain it
-            - smartctl -a /dev/{{ $labels.device }} on {{ $labels.instance }} for the attribute that tripped
+            - the drive reports that it is failing. Replace it, and do not wait for a reason
+            - move Longhorn replicas off this node first, then drain it
+            - find the attribute that tripped: smartctl -a /dev/{{ $labels.device }} on {{ $labels.instance }}
         noDataState: OK
         execErrState: KeepLast
         data:
@@ -46,8 +45,8 @@ groups:
               conditions:
                 - type: query
                   evaluator: {type: lt, params: [1]}
-      # An NVMe controller's own alarm bitfield: spare exhausted, over temperature, degraded reliability,
-      # switched to read-only, or the volatile-memory backup failed. Any bit set is already an emergency.
+      # The NVMe controller alarm bits: spare used up, over temperature, degraded reliability, read-only mode,
+      # or a failed volatile-memory backup. Any set bit is an emergency.
       - uid: smart-nvme-critical-warning
         title: NVMe critical warning
         condition: C
@@ -56,9 +55,9 @@ groups:
         annotations:
           summary: 'NVMe {{ $labels.device }} on {{ $labels.instance }} raised a critical warning'
           description: |
-            - the controller set a critical warning bit: read-only mode and data loss are both on the table
-            - smartctl -a /dev/{{ $labels.device }} on {{ $labels.instance }} names which bit
-            - if it went read-only, Longhorn replicas on this node are already failing writes
+            - the controller set a critical warning bit. Read-only mode and data loss are both possible
+            - find the bit: smartctl -a /dev/{{ $labels.device }} on {{ $labels.instance }}
+            - in read-only mode, Longhorn replicas on this node already fail writes
         noDataState: OK
         execErrState: KeepLast
         data:
@@ -84,8 +83,7 @@ groups:
               conditions:
                 - type: query
                   evaluator: {type: gt, params: [0]}
-      # Spare blocks are what a drive remaps failures onto. Below its own threshold it has nothing left to
-      # remap with, and the next bad block is data loss. Subtracted rather than compared so one series decides.
+      # The query subtracts instead of comparing, so one series decides.
       - uid: smart-spare-low
         title: Disk spare blocks below threshold
         condition: C
@@ -94,8 +92,8 @@ groups:
         annotations:
           summary: 'Disk {{ $labels.device }} on {{ $labels.instance }} is out of spare blocks'
           description: |
-            - available spare fell under the drive's own threshold: it can no longer remap bad blocks
-            - replace the disk; this one does not recover
+            - available spare fell under the drive threshold, so it can no longer remap bad blocks
+            - replace the disk. It does not recover
             - move Longhorn replicas off {{ $labels.instance }} before draining
         noDataState: OK
         execErrState: KeepLast
@@ -122,9 +120,8 @@ groups:
               conditions:
                 - type: query
                   evaluator: {type: gt, params: [0]}
-      # increase() over 24h, NOT `!= 0`: the counter never resets, so a drive that logged one error years ago
-      # would alert forever. This asks whether it logged a NEW one, which is what changes the decision.
-      # Hence the 24h relativeTimeRange below, where every other rule in this repo uses 600.
+      # increase() over 24h, because the counter never resets and one error years ago must not alert forever.
+      # That is why relativeTimeRange is 24h here and 600 in every other rule.
       - uid: smart-media-errors
         title: Disk media errors increasing
         condition: C
@@ -133,8 +130,8 @@ groups:
         annotations:
           summary: 'Disk {{ $labels.device }} on {{ $labels.instance }} logged new media errors'
           description: |
-            - unrecoverable read/write errors in the last 24h: the drive is starting to go
-            - it is not dead yet, so plan the swap rather than reacting to it
+            - unrecoverable read or write errors in the last 24h. The drive is starting to fail
+            - it still works, so plan the swap now
             - check Longhorn for degraded volumes with a replica on {{ $labels.instance }}
         noDataState: OK
         execErrState: KeepLast
@@ -161,9 +158,8 @@ groups:
               conditions:
                 - type: query
                   evaluator: {type: gt, params: [0]}
-      # The drive's own estimate of endurance consumed, where 100 means it has written its rated total. A
-      # replicated volume writes every block to every replica, so consumer drives get there sooner than the
-      # datasheet's number suggests. 80 leaves months to order a replacement, not hours.
+      # The drive estimate of endurance used. 100 means it has written its rated total. Replication writes every
+      # block to every replica, so drives get there sooner than the datasheet says. 80 leaves months to replace.
       - uid: smart-wear-high
         title: Disk wear above 80%
         condition: C
@@ -172,9 +168,9 @@ groups:
         annotations:
           summary: 'Disk {{ $labels.device }} on {{ $labels.instance }} is 80% through its rated endurance'
           description: |
-            - 100% means the rated write endurance is used up; this is the order-a-replacement warning
-            - replication multiplies writes, so the other nodes' disks are probably close behind
-            - shrink the biggest writers if you want to buy time (log volumes, metrics retention)
+            - at 100%, the rated write endurance is used up. Order a replacement now
+            - replication multiplies writes, so the disks on the other nodes are probably close behind
+            - to buy time, shrink the biggest writers, such as log volumes and metrics retention
         noDataState: OK
         execErrState: KeepLast
         data:
@@ -200,20 +196,19 @@ groups:
               conditions:
                 - type: query
                   evaluator: {type: gt, params: [80]}
-      # One rule for every transport, where hwmon would need a separate chip regex per driver (nvme, drivetemp)
-      # and could not name the device. 70C is under a typical NVMe ~85C critical point and at a SATA SSD's
-      # spec limit, so it warns before the drive starts throttling writes.
+      # One rule for every transport. hwmon needs a chip regex per driver and cannot name the device.
+      # 70C is under the usual 85C NVMe critical point and at the SATA SSD spec limit, so it fires before throttling.
       - uid: smart-device-temp-high
         title: Disk temperature high
         condition: C
         for: 15m
         labels: {severity: warning}
         annotations:
-          summary: 'Disk {{ $labels.device }} on {{ $labels.instance }} above 70C'
+          summary: 'Disk {{ $labels.device }} on {{ $labels.instance }} is above 70C'
           description: |
-            - the drive throttles writes well before its critical point: etcd and Longhorn both suffer
+            - the drive throttles writes well before its critical point. etcd and Longhorn both slow down
             - add a heatsink to the drive or improve airflow over it
-            - compare with the CPU temperature: if both are high it is case airflow, not the drive
+            - compare with the CPU temperature. If both are high, the cause is case airflow, not the drive
         noDataState: OK
         execErrState: KeepLast
         data:
@@ -239,9 +234,8 @@ groups:
               conditions:
                 - type: query
                   evaluator: {type: gt, params: [70]}
-      # The SATA counterpart to media errors: NVMe drives have no such attribute, SATA ones have no
-      # media_errors, so both rules are needed to cover a mixed cluster. Raw value, not the normalised one,
-      # which starts at 100 and counts DOWN and would never cross a `> 0`.
+      # The SATA version of media errors. NVMe drives lack this attribute, and SATA drives lack media_errors.
+      # Raw value, because the normalised one counts down from 100 and never crosses `> 0`.
       - uid: smart-sata-reallocated
         title: Disk has reallocated sectors
         condition: C
@@ -250,9 +244,9 @@ groups:
         annotations:
           summary: 'Disk {{ $labels.device }} on {{ $labels.instance }} has reallocated sectors'
           description: |
-            - the drive remapped bad sectors onto spares: physical degradation, and it rarely stops at one
-            - watch whether the count grows; a stable count from years ago is not urgent
-            - smartctl -a /dev/{{ $labels.device }} on {{ $labels.instance }} for the full attribute table
+            - the drive remapped bad sectors onto spares. The disk is wearing out, and it rarely stops at one
+            - watch whether the count grows. A stable count from years ago is not urgent
+            - full attribute table: smartctl -a /dev/{{ $labels.device }} on {{ $labels.instance }}
         noDataState: OK
         execErrState: KeepLast
         data:

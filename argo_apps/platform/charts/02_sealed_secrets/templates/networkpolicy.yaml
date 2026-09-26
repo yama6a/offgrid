@@ -1,13 +1,12 @@
-# Namespace-wide default-deny for the controller holding the RSA key that decrypts every SealedSecret.
+# Default-deny for the sealed-secrets namespace. The controller holds the RSA key for every SealedSecret.
 apiVersion: cilium.io/v2
 kind: CiliumNetworkPolicy
 metadata:
   name: sealed-secrets
   namespace: {{ .Release.Namespace }}
 spec:
-  endpointSelector: {}          # every pod in the sealed-secrets namespace
+  endpointSelector: {}
   ingress:
-    # vmagent scrapes controller metrics.
     - fromEndpoints:
         - matchLabels:
             k8s:io.kubernetes.pod.namespace: monitoring
@@ -15,14 +14,13 @@ spec:
       toPorts:
         - ports:
             - { port: "8081", protocol: TCP }
-    # kubeseal fetches the public cert via the API server's service proxy.
-    # remote-node: an apiserver on another node sources from that node's cilium_host IP, not the apiserver identity.
+    # kubeseal fetches the public cert through the API server's service proxy. An apiserver on another node
+    # arrives from that node's cilium_host IP, so it matches remote-node, not kube-apiserver.
     - fromEntities: [kube-apiserver, host, remote-node]
       toPorts:
         - ports:
             - { port: "8080", protocol: TCP }
   egress:
-    # DNS (CoreDNS).
     - toEndpoints:
         - matchLabels:
             k8s:io.kubernetes.pod.namespace: kube-system
@@ -31,5 +29,4 @@ spec:
         - ports:
             - { port: "53", protocol: UDP }
             - { port: "53", protocol: TCP }
-    # Watch SealedSecret CRs / write the decrypted Secrets.
     - toEntities: [kube-apiserver]

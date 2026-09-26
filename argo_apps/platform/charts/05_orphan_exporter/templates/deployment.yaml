@@ -7,16 +7,14 @@ metadata:
     app.kubernetes.io/name: orphan-exporter
 spec:
   replicas: 1
-  revisionHistoryLimit: 0  # recovery is a git revert, never a rollback, so kept history is dead weight
+  revisionHistoryLimit: 0
   selector:
     matchLabels:
       app.kubernetes.io/name: orphan-exporter
   template:
     metadata:
       annotations:
-        # exporter.py lives in the ConfigMap and is mounted, so editing it does NOT restart the running python
-        # process (a mounted ConfigMap updates in place). Without this the script silently keeps running the old
-        # code after a sync. The checksum rolls the pod whenever the ConfigMap changes.
+        # Python does not reload the mounted script, so a ConfigMap change rolls the pod.
         checksum/config: {{ include (print $.Template.BasePath "/configmap.yaml") . | sha256sum }}
       labels:
         app.kubernetes.io/name: orphan-exporter
@@ -36,7 +34,7 @@ spec:
               value: "{{ .Values.intervalSeconds }}"
             - name: PORT
               value: "{{ .Values.port }}"
-            - name: PYTHONDONTWRITEBYTECODE  # /app is read-only; skip .pyc rather than error
+            - name: PYTHONDONTWRITEBYTECODE  # /app is read-only, so do not write .pyc files
               value: "1"
           ports:
             - name: metrics

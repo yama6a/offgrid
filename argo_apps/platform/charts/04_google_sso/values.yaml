@@ -1,36 +1,31 @@
 namespace: gateway                       # must equal the ingress chart's hardcoded gateway namespace
-callbackImage: "traefik/whoami:v1.12.0"  # Envoy intercepts /oauth2/callback before it reaches this
+callbackImage: "traefik/whoami:v1.12.0"  # backend of the callback host. Envoy handles /oauth2/callback itself.
 
-# One Google client for everything. clientID written by 04_google_sso.sh, the secret is sealed.
+# One Google OAuth client for every domain. 04_google_sso.sh writes clientID and seals the secret.
 oidc:
-  clientID: "000000000000-example.apps.googleusercontent.com"
+  clientID: "000000000000-example.apps.googleusercontent.com"  # written by 04_google_sso.sh
   clientSecretName: google-oauth   # sealed Secret, key `client-secret`
-  authSubdomain: google-sso        # callback host = <authSubdomain>.<domain>; register it as the redirect URI
-  idTokenCookie: "google-id-token"
-  logoutPath: "/oauth2/sign_out"   # off the default /logout so it doesn't swallow a backend's own /logout
-  refreshToken: true               # renew silently so a session outlives Google's 1h id token...
-  sessionTTL: "24h"                # ...capped here; Google refresh tokens carry no expiry, so this is the session
-  csrfTokenTTL: "5m"               # short, so orphaned per-flow cookies drain fast
-  # XHR/websocket requests get 401 instead of a 302 to Google, else a logged-out SPA leaks cookies until Envoy
-  # resets the stream (ERR_HTTP2_PROTOCOL_ERROR). Empty disables.
+  authSubdomain: google-sso        # callback host is <authSubdomain>.<domain>. Register it as the redirect URI.
+  idTokenCookie: "google-id-token" # cookie that holds the Google id token
+  logoutPath: "/oauth2/sign_out"   # not Envoy's default /logout, so backends keep their own /logout
+  refreshToken: true               # renew silently, so a session outlives Google's 1h id token
+  sessionTTL: "24h"                # session length. Google refresh tokens never expire, so this is the only cap.
+  csrfTokenTTL: "5m"               # short, so cookies from abandoned logins expire fast
+  # Sec-Fetch-Mode values that get a 401 instead of a 302 to Google. Empty disables it. Without it, a logged-out
+  # SPA leaks cookies until Envoy resets the stream with ERR_HTTP2_PROTOCOL_ERROR.
   denyRedirectSecFetchMode: "cors|no-cors|same-origin|websocket"
 
-# The platform's own registrable domain. Every host in `hosts` MUST sit under it: the policy sets one
-# cookieDomain, and a cookie only ever reaches that domain and its subdomains, so a host outside it never gets
-# the id token and loops through Google forever. Other domains go in `extraDomains`, one policy each.
+# The platform's registrable domain. Every host in `hosts` must sit under it, or that host never gets the
+# domain-scoped cookie and loops through Google forever. Put other domains in `extraDomains`.
 domain: example.com        # written by 04_values.sh from .env BASE_DOMAIN
-issuer: letsencrypt-prod   # callback cert issuer (letsencrypt-staging | letsencrypt-prod)
+issuer: letsencrypt-prod   # callback cert issuer: letsencrypt-staging or letsencrypt-prod
 
-# Who may log in, the default for every gated host on every domain. Never leave this empty on a real
-# deployment: an empty allowlist denies everyone, including you.
+# The default for every gated host. An empty list denies everyone, including you.
 allowlist:                 # written by 04_values.sh from .env SSO_ALLOWLIST
   - you@example.com
 
-# Which hosts are SSO-gated. `subdomain` composes against `domain` into the FQDN its ingress renders, because
-# the policy attaches to routes by dashed-host name and both sides must agree. A host may carry its own
-# `allowlist` to override the one above.
-# This list is policy, not config, so it is NOT stamped: sample-user-manager is deliberately absent (open)
-# while sample-user-manager-sso is listed, and that contrast is the demo.
+# SSO-gated hosts, as <subdomain>.<domain>. A host may set its own `allowlist`. This list is policy, so
+# 04_values.sh does not write it. sample-user-manager stays open on purpose, next to the gated -sso demo.
 hosts:
   - subdomain: argocd.ops
   - subdomain: grafana.ops
@@ -41,16 +36,13 @@ hosts:
   - subdomain: rabbitmq.ops   # edge SSO, then RabbitMQ's own login
   - subdomain: sample-user-manager-sso.app
 
-# Other registrable domains, hand-written: 04_values.sh stamps only `domain` above. Each gets its own policy,
-# cookie scope and google-sso.<domain> callback, so each needs its own redirect URI on the same Google client.
-# 04_google_sso.sh prints them. See docs/04_ingress.md.
+# Other registrable domains, edited by hand. Register each google-sso.<domain> callback on the same Google client.
 extraDomains: []
 # - domain: example.edu
-#   issuer: letsencrypt-staging       # OPTIONAL: defaults to `issuer` above
-#   claimToHeaders:                   # OPTIONAL: copy a verified token claim onto the request to the backend,
-#     - {claim: email, header: x-user}  # for an app that can trust a header instead of running its own login.
-#                                       # Domain-wide. Only for backends the edge is the sole route into.
+#   issuer: letsencrypt-staging       # optional, defaults to `issuer` above
+#   claimToHeaders:                   # optional, for the whole domain. Only for backends reachable solely
+#     - {claim: email, header: x-user}  # through the edge, or any caller can forge the header.
 #   hosts:
 #     - subdomain: www
 #     - subdomain: api
-#       allowlist: [ops@example.edu]  # OPTIONAL: defaults to `allowlist` above
+#       allowlist: [ops@example.edu]  # optional, defaults to `allowlist` above

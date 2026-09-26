@@ -1,10 +1,10 @@
 apiVersion: v2
 name: sample-user-manager
-description: The user-domain hub. The sample-app /manager binary (HTTP GET /users + Postgres) and the owner of all three messaging exchanges.
+description: The hub of the user domain. It runs the sample-app /manager binary with HTTP GET /users and Postgres, and owns all three messaging exchanges.
 type: application
-version: 0.1.0 # local chart, never bump version
+version: 0.1.0 # nothing publishes this chart, so never bump it
 
-# Helm renders a dependency once, so N instances == N aliases. Each alias is a values key carrying its own name.
+# Helm renders a dependency once, so each instance needs its own alias. Each alias is a values key with its own name.
 dependencies:
   - name: pg-cluster
     alias: maindb

@@ -1,4 +1,3 @@
-# The shared ingress Gateway and the Let's Encrypt ClusterIssuers.
 apiVersion: argoproj.io/v1alpha1
 kind: Application
 metadata:
@@ -8,7 +7,7 @@ metadata:
     - resources-finalizer.argocd.argoproj.io
   annotations:
     argocd.argoproj.io/sync-wave: "3"
-    argocd.argoproj.io/compare-options: ServerSideDiff=true # else server-defaulted Gateway API fields read as perpetual OutOfSync
+    argocd.argoproj.io/compare-options: ServerSideDiff=true # without it, Gateway API fields the server defaults stay OutOfSync
 spec:
   project: default
   revisionHistoryLimit: 0
@@ -32,4 +31,4 @@ spec:
         maxDuration: 1m
     syncOptions:
       - CreateNamespace=true
-      - ServerSideApply=true # the Envoy controller writes this Gateway's status, and server-side apply lets each side own its own fields
+      - ServerSideApply=true # the Envoy controller writes this Gateway's status. Each side then owns its own fields.

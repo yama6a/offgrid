@@ -1,14 +1,14 @@
 ingress:
   ingresses:
     - name: platform
-      domain: ops.example.com # written by 04_values.sh; platform UIs sit under *.ops.<base>, workloads under *.app.<base>
-      issuer: letsencrypt-prod # GitHub webhook SSL verification to argocd.<domain> needs a publicly-trusted cert
+      domain: ops.example.com # written by 04_values.sh. Platform UIs use *.ops.<base>, workloads *.app.<base>.
+      issuer: letsencrypt-prod # GitHub checks TLS when it calls the argocd.<domain> webhook, so this needs a public cert
       hosts:
         - subdomain: argocd
           targetNamespace: argocd
           targetService: argocd-server
           targetPort: 80
-          requestTimeout: "0s"           # the UI keeps /api/v1/stream/* open to receive live updates; Envoy's 15s default cuts it off with a 504
+          requestTimeout: "0s"           # the UI holds /api/v1/stream/* open for live updates
 
         - subdomain: grafana
           targetNamespace: monitoring
@@ -32,13 +32,12 @@ ingress:
           targetPort: 80
         - subdomain: rabbitmq
           targetNamespace: rabbitmq
-          targetService: rabbitmq          # management UI, gated by google-sso then RabbitMQ's own login
+          targetService: rabbitmq          # management UI, gated by google-sso and then RabbitMQ's own login
           targetPort: 15672
-        # Deliberately NOT listed in 04_google_sso, so this edge stays OPEN: a mobile app cannot do human
-        # OAuth. ntfy's own deny-all + token auth is the only gate. Keep this ingress on letsencrypt-prod:
-        # the Android app validates TLS and rejects a staging cert.
+        # Not behind SSO, because a mobile app cannot do an OAuth login. ntfy's own auth is the gate.
+        # Keep letsencrypt-prod, because the Android app rejects a staging cert.
         - subdomain: ntfy
           targetNamespace: monitoring
           targetService: ntfy
           targetPort: 8080
-          requestTimeout: "0s"           # the app holds a long-poll stream; 15s would force a reconnect 4x/min
+          requestTimeout: "0s"           # the app holds a long-poll stream

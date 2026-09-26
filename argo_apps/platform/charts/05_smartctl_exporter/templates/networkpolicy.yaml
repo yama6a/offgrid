@@ -1,4 +1,3 @@
-# Default-deny both ways for the exporter.
 apiVersion: cilium.io/v2
 kind: CiliumNetworkPolicy
 metadata:
@@ -9,7 +8,6 @@ spec:
     matchLabels:
       app.kubernetes.io/name: prometheus-smartctl-exporter
   ingress:
-    # vmagent scrapes the exporter on :9633.
     - fromEndpoints:
         - matchLabels:
             k8s:io.kubernetes.pod.namespace: monitoring
@@ -17,14 +15,12 @@ spec:
       toPorts:
         - ports:
             - { port: "9633", protocol: TCP }
-    # Kubelet TCP health probes hit the pod directly from the node.
     - fromEntities: [host, remote-node]
       toPorts:
         - ports:
             - { port: "9633", protocol: TCP }
   egress:
-    # DNS (CoreDNS). Everything else the exporter needs is a local ioctl to the disk, so there is no other
-    # egress rule: it never talks to the apiserver or off-cluster.
+    # The exporter reads disks through local ioctls, so DNS is its only egress.
     - toEndpoints:
         - matchLabels:
             k8s:io.kubernetes.pod.namespace: kube-system

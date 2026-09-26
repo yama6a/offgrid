@@ -2,9 +2,9 @@ apiVersion: v2
 name: prometheus-operator-crds
 description: Prometheus Operator CRDs only, no controller.
 type: application
-version: 0.1.0 # local chart, never bump version
+version: 0.1.0 # nothing publishes this chart, so never bump it
 
 dependencies:
   - name: prometheus-operator-crds
-    version: "32.0.1" # must match the prometheus-operator the monitoring stack expects; bump the two together
+    version: "32.0.1" # must match the prometheus-operator version the monitoring stack expects. Bump both together.
     repository: https://prometheus-community.github.io/helm-charts

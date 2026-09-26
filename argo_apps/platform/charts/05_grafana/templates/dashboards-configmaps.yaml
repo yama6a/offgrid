@@ -1,7 +1,6 @@
 {{- /*
-One ConfigMap per file in files/dashboards/, labelled for the dashboards sidecar. Same .Files.Get-verbatim
-mechanism as the alerts: the JSON is never templated, so the Grafana `{{ label }}` legends inside stay literal.
-For dashboards we WRITE. An upstream chart's own dashboards keep shipping from that chart.
+.Files.Get reads each file verbatim, so Grafana's `{{ label }}` legends need no Helm escaping.
+Only first-party dashboards live here. An upstream chart ships its own dashboards.
 */ -}}
 {{- range $path, $_ := .Files.Glob "files/dashboards/*.json" }}
 ---

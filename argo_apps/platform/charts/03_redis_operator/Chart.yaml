@@ -1,8 +1,8 @@
 apiVersion: v2
 name: redis-operator
-description: The OpsTree Redis operator and its CRDs. The instances are per-workload, rendered by lib/helm/redis-instance.
+description: The OpsTree Redis operator and its CRDs. Each workload renders its own instance with lib/helm/redis-instance.
 type: application
-version: 0.1.0 # local chart, never bump version
+version: 0.1.0 # nothing publishes this chart, so never bump it
 
 dependencies:
   - name: redis-operator

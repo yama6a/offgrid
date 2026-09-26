@@ -1,241 +1,115 @@
 # Networking: Cilium
 
-The cluster arrives with no CNI and no kube-proxy, which is a prerequisite this repo states rather than
-arranges (see the README). On Talos that is `cni: none` plus `proxy.disabled: true` in the machine config;
-other distributions have their own switch. Cilium fills all of it
-from one install: CNI, load balancer, and node-to-node encryption. `01_cilium.sh` does it and flips the nodes to
-Ready.
+Cilium is the CNI, the load balancer and the node-to-node encryption, all from one install. Procedures are in
+[runbooks/01_networking.md](runbooks/01_networking.md).
 
-- The one component installed imperatively. Everything after it is GitOps.
-- Nothing has a pod network until it lands, so ArgoCD, CoreDNS and every workload depend on it.
-- Source of truth is the wrapper chart at `argo_apps/platform/charts/00_cilium/`. The script only installs that
-  chart; ArgoCD later adopts the same release (same chart, namespace, release name, values) so Argo sees it
-  in-sync rather than fighting it. No version, CRD list or value lives in the script.
-
-| Path                       | Holds                                                                                      |
-|----------------------------|--------------------------------------------------------------------------------------------|
-| `Chart.yaml`               | the cilium chart, declared as a dependency on `helm.cilium.io`                              |
-| `values.yaml`              | the Talos-flavoured cilium values (under the `cilium:` key) + the `loadBalancer` gate       |
-| `crds/`                    | empty. Cilium does not vendor the Gateway API CRDs; Envoy Gateway owns them. See [04_ingress.md](04_ingress.md) |
-| `templates/cilium-lb.yaml` | the LB-IPAM pool + L2 policy, gated by `.Values.loadBalancer.enabled`                       |
+- The cluster must arrive with no CNI and no kube-proxy. On Talos, the machine config sets `cni: none` and
+  `proxy.disabled: true`.
+- Cilium is the only component installed imperatively before Argo CD, because nothing has a pod network until it
+  runs. `01_cilium.sh` installs the wrapper chart `argo_apps/platform/charts/00_cilium/`. Argo CD later adopts the
+  same release with the same values, so it sees the release as in sync.
 
 ## Why Cilium: one component instead of three
 
-Bare-metal Kubernetes ships no LoadBalancer, no ingress and no encryption. The alternative is stacking three
-single-purpose tools. Cilium does all of it from one agent plus operator.
+Bare-metal Kubernetes ships no LoadBalancer, no ingress and no encryption. Cilium covers all three with one agent
+and one operator.
 
-| Need              | Cilium provides                  | What it replaces, and why |
-|-------------------|----------------------------------|---------------------------|
-| LoadBalancer IPs  | LB-IPAM + L2 announcements (ARP) | MetalLB. On an all-Cilium cluster it only duplicates the IP-announce half (eBPF already does the data-path LB), adds a second ARP owner on the same nodes, and adds pods plus CRDs for no gain. Trade-off: Cilium L2 is Beta vs MetalLB's GA L2, fine for a homelab. |
-| Ingress / gateway | Gateway API (Envoy-backed)       | ingress-nginx, which the community retires in March 2026. Gateway API is the forward path. Cilium can serve it, but ingress went to Envoy Gateway for its `SecurityPolicy` CRD (label-attached SSO), so Cilium's `gatewayAPI` is off and it vendors no Gateway API CRDs. See [04_ingress.md](04_ingress.md) |
-| Pod encryption    | transparent WireGuard, one flag  | Istio or another service mesh. We wanted the wire encrypted plus a gateway, not AuthorizationPolicy or VirtualService. Sidecar Istio is also heavy on 3x 8 GB Pis, one Envoy per pod |
-| A mesh, if needed | sidecarless L7 + Hubble          | covers what we would use a mesh for, without per-pod sidecars |
+| Need | Cilium provides | What it replaces, and why |
+|---|---|---|
+| LoadBalancer IPs | LB-IPAM, which hands out IPs from a pool, and L2 announcements, where one node answers ARP for each IP | MetalLB. With Cilium, MetalLB only duplicates the announcement and adds a second ARP owner, pods and CRDs. Trade-off: Cilium L2 is Beta, MetalLB L2 is GA. Beta is fine for a homelab |
+| Pod encryption | transparent WireGuard, one flag | Istio or another mesh. The goal is an encrypted wire, not AuthorizationPolicy or VirtualService. Sidecar Istio runs one Envoy per pod, which is heavy on 3 Pis with 8 GB each |
+| Ingress | Gateway API is possible, but off | Ingress runs on Envoy Gateway for its `SecurityPolicy` CRD, which attaches SSO by label. See [04_ingress.md](04_ingress.md) |
 
 Decisions:
 
-- WireGuard, not mTLS. Transparent, node-to-node, no certs or SPIFFE. Exactly "encrypt the wire". Same-node pod
-  traffic is NOT encrypted, since it never leaves the host. Cilium's SPIFFE mutual-auth is a separate feature we
-  do not enable. The image kernel already carries `CONFIG_WIREGUARD`.
-- kube-proxy replacement is mandatory: L2 announcements require it. Hence `proxy.disabled: true` at the Talos
-  layer and `kubeProxyReplacement: true` in the values.
-- KubePrism (`localhost:7445`) is Cilium's API endpoint. Pure host networking, so Cilium needs no external LB to
-  reach the API server.
+- **WireGuard, not mTLS.** WireGuard encrypts the wire node to node, with no certs and no SPIFFE. Pod traffic on
+  one node stays unencrypted, because it never leaves the host.
+- **kube-proxy replacement is on,** because L2 announcements need it.
+- **KubePrism (`localhost:7445`) is the API endpoint.** It is host networking, so Cilium reaches the API server
+  before any pod network exists.
+- **Every `type: LoadBalancer` service uses `externalTrafficPolicy: Cluster`.** Cilium elects the announcing node
+  from the `nodeSelector` alone. With `Local`, a node with no backend can win the lease, answer ARP and drop the
+  traffic. Leases are sticky, so a bad draw looks like a permanent outage. The cost is the client source IP. See
+  [Policy gotchas](#policy-gotchas).
+- **Cilium auto-syncs with full `selfHeal` and `prune`,** like every other app, for hands-off upgrades. It is the
+  one app that can cut Argo CD off its own network.
+  - Argo CD reverts an out-of-band fix unless you commit it.
+  - A bad change pushed to git applies unattended. Check every Cilium push.
+  - `01_cilium.sh` stays as the break-glass tool, the emergency path that bypasses Argo CD.
 
-## What `01_cilium.sh` does
+## Hubble
 
-Native `helm` + `kubectl`, erroring out if either is missing. Talks to the cluster via the pinned kubeconfig
-derived from `KUBE_CONTEXT`. Idempotent.
+Hubble is Cilium's flow observability layer. Relay and UI run in `kube-system`. The platform-ingress app exposes
+the UI as `hubble.<domain>` behind Google SSO.
 
-1. `helm dependency build argo_apps/platform/charts/00_cilium` pulls the pinned `cilium/cilium` subchart into
-   `charts/`, falling back to `helm dependency update` to generate `Chart.lock` on a first run.
-2. `helm upgrade --install cilium ... --wait` installs with the chart's values: KubePrism endpoint, kube-proxy
-   replacement, WireGuard, L2 announcements, Hubble, and the Talos-mandatory `cgroup` (no auto-mount) plus
-   `securityContext` capability blocks.
-3. Waits for nodes Ready. They were NotReady with no CNI.
-4. Enables the LB-IPAM pool + L2 policy. See the two-pass note below.
-5. Verifies agent and operator rollout, and the LB pool.
-
-The two-pass install exists because the `CiliumLoadBalancerIPPool` and L2 CRDs are registered by the
-cilium-operator at RUNTIME, not shipped by the chart. On a fresh cluster they do not exist when Helm would apply
-the pool, so step 2 runs with `--set loadBalancer.enabled=false`, then the upgrade re-runs with the gate back on
-once the operator is up. On a re-run the CRD is already there and it happens in one shot. ArgoCD just leaves
-`loadBalancer.enabled=true` and relies on sync-retry.
-
-```bash
-./01_cilium.sh
-```
-
-Smoke-test the LoadBalancer end to end:
-
-```bash
-kubectl create deploy nginx --image=nginx
-kubectl expose deploy nginx --type=LoadBalancer --port=80
-kubectl get svc nginx              # EXTERNAL-IP from your pool, reachable over ARP
-```
-
-## Hubble observability
-
-`hubble.enabled`, `relay` and `ui` are all true, so `hubble-relay` and `hubble-ui` run in `kube-system`. Two ways
-it surfaces:
-
-- Metrics. `hubble.metrics` exports a lean flow set (`dns, drop, tcp, flow, icmp, port-distribution`, kept small
-  to bound the number of series on the Pis) with a `serviceMonitor`, so it reaches vmagent like every other
-  platform scrape. Every handler spells out its context options
-  (`labelsContext=source_namespace,destination_namespace` plus `sourceContext`/`destinationContext` of
-  `workload-name|reserved-identity`). A bare handler name emits the counter with NO peer or namespace labels at
-  all, so nothing can be split by who sent the traffic. The same `cilium_*` metrics drive the `cilium-health`
-  Grafana alert group: agent-down, BPF-map pressure, unreachable nodes. See
-  [06_monitoring.md](06_monitoring.md).
-- Dashboard. ONE first-party `hubble` dashboard, in `05_grafana/files/dashboards/hubble.json`, and
-  `hubble.metrics.dashboards.enabled: false` so the chart's own four stay out of Grafana. Theirs group every
-  panel by cilium-agent pod without printing it, so each panel draws one indistinguishable line per node; ours
-  aggregates across agents and makes the node a variable. Rows: overview, drops and would-be (`AUDIT`) drops,
-  a per-namespace talkers view, TCP/ICMP/ports, DNS.
-- What the DNS panels can see. `hubble_dns_*` only counts DNS that went through Cilium's DNS proxy, and a pod
-  is only routed through it by a policy with `toFQDNs` or L7 `dns` rules. Today that is just the two backup
-  CronJobs, so the DNS row is near-empty and NOT broken. Everything else's DNS shows up as plain UDP flows.
-- No L7 HTTP metrics. `httpV2` is off, so there is no `hubble_http_*` and no L7 row. Turning it on is not just
-  the handler: Hubble only sees HTTP for traffic an L7 `http` rule in a CiliumNetworkPolicy pulls through the
-  Envoy L7 proxy, so it costs a per-workload policy change plus a proxy hop, and for the ingress path it would
-  recount what the edge already counts. HTTP observability lives in the `ingress-http` dashboard off Envoy's own
-  metrics instead. See [04_ingress.md](04_ingress.md).
-- UI. The `hubble-ui` Service is exposed as `hubble.<domain>` by the platform-ingress app (wave 6) and gated by
-  Google SSO: a plain cross-namespace edge into `kube-system`, in the same `hosts` list and `04_google_sso`
-  allowlist as the other platform UIs. See [04_ingress.md](04_ingress.md).
-- Dropped-flow logs. `hubble.export.dynamic` writes one JSON line per `DROPPED` flow to a file on the node, which
-  the log collector ships to VictoriaLogs (`source:hubble`). The `drop` metric above only counts drops; the log
-  names the pod, port and identity, which is what you need to find the missing rule in a default-deny CNP. The
-  live equivalent is `hubble observe --verdict DROPPED`, but that only shows what is happening right now. See
-  [06_monitoring.md](06_monitoring.md).
+- **A small metric set with peer labels.** Every handler carries namespace and workload context, so panels can
+  split traffic by sender. The set stays small to limit series on the Pis. The same metrics drive the
+  `cilium-health` alerts. See [06_monitoring.md](06_monitoring.md).
+- **A first-party dashboard.** `05_grafana/files/dashboards/hubble.json` replaces the chart's dashboards, which
+  draw one line per node with no way to tell them apart.
+- **No L7 HTTP metrics.** Hubble sees HTTP only when an L7 policy routes it through Cilium's Envoy proxy. That
+  costs a policy change per workload and an extra hop. The `ingress-http` dashboard already covers HTTP from
+  Envoy Gateway's own metrics.
+- **Dropped-flow logs.** Each denied flow becomes a JSON line in VictoriaLogs as `source:hubble`. It names the pod,
+  port and identity, which the `drop` metric only counts. Use it to find the missing rule in a policy.
 
 ## Network policy
 
-Lockdown is opt-in per component via `CiliumNetworkPolicy`. There is no cluster-wide default-deny. CNP over
-vanilla `NetworkPolicy` buys the `kube-apiserver` and `world` entities, so no hardcoded IPs, plus Hubble
-policy-verdict visibility (`hubble observe --verdict DROPPED`).
+Each component opts in to lockdown with a `CiliumNetworkPolicy` (CNP). There is no cluster-wide default-deny.
 
-Two places carry policies. Workloads: the sample workload's app plus its CNPG Postgres, see
-[07_sample_workload.md](07_sample_workload.md) for those and for the reusable DB policy baked into the
-`pg-cluster` wrapper. Platform: a full explicit policy per chart in its own `templates/networkpolicy.yaml`, so
-the file you open is the policy that gets applied, with no shared library or render abstraction. Three groups:
+CNP over vanilla `NetworkPolicy` gives two things:
 
-- Secret-holders, namespace-wide default-deny (`endpointSelector: {}`): `sealed-secrets`, `cert-manager`,
-  `argocd`.
-- Data stores and services, pod-scoped because their namespace also holds an unrestricted scraper: `vmsingle`,
-  `vlsingle`, `grafana` (`vmagent` shares `monitoring` and scrapes the whole cluster, so it stays unrestricted),
-  `ntfy`, the RabbitMQ broker, and the egress-only backup CronJobs `redis-backup` and `vm-backup`.
-- Operators and the backup plugin, pod-scoped, added so no pod-running component is left implicitly
-  default-allow: `cnpg-operator`, `redis-operator`, the RabbitMQ `cluster-operator` and
-  `messaging-topology-operator`, and the `barman-cloud` CNPG-I plugin (the S3 backup coordinator, which holds the
-  S3 client mTLS identity). Each allows only its real surface: the metrics scrape where a PodMonitor exists, the
-  admission webhook where enabled, the kubelet health probe, DNS, the API server, and egress to the specific pods
-  it manages.
+- The `kube-apiserver` and `world` entities, so no policy hardcodes an IP.
+- Policy verdicts in Hubble, so a missing rule is visible.
 
-External egress (argocd to GitHub, cert-manager to ACME, grafana to a plugin download, barman to S3) is
-`toEntities: [world]` on the specific port rather than `toFQDNs`, so there is no DNS-proxy dependency. Peer
-selectors (CoreDNS `k8s-app: kube-dns`, vmagent, the Envoy edge, the stores) are repeated verbatim across the
-manifests, so if a platform component is relabelled you grep and update each one.
+Each chart holds its full policy in its own `templates/networkpolicy.yaml`. No shared library sits in between, so
+the file you open is the policy Cilium applies. Platform policies fall in three groups:
 
-Four Cilium subtleties to know:
+| Group | Scope | Components |
+|---|---|---|
+| Secret holders | the whole namespace (`endpointSelector: {}`) | `sealed-secrets`, `cert-manager`, `argocd` |
+| Data stores and services | pod-scoped, because the namespace also holds an unrestricted scraper | `vmsingle`, `vlsingle`, `grafana`, `ntfy`, the RabbitMQ broker, the `redis-backup` and `vm-backup` CronJobs |
+| Operators and the backup plugin | pod-scoped | `cnpg-operator`, `redis-operator`, both RabbitMQ operators, the `barman-cloud` plugin |
 
-- An admission webhook needs `remote-node` on its ingress rule, not just `kube-apiserver`. When the apiserver on
-  node A dials a pod on node B, the packet's source is node A's `cilium_host` router IP (a `10.244.x.y` address),
-  which carries the `remote-node` identity. Only the node's PRIMARY IP maps to `kube-apiserver`. So a
-  `fromEntities: [kube-apiserver]` rule misses roughly two admissions in three on a 3-node control plane, and the
-  webhook only works when the admitting apiserver happens to be co-located with the pod. Same for anything
-  reached through the apiserver's service proxy, which is how `kubeseal` fetches the sealed-secrets public cert.
-- A `fromEndpoints`/`toEndpoints` selector that OMITS the namespace label matches the policy's OWN namespace
-  only. To reach a managed pod in another namespace (cnpg-operator to its instances, redis-operator to its
-  redises) use `matchExpressions: [{key: k8s:io.kubernetes.pod.namespace, operator: Exists}]`, NOT the empty `{}`
-  selector, which is also same-namespace.
-- Ingress through a `type: LoadBalancer` service is not `world` on its own. `externalTrafficPolicy: Cluster`
-  SNATs the client to the IP of whichever node answered the ARP, so the identity the policy sees is
-  `remote-node`, or `host` when that node also runs the pod. A pod behind its own LoadBalancer service needs
-  `[world, remote-node, host]` on its ingress rule for this reason.
-- The RabbitMQ operator subchart ships bundled vanilla `NetworkPolicy`s that default to allow-all-egress. Cilium
-  UNIONs those with our CNP and would blow the default-deny open, so we pin `...networkPolicy.enabled: false`.
-  Same move as argocd's `global.networkPolicy.create: false`. See [02_gitops.md](02_gitops.md) and
-  [08_messaging.md](08_messaging.md).
+- External egress uses `toEntities: [world]` on one port, not `toFQDNs`, so no policy depends on Cilium's DNS
+  proxy.
+- Policies repeat peer selectors word for word: CoreDNS `k8s-app: kube-dns`, vmagent, the Envoy edge, the stores.
+  If a component gets new labels, grep for the old ones and update each policy.
 
-Deliberately NOT policed, listed so it reads as a decision rather than an omission:
+### Policy gotchas
 
-- The Envoy data plane (`mergeGateways` means egress fans out to every backend) and its Gateway controller (same
-  namespace, on the ingress critical path).
-- `vmagent` and the VictoriaLogs collector, which scrape everything.
-- `metrics-server`, and any host-network node agent your OS tooling applies, which sit in kube-system or on
-  the host network and so are not subject to these policies.
-- `longhorn`, which runs a node-to-node replication mesh.
-- `vm-operator`, a tiny apiserver-only surface.
-- `03_gateway` and `google-sso`, which have no or thin pods.
-- `kube-system` and Cilium itself. Policing those risks cutting the cluster off its own network.
-- The `storage-bench` namespace, which exists for hours at a time and holds no data. See
-  [12_storage_bench.md](12_storage_bench.md).
+- **An admission webhook needs `remote-node` on its ingress rule.** An API server on another node reaches the
+  webhook from its `cilium_host` IP, which carries `remote-node`, not `kube-apiserver`. With `kube-apiserver`
+  alone, about two admissions in three fail on a 3-node control plane. `kubeseal` fetching its cert through the
+  API server proxy hits the same rule.
+- **A peer selector without a namespace label matches only the policy's own namespace.** To reach another
+  namespace, add `matchExpressions: [{key: k8s:io.kubernetes.pod.namespace, operator: Exists}]`.
+- **Traffic through a LoadBalancer service is not `world`.** `externalTrafficPolicy: Cluster` rewrites the source
+  to the announcing node. A pod behind its own LoadBalancer needs `[world, remote-node, host]`.
+- **Upstream charts can bundle an allow-all `NetworkPolicy`.** Cilium unions it with the CNP, which opens the
+  default-deny. So `03_rabbitmq` and `01_argocd` turn theirs off.
 
-Rollout is audit-first: with Cilium's global `policyAuditMode` on, every policy stages as log-only until
-validated, then gets enforced by turning audit off. Three places to look, cheapest first:
+### Components with no policy
 
-- `sum by (source, destination) (increase(hubble_flows_processed_total{verdict="AUDIT"}[24h]))` in Grafana, or
-  the "would-be drops" row of the `hubble` dashboard. Cluster-wide and survives restarts, but has no port label.
-- `source:hubble AND verdict:AUDIT` in VictoriaLogs, which has the port and identity. Retained, so use it for
-  anything that already happened. See [06_monitoring.md](06_monitoring.md).
-- `hubble observe --verdict AUDIT -f` inside a `cilium-agent` pod, per node. Live only, and the ring buffer holds
-  a few minutes, so it is for reproducing on demand: `kubectl apply --dry-run=server` re-triggers admission
-  webhooks without changing anything.
+| Component | Reason |
+|---|---|
+| The Envoy data plane | `mergeGateways` fans its egress out to every backend |
+| The Envoy Gateway controller | same namespace as the data plane, and on the ingress critical path |
+| `vmagent`, the VictoriaLogs collector | they scrape everything |
+| `metrics-server`, host-network node agents | they sit in `kube-system` or on the host network |
+| `longhorn` | it runs a node-to-node replication mesh |
+| `vm-operator` | it only talks to the API server |
+| `03_gateway`, `google-sso` | they run no pods, or almost none |
+| `kube-system`, Cilium itself | a policy there can cut the cluster off its own network |
+| the `storage-bench` namespace | it exists for a few hours and holds no data. See [12_storage_bench.md](12_storage_bench.md) |
+
+### Audit-first rollout
+
+Cilium's global `policyAuditMode` is on. Every policy logs a would-be drop as verdict `AUDIT` and drops nothing.
+Turn audit mode off once the policies are validated. The runbook lists where to read the would-be drops.
 
 ## CoreDNS placement
 
-Talos owns the coredns Deployment and sets a `preferred` hostname anti-affinity on it at weight 100. Nothing
-here strengthens that. `preferred` is only a score, summed with ImageLocality and the rest, so on a fresh
-cluster both replicas CAN land on one node and that node then owns all cluster DNS until something
-reschedules them.
-
-That was previously patched to `required` by a wave-0 app. It was removed deliberately: `required` at 2
-replicas leaves a pod Pending forever on a single-node cluster, and the risk was judged not worth the
-mechanism. The `CoreDNS replica down` alert is what catches the failure now.
-
-## Caveats
-
-- Run order: any node-level network hardening belongs BEFORE this, ahead of Cilium's network-heavy rollout.
-  The script's only
-  cluster-side dependency is a reachable API, which works over the VIP even with no CNI.
-- All nodes are control-plane, so the L2 policy selects every Linux node. The `node-role.kubernetes.io/control-plane:
-  DoesNotExist` selector from upstream examples would match zero nodes here and nothing would answer ARP.
-  `cilium-lb.yaml` gets this right; do not copy the example blindly.
-- CRD apiVersion split: `CiliumLoadBalancerIPPool` is `cilium.io/v2`, `CiliumL2AnnouncementPolicy` is still
-  `cilium.io/v2alpha1`. Easy to get wrong by hand.
-- L2 announcements is Beta and leans on leader-election leases. If you grow the pool and see operator API
-  throttling, raise `k8sClientRateLimit`.
-- LB pool placement must sit outside the router's DHCP lease range and clear of the VIP, or you get IP conflicts.
-- Every `type: LoadBalancer` service MUST be `externalTrafficPolicy: Cluster`. Upstream documents L2
-  announcements as incompatible with `Local`: the lease is elected from the `nodeSelector` alone, so a node
-  with no backend answers the ARP and drops what it answers for. Leases are sticky, so a bad draw reads as a
-  permanent outage and a good one holds until the next agent restart, reboot or upgrade reshuffles it.
-  `Cluster` costs the client source IP, which changes the policy identity: see the `world` note under Network
-  policy above.
-- Circular dependency once Argo owns it: ArgoCD runs on Cilium's network, so a bad Cilium change synced through
-  Argo can cut Argo off. Upgrades are normally non-disruptive (per-node agent restart, the eBPF datapath
-  persists). The Cilium Application auto-syncs with full `selfHeal` + `prune`, chosen for convenience, so
-  upgrades are hands-off but Argo WILL revert an out-of-band fix and WILL cascade-delete a resource or CRD
-  dropped from the chart. Keep `01_cilium.sh` as break-glass, and after using it commit the fix to git FAST,
-  before `selfHeal` reverts it. A bad change pushed to git applies unattended and is self-healed in place, so
-  mind your pushes: this is the one app that can take the whole cluster down. See
-  [02_gitops.md](02_gitops.md).
-
-## Troubleshooting
-
-- Nodes stay NotReady after `01_cilium.sh`: the agents are not Ready. `kubectl -n kube-system get pods -l
-  k8s-app=cilium`, then `kubectl -n kube-system logs ds/cilium`. Usual causes are the Talos
-  `cgroup`/`securityContext` values missing or wrong, or KubePrism unreachable, in which case check that
-  `proxy.disabled` and `kubePrism` landed in the machine config.
-- `type: LoadBalancer` stuck `<pending>`: no pool, or it is exhausted or overlapping. `kubectl get
-  ciliumloadbalancerippool`, and confirm the range is outside the DHCP lease and clear of the VIP.
-- LB IP assigned but unreachable: check the service's `externalTrafficPolicy` first. `Local` is incompatible
-  with L2 announcements and produces exactly this, per service and intermittently. See Caveats above.
-  Otherwise L2 is not announcing at all. Cilium picks the announcing node from the policy's
-  `nodeSelector` ALONE and applies the `interfaces` regex only afterwards, so a node that matches the selector
-  but matches no device takes the lease and programs nothing. `interfaces` is therefore the ethernet CLASS
-  (`^en`, matching `end0` on a Pi and `eno1`/`enp0s31f6` on x86) rather than one device name, which is what lets
-  `nodeSelector` stay broad without that risk. Check who holds it with `kubectl get lease -n kube-system | grep
-  l2announce`, and `kubectl get ciliuml2announcementpolicy`.
-- Gateway not programmed: that is Envoy Gateway now, not Cilium, whose `gatewayAPI` is disabled. The Gateway API
-  CRDs and the `eg` GatewayClass come from the `01_envoy_gateway` app. See [04_ingress.md](04_ingress.md).
+Talos sets a `preferred` hostname anti-affinity on CoreDNS, so both replicas can land on one node. This repo keeps
+it. `required` would leave one replica Pending forever on a single-node cluster. The `CoreDNS replica down` alert
+catches the failure instead.

@@ -1,5 +1,5 @@
-# Read every node, and write only their taints. Nothing else: the built-in pod GC and the CSI attach-detach
-# controllers do the actual pod deletion and volume detach once the taint is on.
+# Reads every node and writes only taints. After the taint, the built-in pod GC deletes the pods and the CSI
+# attach-detach controller detaches the volumes.
 apiVersion: rbac.authorization.k8s.io/v1
 kind: ClusterRole
 metadata:
@@ -10,7 +10,7 @@ rules:
     verbs: ["get", "list", "watch"]
   - apiGroups: [""]
     resources: ["nodes"]
-    verbs: ["patch"] # `kubectl taint` patches .spec.taints; there is no narrower resource for it
+    verbs: ["patch"] # `kubectl taint` patches .spec.taints. No narrower resource exists.
 ---
 apiVersion: rbac.authorization.k8s.io/v1
 kind: ClusterRoleBinding

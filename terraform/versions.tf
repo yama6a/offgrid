@@ -1,5 +1,3 @@
-# The repo's only Terraform, driven by lib/shell/10a_s3_backup_bucket.sh, which exports the AWS deployer creds
-# and TF_VAR_* from .env.
 terraform {
   required_version = ">= 1.6"
 
@@ -10,13 +8,11 @@ terraform {
     }
   }
 
-  # Local state: single operator, no remote backend. terraform.tfstate holds the generated IAM secret key, so
-  # it is gitignored. .terraform.lock.hcl IS committed: a provider pin, not a secret.
+  # Local state, because there is one operator. It holds the IAM secret key, so it is gitignored.
   backend "local" {}
 }
 
 provider "aws" {
   region = var.region
-  # Creds come from AWS_ACCESS_KEY_ID / AWS_SECRET_ACCESS_KEY, exported by 10a_s3_backup_bucket.sh. Never
-  # hardcoded here or in a committed tfvars.
+  # 10a_s3_backup_bucket.sh exports the creds. Never put them here.
 }

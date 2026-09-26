@@ -1,27 +1,25 @@
 cert-manager:
   crds:
     enabled: true
-    keep: true # never let a prune cascade-delete them, that takes every Certificate/Issuer/Order CR with it
+    keep: true # a CRD prune would delete every Certificate, Issuer and Order CR with it
 
   global:
-    priorityClassName: platform-critical # an evicted webhook fails ALL cert admission cluster-wide until it reschedules
+    priorityClassName: platform-critical # while the webhook is evicted, every cert-manager admission in the cluster fails
     revisionHistoryLimit: 0
 
-  enableCertificateOwnerRef: true # GC the issued TLS Secret with its Certificate; upstream default leaves it orphaned
+  enableCertificateOwnerRef: true # delete the TLS Secret with its Certificate. The upstream default leaves it behind.
 
   startupapicheck:
-    enabled: false # a PostSync hook Job per sync; ArgoCD's unbounded retry already converges that ordering
+    enabled: false # a hook Job on every sync. Argo CD's unbounded retry already handles the ordering.
 
   prometheus:
     enabled: true
-    servicemonitor: # lowercase, cert-manager spells this key differently from most charts
+    servicemonitor: # all lowercase in this chart, unlike most charts
       enabled: true
 
   resources:
     requests: { cpu: 10m, memory: 49Mi }
     limits:   { memory: 95Mi }
-  # Soft + hostname on all three: bare Pi nodes carry no zone label, and soft means raising replicaCount
-  # never wedges a pod Pending on a 3-node cluster.
   affinity:
     podAntiAffinity:
       preferredDuringSchedulingIgnoredDuringExecution:
@@ -31,7 +29,7 @@ cert-manager:
               matchLabels:
                 app.kubernetes.io/name: cert-manager
                 app.kubernetes.io/component: controller
-            matchLabelKeys: [pod-template-hash] # compare within one revision, so a rollout's old pod never repels the new one
+            matchLabelKeys: [pod-template-hash] # so a rollout's old pod does not repel the new one
             topologyKey: kubernetes.io/hostname
   webhook:
     resources:
@@ -46,7 +44,7 @@ cert-manager:
                 matchLabels:
                   app.kubernetes.io/name: webhook
                   app.kubernetes.io/component: webhook
-              matchLabelKeys: [pod-template-hash] # compare within one revision, so a rollout's old pod never repels the new one
+              matchLabelKeys: [pod-template-hash] # so a rollout's old pod does not repel the new one
               topologyKey: kubernetes.io/hostname
   cainjector:
     resources:
@@ -61,16 +59,17 @@ cert-manager:
                 matchLabels:
                   app.kubernetes.io/name: cainjector
                   app.kubernetes.io/component: cainjector
-              matchLabelKeys: [pod-template-hash] # compare within one revision, so a rollout's old pod never repels the new one
+              matchLabelKeys: [pod-template-hash] # so a rollout's old pod does not repel the new one
               topologyKey: kubernetes.io/hostname
 
-  # HTTP-01 through Gateway API. Not a feature gate, it only exists in this controller config file.
+  # HTTP-01 through the Gateway API. This is not a feature gate. Only this controller config file can set it.
   config:
     apiVersion: controller.config.cert-manager.io/v1alpha1
     kind: ControllerConfiguration
+    # The Gateway API CRDs must exist when the controller starts. If they land after it, restart cert-manager.
     enableGatewayAPI: true
 
-  # DNS-01 self-check resolvers. Public ones on purpose: a split-horizon home DNS makes the _acme-challenge
-  # TXT look un-propagated and wedges issuance. Only exercised by a dns01 solver.
+  # Resolvers for the DNS-01 self-check, used only by a dns01 solver. They are public because a split-horizon
+  # home DNS hides the _acme-challenge TXT record, and issuance then never completes.
   dns01RecursiveNameservers: "1.1.1.1:53,9.9.9.9:53"
   dns01RecursiveNameserversOnly: true

@@ -1,6 +1,6 @@
 {{- /*
-Redis lockdown, and the ONLY access control on this instance: there is no password. Default-deny both
-ways, then allow only what the instance needs. The only per-consumer knob is allowedClients.
+Locks down the Redis pod. There is no password, so this policy is the only access control. Default-deny
+both ways, then allow only what the instance needs. allowedClients is the only per-consumer knob.
 */ -}}
 {{- $name := .Values.name }}
 apiVersion: cilium.io/v2
@@ -21,7 +21,7 @@ spec:
     {{- range .Values.allowedClients }}
     - fromEndpoints:
         - matchLabels:
-            k8s:io.kubernetes.pod.namespace: {{ $.Release.Namespace }} # same-ns only, enforced by validate.yaml
+            k8s:io.kubernetes.pod.namespace: {{ $.Release.Namespace }} # same namespace only. validate.yaml enforces it
             {{- range $k, $v := .matchLabels }}
             {{ $k }}: {{ $v | quote }}
             {{- end }}
@@ -30,7 +30,7 @@ spec:
             - { port: "6379", protocol: TCP }
     {{- end }}
     {{- if .Values.persistence }}
-    # The central redis-backup job (redis-cli --rdb), durable instances only.
+    # The central redis-backup job runs redis-cli --rdb, for durable instances only.
     - fromEndpoints:
         - matchLabels:
             k8s:io.kubernetes.pod.namespace: redis-backup
@@ -39,19 +39,16 @@ spec:
         - ports:
             - { port: "6379", protocol: TCP }
     {{- end }}
-    # The OpsTree operator reconciles and health-checks the instance.
     - fromEndpoints:
         - matchLabels:
             k8s:io.kubernetes.pod.namespace: redis-operator
       toPorts:
         - ports:
             - { port: "6379", protocol: TCP }
-    # Kubelet TCP probes, from the node.
     - fromEntities: [host, remote-node]
       toPorts:
         - ports:
             - { port: "6379", protocol: TCP }
-    # vmagent scrapes the redis-exporter sidecar.
     - fromEndpoints:
         - matchLabels:
             k8s:io.kubernetes.pod.namespace: monitoring
@@ -60,7 +57,6 @@ spec:
         - ports:
             - { port: "9121", protocol: TCP }
   egress:
-    # DNS.
     - toEndpoints:
         - matchLabels:
             k8s:io.kubernetes.pod.namespace: kube-system
@@ -69,5 +65,5 @@ spec:
         - ports:
             - { port: "53", protocol: UDP }
             - { port: "53", protocol: TCP }
-    # Precautionary: the operator-managed pod may watch or report via the API.
+    # A precaution, in case the operator-managed pod watches or reports through the API.
     - toEntities: [kube-apiserver]

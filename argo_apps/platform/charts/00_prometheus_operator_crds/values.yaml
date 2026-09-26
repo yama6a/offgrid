@@ -1,9 +1,5 @@
-# Only the two kinds charts here actually create. Every CRD costs kube-apiserver memory for its schemas and
-# validators, and these ten were a quarter of all CRD schema bytes. VictoriaMetrics owns alerting, recording
-# rules and probes, so nothing creates the rest.
-# Turning one back on: its CRD appears on sync, then restart victoria-metrics-operator, which decides at
-# startup which Prometheus kinds to convert. Turning one off: the ArgoCD app does not prune, so delete the
-# CRD by hand (`kubectl delete crd <plural>.monitoring.coreos.com`), which deletes every object of that kind.
+# Only the two kinds charts here create, because each CRD costs kube-apiserver memory.
+# After you turn one on, restart victoria-metrics-operator. It picks the kinds to convert at startup.
 prometheus-operator-crds:
   crds:
     servicemonitors: {enabled: true}

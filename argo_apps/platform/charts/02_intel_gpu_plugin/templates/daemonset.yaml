@@ -17,18 +17,17 @@ spec:
       labels:
         app.kubernetes.io/name: intel-gpu-plugin
     spec:
-      # Talos labels a node for every extension it booted with, so this lands only where the i915 driver
-      # actually is. Better than `kubernetes.io/arch: amd64`, which would also match an x86 box with no iGPU.
-      # Has to be nodeAffinity: nodeSelector cannot say "has this key", and the label's value is a firmware
-      # date that changes on every extension bump.
+      # Talos labels a node with each extension it booted, so this matches only nodes with the i915 driver.
+      # `kubernetes.io/arch: amd64` would also match an x86 node with no iGPU. The label value is a firmware
+      # date that changes on each extension bump, and only nodeAffinity can match on the key alone.
       affinity:
         nodeAffinity:
           requiredDuringSchedulingIgnoredDuringExecution:
             nodeSelectorTerms:
               - matchExpressions:
                   - {key: extensions.talos.dev/i915, operator: Exists}
-      tolerations: [{operator: Exists}] # the GPU is wanted whatever the node's role or taints
-      automountServiceAccountToken: false # talks to the kubelet over a unix socket, never to the kube API
+      tolerations: [{operator: Exists}] # run on the GPU node whatever its role or taints
+      automountServiceAccountToken: false # it talks to the kubelet over a unix socket, never to the kube API
       containers:
         - name: intel-gpu-plugin
           image: {{ .Values.image | quote }}
@@ -55,7 +54,7 @@ spec:
           hostPath: {path: /sys/class/drm}
         - name: kubeletsockets
           hostPath: {path: /var/lib/kubelet/device-plugins}
-        # Where the plugin writes the device spec containerd reads to inject /dev/dri into a consumer, keeping
-        # the host's 0666 mode so the pod needs no supplementalGroups. Talos 1.13 has CDI on by default.
+        # The plugin writes a CDI device spec here. containerd reads it to give /dev/dri to a consumer with the
+        # host's 0666 mode, so the pod needs no supplementalGroups. Talos 1.13 turns CDI on by default.
         - name: cdipath
           hostPath: {path: /var/run/cdi, type: DirectoryOrCreate}

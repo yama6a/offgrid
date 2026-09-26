@@ -1,16 +1,13 @@
 redis-operator:
   redisOperator:
-    # Only guards the master-slave anti-affinity feature (RedisReplication), which we don't use. Off means
-    # there is no webhook serving-cert to manage, so no cert-manager dependency.
+    # Guards only RedisReplication anti-affinity, which is unused. Off means no cert-manager dependency.
     webhook: false
-    # Endpoint only. No PodMonitor ships from here (upstream has no toggle); the signal that matters is the
-    # per-instance redis-exporter, scraped by the redis-instance ServiceMonitor.
+    # The endpoint only. The useful metrics come from each instance's redis-exporter.
     metrics:
       enabled: true
-    imagePullPolicy: IfNotPresent # the tag is immutable, so Always just re-pulls on a bandwidth-limited cluster
+    imagePullPolicy: IfNotPresent # the tag is immutable, so Always only wastes bandwidth
 
-  # Top-level keys (the chart's pod/container contexts), NOT under redisOperator. readOnlyRootFilesystem is
-  # left off, unverified whether the controller has scratch writes.
+  # readOnlyRootFilesystem stays off. It is unknown whether the controller writes scratch files.
   podSecurityContext:
     runAsNonRoot: true
   securityContext:
@@ -21,18 +18,15 @@ redis-operator:
     seccompProfile:
       type: RuntimeDefault
 
-  # Fully specified, not just memory: Helm deep-merges this map, so an omitted key silently inherits the
-  # chart's 500m default. Dropping a key needs an explicit null, which renders as no key at all.
+  # Helm merges this map, so every key is set. A missing key gets the chart's 500m default.
   resources:
     requests:
       cpu: 10m
       memory: 60Mi
     limits:
-      cpu: null # no cpu limit anywhere in the cluster: CFS throttling stalls a burst even when the node is idle
+      cpu: null # no CPU limits in this cluster. CFS throttling stalls a burst even on an idle node.
       memory: 92Mi
 
-  # Soft + hostname: bare Pi nodes have no zone label, and soft means raising replicas never wedges a pod
-  # Pending on 3 nodes.
   affinity:
     podAntiAffinity:
       preferredDuringSchedulingIgnoredDuringExecution:
@@ -41,7 +35,5 @@ redis-operator:
             labelSelector:
               matchLabels:
                 name: redis-operator # the chart labels its pod only with `name`
-            matchLabelKeys: [pod-template-hash] # compare within one revision, so a rollout's old pod never repels the new one
+            matchLabelKeys: [pod-template-hash] # so a rollout's old pod does not repel the new one
             topologyKey: kubernetes.io/hostname
-
-# No StorageClasses here. Every redis-instance PVC uses longhorn-r2-ephemeral, owned by 02_longhorn.

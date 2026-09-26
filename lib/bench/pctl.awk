@@ -1,10 +1,10 @@
-# Percentiles from pgbench --log files. pgbench prints only a mean, so the per-transaction log is the
-# only place p99 exists. Usage: awk -v warmup=60 -f pctl.awk run.log.*
+# Computes percentiles from pgbench --log files. pgbench prints only a mean, so p99 needs the per-transaction log.
+# Usage: awk -v warmup=60 -f pctl.awk run.log.*
 #
 # pgbench log line: client_id transaction_no time script_no time_epoch time_us
-# $3 is the transaction latency in microseconds, $5 the commit epoch in seconds.
+# $3 is the transaction latency in microseconds. $5 is the commit epoch in seconds.
 #
-# Emits one line of shell-eval-able KEY=value, latencies in ms:
+# Prints one line of KEY=value pairs. Latencies are in ms:
 #   n=23901 p50=4.312 p95=9.880 p99=18.441 max=132.006 tps=199.18 window=120
 
 function qsort(a, lo, hi,   i, j, p, t) {
@@ -18,7 +18,7 @@ function qsort(a, lo, hi,   i, j, p, t) {
   qsort(a, lo, j); qsort(a, i, hi)
 }
 
-# Nearest-rank on a 1-indexed sorted array, which is what fio and perf-test report too.
+# Nearest-rank percentile on a sorted array that starts at 1. fio and perf-test use the same method.
 function pct(a, n, p,   r) {
   r = int(p * n + 0.999999)
   if (r < 1) r = 1

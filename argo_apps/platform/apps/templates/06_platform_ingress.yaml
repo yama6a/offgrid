@@ -1,4 +1,4 @@
-# The edges for every platform UI (argocd, grafana, vmui, vlogs). SSO is applied centrally by 04_google_sso.
+# 04_google_sso gates these edges.
 apiVersion: argoproj.io/v1alpha1
 kind: Application
 metadata:
@@ -18,7 +18,7 @@ spec:
     path: argo_apps/platform/charts/06_platform_ingress
   destination:
     server: https://kubernetes.default.svc
-    namespace: gateway # each ReferenceGrant overrides this with its own namespace (argocd / monitoring)
+    namespace: gateway # each ReferenceGrant sets its own namespace, argocd or monitoring
   syncPolicy:
     automated:
       prune: true

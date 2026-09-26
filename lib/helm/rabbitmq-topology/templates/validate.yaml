@@ -1,15 +1,15 @@
-{{- /* Renders nothing: fail-fast guards only (like pg-cluster/redis-instance validate.yaml). */ -}}
+{{- /* Validation only. Renders nothing and fails on an invalid value. */ -}}
 {{- if or (hasKey .Values "cluster") (hasKey .Values "vhost") }}
-{{- fail "rabbitmq-topology: `cluster`/`vhost` are fixed platform invariants (broker `rabbitmq`/ns `rabbitmq`, vhost `apps`), not configurable; remove them" }}
+{{- fail "rabbitmq-topology: `cluster` and `vhost` are fixed and not configurable. The broker is `rabbitmq` in namespace `rabbitmq`, and the vhost is `apps`. Remove them" }}
 {{- end }}
 {{- range $e := (.Values.publishEvents | default list) }}
-{{- if not $e.name }}{{ fail "rabbitmq-topology: every publishEvents entry needs a name (the event exchange this workload owns)" }}{{ end }}
-{{- if not $e.type }}{{ fail "rabbitmq-topology: every publishEvents entry needs a type (topic | fanout | direct | headers)" }}{{ end }}
+{{- if not $e.name }}{{ fail "rabbitmq-topology: every publishEvents entry needs a name. It is the event exchange this workload owns" }}{{ end }}
+{{- if not $e.type }}{{ fail "rabbitmq-topology: every publishEvents entry needs a type: topic, fanout, direct or headers" }}{{ end }}
 {{- end }}
 {{- range $c := (.Values.consumeCommands | default list) }}
-{{- if not $c.name }}{{ fail "rabbitmq-topology: every consumeCommands entry needs a name (the command exchange+queue this workload owns)" }}{{ end }}
-{{- if hasKey $c "type" }}{{ fail "rabbitmq-topology: consumeCommands entries are always a direct exchange (command topics are point-to-point, N publishers : 1 consumer); remove `type`" }}{{ end }}
+{{- if not $c.name }}{{ fail "rabbitmq-topology: every consumeCommands entry needs a name. It is the command exchange and queue this workload owns" }}{{ end }}
+{{- if hasKey $c "type" }}{{ fail "rabbitmq-topology: a consumeCommands entry is always a direct exchange, because a command goes from many publishers to one consumer. Remove `type`" }}{{ end }}
 {{- end }}
 {{- range $s := (.Values.subscribeEvents | default list) }}
-{{- if not $s.exchange }}{{ fail "rabbitmq-topology: every subscribeEvents entry needs an exchange (the event topic to subscribe to; its owner declares it)" }}{{ end }}
+{{- if not $s.exchange }}{{ fail "rabbitmq-topology: every subscribeEvents entry needs an exchange. It is the event exchange to subscribe to, and its owner declares it" }}{{ end }}
 {{- end }}

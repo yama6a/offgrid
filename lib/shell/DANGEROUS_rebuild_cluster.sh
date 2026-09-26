@@ -1,35 +1,33 @@
 #!/usr/bin/env bash
-# DANGEROUS: tears the platform down to bare Kubernetes and redelivers it. One confirmation, up front.
-# It does NOT touch the nodes: wiping the machines themselves belongs to whatever tooling built them.
+# DANGEROUS: tears the platform down to bare Kubernetes and delivers it again. It asks once, up front.
+# It does not touch the nodes. The tooling that built the machines wipes them.
 #
-# A rebuild is a FULL fresh start: it wipes local data AND the S3 backups, so the empty same-named clusters
-# ArgoCD recreates begin a clean backup history with no old-vs-new systemID conflict. To keep the OLD data,
-# restore BEFORE rebuilding.
+# A rebuild wipes local data and the S3 backups. The empty clusters that ArgoCD creates under the same names
+# then start a clean backup history, with no systemID conflict. To keep the old data, restore before rebuilding.
 #
-# The sealed-secrets key is RESTORED, not re-sealed, so the committed SealedSecrets still decrypt. This script
-# does NOT back the key up: doing that here would risk overwriting a good backup with the about-to-be-wiped
-# cluster's key. Back up DELIBERATELY beforehand so the restore step has something to restore; with no backup
-# it fails cleanly and you re-seal instead.
+# The script restores the sealed-secrets key, so the committed SealedSecrets still decrypt. It does not back
+# the key up, because that could overwrite a good backup with a key about to be wiped. Back up the key first.
+# Without a backup the restore fails cleanly, and you seal again instead.
 #
-# The first steps abort on the first failure; the key restore onwards is best-effort.
+# The first steps abort on failure. From the key restore on, every step is best-effort.
 set -uo pipefail
 
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 source "${SCRIPT_DIR}/common.sh"
-cd "$REPO_ROOT" || exit 1 # git ops below; set -e is off, so guard the cd
+cd "$REPO_ROOT" || exit 1
 
 # ---- knobs ----
 STEP=0
-STEP_TOTAL=9           # common.sh step/run_step; bump TOTAL if you add or remove a step
-STEP_DIR="$SCRIPT_DIR" # every step script is a sibling of this orchestrator
+STEP_TOTAL=9           # the number of step and run_step calls below. Change it when you add or remove a step.
+STEP_DIR="$SCRIPT_DIR" # the step scripts sit next to this one
 RESTORE="${STEP_DIR}/03_restore_sealed_secrets_key.sh"
 INGRESS_GW_NS="gateway" # namespace of the shared Gateway
 COMMIT_MSG="rebuild: sync working tree before cluster rebuild"
 COMMIT_MSG_SYNC="rebuild: sync LB range written by 01_cilium"
-INGRESS_WAIT=900    # secs to wait for the ingress to actually serve (HTTP-01 is slow)
-INGRESS_HOSTS=""    # space-separated hosts to check; empty = derive from the Gateway's listeners
-CONVERGE_SETTLE=120 # secs to let ArgoCD create its apps + roll the early waves first
-CONVERGE_WAIT=900   # secs for the converge backstop to drive every app to Synced+Healthy
+INGRESS_WAIT=900    # seconds to wait for the ingress to serve. HTTP-01 is slow.
+INGRESS_HOSTS=""    # space-separated hosts to check. Empty means all hosts on the Gateway listeners.
+CONVERGE_SETTLE=120 # seconds for ArgoCD to create its apps and roll the early waves
+CONVERGE_WAIT=900   # seconds to wait for every app to reach Synced and Healthy
 
 # ---- functions ----
 
@@ -37,137 +35,121 @@ check_prerequisites() {
   require git kubectl helm yq kubeseal
   ensure_cluster_dir
   [ -f "$RESTORE" ] || die "missing ${RESTORE}"
-  # Pinned BEFORE the banner, so the confirmation names the context this redelivers onto and an unset or
-  # typo'd KUBE_CONTEXT fails here rather than after you have typed the confirmation word. Cheap (a config
-  # read); the reachability probe waits until after the commit+push.
+  # Before the banner, so the prompt names the target context and a wrong KUBE_CONTEXT fails before you confirm.
   use_kubeconfig
 }
 
 confirm_rebuild() {
   cat << EOF
 
-This will REDELIVER the entire platform onto the cluster KUBE_CONTEXT names in .env:
+This delivers the whole platform again onto the cluster that KUBE_CONTEXT in .env names:
   context : ${KUBE_CONTEXT}
   config  : ${KUBECONFIG}
-  flow  : commit+push -> 01 (CNI) -> commit+push -> 02a (ArgoCD) -> restore sealed-secrets key
-          -> WIPE S3 backups -> converge -> seed ntfy -> verify ingress
-          (ArgoCD redeploys cilium/cert-manager/longhorn/gateway/SSO/monitoring from git)
-  note  : it WIPES the S3 backups, so the DBs come back EMPTY. If you want the old data, restore from S3
-          BEFORE rebuilding (make restore-cnpg); a rebuild discards it.
-  nodes : NOT touched. To wipe the machines themselves, do that first with whatever tooling built them,
-          then come back here.
+  steps   : commit and push, 01 CNI, commit and push, 02a ArgoCD, restore the sealed-secrets key,
+            wipe the S3 backups, converge, seed ntfy, verify ingress
+            ArgoCD deploys Cilium, cert-manager, Longhorn, the gateway, SSO and monitoring from git.
+  note    : it wipes the S3 backups, so the databases come back empty. To keep the old data,
+            restore from S3 with make restore-cnpg before you rebuild.
+  nodes   : not touched. To wipe the machines, use the tooling that built them first, then come back here.
 
-Have a CURRENT sealed-secrets key backup (03_backup_sealed_secrets_key.sh), else SSO won't decrypt
-until you re-seal (04_google_sso). ntfy alerting is seeded post-boot via 06_ntfy_auth regardless.
+You need a current sealed-secrets key backup from 03_backup_sealed_secrets_key.sh.
+Without it, SSO does not decrypt until you seal again with 04_google_sso.
+06_ntfy_auth seeds ntfy alerting after boot either way.
 EOF
   confirm_word_always REBUILD || {
-    echo "aborted (phew!)."
+    echo "aborted."
     exit 0
   }
 }
 
 commit_and_push_working_tree() {
-  step "git add + commit + push"
+  step "commit and push the working tree"
   git add -A
   if git diff --cached --quiet; then
     ok "nothing new to commit"
   else
     git commit -m "$COMMIT_MSG" > /dev/null && ok "committed local changes" || die "git commit failed"
   fi
-  git push || die "git push failed, ArgoCD deploys the REMOTE; push manually then re-run"
+  git push || die "git push failed. ArgoCD deploys the remote. Push by hand, then run this again."
   ok "remote up to date"
 }
 
-# The nodes belong to whatever tooling built them. All this needs is a cluster that answers.
 assert_cluster_exists() {
   local node_count
   say "precondition: the cluster exists and is reachable"
   assert_api
   node_count="$(kubectl get nodes --no-headers 2> /dev/null | wc -l | tr -d ' ')"
-  [ "${node_count:-0}" -gt 0 ] || die "no nodes found via context ${KUBE_CONTEXT} (${KUBECONFIG}).
-       Rebuild the cluster first with whatever tooling built it, then point KUBE_CONTEXT at it."
+  [ "${node_count:-0}" -gt 0 ] || die "no nodes found through context ${KUBE_CONTEXT} (${KUBECONFIG}).
+       Rebuild the cluster first with the tooling that built it, then point KUBE_CONTEXT at it."
   ok "${node_count} node(s) reachable"
 }
 
-# 01_cilium writes the .env LB-IPAM range into 00_cilium's values.yaml, AFTER the commit above, and 02a
-# refuses to hand off with argo_apps/ dirty. So sync again: a changed LB_RANGE_* is a real edit only this step
-# can catch.
+# 01_cilium writes the LB-IPAM range into 00_cilium's values.yaml after the first commit.
+# 02a refuses to continue with uncommitted changes under argo_apps/.
 commit_and_push_lb_range() {
-  step "git add + commit + push (01_cilium's LB range)"
+  step "commit and push the LB range from 01_cilium"
   git add -A
   if git diff --cached --quiet; then
     ok "nothing new to commit"
   else
     git commit -m "$COMMIT_MSG_SYNC" > /dev/null && ok "committed the LB range" || die "git commit failed"
   fi
-  git push || die "git push failed, ArgoCD deploys the REMOTE; push manually then resume from 02a_argocd.sh by hand"
+  git push || die "git push failed. ArgoCD deploys the remote. Push by hand, then resume from 02a_argocd.sh by hand."
   ok "remote up to date"
 }
 
-# Waits for the controller (ArgoCD wave 2), applies the backed-up key and restarts it, so the committed
-# SealedSecrets decrypt. Fails cleanly (no backup, or the controller never came up) without wedging the rebuild.
 restore_master_key() {
   run_step "restore the backed-up sealed-secrets master key" "$STEP_DIR" 03_restore_sealed_secrets_key.sh best-effort \
-    "key restore didn't complete (see above), restore by hand once sealed-secrets is up, or re-seal (04_google_sso) + commit/push"
+    "key restore did not complete. See above. When sealed-secrets is up, restore by hand, or seal again with 04_google_sso, then commit and push."
 }
 
-# A rebuild discards the local data, so discard the old backups too, else the fresh, same-named clusters would
-# collide with the old backup history (systemID mismatch) and fail archiving. Runs right after the ArgoCD
-# bootstrap, BEFORE the workloads and any new archiving come up. Pure AWS, best-effort.
-# Not via run_step, which cannot pass the `wipe` arg. ASSUME_YES=1 so 10a does not re-prompt: the REBUILD
-# confirmation already covers it.
+# Old backups make the new clusters of the same name fail archiving on a systemID mismatch.
+# This runs before the workloads start archiving. run_step cannot pass the `wipe` argument.
 wipe_s3_backups() {
   if [ -z "$AWS_DEPLOY_ACCESS_KEY_ID" ]; then
-    step "wipe S3 backups (skipped: .env AWS creds empty)"
+    step "wipe S3 backups: skipped, the .env AWS creds are empty"
     return 0
   fi
-  step "wipe the S3 backups (rebuild = fresh start; bucket + IAM kept)"
+  step "wipe the S3 backups. The bucket and IAM writer stay."
   if ASSUME_YES=1 bash "${STEP_DIR}/10a_s3_backup_bucket.sh" wipe < /dev/null; then
     ok "S3 backups wiped"
   else
-    warn "S3 wipe didn't complete; empty it by hand ('make s3-backup-wipe') before the new clusters archive"
+    warn "S3 wipe did not complete. Run 'make s3-backup-wipe' before the new clusters start archiving."
   fi
 }
 
-# Real self-healing does the work: each app's syncPolicy.retry (limit:-1, refresh) re-drives a failed sync
-# until its dependency lands, selfHeal + the poll re-examine, and the CNPG ObjectStore is a persistent
-# resource (not a helm hook) so nothing wedges. This is the backstop: it hard-refreshes EVERY app so it
-# re-compares against this rebuild's pushed commit and the key restore right away (the webhook is not up yet
-# and the poll is 300s), then nudges stragglers. Settles first so the platform has created its apps.
-# Best-effort; never fails the rebuild.
+# Each app's unbounded retry converges it on its own. The webhook is not up yet and the poll runs every 300s,
+# so a hard refresh of every app applies this rebuild's commit and the restored key now.
 converge_apps() {
-  use_kubeconfig # needed by converge_argocd_apps
-  step "let ArgoCD settle ${CONVERGE_SETTLE}s, then converge all apps to Synced+Healthy (backstop, up to ${CONVERGE_WAIT}s)"
+  use_kubeconfig
+  step "wait ${CONVERGE_SETTLE}s for ArgoCD, then converge all apps to Synced and Healthy, up to ${CONVERGE_WAIT}s"
   sleep "$CONVERGE_SETTLE"
   converge_argocd_apps "$CONVERGE_WAIT" || true
 }
 
-# Any OS-repo reset that preceded this wiped ntfy's Longhorn PVC, so ntfy came back with an EMPTY auth DB and
-# the committed grafana-ntfy token is stale. 06_ntfy_auth re-creates the users + ACLs and mints and re-seals a
-# FRESH token; push it (ArgoCD applies it) and restart Grafana to pick up GF_NTFY_TOKEN.
+# A node reset before this run wipes the ntfy PVC, so ntfy starts with an empty auth DB and the committed token
+# is stale. 06_ntfy_auth creates the users and ACLs again and seals a new token.
 seed_ntfy_and_push_token() {
   if [ -z "$NTFY_PHONE_PASSWORD_SECRET" ]; then
-    step "seed ntfy auth (skipped: .env NTFY_PHONE_PASSWORD_SECRET empty)"
-    warn "NTFY_PHONE_PASSWORD_SECRET empty in .env -> ntfy alerting off; set it + run 'make configure-ntfy-auth' later"
+    step "seed ntfy auth: skipped, NTFY_PHONE_PASSWORD_SECRET in .env is empty"
+    warn "NTFY_PHONE_PASSWORD_SECRET is empty in .env, so ntfy alerting is off. Set it and run 'make configure-ntfy-auth' later."
     return 0
   fi
-  run_step "seed ntfy users + seal Grafana's ntfy token" "$STEP_DIR" 06_ntfy_auth.sh best-effort \
-    "06_ntfy_auth didn't complete; re-run 'make configure-ntfy-auth' + commit/push once ntfy is up" || return 0
+  run_step "seed ntfy users and seal the Grafana ntfy token" "$STEP_DIR" 06_ntfy_auth.sh best-effort \
+    "06_ntfy_auth did not complete. When ntfy is up, run 'make configure-ntfy-auth', then commit and push." || return 0
   git add -A
   if git diff --cached --quiet; then ok "no ntfy token change to commit"; else
-    git commit -m "rebuild: re-seal Grafana ntfy token" > /dev/null && ok "committed sealed ntfy token" || warn "commit failed; commit by hand"
+    git commit -m "rebuild: seal the Grafana ntfy token again" > /dev/null && ok "committed the sealed ntfy token" || warn "commit failed. Commit by hand."
   fi
-  git push || warn "push failed; push the sealed grafana-ntfy token by hand"
-  converge_argocd_apps "$CONVERGE_WAIT" || true # apply the pushed SealedSecret
+  git push || warn "push failed. Push the sealed grafana-ntfy token by hand."
+  converge_argocd_apps "$CONVERGE_WAIT" || true
   kubectl -n "$MONITORING_NS" rollout restart deploy/grafana > /dev/null 2>&1 \
-    && ok "grafana restarted (picks up GF_NTFY_TOKEN)" || warn "restart grafana by hand to pick up GF_NTFY_TOKEN"
+    && ok "Grafana restarted and reads GF_NTFY_TOKEN" || warn "restart Grafana by hand, so it reads GF_NTFY_TOKEN"
 }
 
-# ArgoCD brings the ingress stack up (envoy-gateway -> gateway -> cert-manager -> apps) ASYNC after the ArgoCD
-# bootstrap, and HTTP-01 issuance takes minutes, so a finished 02a does NOT mean the sites work yet.
-# Best-effort: warns rather than failing the rebuild if it cannot confirm within INGRESS_WAIT.
+# HTTP-01 issuance takes minutes, so the sites can still be down after 02a finishes.
 verify_ingress_serving() {
-  step "verify ingress serving (LE cert + HTTPS response), up to ${INGRESS_WAIT}s"
+  step "verify that the ingress serves HTTPS with a Let's Encrypt cert, up to ${INGRESS_WAIT}s"
   verify_ingress "$INGRESS_GW_NS" "$INGRESS_WAIT" "$INGRESS_HOSTS" || true
 }
 
@@ -175,22 +157,22 @@ print_handoff() {
   cat << EOF
 
 =============== cluster rebuilt ===============
-ArgoCD is bootstrapped and reconciling every app from git (cilium adopt, cert-manager, longhorn,
-envoy-gateway, gateway, SSO, monitoring). Watch it:
+ArgoCD is up and reconciles every app from git: Cilium, cert-manager, Longhorn, envoy-gateway, the gateway,
+SSO and monitoring. Watch it:
   kubectl get applications -n argocd -w
 
 Notes:
-  - If the key restore (STEP 5) didn't run, do it once sealed-secrets is up
-    (lib/shell/03_restore_sealed_secrets_key.sh), or re-seal with 04_google_sso and commit+push.
-  - ntfy alerting: STEP 8 re-seeded it automatically (if NTFY_PHONE_PASSWORD_SECRET was set). If the nodes were
-    reset first, ntfy's PVC went with them, so a fresh token was minted + re-sealed. If it was skipped/failed, run 'make configure-ntfy-auth'
-    + commit/push + restart grafana. On your phone, re-subscribe 'cluster-alerts' at https://ntfy.ops.example.com.
-  - FULL FRESH START: STEP 6 cleared the S3 backups, and any node reset you ran first cleared every volume.
-    The DBs come back EMPTY and begin a clean backup history. If you wanted the old data, you had to restore
-    BEFORE rebuilding (make restore-cnpg), because a rebuild discards it. The bucket + IAM stay; only
-    \`make s3-backup-destroy\` tears those down. See docs/10_backups.md.
-  - TLS certs re-issue via HTTP-01; first issuance takes a few minutes. If you've rebuilt repeatedly,
-    validate hosts on letsencrypt-staging before flipping to prod (tight rate limits).
+  - If the key restore in step 5 did not run, run lib/shell/03_restore_sealed_secrets_key.sh when sealed-secrets
+    is up. Or seal again with 04_google_sso, then commit and push.
+  - If NTFY_PHONE_PASSWORD_SECRET was set, step 8 seeded ntfy alerting again. A node reset before this run
+    wipes the ntfy PVC, so step 8 sealed a new token. If the step was skipped or failed, run
+    'make configure-ntfy-auth', commit and push, and restart Grafana.
+    On your phone, subscribe to 'cluster-alerts' at https://ntfy.${OPS_DOMAIN} again.
+  - Step 6 cleared the S3 backups, and a node reset before this run cleared every volume. The databases come back
+    empty and start a clean backup history. The old data is gone unless you restored it before the rebuild.
+    The bucket and IAM writer stay. Only \`make s3-backup-destroy\` removes them. See docs/10_backups.md.
+  - TLS certs come again from HTTP-01, and the first issuance takes a few minutes. After many rebuilds, test hosts
+    on letsencrypt-staging before you switch to prod, because the prod rate limits are tight.
 EOF
 }
 
@@ -201,9 +183,9 @@ confirm_rebuild
 commit_and_push_working_tree
 assert_cluster_exists
 
-run_step "CNI + monitoring CRDs + LB/L2 + Hubble" "$STEP_DIR" 01_cilium.sh
+run_step "CNI, monitoring CRDs, LB-IPAM, L2 and Hubble" "$STEP_DIR" 01_cilium.sh
 commit_and_push_lb_range
-run_step "bootstrap ArgoCD; it deploys the rest from git" "$STEP_DIR" 02a_argocd.sh
+run_step "install ArgoCD, which deploys the rest from git" "$STEP_DIR" 02a_argocd.sh
 
 restore_master_key
 wipe_s3_backups

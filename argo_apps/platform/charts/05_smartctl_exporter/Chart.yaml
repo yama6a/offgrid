@@ -1,8 +1,8 @@
 apiVersion: v2
 name: smartctl-exporter
-description: Per-disk SMART health, wear and error counters, which node-exporter does not read at all.
+description: SMART health, wear and error counters per disk. node-exporter does not read these.
 type: application
-version: 0.1.0 # local chart, never bump version
+version: 0.1.0 # nothing publishes this chart, so never bump it
 
 dependencies:
   - name: prometheus-smartctl-exporter

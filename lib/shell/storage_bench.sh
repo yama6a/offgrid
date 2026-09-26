@@ -1,37 +1,37 @@
 #!/usr/bin/env bash
-# Measures what a Longhorn replica being local or remote costs CNPG and RabbitMQ in write latency,
-# which is the choice between the two shipped -ephemeral classes. See docs/12_storage_bench.md.
+# Measures the write latency cost for CNPG and RabbitMQ of a local versus a remote Longhorn replica.
+# That is the choice between the two shipped -ephemeral classes. See docs/12_storage_bench.md.
 set -uo pipefail
 
 # ---- knobs ----
 BENCH_NS="storage-bench"
-BENCH_SC_REMOTE="bench-lh-remote" # dataLocality disabled + replicas pinned OFF the bench node
-BENCH_SC_LOCAL="bench-lh-local"   # dataLocality best-effort, one replica follows the pod
-REPLICA_TAG="benchreplica"        # Longhorn node tag; teardown removes it from every node
+BENCH_SC_REMOTE="bench-lh-remote" # dataLocality disabled, and no replica on the bench node
+BENCH_SC_LOCAL="bench-lh-local"   # dataLocality best-effort, so one replica follows the pod
+REPLICA_TAG="benchreplica"        # Longhorn node tag. Teardown removes it from every node.
 OWNER_LABEL="bench.offgrid/owner=storage_bench.sh"
-RABBIT_NS="rabbitmq"                  # where the live cluster operator lives (needs an egress grant)
-EGRESS_CNP="bench-mq-operator-egress" # additive CNP in $RABBIT_NS; teardown deletes it BY NAME
+RABBIT_NS="rabbitmq"                  # namespace of the live cluster operator, which needs an egress grant
+EGRESS_CNP="bench-mq-operator-egress" # extra CNP in $RABBIT_NS. Teardown deletes it by name.
 REPEATS=3
-PGBENCH_SCALE=20 # ~300MB: >= PGBENCH_CLIENTS (else pgbench_branches row-lock contention masks
-# storage) and > shared_buffers (else writes never reach the volume). Both
-# constraints are satisfied well before 50, and init cost scales with it.
-PGBENCH_SECONDS=180 # first PGBENCH_WARMUP dropped in post-processing, no separate warm-up run
+# The scale must be >= PGBENCH_CLIENTS, or row-lock contention on pgbench_branches hides the storage.
+# The data must exceed shared_buffers, or writes never reach the volume. Init time grows with the scale.
+PGBENCH_SCALE=20    # about 300MB
+PGBENCH_SECONDS=180 # includes PGBENCH_WARMUP, which post-processing drops
 PGBENCH_WARMUP=60
 PGBENCH_CLIENTS=8
 PERFTEST_SECONDS=150
-INTER_CELL_SLEEP=60 # NVMe on cp3 idles at 50C; let it settle between cells
-PVC_SIZE="8Gi"      # per CNPG arm; 2x this across the two replicas
+INTER_CELL_SLEEP=60 # seconds between cells. The NVMe on cp3 idles at 50C and needs time to cool.
+PVC_SIZE="8Gi"      # per CNPG arm. The two replicas use twice this.
 MQ_PVC_SIZE="4Gi"
-CPU_DRIFT_ABORT=25  # percentage points of node CPU movement across a cell that voids it
-MIN_FREE_MEM_MI=700 # per node, before the bench adds ~1.5Gi cluster-wide
+CPU_DRIFT_ABORT=25  # change of node CPU during a cell, in percentage points, that voids the cell
+MIN_FREE_MEM_MI=700 # per node, before the bench adds about 1.5Gi across the cluster
 MIN_FREE_LONGHORN_GI=50
 
 # renovate: datasource=docker
-FIO_IMAGE="alpine:3.24" # no maintained multi-arch fio image exists; apk add instead
+FIO_IMAGE="alpine:3.24" # no maintained multi-arch fio image exists, so the pod runs apk add
 # renovate: datasource=docker
-PERFTEST_IMAGE="pivotalrabbitmq/perf-test:2.25.0" # 2.25.0 is the first line with linux/arm64 manifests
-MQ_IMAGE="rabbitmq:4.3.4-management-alpine"       # matches the live broker (03_rabbitmq values)
-MQ_REPLICAS=3                                     # a quorum queue needs a quorum; 1 broker measures nothing about Raft
+PERFTEST_IMAGE="pivotalrabbitmq/perf-test:2.25.0" # 2.25.0 is the first release with linux/arm64 images
+MQ_IMAGE="rabbitmq:4.3.4-management-alpine"       # same as the live broker in the 03_rabbitmq values
+MQ_REPLICAS=3                                     # a quorum queue needs a quorum. 1 broker tells nothing about Raft.
 PG_MAJOR="18"
 
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
@@ -40,25 +40,17 @@ source "${SCRIPT_DIR}/common.sh"
 BENCH_LIB="${REPO_ROOT}/lib/bench"
 PG_IMAGE="$(yq -r ".\"${PG_MAJOR}\"" "${REPO_ROOT}/lib/helm/pg-cluster/files/postgres-images.yaml")"
 
-# The arms. Fields: id|storageClass|human label. IDs are lowercase because they become Kubernetes
-# object names, which are RFC1123.
-# The pair the whole exercise turns on: same node, same class settings, same replica count, differing
-# only in whether one replica sits under the pod or both are a network hop away. That is exactly the
-# choice between longhorn-r2-ephemeral and longhorn-r2-ephemeral-local.
+# Fields: id|storageClass|label. The id becomes part of Kubernetes object names, so it is lowercase.
+# The two arms differ only in replica placement: one replica under the pod, or both over the network.
 ARMS=(
-  "b-lh-remote|${BENCH_SC_REMOTE}|longhorn r2, BOTH replicas remote, every read and write over the wire"
+  "b-lh-remote|${BENCH_SC_REMOTE}|longhorn r2, both replicas remote, every read and write over the network"
   "c-lh-local|${BENCH_SC_LOCAL}|longhorn r2 best-effort, one replica local, only the 2nd write crosses"
 )
 
-# The `pgsync` workload's own arms. Answers a different question from ARMS above, which is why it does
-# not share them: ARMS isolates replica LOCALITY for a single-instance DB, this isolates what
-# SYNCHRONOUS replication costs, i.e. what highAvailability: true buys and charges.
+# Arms of the `pgsync` workload. They measure the cost of synchronous replication, highAvailability: true.
 # Fields: id|storageClass|instances|sync|label
-#
-# Uses the SHIPPED class, not the two bench ones, because this feeds a decision about the real
-# databases, so the real class settings (dataLocality disabled included) are the ones that matter.
-# 3 instances because `any 1` of two standbys is the config worth running: it survives one node being
-# drained without stalling writes, which is what makes a rolling node upgrade safe.
+# They use the shipped class, because the result is a decision about the real databases.
+# 3 instances with `any 1` of two standbys survive a node drain without stalling writes.
 SYNC_ARMS=(
   "f-lh-async|longhorn-r2-ephemeral|1|off|longhorn r2, single instance, no replication"
   "g-lh-sync|longhorn-r2-ephemeral|3|on|longhorn r2, 3 instances, synchronous any 1 required"
@@ -72,22 +64,20 @@ SMOKE=false
 RESUME_DIR=""
 FIO_JOBS=(wal-fsync wal-group-commit seq-throughput)
 
-# --smoke: prove the plumbing, not the storage. Every code path runs once at the shortest settings
-# that still exercise it. fio still covers all three arms, because the tag-driven replica placement
-# and the settle gate are the parts most likely to be wrong; pgbench and amqp cover one arm only,
-# because a second CNPG cluster forming proves nothing a first one did not.
+# --smoke tests the script, not the storage. Every code path runs once with the shortest settings.
+# fio covers every arm, because replica placement and the settle check fail most often.
+# pgbench and amqp cover one arm only.
 apply_smoke_knobs() {
   REPEATS=1
   FIO_JOBS=(smoke)
   PGBENCH_SCALE=1
-  PGBENCH_CLIENTS=1 # scale must stay >= clients
+  PGBENCH_CLIENTS=1 # the scale must stay >= the clients
   PGBENCH_SECONDS=15
   PGBENCH_WARMUP=5
   PERFTEST_SECONDS=20
-  MQ_REPLICAS=1 # a 3-broker quorum takes minutes to form and proves nothing extra here
+  MQ_REPLICAS=1 # a 3-broker quorum takes minutes to form and tests nothing extra here
   INTER_CELL_SLEEP=5
-  CPU_DRIFT_ABORT=100 # off: 5s is far short of metrics-server's window, so the guard would only
-  # ever re-read the smoke load itself and warn on every cell
+  CPU_DRIFT_ABORT=100 # off. 5s is shorter than the metrics-server window, so the check would warn on every cell.
   PVC_SIZE="2Gi"
   MQ_PVC_SIZE="1Gi"
 }
@@ -100,16 +90,16 @@ usage: storage_bench.sh [run] [--workload fio|pgbench|amqp|pgsync|all] [--repeat
        storage_bench.sh report <run-dir>
        storage_bench.sh corroborate <run-dir>
 
-  --smoke   exercise every code path once at minimum runtime and throw the numbers away.
-            Use this after editing the script, NOT to answer anything about storage.
+  --smoke   run every code path once with the shortest settings and discard the numbers.
+            Use it after you edit the script. It answers nothing about storage.
 
-  --resume  reuse an existing run dir and skip the arms that already finished, for picking a long
-            run back up after it was interrupted. The cells then span two points in time, so check
-            the pgbench -S control before trusting a comparison across them.
+  --resume  reuse an existing run dir and skip the arms that already finished. Use it to continue
+            an interrupted run. The cells then come from two points in time, so check the
+            pgbench -S control before you compare across them.
 
-  pgsync    what SYNCHRONOUS replication costs, i.e. the price of highAvailability: true. NOT part of
-            `all`: another ~45 min, and a different question from the replica-locality one the other
-            workloads share. See docs/12_storage_bench.md.
+  pgsync    the cost of synchronous replication, the price of highAvailability: true.
+            Not part of `all`. It takes about 45 more minutes and answers a different question.
+            See docs/12_storage_bench.md.
 EOF
   exit 1
 }
@@ -119,7 +109,7 @@ EOF
 kb() { kubectl -n "$BENCH_NS" "$@"; }
 lh() { kubectl -n longhorn-system "$@"; }
 
-# Every delete in this script is scoped to $OWNER_LABEL. Nothing without it is ever touched.
+# Every delete in this script selects on $OWNER_LABEL. It touches nothing without that label.
 labelled() { printf 'bench.offgrid/owner: storage_bench.sh'; }
 
 node_cpu_pct() {
@@ -133,7 +123,6 @@ node_free_mem_mi() {
   echo $((alloc / 1024 - used))
 }
 
-# Longhorn nodes holding a replica of a bound PVC, one per line.
 replica_nodes() {
   local pvc="$1" vol
   vol="$(kb get pvc "$pvc" -o jsonpath='{.spec.volumeName}' 2> /dev/null)"
@@ -142,14 +131,11 @@ replica_nodes() {
     -o jsonpath='{range .items[*]}{.spec.nodeID}{"\n"}{end}' | sort -u | grep -v '^$'
 }
 
-# Pull one KEY=value out of a pctl.awk line, without eval'ing file content.
+# Reads one KEY=value from a pctl.awk line without eval on file content.
 kv() { awk -v k="$1" '{for(i=1;i<=NF;i++){split($i,a,"="); if(a[1]==k){print a[2]; exit}}}' <<< "$2"; }
 
-# Retry an IDEMPOTENT `kb exec ...`, writing stdout to a file. `kubectl exec` streams through the
-# apiserver, and a reset on that connection ("next reader: read tcp ...: connection reset by peer")
-# truncates the output with no fault in the thing being measured. A run is an hour of these, so the
-# read-only probes retry rather than costing a validity gate. NOT for the pgbench runs themselves: a
-# half-written transaction log has to stay a visible failure, not be silently replaced.
+# Retries an idempotent `kb exec` into a file. A reset on the apiserver stream truncates the output.
+# Read-only probes only. A pgbench run must fail visibly, so it never goes through this.
 kb_exec_retry() {
   local what="$1" dest="$2" tries="${3:-3}"
   shift 3
@@ -161,12 +147,11 @@ kb_exec_retry() {
     fi
     sleep 5
   done
-  bad "${what} (${tries} attempts, last: $(tail -1 "$dest" | cut -c1-80))"
+  bad "${what}. ${tries} attempts, last error: $(tail -1 "$dest" | cut -c1-80)"
   return 1
 }
 
-# Mean p99 for one pgsync arm and pgbench run, across the repeats. Empty if the arm never produced a
-# cell, which is what a skipped (non-synchronous) arm looks like.
+# Empty if the arm has no cell, as when it was skipped.
 mean_p99() {
   local dir="$1" arm="$2" run="$3" f v t=0 n=0
   for f in "${dir}"/pgsync/"${arm}"/r*/"${run}".pctl; do
@@ -179,7 +164,7 @@ mean_p99() {
   [ "$n" -gt 0 ] && awk -v t="$t" -v n="$n" 'BEGIN{printf "%.2f", t/n}'
 }
 
-# "b-a (x.yx)". Both empty-safe, because a skipped arm must read as a gap rather than as zero cost.
+# Prints "+<b-a> (<b/a>x)". A skipped arm prints n/a, never a zero cost.
 delta() {
   { [ -n "$1" ] && [ -n "$2" ]; } || {
     printf 'n/a'
@@ -188,8 +173,7 @@ delta() {
   awk -v a="$1" -v b="$2" 'BEGIN{ printf "+%.2f (%.2fx)", b-a, (a>0 ? b/a : 0) }'
 }
 
-# What the run exists to produce, with the subtraction done: the price of synchronous replication.
-# p99 in ms, meaned over the repeats.
+# The price of synchronous replication: mean p99 in ms over the repeats.
 pgsync_grid() {
   local dir="$1" run fa ga
   compgen -G "${dir}/pgsync/*" > /dev/null 2>&1 || return 0
@@ -208,13 +192,11 @@ pg_conn() {
   printf 'postgresql://app:%s@pg-%s-rw.%s.svc:5432/app' "$pw" "$1" "$BENCH_NS"
 }
 
-# Predicates for wait_for. Functions rather than `bash -c` strings: the jsonpath filters carry nested
-# quotes that do not survive a round trip through a shell string.
+# Predicates for wait_for. Functions, because the nested quotes in the jsonpath break inside `bash -c`.
 pvc_bound() { [ "$(kb get pvc "$1" -o jsonpath='{.status.phase}' 2> /dev/null)" = "Bound" ]; }
 pg_healthy() { [ "$(kb get cluster.postgresql.cnpg.io "$1" -o jsonpath='{.status.phase}' 2> /dev/null)" \
   = "Cluster in healthy state" ]; }
-# Which pod is primary, and on which node. Never assume `-1`: with several instances CNPG picks, and
-# after any switchover the answer changes.
+# Never assume `-1` is the primary. CNPG picks it, and a switchover changes it.
 pg_primary() { kb get cluster.postgresql.cnpg.io "$1" -o jsonpath='{.status.currentPrimary}' 2> /dev/null; }
 pg_primary_node() { kb get pod "$(pg_primary "$1")" -o jsonpath='{.spec.nodeName}' 2> /dev/null; }
 mq_ready() { [ "$(kb get rabbitmqcluster "$1" \
@@ -234,9 +216,7 @@ wait_for() {
   return 1
 }
 
-# Longhorn volume is healthy at exactly numberOfReplicas AND (for arm C) one replica sits on the
-# bench node. best-effort adds the local replica on ATTACH and drops a remote one, which is a
-# rebuild; measuring during it measures the rebuild.
+# best-effort adds the local replica on attach, which is a rebuild. A measurement during it measures the rebuild.
 volume_settled() {
   local pvc="$1" want_local="$2" vol rob cnt
   vol="$(kb get pvc "$pvc" -o jsonpath='{.spec.volumeName}' 2> /dev/null)" || return 1
@@ -265,20 +245,19 @@ preflight() {
     if [ "$(kubectl get node "$n" -o jsonpath='{.status.conditions[?(@.type=="Ready")].status}')" = "True" ]; then
       ok "node ${n} Ready"
     else
-      bad "node ${n} NOT Ready"
+      bad "node ${n} not Ready"
       fails=1
     fi
     mem="$(node_free_mem_mi "$n")"
     if [ "$mem" -ge "$MIN_FREE_MEM_MI" ]; then
-      ok "node ${n} has ${mem}Mi free (need ${MIN_FREE_MEM_MI}Mi)"
+      ok "node ${n} has ${mem}Mi free, needs ${MIN_FREE_MEM_MI}Mi"
     else
-      bad "node ${n} has only ${mem}Mi free, the bench would risk evicting a live pod"
+      bad "node ${n} has only ${mem}Mi free. The bench could evict a live pod."
       fails=1
     fi
   done <<< "$nodes"
 
-  # 3 schedulable Longhorn disks is not cosmetic: with only 2, hard replica anti-affinity forces every
-  # pair onto the same two nodes and arms B and C silently become the same measurement.
+  # With only 2 disks, hard anti-affinity puts every replica pair on the same nodes, and arms b and c measure the same.
   local sched
   sched="$(lh get nodes.longhorn.io -o json | python3 -c '
 import json,sys
@@ -289,9 +268,9 @@ for i in json.load(sys.stdin)["items"]:
         if c.get("Ready")=="True" and c.get("Schedulable")=="True": n+=1
 print(n)')"
   if [ "$sched" = "3" ]; then
-    ok "3 Longhorn disks Ready+Schedulable"
+    ok "3 Longhorn disks Ready and Schedulable"
   else
-    bad "only ${sched}/3 Longhorn disks schedulable; arms B and C collapse into each other, fix first"
+    bad "only ${sched}/3 Longhorn disks schedulable. Arms b and c would measure the same. Fix this first."
     fails=1
   fi
 
@@ -305,20 +284,20 @@ print(min((d["storageAvailable"]//2**30) for i in json.load(sys.stdin)["items"] 
     fails=1
   }
 
-  # A rebuild in flight saturates the exact replication path under test.
+  # A running rebuild saturates the replication path under test.
   local degraded
   degraded="$(lh get volumes.longhorn.io -o json \
     | python3 -c 'import json,sys; print(" ".join(v["metadata"]["name"] for v in json.load(sys.stdin)["items"] if v["status"]["state"]=="attached" and v["status"]["robustness"]!="healthy"))')"
   [ -z "$degraded" ] && ok "no attached Longhorn volume is rebuilding" \
     || {
-      bad "rebuilding/degraded volumes: ${degraded}"
+      bad "rebuilding or degraded volumes: ${degraded}"
       fails=1
     }
 
   local unhealthy
   unhealthy="$(kubectl get cluster.postgresql.cnpg.io -A -o json \
     | python3 -c 'import json,sys; print(" ".join(c["metadata"]["name"] for c in json.load(sys.stdin)["items"] if c.get("status",{}).get("phase")!="Cluster in healthy state"))')"
-  [ -z "$unhealthy" ] && ok "every live CNPG cluster healthy" \
+  [ -z "$unhealthy" ] && ok "every live CNPG cluster is healthy" \
     || {
       bad "unhealthy CNPG: ${unhealthy}"
       fails=1
@@ -333,8 +312,8 @@ print(min((d["storageAvailable"]//2**30) for i in json.load(sys.stdin)["items"] 
   local syncing
   syncing="$(kubectl -n argocd get applications.argoproj.io -o json 2> /dev/null \
     | python3 -c 'import json,sys; print(" ".join(a["metadata"]["name"] for a in json.load(sys.stdin)["items"] if (a.get("status",{}).get("operationState") or {}).get("phase")=="Running"))')"
-  [ -z "$syncing" ] && ok "no ArgoCD sync in flight" || {
-    bad "ArgoCD syncing: ${syncing}"
+  [ -z "$syncing" ] && ok "no Argo CD sync running" || {
+    bad "Argo CD syncing: ${syncing}"
     fails=1
   }
 
@@ -347,7 +326,7 @@ print(min((d["storageAvailable"]//2**30) for i in json.load(sys.stdin)["items"] 
   }
 
   if kubectl get ns "$BENCH_NS" > /dev/null 2>&1; then
-    bad "namespace ${BENCH_NS} already exists; run 'make storage-bench-teardown' first"
+    bad "namespace ${BENCH_NS} already exists. Run 'make storage-bench-teardown' first."
     fails=1
   else
     ok "namespace ${BENCH_NS} is free"
@@ -363,14 +342,9 @@ setup_ns() {
   kubectl label ns "$BENCH_NS" "$OWNER_LABEL" --overwrite > /dev/null
 }
 
-# Both bench classes copy longhorn-r2-ephemeral exactly. They differ only in where the two replicas
-# may live relative to the pod, which is the comparison the whole benchmark exists to make.
-#
-# The tag is what makes arm b honest. Without it Longhorn picks any 2 of the 3 nodes by free space,
-# so it can and does put a replica under the pod, and "both replicas remote" silently becomes "one
-# replica local" - the exact thing arm c measures. Tagging the two non-bench nodes and selecting on
-# it forces the pod's node out of the running. allow-empty-node-selector-volume is true here, so the
-# existing no-selector volumes are unaffected by the tag.
+# Both bench classes copy longhorn-r2-ephemeral. They differ only in where the replicas may live.
+# Arm b needs the tag. Without it Longhorn can put a replica under the pod, and arm b then measures arm c.
+# allow-empty-node-selector-volume is true, so the tag does not affect volumes without a selector.
 setup_classes() {
   say "creating the two bench StorageClasses and tagging replica nodes"
 
@@ -413,13 +387,12 @@ parameters:
   fsType: "ext4"
   dataLocality: "best-effort"
 YAML
-  ok "${BENCH_SC_REMOTE} (replicas off ${BENCH_NODE}) and ${BENCH_SC_LOCAL} (one replica on it) created"
+  ok "created ${BENCH_SC_REMOTE}, no replica on ${BENCH_NODE}, and ${BENCH_SC_LOCAL}, one replica on it"
 }
 
 setup_support() {
-  # The live operator's 15672 egress rule is a bare matchLabels with no namespace key, which in Cilium
-  # means its own namespace only, so it cannot reach a bench broker anywhere else and the cluster never
-  # finishes forming. Cilium unions policies, so this widens that egress without editing the chart.
+  # The egress rule of the live operator on 15672 has no namespace key, so Cilium limits it to its own
+  # namespace. The bench broker would never form. Cilium adds policies together, so this extra CNP opens it.
   kubectl apply -f - > /dev/null << YAML
 apiVersion: cilium.io/v2
 kind: CiliumNetworkPolicy
@@ -450,11 +423,11 @@ YAML
 
 teardown() {
   say "teardown"
-  # The RabbitmqCluster carries a finalizer; deleting the namespace first wedges it in Terminating.
+  # The RabbitmqCluster has a finalizer. Deleting the namespace first leaves it stuck in Terminating.
   if kb get rabbitmqcluster bench-mq > /dev/null 2>&1; then
     kb delete rabbitmqcluster bench-mq --wait=true --timeout=180s > /dev/null 2>&1 \
       && ok "bench-mq deleted" \
-      || bad "bench-mq stuck; clear it with: kubectl -n ${BENCH_NS} patch rabbitmqcluster bench-mq --type=merge -p '{\"metadata\":{\"finalizers\":null}}'"
+      || bad "bench-mq is stuck. Clear it with: kubectl -n ${BENCH_NS} patch rabbitmqcluster bench-mq --type=merge -p '{\"metadata\":{\"finalizers\":null}}'"
   fi
   kb delete cluster.postgresql.cnpg.io --all --wait=true --timeout=180s > /dev/null 2>&1
   kb delete pvc --all --wait=true --timeout=180s > /dev/null 2>&1
@@ -466,18 +439,18 @@ teardown() {
     ok "namespace ${BENCH_NS} absent"
   fi
 
-  # These three live outside the namespace, so `delete ns` does not reach them.
+  # These live outside the bench namespace, so `delete ns` does not reach them.
   kubectl delete storageclass "$BENCH_SC_REMOTE" "$BENCH_SC_LOCAL" --ignore-not-found > /dev/null 2>&1 \
-    && ok "bench StorageClasses gone"
+    && ok "bench StorageClasses removed"
   kubectl -n "$RABBIT_NS" delete ciliumnetworkpolicy "$EGRESS_CNP" --ignore-not-found > /dev/null 2>&1 \
-    && ok "${EGRESS_CNP} in ${RABBIT_NS} gone"
+    && ok "${EGRESS_CNP} in ${RABBIT_NS} removed"
 
   local n tags
   for n in $(kubectl get nodes -o jsonpath='{range .items[*]}{.metadata.name} {end}'); do
     tags="$(lh get nodes.longhorn.io "$n" -o jsonpath='{.spec.tags}' 2> /dev/null)"
     case "$tags" in *"$REPLICA_TAG"*)
       lh patch nodes.longhorn.io "$n" --type=merge -p '{"spec":{"tags":[]}}' > /dev/null 2>&1 \
-        && ok "untagged ${n}" || bad "could not untag ${n}, remove ${REPLICA_TAG} by hand"
+        && ok "untagged ${n}" || bad "could not untag ${n}. Remove ${REPLICA_TAG} by hand."
       ;;
     esac
   done
@@ -490,10 +463,8 @@ teardown() {
 
 # ---- bench node ----
 
-# Every arm runs on ONE node, so storage is the only variable. Pick the node with the most free
-# memory: the bench adds ~1.5Gi and these are 8Gi boards, so this is the choice least likely to
-# evict something real. Replica placement is then forced by the tag in setup_classes, not left to
-# Longhorn's free-space heuristic.
+# Every arm runs on one node, so storage is the only variable. The bench adds about 1.5Gi on 8Gi nodes,
+# so the node with the most free memory is the least likely to evict a real pod.
 pick_nodes() {
   say "picking the bench node"
   local n best=-1 mem
@@ -506,11 +477,11 @@ pick_nodes() {
   done
   [ -n "$BENCH_NODE" ] || die "could not pick a bench node"
 
-  # pgbench and perf-test clients run elsewhere so client CPU never contends with the thing under test.
+  # The pgbench and perf-test clients run on another node, so their CPU does not compete with the test.
   for n in $(kubectl get nodes -o jsonpath='{range .items[*]}{.metadata.name} {end}'); do
     [ "$n" != "$BENCH_NODE" ] && OFF_NODE="$n" && break
   done
-  ok "bench node ${BENCH_NODE} (${best}Mi free); clients on ${OFF_NODE}"
+  ok "bench node ${BENCH_NODE} with ${best}Mi free. Clients on ${OFF_NODE}."
 }
 
 # ---- fio ----
@@ -535,16 +506,14 @@ apiVersion: v1
 kind: Pod
 metadata: { name: fio-${arm}, namespace: ${BENCH_NS}, labels: { $(labelled) } }
 spec:
-  # No priorityClassName on purpose: priority 0 puts the bench below data-critical, so node-pressure
-  # eviction reaches the benchmark before it reaches any database.
+  # No priorityClassName: at priority 0, node-pressure eviction hits the bench before any database.
   nodeSelector: { kubernetes.io/hostname: ${BENCH_NODE} }
   restartPolicy: Never
   containers:
     - name: fio
       image: ${FIO_IMAGE}
       command: [sh, -c, "apk add --no-cache fio >/dev/null && sleep infinity"]
-      # PSA enforces baseline here, so root is permitted and apk needs it. Drop everything baseline
-      # does not already require, so this is only as privileged as the package install forces.
+      # PSA baseline allows root, and apk needs it. Everything else is dropped.
       securityContext:
         allowPrivilegeEscalation: false
         capabilities: { drop: [ALL] }
@@ -579,11 +548,10 @@ YAML
 pg_arm_up() {
   local arm="$1" sc="$2" instances="${3:-1}" sync="${4:-off}"
 
-  # One instance is pinned to BENCH_NODE so storage is the only variable, which is what the three
-  # locality arms need. Several instances cannot be: they have to sit on DIFFERENT nodes or the
-  # synchronous ack never crosses the network and the measurement is meaningless. So required
-  # anti-affinity spreads them one per node instead, and which node ends up primary is recorded
-  # per cell rather than controlled. See the threats section in docs/12_storage_bench.md.
+  # One instance runs on BENCH_NODE, so storage is the only variable. Several instances must run on
+  # different nodes, or the synchronous ack never crosses the network. Required anti-affinity spreads them.
+  # CNPG picks the primary of a 3-instance cluster, so each cell records its node. The client shares a node
+  # with one instance, and `any 1` waits for the faster standby, so sync results run a little optimistic.
   local placement="    nodeSelector: { kubernetes.io/hostname: ${BENCH_NODE} }"
   [ "$instances" -gt 1 ] && placement="    podAntiAffinityType: required
     topologyKey: kubernetes.io/hostname"
@@ -607,9 +575,8 @@ ${placement}
   postgresql:
 ${syncblock}
     parameters:
-      # The live pg-cluster values verbatim, plus the two timing counters. Everything that decides
-      # commit cost (synchronous_commit, fsync, full_page_writes, checkpoint_timeout) stays at its
-      # production value, or the result would not transfer.
+      # The live pg-cluster values plus two timing counters. Settings that decide commit cost keep their
+      # production values, so the result applies to production.
       max_connections: "50"
       shared_buffers: "128MB"
       effective_cache_size: "256MB"
@@ -623,19 +590,17 @@ YAML
   wait_for "pg-${arm} healthy" 900 pg_healthy "pg-${arm}"
 }
 
-# The one failure that would silently ruin a pgsync run: CNPG ignoring a malformed `synchronous` block,
-# so the arm measures async and the grid reports "sync is free". Postgres itself is asked, twice, and a
-# failure SKIPS the arm rather than recording a number nobody can trust. Written to synchronous.txt as
-# the run's evidence that the arm was what it claimed.
+# CNPG ignores a malformed `synchronous` block. The arm would then measure async and report that sync is free.
+# So this asks Postgres, skips the arm on failure, and writes the evidence to synchronous.txt.
 pg_assert_sync() {
   local arm="$1" out="$2" names states pod
   pod="$(pg_primary "pg-${arm}")"
   [ -n "$pod" ] || {
-    bad "${arm}: no primary to interrogate"
+    bad "${arm}: no primary to query"
     return 1
   }
   mkdir -p "$out"
-  # -At leaves psql's default '|' between columns, which avoids quoting a separator into the SQL.
+  # -At keeps the psql default '|' between columns, so the SQL needs no quoted separator.
   names="$(kb exec "$pod" -c postgres -- psql -U postgres -Atc 'show synchronous_standby_names;' 2> /dev/null)"
   states="$(kb exec "$pod" -c postgres -- psql -U postgres -Atc \
     'select application_name, sync_state from pg_stat_replication;' 2> /dev/null)"
@@ -643,15 +608,15 @@ pg_assert_sync() {
     "$pod" "$(pg_primary_node "pg-${arm}")" "${names:-<empty>}" "${states:-<none>}" > "${out}/synchronous.txt"
 
   [ -n "$names" ] || {
-    bad "${arm}: synchronous_standby_names is EMPTY, so this arm is async; skipping"
+    bad "${arm}: synchronous_standby_names is empty, so this arm is async. Skipping."
     return 1
   }
   grep -qE '\|(sync|quorum)$' <<< "$states" \
     || {
-      bad "${arm}: no standby reports sync_state sync/quorum (${states:-none}); skipping"
+      bad "${arm}: no standby reports sync_state sync or quorum. States: ${states:-none}. Skipping."
       return 1
     }
-  ok "${arm} is genuinely synchronous (${names})"
+  ok "${arm} is synchronous: ${names}"
 }
 
 pg_client_up() {
@@ -673,26 +638,24 @@ YAML
 }
 
 pgbench_arm() {
-  # 4th arg is the workload dir, so pgsync's cells land beside pgbench's rather than mixed in with them.
-  # The cell body is identical for both: only how the cluster was provisioned differs.
+  # The 4th arg is the workload dir, so pgsync cells land beside the pgbench cells, not among them.
   local arm="$1" sc="$2" rep="$3" kind="${4:-pgbench}" out="${RUN_DIR}/${4:-pgbench}/${1}/r${3}"
   mkdir -p "$out"
   local bin="/usr/lib/postgresql/${PG_MAJOR}/bin"
   local conn
   conn="$(pg_conn "$arm")"
-  # Resolved, not assumed: with several instances the primary is whichever CNPG picked, and every
-  # probe below has to hit THAT pod or it measures a standby's storage instead.
+  # Every probe must hit the primary, or it measures the storage of a standby.
   local pri
   pri="$(pg_primary "pg-${arm}")"
   [ -n "$pri" ] || {
-    bad "${arm} r${rep}: no primary, skipping cell"
+    bad "${arm} r${rep}: no primary, skipping the cell"
     return 1
   }
 
   replica_nodes "${pri}" > "${out}/replica-nodes.txt" 2> /dev/null
   pg_primary_node "pg-${arm}" > "${out}/primary-node.txt" 2> /dev/null
 
-  # Zero-network cross-check on the same volume. If it disagrees with fio's sync p50 the fio job is wrong.
+  # A cross-check on the same volume with no network. If it disagrees with the fio sync p50, the fio job is wrong.
   kb_exec_retry "${arm} r${rep} pg_test_fsync" "${out}/pg_test_fsync.txt" 3 \
     "$pri" -c postgres -- "${bin}/pg_test_fsync" -f /var/lib/postgresql/data/pgdata/fsync-probe -s 5
   kb exec "$pri" -c postgres -- rm -f /var/lib/postgresql/data/pgdata/fsync-probe > /dev/null 2>&1
@@ -702,8 +665,7 @@ pgbench_arm() {
      SELECT wal_records,wal_fpi,wal_bytes,wal_buffers_full FROM pg_stat_wal;
      SELECT blk_write_time,blk_read_time,xact_commit FROM pg_stat_database WHERE datname='app';" \
     > "${out}/pgstat.before" 2>&1
-  # Separately, and as postgres from inside the primary: pg_stat_replication hides sync_state and the
-  # lag columns from unprivileged roles, so via pgclient's app user they all come back NULL.
+  # As postgres on the primary. pg_stat_replication returns NULL for sync_state and lag to the app user.
   kb exec "$pri" -c postgres -- psql -U postgres -Atc \
     'SELECT application_name,sync_state,write_lag,flush_lag,replay_lag FROM pg_stat_replication;' \
     > "${out}/replication.before" 2>&1
@@ -715,7 +677,7 @@ pgbench_arm() {
       clients=$PGBENCH_CLIENTS
       threads=4
     }
-    # --log-prefix=/tmp/c1 writes /tmp/c1.<pid>[.<thread>], NOT /tmp/c1.log.*, so the glob is prefix.*
+    # --log-prefix=/tmp/c1 writes /tmp/c1.<pid>[.<thread>], not /tmp/c1.log.*
     kb exec pgclient -- sh -c \
       "rm -f /tmp/${run}.*; ${bin}/pgbench -c ${clients} -j ${threads} -T ${PGBENCH_SECONDS} -P 10 -r \
          --log --log-prefix=/tmp/${run} '${conn}'" \
@@ -726,8 +688,8 @@ pgbench_arm() {
     awk -v warmup="$PGBENCH_WARMUP" -f "${BENCH_LIB}/pctl.awk" "${out}/${run}.log" > "${out}/${run}.pctl" 2> /dev/null
   done
 
-  # Read-only control. Reads come from cache, so this MUST match across arms; if it does not, the arms
-  # were never comparable and no verdict may be read off the write numbers.
+  # Read-only control. At PGBENCH_SCALE=20 the data exceeds shared_buffers, so these reads reach storage
+  # and differ by arm. A CPU-bound query that never touches storage would be a real control.
   kb exec pgclient -- "${bin}/pgbench" -S -c 4 -j 4 -T 60 -P 10 "$conn" \
     > "${out}/select.txt" 2>&1 && ok "${arm} r${rep} pgbench -S control" || bad "${arm} r${rep} -S control failed"
 
@@ -736,8 +698,7 @@ pgbench_arm() {
      SELECT wal_records,wal_fpi,wal_bytes,wal_buffers_full FROM pg_stat_wal;
      SELECT blk_write_time,blk_read_time,xact_commit FROM pg_stat_database WHERE datname='app';" \
     > "${out}/pgstat.after" 2>&1
-  # Separately, and as postgres from inside the primary: pg_stat_replication hides sync_state and the
-  # lag columns from unprivileged roles, so via pgclient's app user they all come back NULL.
+  # As postgres on the primary. pg_stat_replication returns NULL for sync_state and lag to the app user.
   kb exec "$pri" -c postgres -- psql -U postgres -Atc \
     'SELECT application_name,sync_state,write_lag,flush_lag,replay_lag FROM pg_stat_replication;' \
     > "${out}/replication.after" 2>&1
@@ -754,8 +715,7 @@ metadata: { name: bench-mq, namespace: ${BENCH_NS}, labels: { $(labelled) } }
 spec:
   replicas: ${MQ_REPLICAS}
   image: ${MQ_IMAGE}
-  # The live CR says 604800 (7 days). Inheriting that would wedge teardown for a week; this is the one
-  # place the bench deliberately breaks parity with production.
+  # The live CR uses 604800, 7 days. That would block teardown for a week, so the bench differs here.
   terminationGracePeriodSeconds: 30
   persistence: { storage: ${MQ_PVC_SIZE}, storageClassName: ${sc} }
   resources:
@@ -786,8 +746,8 @@ amqp_arm() {
   kb get pods -l app.kubernetes.io/name=bench-mq \
     -o custom-columns='POD:.metadata.name,NODE:.spec.nodeName' --no-headers > "${out}/broker-nodes.txt" 2> /dev/null
 
-  # -c 1 is one outstanding confirm, so every publish waits on the Raft majority fsync: that IS the
-  # write-latency number. -c 100 pipelines and shows whether the cost amortizes into throughput.
+  # -c 1 allows one open confirm, so every publish waits on the Raft majority fsync. That is the write latency.
+  # -c 100 pipelines, and shows whether throughput hides the cost.
   local c
   for c in 1 100; do
     kb delete pod "perftest-c${c}" --ignore-not-found --wait=true --timeout=60s > /dev/null 2>&1
@@ -837,13 +797,9 @@ YAML
 
 # ---- cell driver ----
 
-# Records BACKGROUND load either side of a cell, to catch a neighbour (a CronJob, an ArgoCD sync, a
-# Longhorn rebuild) turning up mid-measurement. A cell that ran through a big swing measured the
-# neighbour, not the storage, so it is flagged void rather than averaged in.
-#
-# Both samples must be of an IDLE cluster, hence the settle sleep BEFORE the second one. `kubectl top`
-# serves a rolling average, so sampling the instant the load stops just re-reads the benchmark's own
-# CPU and flags every single cell. That is exactly what the first smoke run did.
+# Samples node CPU before and after a cell. A large change means other load ran, such as a CronJob, an
+# Argo CD sync or a Longhorn rebuild. Such a cell is marked void.
+# `kubectl top` is a rolling average, so the second sample waits for the bench load to settle first.
 cell() {
   local kind="$1" arm="$2" sc="$3" rep="$4"
   local before after n
@@ -858,7 +814,7 @@ cell() {
     amqp) amqp_arm "$arm" "$rep" ;;
   esac
 
-  sleep "$INTER_CELL_SLEEP" # let the load drain out of metrics-server's window before re-sampling
+  sleep "$INTER_CELL_SLEEP" # let the bench load leave the metrics-server window before the second sample
   after=""
   for n in $(kubectl get nodes -o jsonpath='{range .items[*]}{.metadata.name} {end}'); do
     after="${after}${n}=$(node_cpu_pct "$n") "
@@ -873,7 +829,7 @@ cell() {
     [ -n "$b" ] && [ -n "$a" ] && [ "$((b > a ? b - a : a - b))" -gt "$CPU_DRIFT_ABORT" ] && drift=1
   done
   [ "$drift" -eq 1 ] \
-    && warn "${kind} ${arm} r${rep}: background node CPU moved >${CPU_DRIFT_ABORT}pt across the cell, treat as void"
+    && warn "${kind} ${arm} r${rep}: background node CPU changed by more than ${CPU_DRIFT_ABORT} points during the cell. Treat it as void."
   return 0
 }
 
@@ -881,9 +837,9 @@ cell() {
 
 do_run() {
   $SMOKE && apply_smoke_knobs
-  preflight # before the prompt: no point asking for hours of cluster time if it would fail anyway
+  preflight # before the prompt, so a run that would fail never asks for hours of cluster time
 
-  # Per arm: a one-off provisioning cost, plus a per-repeat measuring cost. Seconds, then minutes.
+  # Per arm: a setup cost once, plus a measuring cost per repeat. In seconds, then minutes.
   local n_arms=${#ARMS[@]} slow_arms=${#ARMS[@]} fio_m=0 pg_m=0 mq_m=0 sy_m=0 est
   local sync_arms=${#SYNC_ARMS[@]}
   $SMOKE && slow_arms=1
@@ -902,7 +858,7 @@ do_run() {
     mq_m=$((slow_arms * (240 + 90 + REPEATS * (2 * PERFTEST_SECONDS + INTER_CELL_SLEEP))))
     ;;
   esac
-  # A 3-instance cluster takes longer to form than a 1-instance one, hence 300 rather than 210.
+  # A 3-instance cluster takes longer to form than a 1-instance cluster, so 300 instead of 210.
   case "$WORKLOADS" in pgsync)
     sy_m=$((sync_arms * (300 + 150 + 90 + REPEATS * (2 * PGBENCH_SECONDS + 60 + INTER_CELL_SLEEP))))
     ;;
@@ -910,34 +866,33 @@ do_run() {
   est=$(((fio_m + pg_m + mq_m + sy_m) / 60))
 
   if $SMOKE; then
-    say "SMOKE: ~${est} min. Exercises every path once; the numbers are garbage on purpose."
+    say "smoke run: about ${est} min. It runs every path once. The numbers mean nothing."
   else
-    say "estimate: ~${est} min (fio $((fio_m / 60)), pgbench $((pg_m / 60)), amqp $((mq_m / 60)), pgsync $((sy_m / 60))) at --repeats ${REPEATS}"
-    warn "the cluster is loaded the whole time; live apps will be slower. --workload fio is the shortest real answer."
+    say "estimate: about ${est} min at --repeats ${REPEATS}. fio $((fio_m / 60)), pgbench $((pg_m / 60)), amqp $((mq_m / 60)), pgsync $((sy_m / 60))."
+    warn "the cluster is under load the whole time, so live apps are slower. --workload fio is the shortest real run."
   fi
   confirm "run the benchmark now?" || die "aborted"
 
   RUN_DIR="${REPO_ROOT}/.cache/storage-bench/$(date -u +%Y%m%dT%H%MZ)"
-  $SMOKE && RUN_DIR="${RUN_DIR}-SMOKE" # in the path, so nobody quotes these numbers by accident
+  $SMOKE && RUN_DIR="${RUN_DIR}-SMOKE" # in the path, so nobody quotes these numbers by mistake
   if [ -n "$RESUME_DIR" ]; then
     [ -d "$RESUME_DIR" ] || die "--resume: no such run dir: ${RESUME_DIR}"
     RUN_DIR="$RESUME_DIR"
-    warn "resuming into ${RUN_DIR}: finished arms are skipped, so cells will span two points in time."
-    warn "the pgbench -S control is what says whether they are still comparable. Check it before reading the grid."
+    warn "resuming into ${RUN_DIR}. Finished arms are skipped, so the cells come from two points in time."
+    warn "the pgbench -S control shows whether they are still comparable. Check it before you read the grid."
   fi
   mkdir -p "${RUN_DIR}"/{fio,pgbench,amqp,pgsync}
   trap 'teardown' EXIT
   setup_ns
-  pick_nodes # must run before the classes: the tag they select on is "not the bench node"
-  # pgsync measures the shipped longhorn class, so it needs neither bench class nor the replica tag.
-  # No reason to tag every Longhorn node for a run that never selects on it.
-  case "$WORKLOADS" in pgsync) say "skipping the bench StorageClasses: pgsync uses the shipped class" ;;
+  pick_nodes # before the classes, because the tag goes on every node except the bench node
+  # pgsync uses the shipped class, so it needs no bench class and no replica tag.
+  case "$WORKLOADS" in pgsync) say "skipping the bench StorageClasses. pgsync uses the shipped class." ;;
   *) setup_classes ;;
   esac
   setup_support
 
   {
-    $SMOKE && echo "SMOKE RUN: plumbing check only, the numbers below are meaningless"
+    $SMOKE && echo "SMOKE RUN: script check only. The numbers below mean nothing."
     echo "git: $(git -C "$REPO_ROOT" rev-parse --short HEAD)"
     echo "benchNode: ${BENCH_NODE}"
     echo "clientNode: ${OFF_NODE}"
@@ -945,9 +900,8 @@ do_run() {
     echo "pgImage: ${PG_IMAGE}"
   } > "${RUN_DIR}/manifest.txt"
 
-  # fio is cheap to set up (a PVC and a pod), so it runs repeat-major and PALINDROMIC: repeat 1
-  # forward, repeat 2 reversed, repeat 3 forward, which cancels linear drift instead of loading it
-  # onto whichever arm always goes last.
+  # fio is cheap to set up, so each repeat runs every arm. The order reverses on each repeat, which
+  # cancels linear drift instead of loading it onto the arm that always goes last.
   case "$WORKLOADS" in fio | all)
     local rep i arm id sc
     for ((rep = 1; rep <= REPEATS; rep++)); do
@@ -960,20 +914,16 @@ do_run() {
       for arm in "${order[@]}"; do
         id="${arm%%|*}"
         sc="$(cut -d'|' -f2 <<< "$arm")"
-        say "fio repeat ${rep}/${REPEATS}: ${id} (${sc})"
+        say "fio repeat ${rep}/${REPEATS}: ${id}, ${sc}"
         cell fio "$id" "$sc" "$rep"
       done
     done
     ;;
   esac
 
-  # pgbench and amqp run ARM-MAJOR: provision once, then loop the repeats against it. Repeat-major
-  # would rebuild a CNPG cluster and reload pgbench's dataset 9 times instead of 3, which is over an
-  # hour of pure churn for no extra information. The cost is that an arm's repeats sit adjacent in
-  # time, so drift shows up as within-cell variance rather than cancelling; the report prints the
-  # per-repeat spread, and the 1.5x validity gate is what catches it.
-  # Under --smoke only the first arm: a second CNPG cluster forming proves nothing the first did not,
-  # and it is 6 of the 10 minutes.
+  # pgbench and amqp set up each arm once and run all repeats against it. Setup per repeat would cost
+  # hours for no extra information. Drift then shows as spread between repeats, which the 1.5x gate catches.
+  # Under --smoke only the first arm runs. A second CNPG cluster tests nothing new.
   local slow=("${ARMS[@]}")
   $SMOKE && slow=("${ARMS[0]}")
 
@@ -982,10 +932,10 @@ do_run() {
       id="${arm%%|*}"
       sc="$(cut -d'|' -f2 <<< "$arm")"
       if [ -f "${RUN_DIR}/pgbench/${id}/r${REPEATS}/c8.txt" ]; then
-        ok "pgbench: ${id} already complete, skipping (--resume)"
+        ok "pgbench: ${id} already complete, skipping it for --resume"
         continue
       fi
-      say "pgbench: ${id} (${sc})"
+      say "pgbench: ${id}, ${sc}"
       if pg_arm_up "$id" "$sc"; then
         pg_client_up
         kb exec pgclient -- "/usr/lib/postgresql/${PG_MAJOR}/bin/pgbench" \
@@ -995,14 +945,13 @@ do_run() {
         kb delete cluster.postgresql.cnpg.io "pg-${id}" --wait=true --timeout=180s > /dev/null 2>&1
         kb delete pvc -l "cnpg.io/cluster=pg-${id}" --wait=true --timeout=180s > /dev/null 2>&1
       else
-        bad "${id}: CNPG cluster never became healthy, skipping pgbench"
+        bad "${id}: CNPG cluster never became healthy. Skipping pgbench."
       fi
     done
     ;;
   esac
 
-  # pgsync: same cell body, different provisioning. Under --smoke only the two sync arms, since the
-  # async ones are just pgbench again and prove nothing new about the synchronous path.
+  # pgsync: the same cells as pgbench on a different cluster. Under --smoke only the sync arm runs.
   local syncset=("${SYNC_ARMS[@]}")
   $SMOKE && syncset=("${SYNC_ARMS[1]}" "${SYNC_ARMS[3]}")
 
@@ -1014,13 +963,12 @@ do_run() {
       inst="$(cut -d'|' -f3 <<< "$arm")"
       syn="$(cut -d'|' -f4 <<< "$arm")"
       if [ -f "${RUN_DIR}/pgsync/${id}/r${REPEATS}/c8.pctl" ]; then
-        ok "pgsync: ${id} already complete, skipping (--resume)"
+        ok "pgsync: ${id} already complete, skipping it for --resume"
         continue
       fi
-      say "pgsync: ${id} (${sc}, ${inst} instance(s), sync ${syn})"
+      say "pgsync: ${id}, ${sc}, instances: ${inst}, sync: ${syn}"
       if pg_arm_up "$id" "$sc" "$inst" "$syn"; then
-        # An arm that claims to be synchronous and is not would report "sync is free", so it is proved
-        # against Postgres before a single number is taken, and skipped rather than half-trusted.
+        # An arm that is not really synchronous would report that sync is free, so check it first.
         if [ "$syn" = on ] && ! pg_assert_sync "$id" "${RUN_DIR}/pgsync/${id}"; then
           kb delete cluster.postgresql.cnpg.io "pg-${id}" --wait=true --timeout=180s > /dev/null 2>&1
           kb delete pvc -l "cnpg.io/cluster=pg-${id}" --wait=true --timeout=180s > /dev/null 2>&1
@@ -1034,7 +982,7 @@ do_run() {
         kb delete cluster.postgresql.cnpg.io "pg-${id}" --wait=true --timeout=180s > /dev/null 2>&1
         kb delete pvc -l "cnpg.io/cluster=pg-${id}" --wait=true --timeout=180s > /dev/null 2>&1
       else
-        bad "${id}: CNPG cluster never became healthy, skipping pgsync"
+        bad "${id}: CNPG cluster never became healthy. Skipping pgsync."
       fi
     done
     ;;
@@ -1045,16 +993,16 @@ do_run() {
       id="${arm%%|*}"
       sc="$(cut -d'|' -f2 <<< "$arm")"
       if [ -f "${RUN_DIR}/amqp/${id}/r${REPEATS}/c100.txt" ]; then
-        ok "amqp: ${id} already complete, skipping (--resume)"
+        ok "amqp: ${id} already complete, skipping it for --resume"
         continue
       fi
-      say "amqp: ${id} (${sc})"
+      say "amqp: ${id}, ${sc}"
       if mq_arm_up "$id" "$sc"; then
         for ((rep = 1; rep <= REPEATS; rep++)); do cell amqp "$id" "$sc" "$rep"; done
         kb delete rabbitmqcluster bench-mq --wait=true --timeout=180s > /dev/null 2>&1
         kb delete pvc -l app.kubernetes.io/name=bench-mq --wait=true --timeout=180s > /dev/null 2>&1
       else
-        bad "${id}: bench-mq never became ready, skipping amqp"
+        bad "${id}: bench-mq never became ready. Skipping amqp."
       fi
     done
     ;;
@@ -1125,10 +1073,9 @@ PY
         "$(kv max "$line")" "$(kv tps "$line")"
     done
 
-    # perf-test's closing summary, e.g.
+    # The closing summary of perf-test, for example:
     #   confirm latency min/median/75th/95th/99th/max 3219/5697/6025/7984/10703/48067 us
-    # The per-interval lines carry the same numbers but "confirm latency" there is a column HEADER,
-    # so anchor on the summary line and take the slash-separated field.
+    # The interval lines use "confirm latency" as a column header, so match the summary line only.
     for f in "${dir}"/amqp/*/r*/c1.txt "${dir}"/amqp/*/r*/c100.txt; do
       [ -f "$f" ] || continue
       rep="$(basename "$(dirname "$f")")"
@@ -1151,19 +1098,20 @@ PY
     pgsync_grid "$dir"
     echo
     echo '#### validity gates'
-    echo '- [ ] pgbench -S read-only control within 10% across arms (see per-arm select.txt)'
+    echo '- [ ] pgbench -S read-only control within 10% across arms. See select.txt per arm.'
+    # max/min grows with the repeat count, so more repeats fail it more often. An interquartile spread would not.
     echo '- [ ] max/min of p99 across repeats under 1.5x in every cell'
-    echo '- [ ] pg_test_fsync and fio sync p50 within 2x AND ranking the arms the same way'
-    echo '- [ ] no cell flagged by the CPU-drift guard (see fio/load.txt, pgbench/load.txt)'
-    echo '- [ ] c-lh-local had a local replica and b-lh-remote did not (replica-nodes.txt per cell)'
+    echo '- [ ] pg_test_fsync and fio sync p50 within 2x, and both rank the arms the same way'
+    echo '- [ ] no cell flagged by the CPU drift check. See fio/load.txt and pgbench/load.txt.'
+    echo '- [ ] c-lh-local had a local replica and b-lh-remote did not. See replica-nodes.txt per cell.'
     if compgen -G "${dir}/pgsync/*" > /dev/null; then
-      echo '- [ ] both sync arms show a real sync/quorum standby (pgsync/*/synchronous.txt)'
-      echo '- [ ] primary on the same node in every pgsync arm (pgsync/*/r*/primary-node.txt)'
+      echo '- [ ] both sync arms show a sync or quorum standby. See pgsync/*/synchronous.txt.'
+      echo '- [ ] primary on the same node in every pgsync arm. See pgsync/*/r*/primary-node.txt.'
       echo '- [ ] g-lh-sync minus e-local-sync is near 2x the f-lh-async minus d-local-async gap;'
       echo '      far off means the network dominates both, or a cell is invalid'
     fi
     echo
-    echo 'Any unchecked box means INVALID: publish no verdict.'
+    echo 'Any unchecked box makes the run invalid. Publish no verdict.'
   } > "$md"
 
   cat "$md"
@@ -1171,9 +1119,8 @@ PY
 
 # ---- corroborate ----
 
-# Deliberately a separate sub-command, never a hidden port-forward inside a run. At scrapeInterval 60s
-# and dedup.minScrapeInterval 60s a 150s cell yields two samples, so this can contradict the tools but
-# it cannot replace them.
+# A separate subcommand, not part of a run. At a 60s scrape interval a 150s cell gets two samples.
+# So the metrics can contradict the bench tools, but cannot replace them.
 do_corroborate() {
   local dir="${1:?usage: corroborate <run-dir>}"
   local svc="vmsingle-victoria-metrics-k8s-stack" port=8428
@@ -1183,7 +1130,7 @@ do_corroborate() {
   cleanup_pf() { [ -n "$pf" ] && kill "$pf" 2> /dev/null; }
   trap cleanup_pf EXIT
 
-  say "port-forwarding svc/${svc} (${MONITORING_NS}) -> 127.0.0.1:${port}"
+  say "port-forwarding svc/${svc} in ${MONITORING_NS} to 127.0.0.1:${port}"
   kubectl -n "$MONITORING_NS" port-forward "svc/${svc}" "${port}:${port}" > /dev/null 2>&1 &
   pf=$!
   local i
@@ -1192,7 +1139,7 @@ do_corroborate() {
       exec 3>&- 3<&-
       break
     }
-    kill -0 "$pf" 2> /dev/null || die "port-forward died (is the monitoring stack up?)"
+    kill -0 "$pf" 2> /dev/null || die "port-forward died. Is the monitoring stack up?"
     sleep 1
   done
 
@@ -1225,7 +1172,7 @@ while [ $# -gt 0 ]; do
     --workload)
       WORKLOADS="$2"
       case "$WORKLOADS" in fio | pgbench | amqp | pgsync | all) ;;
-      *) die "unknown --workload '${WORKLOADS}': every case below would miss it and the run would do nothing" ;;
+      *) die "unknown --workload '${WORKLOADS}'. The run would do nothing." ;;
       esac
       shift 2
       ;;

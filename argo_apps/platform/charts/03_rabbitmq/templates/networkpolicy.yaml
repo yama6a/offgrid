@@ -1,10 +1,6 @@
 {{- /*
-Broker lockdown for the RabbitmqCluster server pods. Default-deny both ways, then allow only what RabbitMQ
-needs. WHO may open an AMQP connection is label-based, not an enumerated allowlist, so this platform app never
-needs editing when a new messaging workload appears: the workload opts in by carrying `messaging-client: true`
-and adding a matching egress rule of its own.
-Intra-cluster peer traffic is allowed on ALL ports (4369 epmd, 25672 inter-node, plus CLI), so a missed
-clustering port cannot break quorum formation.
+A new messaging workload needs no change here. It sets `messaging-client: true` and adds its own egress rule.
+Brokers reach each other on all ports, so a missed clustering port cannot break quorum formation.
 */ -}}
 apiVersion: cilium.io/v2
 kind: CiliumNetworkPolicy
@@ -16,21 +12,19 @@ spec:
     matchLabels:
       app.kubernetes.io/name: {{ .Values.name }}
   ingress:
-    # AMQP clients: any pod that opts in with `messaging-client: "true"`, in any namespace.
+    # AMQP clients: any pod in any namespace with `messaging-client: "true"`.
     - fromEndpoints:
         - matchLabels:
             messaging-client: "true"
           matchExpressions:
-            - { key: k8s:io.kubernetes.pod.namespace, operator: Exists }   # else rabbitmq-ns only, matching nothing
+            - { key: k8s:io.kubernetes.pod.namespace, operator: Exists }   # without it, only the rabbitmq namespace matches
       toPorts:
         - ports:
             - { port: "5672", protocol: TCP }
-    # Broker peers, on ALL ports.
     - fromEndpoints:
         - matchLabels:
             app.kubernetes.io/name: {{ .Values.name }}
-    # Management API: the Envoy data-plane serving the SSO-gated UI, and the operators in this namespace
-    # (the topology operator declares topology over the HTTP management API).
+    # Management API: the Envoy proxy that serves the SSO-gated UI, and the operators in this namespace.
     - fromEndpoints:
         - matchLabels:
             k8s:io.kubernetes.pod.namespace: envoy-gateway-system
@@ -40,12 +34,10 @@ spec:
       toPorts:
         - ports:
             - { port: "15672", protocol: TCP }
-    # Kubelet TCP probes on the AMQP port, from the node.
     - fromEntities: [host, remote-node]
       toPorts:
         - ports:
             - { port: "5672", protocol: TCP }
-    # vmagent scrapes the broker's Prometheus endpoint.
     - fromEndpoints:
         - matchLabels:
             k8s:io.kubernetes.pod.namespace: monitoring
@@ -54,7 +46,7 @@ spec:
         - ports:
             - { port: "15692", protocol: TCP }
   egress:
-    # DNS. Peer discovery resolves the headless `rabbitmq-nodes` Service through it.
+    # DNS. Peer discovery resolves the headless `rabbitmq-nodes` Service.
     - toEndpoints:
         - matchLabels:
             k8s:io.kubernetes.pod.namespace: kube-system
@@ -63,9 +55,8 @@ spec:
         - ports:
             - { port: "53", protocol: UDP }
             - { port: "53", protocol: TCP }
-    # Egress to broker peers, on ALL ports.
     - toEndpoints:
         - matchLabels:
             app.kubernetes.io/name: {{ .Values.name }}
-    # Peer discovery and operator-coordinated cluster formation. Entity, so no hardcoded apiserver IP.
+    # Peer discovery and cluster formation. The entity avoids a hardcoded apiserver IP.
     - toEntities: [kube-apiserver]

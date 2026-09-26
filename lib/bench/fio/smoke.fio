@@ -1,5 +1,5 @@
-# --smoke only. Same shape as wal-fsync, seconds instead of minutes: proves the PVC mounts, fio runs
-# and the JSON parses. The numbers it produces are meaningless, and --smoke stamps the run as such.
+# For --smoke only. It has the shape of wal-fsync but runs for seconds, not minutes.
+# It proves that the PVC mounts, fio runs and the JSON parses. Its numbers mean nothing, and --smoke marks the run so.
 
 [global]
 filename=/data/fio-smoke

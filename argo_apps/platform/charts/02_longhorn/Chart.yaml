@@ -1,10 +1,12 @@
 apiVersion: v2
 name: longhorn
-description: Longhorn, the cluster's distributed block storage and default StorageClass, on the XFS 'longhorn' volume 03c mounts.
+description: Longhorn, the cluster's distributed block storage, on the dedicated data volume of each node.
 type: application
-version: 0.1.0 # local chart, never bump version
+version: 0.1.0 # nothing publishes this chart, so never bump it
 
 dependencies:
   - name: longhorn
+    # Upstream deleted the 1.12.1 tarball, so a cold helm cache cannot build this chart. Longhorn cannot
+    # downgrade, so take 1.12.2 when it ships.
     version: "1.12.1"
     repository: https://charts.longhorn.io

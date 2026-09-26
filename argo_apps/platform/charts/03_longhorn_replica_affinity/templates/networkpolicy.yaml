@@ -1,4 +1,3 @@
-{{- /* The only reason this wrapper exists: upstream ships no NetworkPolicy, since it cannot know the engine. */ -}}
 {{- $lra := index .Values "longhorn-replica-affinity" -}}
 apiVersion: cilium.io/v2
 kind: CiliumNetworkPolicy
@@ -11,15 +10,14 @@ spec:
       app.kubernetes.io/name: longhorn-replica-affinity
       app.kubernetes.io/component: webhook
   ingress:
-    # Without this every mutation times out, and failurePolicy Ignore makes that silent. The call arrives
-    # SNATed to the node that hosts the apiserver, so the identity is remote-node and kube-apiserver alone
-    # never matches the SYN.
+    # Without this, every mutation times out, and failurePolicy Ignore hides it. The call arrives with the
+    # source IP of the apiserver's node, so it matches remote-node, not kube-apiserver.
     - fromEntities: [kube-apiserver, remote-node]
       toPorts:
         - ports:
             - {port: "8443", protocol: TCP}
-    # Apiserver replies on ephemeral ports, for the egress below. Conntrack covers them until the entry
-    # ages out mid-stream, and the retransmit then arrives as a new flow with no rule to match.
+    # Apiserver replies to the egress below arrive on ephemeral ports. Conntrack allows them until its entry
+    # expires. After that, a retransmit is a new flow and needs this rule.
     - fromEntities: [kube-apiserver]
     - fromEndpoints:
         - matchLabels:
@@ -58,8 +56,8 @@ spec:
       toPorts:
         - ports:
             - {port: "9100", protocol: TCP}
-    # Apiserver replies on ephemeral ports, for the egress below. Conntrack covers them until the entry
-    # ages out mid-stream, and the retransmit then arrives as a new flow with no rule to match.
+    # Apiserver replies to the egress below arrive on ephemeral ports. Conntrack allows them until its entry
+    # expires. After that, a retransmit is a new flow and needs this rule.
     - fromEntities: [kube-apiserver]
   egress:
     - toEndpoints:

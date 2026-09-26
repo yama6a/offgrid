@@ -1,4 +1,3 @@
-# CloudNativePG operator + CRDs. The databases themselves are workloads, via lib/helm/pg-cluster.
 apiVersion: argoproj.io/v1alpha1
 kind: Application
 metadata:

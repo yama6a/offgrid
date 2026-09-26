@@ -1,10 +1,6 @@
 metrics-server:
-  # Written by 04_values.sh from KUBELET_TLS_INSECURE in .env, so do not hand-edit.
-  # A kubelet serving a self-signed cert on a cluster with no CSR approver cannot be identity-verified by
-  # metrics-server. That is the Talos default and the default here. The scrape stays TLS-encrypted, only the
-  # identity is unverified. The secure path is rotate-server-certificates plus a CSR approver plus
-  # --kubelet-certificate-authority; set KUBELET_TLS_INSECURE=false once you have that.
-  # `args` is APPENDED to the chart's defaultArgs, which already carry the rest.
+  # 04_values.sh writes this from .env. Self-signed kubelet certs, the Talos default, cannot be verified. The
+  # scrape still uses TLS. Set KUBELET_TLS_INSECURE=false only once a CSR approver signs the kubelet certs.
   args:
     - --kubelet-insecure-tls
 
@@ -17,8 +13,6 @@ metrics-server:
     limits:
       memory: 200Mi
 
-  # Soft + hostname: bare Pi nodes have no zone label, and soft means raising replicas never wedges a pod
-  # Pending on 3 nodes.
   affinity:
     podAntiAffinity:
       preferredDuringSchedulingIgnoredDuringExecution:
@@ -27,7 +21,7 @@ metrics-server:
             labelSelector:
               matchLabels:
                 app.kubernetes.io/name: metrics-server
-            matchLabelKeys: [pod-template-hash] # compare within one revision, so a rollout's old pod never repels the new one
+            matchLabelKeys: [pod-template-hash] # so a rollout's old pod does not repel the new one
             topologyKey: kubernetes.io/hostname
 
   metrics:

@@ -1,5 +1,5 @@
 apiVersion: v2
 name: ingress
-description: Shared chart that renders the ingress edge for a consumer's ingresses[], per host a Gateway listener + HTTPRoute + ReferenceGrant, and one multi-SAN Certificate per ingress. Renders no SSO.
+description: Shared chart that renders the ingress edge for each entry in a consumer's ingresses list. Per host it renders a Gateway listener, an HTTPRoute and a ReferenceGrant. Per ingress it renders one multi-SAN Certificate. It renders no SSO.
 type: application
-version: 0.1.0 # local chart, never bump version
+version: 0.1.0 # nothing publishes this chart, so never bump it

@@ -1,6 +1,6 @@
 {{- /*
-Scrape THIS instance's redis-exporter. Scoped to this instance and namespace, not the broad
-redis_setup_type=standalone, so a workload's two Redis instances do not cross-scrape.
+Scrapes the redis-exporter of this instance only. It selects by instance and namespace, not by the broad
+redis_setup_type=standalone, so two Redis instances in one workload do not scrape each other.
 */ -}}
 apiVersion: monitoring.coreos.com/v1
 kind: ServiceMonitor
@@ -19,13 +19,11 @@ spec:
       app: {{ .Values.name }}
       redis_setup_type: standalone
       role: standalone
-      # The operator makes TWO Services carrying the three labels above and both expose redis-exporter, so
-      # without this every redis metric lands twice under two job names. It stamps `metrics` here; we stamp
-      # `cache` (_helpers.tpl), so this picks exactly one.
+      # Two Services match the labels above and both expose the exporter. This picks one, or every metric doubles.
       app.kubernetes.io/component: metrics
   endpoints:
     - port: redis-exporter
-      interval: 60s # matches dedup.minScrapeInterval; anything faster is discarded at ingest
+      interval: 60s # matches dedup.minScrapeInterval. Ingest drops samples that arrive faster
       scrapeTimeout: 10s
   namespaceSelector:
     matchNames:

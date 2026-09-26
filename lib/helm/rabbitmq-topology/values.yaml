@@ -1,24 +1,25 @@
-user: ""          # OPTIONAL: (string) This workload's one user. Empty = the release name. Credentials land in Secret <user>-user-credentials.
+user: ""          # optional, string. This workload's one user. Empty uses the release name. Credentials go to Secret <user>-user-credentials
 
-deadLetter: true  # OPTIONAL: (bool) Per consumer queue, a <queue>.dlx + <queue>.dlq pair. Nothing consumes a DLQ, you alert on its depth.
-deliveryLimit: 5  # OPTIONAL: (int) Failed redeliveries before a message goes to its DLQ.
-# Queue arguments are IMMUTABLE: turning deadLetter on for an EXISTING queue needs that queue deleted once.
+deadLetter: true  # optional, bool. A <queue>.dlx and <queue>.dlq pair per consumer queue. Nothing consumes a DLQ, an alert watches its depth
+deliveryLimit: 5  # optional, int. Failed redeliveries before a message goes to its DLQ
+# Queue arguments cannot change. To turn deadLetter on for an existing queue, delete that queue once.
 
-# Event exchanges this workload OWNS and publishes to (1 publisher : N consumers).
+# Event exchanges this workload owns and publishes to. One publisher, many consumers.
 #   - name: sample-events
-#     type: topic            # REQUIRED: topic | fanout | direct | headers
+#     type: topic            # required. topic, fanout, direct or headers
 publishEvents: []
 
-# Event exchanges this workload SUBSCRIBES to. Each gets a private "<user>.<exchange>" queue + binding.
+# Event exchanges this workload subscribes to. Each gets a private "<user>.<exchange>" queue and binding.
 #   - exchange: other-events
-#     routingKey: "order.#"  # OPTIONAL: default "#"
+#     routingKey: "order.#"  # optional. Default "#"
 subscribeEvents: []
 
-# Command exchanges this workload OWNS and consumes (N publishers : 1 consumer). Always direct, setting type is rejected.
+# Command exchanges this workload owns and consumes. Many publishers, one consumer.
+# Always direct. The chart rejects a `type` key.
 #   - name: sample-commands
-#     routingKey: ""         # OPTIONAL: default is the name itself
+#     routingKey: ""         # optional. Default is the exchange name
 consumeCommands: []
 
-# Command exchanges owned by OTHER workloads that this one sends to. Grants write only, no declaration.
+# Command exchanges that other workloads own and this one sends to. Grants write only and declares nothing.
 #   - other-commands
 sendCommands: []

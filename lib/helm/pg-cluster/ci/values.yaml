@@ -1,5 +1,4 @@
-# CI fixture, not a deployment. Every REQUIRED value, since templates/validate.yaml fails the render without
-# them and the chart would never get linted at all.
+# CI fixture with every required value set.
 name: ci-pg
 postgresVersion: "18"
 highAvailability: true

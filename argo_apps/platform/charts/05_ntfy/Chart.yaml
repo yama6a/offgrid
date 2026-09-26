@@ -1,5 +1,5 @@
 apiVersion: v2
 name: ntfy
-description: Self-hosted ntfy, the alert transport Grafana's webhook publishes to. Users/ACLs/token are seeded by lib/shell/06_ntfy_auth.sh, ntfy has no declarative user config.
+description: Self-hosted ntfy. Grafana's webhook publishes alerts to it. ntfy has no declarative user config, so lib/shell/06_ntfy_auth.sh creates the users, ACLs and token.
 type: application
-version: 0.1.0 # local chart, never bump version
+version: 0.1.0 # nothing publishes this chart, so never bump it

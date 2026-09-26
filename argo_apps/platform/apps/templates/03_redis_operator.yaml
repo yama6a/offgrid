@@ -1,4 +1,3 @@
-# OpsTree Redis operator + CRDs. The instances are per-workload, via lib/helm/redis-instance.
 apiVersion: argoproj.io/v1alpha1
 kind: Application
 metadata:

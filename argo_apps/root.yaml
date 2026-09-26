@@ -1,4 +1,4 @@
-# Root-of-roots, applied once by 02a_argocd.sh. Recurses argo_apps/roots/ and manages the two child roots.
+# 02a_argocd.sh applies this once. Everything else follows from git.
 apiVersion: argoproj.io/v1alpha1
 kind: Application
 metadata:

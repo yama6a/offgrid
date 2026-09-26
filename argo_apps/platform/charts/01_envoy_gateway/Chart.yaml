@@ -1,8 +1,8 @@
 apiVersion: v2
 name: envoy-gateway
-description: Envoy Gateway, the cluster's Gateway API data plane. Owns the Gateway API CRDs, the `eg` GatewayClass and the LB-IP-pinning EnvoyProxy.
+description: Envoy Gateway, the cluster's Gateway API data plane. It owns the Gateway API CRDs, the `eg` GatewayClass and the EnvoyProxy that pins the LoadBalancer IP.
 type: application
-version: 0.1.0 # local chart, never bump version
+version: 0.1.0 # nothing publishes this chart, so never bump it
 
 dependencies:
   - name: gateway-helm

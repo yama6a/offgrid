@@ -1,8 +1,8 @@
 apiVersion: v2
 name: victoria-logs
-description: The logs half of observability, a single-replica VLSingle store plus the victoria-logs-collector DaemonSet that tails every container log and the node's own system logs.
+description: Log storage and collection. A single-replica VLSingle store, plus the victoria-logs-collector DaemonSet that tails every container log and the node system logs.
 type: application
-version: 0.1.0 # local chart, never bump version
+version: 0.1.0 # nothing publishes this chart, so never bump it
 
 dependencies:
   - name: victoria-logs-collector

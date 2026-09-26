@@ -1,5 +1,4 @@
-# The exporter, mounted read-only into the pod. Stdlib only (urllib + http.server), so the base python image
-# needs no pip install.
+# The exporter script. It uses only the Python standard library, so the stock python image needs no pip install.
 apiVersion: v1
 kind: ConfigMap
 metadata:
@@ -15,8 +14,8 @@ data:
     ARGOCD_NS = os.environ.get("ARGOCD_NS", "argocd")
     REDIS_BACKUP_NS = os.environ.get("REDIS_BACKUP_NS", "redis-backup")
     REDIS_STATUS_CM = "redis-backup-status"                        # written by the 07_redis_backup CronJob
-    REDIS_BACKUP_LABEL = "redis-backup.offgrid/enabled"      # stamped by redis-instance on persistence:true
-    EMPTY_RDB_BYTES = 250   # under this an RDB holds no keys; same threshold recover_redis_from_s3.sh guards on
+    REDIS_BACKUP_LABEL = "redis-backup.offgrid/enabled"      # set by redis-instance when persistence is true
+    EMPTY_RDB_BYTES = 250   # a smaller RDB holds no keys. recover_redis_from_s3.sh uses the same threshold.
     INTERVAL = int(os.environ.get("INTERVAL", "60"))
     PORT = int(os.environ.get("PORT", "9100"))
     SA = "/var/run/secrets/kubernetes.io/serviceaccount"
@@ -37,7 +36,7 @@ data:
                 return []
             raise
 
-    # Reads BOTH keys so it works under any application.resourceTrackingMethod. Neither present = untracked.
+    # Reads both keys, so it works with any application.resourceTrackingMethod. With neither, the CR is untracked.
     def owning_app(meta):
         tid = (meta.get("annotations") or {}).get("argocd.argoproj.io/tracking-id")
         if tid:
@@ -47,11 +46,7 @@ data:
     def esc(v):
         return v.replace("\\", "\\\\").replace('"', '\\"')
 
-    # Every emitted label MUST be res_-prefixed. A bare one gets CLOBBERED, not merged: the scrape stamps
-    # namespace/pod/instance/container/job from the exporter's own pod and vmagent adds cluster, all of which
-    # win and demote ours to exported_*. That both mislabels the alerts and collapses every orphaned cluster
-    # into one by(namespace,cluster) series.
-    # The VM/VL stores share ONE metric pair with a res_kind label, so the alert file stays at two rules.
+    # Emitted labels start with res_. The scrape's own namespace, pod and job labels win and rename a clash.
     #   (api path, label key, orphaned metric, untracked metric, extra static labels)
     KINDS = [
         ("/apis/postgresql.cnpg.io/v1/clusters",                    "res_cluster", "orphaned_cnpg_cluster",   "cnpg_cluster_untracked",   {}),
@@ -65,7 +60,7 @@ data:
         return ",".join('%s="%s"' % (k, esc(v)) for k, v in pairs)
 
     def rfc3339(s):
-        # "2026-07-27T20:13:45Z", sometimes with fractional seconds. 0 = absent or unparseable.
+        # "2026-07-27T20:13:45Z", sometimes with fractional seconds. Returns 0 if absent or unparseable.
         if not s:
             return 0
         s = s.split(".", 1)[0].rstrip("Z")
@@ -74,10 +69,8 @@ data:
         except ValueError:
             return 0
 
-    # Backup recoverability, per barman server, read off each ObjectStore's status. Deliberately NOT off the
-    # Cluster: under the Barman Cloud plugin, Cluster.status.firstRecoverabilityPoint stays empty even with a
-    # completed base backup in S3, which is also why cnpg-backup-too-old cannot fire. Catches the failure
-    # WAL-archive health cannot: archiving green, catalog empty, restore impossible.
+    # Read from each ObjectStore, because under the Barman plugin Cluster.status.firstRecoverabilityPoint stays
+    # empty. Catches a working WAL archive with an empty catalog, which no restore can use.
     def collect_recoverability():
         out = [
             "# HELP cnpg_backup_recoverable 1 = the object store has a recovery point for this server (restorable)",
@@ -89,14 +82,11 @@ data:
         ]
         for store in items("/apis/barmancloud.cnpg.io/v1/objectstores"):
             ns = store["metadata"]["namespace"]
-            # res_cluster is the chart-stamped label, never the barman server: the server carries the Postgres
-            # major (mydb-pg18) and rotates on a major upgrade, which would rename the series out from under
-            # the alerts and break their `kubectl get objectstore <res_cluster>-backups` hint. The server goes
-            # in res_server, which also keeps two of them (mid-rotation) from colliding on one series.
+            # Not the Barman server name, which carries the Postgres major and would rename the series on upgrade.
             cluster = (store["metadata"].get("labels") or {}).get("cnpg.io/cluster")
             window = ((store.get("status") or {}).get("serverRecoveryWindow") or {})
             if not window:
-                # Emit nothing and there is no series at all, which the alert cannot tell apart from healthy.
+                # With no series at all, the alert cannot tell this apart from healthy. So emit zeros.
                 if cluster:
                     lb = labels([("res_namespace", ns), ("res_cluster", cluster)])
                     out.append("cnpg_backup_recoverable{%s} 0" % lb)
@@ -112,10 +102,8 @@ data:
                 out.append("cnpg_backup_first_recoverability_seconds{%s} %d" % (lb, rfc3339(frp)))
         return out
 
-    # Redis has no in-cluster object describing backup state, so the 07_redis_backup CronJob publishes what it
-    # knows into a ConfigMap, one key per instance. `_` is a safe separator, k8s names cannot contain it.
-    # The instance SET comes from the CRs, not from that ConfigMap, and that is the point: an instance the job
-    # never discovered has no entry, and the job still exits 0 and reports all backups ok.
+    # Instances come from the CRs, not the ConfigMap, because the backup job writes no key for one it missed.
+    # `_` separates namespace and name, because k8s names cannot contain it.
     def collect_redis_recoverability():
         out = [
             "# HELP redis_backup_recoverable 1 = a non-empty RDB dump was uploaded for this instance",
@@ -130,11 +118,11 @@ data:
         except urllib.error.HTTPError as e:
             if e.code != 404:
                 raise
-            data = {}   # backups never ran, or the feature is off; every labelled instance then reports 0
+            data = {}   # backups never ran or are off. Every labelled instance then reports 0.
         for r in items("/apis/redis.redis.opstreelabs.in/v1beta2/redis"):
             m = r["metadata"]
             if (m.get("labels") or {}).get(REDIS_BACKUP_LABEL) != "true":
-                continue    # ephemeral instance, deliberately not backed up
+                continue    # ephemeral instance, not backed up on purpose
             ns, name = m["namespace"], m["name"]
             ts, size = 0, 0
             parts = (data.get("%s_%s" % (ns, name)) or "").split()
@@ -149,11 +137,8 @@ data:
             out.append("redis_backup_last_size_bytes{%s} %d" % (lb, size))
         return out
 
-    # A PV nothing will bind again: Released (its PVC is gone and the class Retains), or Available with no
-    # claimRef (nothing ever claimed it). Available WITH a claimRef is a static PV waiting for its own PVC,
-    # which lib/helm/nfs-volume creates on purpose, so that one is not abandoned.
-    # Deliberately NOT kube_persistentvolume_status_phase: measured here, kube-state-metrics stopped exporting
-    # three PVs the moment they went Released and reported no Released phase for the 37h they existed.
+    # Released, or Available with no claimRef. A claimRef marks a static nfs-volume PV that waits for its PVC.
+    # kube-state-metrics stops exporting a PV once it is Released, so it cannot cover this.
     def collect_abandoned_pvs():
         out = [
             "# HELP abandoned_pv PV no PVC will bind again: Released, or Available and never claimed",
@@ -170,16 +155,13 @@ data:
                 ("res_phase", phase),
                 ("res_storageclass", spec.get("storageClassName") or ""),
                 ("res_reclaim", spec.get("persistentVolumeReclaimPolicy") or ""),
-                # ns/name of the claim that is gone. The cleanup target reads it back to name what this was.
+                # namespace/name of the deleted claim. `make cleanup-abandoned-pvs` reads it to show what the PV held.
                 ("res_claim", "%s/%s" % (ref.get("namespace", ""), ref.get("name", "")) if ref else ""),
             ]))
         return out
 
-    # A BackupVolume whose Longhorn Volume is gone: the S3 backup outlived the thing it backed up. Nothing
-    # prunes it, because a recurring job's `retain` only counts volumes that still exist and the bucket
-    # lifecycle deliberately expires nothing under longhorn/ (terraform/main.tf says why). lastBackupAt is the
-    # age anchor: with no volume there is no new backup, so it freezes and only gets older. That is slightly
-    # EARLIER than the volume's deletion, which nothing records anywhere.
+    # An S3 backup that outlived its volume. Nothing prunes it: `retain` counts only live volumes, and the bucket
+    # lifecycle skips longhorn/. The age is lastBackupAt, because nothing records the deletion time.
     def collect_orphaned_backupvolumes():
         out = [
             "# HELP orphaned_backupvolume_last_backup_seconds unix ts of the last backup of a volume that no longer exists",
@@ -224,7 +206,7 @@ data:
                 base = [("res_namespace", ns)] + sorted(extra.items()) + [(key, name)]
                 app = owning_app(m)
                 if not app:
-                    # Only in an Argo-managed namespace; a hand-made CR elsewhere is intentionally ignored.
+                    # Only in an Argo-managed namespace. A hand-made CR elsewhere is ignored on purpose.
                     if ns in argo_ns:
                         out.append("%s{%s} 1" % (untracked_metric, labels(base)))
                     continue

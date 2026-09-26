@@ -1,5 +1,5 @@
-# Synthetic probes from 05_blackbox_exporter. Unlike the ingress-http group, which reads Envoy's own
-# counters and therefore needs real traffic, these fire on a target nobody has visited.
+# Synthetic probes from 05_blackbox_exporter. They fire even on a host with no real traffic.
+# The ingress-http group reads Envoy counters, so it needs real traffic.
 apiVersion: 1
 groups:
   - orgId: 1
@@ -15,10 +15,11 @@ groups:
         annotations:
           summary: 'Probe of {{ $labels.instance }} is failing'
           description: |
-            - the URL did not answer as expected: DNS, the LoadBalancer, the cert, the route or the backend
-            - on an SSO host, a 200 instead of the 302 means the SecurityPolicy came off and it is now PUBLIC
-            - probe_http_status_code in vmui shows what it actually answered
-            - kubectl get httproute,gateway -A ; kubectl -n gateway get certificate
+            - the URL gave the wrong answer. Suspects: DNS, the LoadBalancer, the cert, the route, the backend
+            - on an SSO host, a 200 instead of a 302 means the SecurityPolicy is gone and the host is public
+            - probe_http_status_code in vmui shows the actual answer
+            - kubectl get httproute,gateway -A
+            - kubectl -n gateway get certificate
         noDataState: OK
         execErrState: KeepLast
         data:
@@ -28,8 +29,7 @@ groups:
             model:
               refId: A
               instant: true
-              # instance=~"https://.*" keeps this to the HTTP probe groups. A tcp_connect target is a bare
-              # host:port and wants its own rule, with a description that is actually about that target.
+              # Matches HTTP probes only. A tcp_connect target is a bare host:port and needs its own rule.
               expr: 'max by (instance) (probe_success{instance=~"https://.*"} == bool 0)'
           - refId: B
             relativeTimeRange: {from: 600, to: 0}
@@ -46,8 +46,8 @@ groups:
               conditions:
                 - type: query
                   evaluator: {type: gt, params: [0]}
-      # Checked at the edge, on the cert actually being SERVED. cert-manager renews at 2/3 of a 90d lifetime,
-      # so 14 days left means renewal has been failing for a fortnight.
+      # Reads the cert the edge serves. cert-manager renews at 2/3 of a 90-day life, 30 days before expiry.
+      # So 14 days left means renewal has failed for over two weeks.
       - uid: ingress-cert-expiring
         title: Ingress certificate expiring
         condition: C
@@ -56,9 +56,9 @@ groups:
         annotations:
           summary: 'TLS cert for {{ $labels.instance }} expires in under 14 days'
           description: |
-            - cert-manager should have renewed by now; it has not
+            - cert-manager should have renewed this cert by now
             - kubectl -n gateway get certificate,certificaterequest,order,challenge
-            - DNS-01 needs the Cloudflare token to still be valid: make configure-cloudflare-token
+            - DNS-01 needs a valid Cloudflare token. To reseal it: make configure-cloudflare-token
         noDataState: OK
         execErrState: KeepLast
         data:

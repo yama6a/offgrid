@@ -12,7 +12,7 @@ metadata:
     {{- include "pg-cluster.labels" . | nindent 4 }}
 spec:
   immediate: true
-  schedule: "0 0 2 * * *" # sec, min, hour, DoM, MoY, DoW
+  schedule: "0 0 2 * * *" # second, minute, hour, day of month, month, day of week
   method: plugin
   backupOwnerReference: self
   cluster:

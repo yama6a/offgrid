@@ -1,8 +1,8 @@
 apiVersion: v2
 name: reloader
-description: Restarts a workload when a ConfigMap or Secret it mounts changes, which Kubernetes never does on its own.
+description: Restarts a workload when a ConfigMap or Secret that it mounts changes. Kubernetes does not do this itself.
 type: application
-version: 0.1.0 # local chart, never bump version
+version: 0.1.0 # nothing publishes this chart, so never bump it
 
 dependencies:
   - name: reloader

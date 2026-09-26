@@ -1,8 +1,7 @@
-# All SCs are 2-replica to volumes survive tje loss of one node.
-# A volume's spec size is only a CEILING. Real occupancy grows with what is written (nothing is reserved).
-# templates/recurringjobs.yaml hands freed blocks back to the SSD weekly.
-# `parameters` is IMMUTABLE once a class exists, so adding a key here means deleting the class by hand first.
-# SCs that don't have `recurringJobSelector` defined get the `trim` job through Longhorn's `default` group.
+# The full size still counts against Longhorn's per-node scheduling budget and the 90%-full alert, so set a
+# real ceiling, not a generous one.
+# `parameters` cannot change once a class exists. To add a key, delete the class by hand first.
+# A class with no `recurringJobSelector` gets the `trim` job through Longhorn's `default` group.
 
 ---
 apiVersion: storage.k8s.io/v1
@@ -17,10 +16,10 @@ parameters:
   numberOfReplicas: "2"
   staleReplicaTimeout: "30"
   fsType: "ext4"
-  dataLocality: "disabled" # every read and write crosses the 1GbE net, even to a replica on this very node
+  dataLocality: "disabled" # every read and write goes over the 1GbE network, even to a replica on the same node
 
-# Longhorn moves one of the volumes to the same node where workload pod runs on, so reads have ~30% lower latency.
-# Only for small volumes that benefit from the lowest possible read-latency. Write latency stays the same regardless.
+# Longhorn moves one replica to the node that runs the pod, so reads have about 30% lower latency. Write latency
+# does not change. Use it only for small volumes that need the lowest read latency.
 ---
 apiVersion: storage.k8s.io/v1
 kind: StorageClass
@@ -34,10 +33,10 @@ parameters:
   numberOfReplicas: "2"
   staleReplicaTimeout: "30"
   fsType: "ext4"
-  dataLocality: "best-effort" # best-effort, not strict: if no local room, schedule anyway rather than fail
+  dataLocality: "best-effort" # with no local room, the volume still schedules. Strict would fail.
 
-# For persistent data with no app-level backup (sqlite, config). recurringJobSelector adds every volume to the
-# `backup` group. since defining `recurringJobSelector` removes the SC from Longhorns `default` group, we add trim back manually.
+# For persistent data with no backup of its own, such as sqlite or config. recurringJobSelector adds each
+# volume to the `backup` group. It also removes the volume from Longhorn's `default` group, so it names `trim` too.
 ---
 apiVersion: storage.k8s.io/v1
 kind: StorageClass

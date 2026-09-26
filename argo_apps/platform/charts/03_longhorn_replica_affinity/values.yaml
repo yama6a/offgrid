@@ -1,20 +1,18 @@
-# Wrapper for the upstream chart. See docs/15_replica_affinity.md.
-# Only values that differ from upstream, or that something else here depends on, belong below.
+# See docs/15_replica_affinity.md.
 
 longhorn-replica-affinity:
-  weight: 30 # stays under a hand-written weight-100 nodeAffinity, so a workload's own placement still wins
+  weight: 30 # below a workload's own weight 100 nodeAffinity, so the workload's placement still wins
 
-  # Pinned, not defaulted: the Application's ignoreDifferences for caBundle is only correct in this mode.
+  # Set, not left to the default. The Application's ignoreDifferences on caBundle is correct only in this mode.
   tls:
     mode: self-signed
 
-  priorityClassName: platform-critical # an evicted webhook drops the preference silently, with no error
+  priorityClassName: platform-critical # while the webhook is evicted, pods lose the preference with no error
 
   podMonitor:
     enabled: true
 
-  # One resources knob shared by both the reconciler and webhook containers; sized to the webhook's higher
-  # need (23Mi req/45Mi lim), which leaves the reconciler comfortably over its own smaller ask.
+  # The reconciler and webhook share this knob. It is sized for the webhook, which needs more.
   resources:
     requests: {cpu: 10m, memory: 24Mi}
     limits: {memory: 48Mi}

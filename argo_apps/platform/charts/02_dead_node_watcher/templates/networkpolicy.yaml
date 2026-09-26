@@ -1,4 +1,3 @@
-{{- /* Default-deny both ways. It reads and patches nodes and serves nothing, so: apiserver and DNS out only. */ -}}
 apiVersion: cilium.io/v2
 kind: CiliumNetworkPolicy
 metadata:
@@ -8,9 +7,8 @@ spec:
   endpointSelector:
     matchLabels:
       app.kubernetes.io/name: dead-node-watcher
-  ingress: [] # nothing talks to it, not even a scrape
+  ingress: [] # nothing connects to it, not even a scrape
   egress:
-    # DNS, to resolve the in-cluster apiserver Service.
     - toEndpoints:
         - matchLabels:
             k8s:io.kubernetes.pod.namespace: kube-system

@@ -1,6 +1,6 @@
 #!/usr/bin/env bash
-# On-demand rightsizing: runs Robusta KRR and prints, per workload, current CPU/memory requests next to what
-# usage history says they should be. Read the numbers, then hand-edit the chart values. Extra args go to KRR.
+# Runs Robusta KRR and prints the CPU and memory requests of each workload next to the values its usage suggests.
+# Read the numbers, then edit the chart values by hand. Extra arguments go to KRR.
 set -euo pipefail
 
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
@@ -8,7 +8,7 @@ source "${SCRIPT_DIR}/common.sh"
 
 # ---- knobs ----
 SVC="vmsingle-victoria-metrics-k8s-stack" # the VMSingle PromQL API service in $MONITORING_NS
-PORT=8428                                 # vmsingle's port; same on both sides of the forward
+PORT=8428                                 # the vmsingle port, the same on both sides of the forward
 # renovate: datasource=docker
 KRR_IMAGE="us-central1-docker.pkg.dev/genuine-flight-317411/devel/krr:v1.30.0"
 
@@ -23,23 +23,20 @@ cleanup() {
   rm -f "$TMP_KUBECONFIG"
 }
 
-# A temp copy, not $KUBECONFIG itself: it lives under the repo's .cache/, which Docker Desktop's file sharing
-# may not expose for bind-mounts. A plain copy suffices because use_kubeconfig already pinned it to one
-# context with the certs inlined, so it stands alone inside the container.
+# Docker Desktop file sharing may not expose .cache/kubeconfig for a bind mount, so this mounts a copy.
+# The copy works alone in the container, because use_kubeconfig pinned one context and inlined the certs.
 copy_kubeconfig() {
   TMP_KUBECONFIG="$(mktemp -p "${REPO_ROOT}/.cache" krr-kubeconfig.XXXXXX)"
   cp "$KUBECONFIG" "$TMP_KUBECONFIG"
 }
 
-# KRR needs a Prometheus-API metrics source. Ours is VMSingle, a ClusterIP with no external programmatic auth,
-# so we reach it over the documented break-glass port-forward.
+# VMSingle is a ClusterIP service with no external auth, so KRR reaches it over a port-forward.
 start_port_forward() {
-  say "port-forwarding svc/${SVC} (${MONITORING_NS}) -> 127.0.0.1:${PORT}"
+  say "port-forwarding svc/${SVC} (${MONITORING_NS}) to 127.0.0.1:${PORT}"
   kubectl -n "$MONITORING_NS" port-forward "svc/${SVC}" "${PORT}:${PORT}" > /dev/null 2>&1 &
   PF_PID=$!
 }
 
-# Waits for the listener in a bounded window rather than hanging.
 wait_for_port_forward() {
   local _
   for _ in $(seq 1 30); do
@@ -47,7 +44,7 @@ wait_for_port_forward() {
       exec 3>&- 3<&-
       break
     }
-    kill -0 "$PF_PID" 2> /dev/null || die "port-forward to ${SVC} died (is the monitoring stack up?)"
+    kill -0 "$PF_PID" 2> /dev/null || die "port-forward to ${SVC} died. Check that the monitoring stack is up."
     sleep 1
   done
   (exec 3<> "/dev/tcp/127.0.0.1/${PORT}") 2> /dev/null \
@@ -55,19 +52,15 @@ wait_for_port_forward() {
   exec 3>&- 3<&-
 }
 
-# Bridge network, NOT --network host: on Docker Desktop a host-network container cannot see the host-side
-# port-forward, whereas the bridge reaches it via host.docker.internal.
-# The image has no ENTRYPOINT, so passing args would REPLACE its whole command, hence --entrypoint python.
-# The two extra mounts drop our own `conservative` strategy into the image's strategies package and replace
-# its __init__.py with one that imports ours: KRR finds strategies by walking the subclasses of its base
-# class, and a class only exists to be found once its module has been imported. No image rebuild needed.
-# The series the strategy reads are all kept by vmagent's drop list, so check there before pruning metrics.
-# --mem-min 0 disables KRR's built-in memory floor, which applies to request AND limit alike, so the strategy
-# owns the asymmetric floors instead.
+# Bridge network, because on Docker Desktop only the bridge reaches the host port-forward via host.docker.internal.
+# The image has no ENTRYPOINT, so --entrypoint python keeps the arguments from replacing its command.
+# KRR finds a strategy only once imported, so the mounts add `conservative` and an __init__.py that imports it.
+# --mem-min 0 turns off the KRR memory floor for request and limit alike. The strategy sets its own floors.
+# The vmagent drop list keeps every series this strategy reads. Keep them when you prune metrics.
 run_krr() {
   local tty="" arg
-  # KRR drops kube-system when it scans all namespaces, which hides Cilium. A match-all regex scans every
-  # namespace instead. A -n from the caller replaces it.
+  # A scan of all namespaces skips kube-system, which hides Cilium. A match-all regex scans every namespace.
+  # A -n from the caller replaces it.
   local ns_args=(--namespace '.*')
   for arg in "$@"; do
     case "$arg" in -n | --namespace | --namespace=*) ns_args=() ;; esac

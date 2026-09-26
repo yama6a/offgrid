@@ -1,5 +1,3 @@
-# This scrape is WHY the exporter's own labels are res_-prefixed: it stamps namespace/pod/instance/container/
-# job here and vmagent adds cluster, all of which beat the metric's own. See the exporter in configmap.yaml.
 apiVersion: monitoring.coreos.com/v1
 kind: PodMonitor
 metadata:

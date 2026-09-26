@@ -1,10 +1,10 @@
-name: ""             # REQUIRED: (string) Also the ClusterIP Service DNS clients dial on :6379.
-redisVersion: ""     # REQUIRED: (string) Redis SERVER tag, e.g. "v8.6.2". The exporter tag stays pinned in the chart.
-resources: {}        # REQUIRED: Per-pod requests/limits. maxmemory is derived as 80% of the memory LIMIT.
-allowedClients: []   # REQUIRED: SAME-NS ONLY, e.g. [{matchLabels: {app: my-app}}]. No password, so this is the only access control.
-persistence: null    # REQUIRED: (bool) true = durable + enrolled in the central S3 RDB backup; false = ephemeral cache, no backup.
-deletionProtection:  # REQUIRED: (bool) To delete: set to false in a first commit, delete the alias in a follow-up commit.
-# persistence does NOT turn AOF off: the operator's own redis.conf sets `appendonly yes`, this chart only overlays it.
+name: ""             # required, string. Also the ClusterIP Service name that clients dial on :6379
+redisVersion: ""     # required, string. Redis server image tag, for example "v8.6.2". The chart pins the exporter tag
+resources: {}        # required. Per-pod requests and limits. maxmemory is 80% of the memory limit
+allowedClients: []   # required. Client pods in the same namespace only, for example [{matchLabels: {app: my-app}}]. There is no password, so this is the only access control
+persistence: null    # required, bool. true is durable and in the central S3 RDB backup. false is a cache with no backup
+deletionProtection:  # required, bool. To delete the instance, set false in one commit, then remove the alias in a second commit
+# persistence false does not turn AOF off. The operator's own redis.conf sets `appendonly yes`, and this chart only adds to it.
 
-alertCritical: false      # OPTIONAL: (bool); true = alert-severity critical; false = warning
-initialFixedDiskSize: 1Gi # OPTIONAL: Set ONCE at creation; changing it later does nothing. Budget >= 2x the memory limit.
+alertCritical: false      # optional, bool. true sends this instance's alerts as critical, false as warning
+initialFixedDiskSize: 1Gi # optional. Takes effect only at creation, later changes do nothing. Give at least 2x the memory limit

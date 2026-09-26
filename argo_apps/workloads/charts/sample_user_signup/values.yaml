@@ -1,6 +1,6 @@
 app:
   name: sample-user-signup
-  image: "ghcr.io/yama6a/pi5-k8s-sample-app:24"   # three-binary image (/manager, /signup, /auditor)
+  image: "ghcr.io/yama6a/pi5-k8s-sample-app:24"   # one image with three binaries: /manager, /signup, /auditor
   command: ["/signup"]
   replicas: 1
   resources:
@@ -8,8 +8,8 @@ app:
     limits:   { memory: 32Mi }
 
 rabbitmq-topology:
-  user: sample-user-signup         # == app.name; the pod reads <user>-user-credentials
-  sendCommands: [create-user-command]                          # write only, the manager owns the exchange
+  user: sample-user-signup         # same as app.name
+  sendCommands: [create-user-command]                          # publish only. The manager owns the exchange.
   subscribeEvents:
-    - { exchange: user-events, routingKey: "users.created" }   # so it never sees users.deleted, nothing binds that key
-    - { exchange: user-audit-logger }                          # fanout, so routingKey is ignored
+    - { exchange: user-events, routingKey: "users.created" }   # no queue binds users.deleted
+    - { exchange: user-audit-logger }                          # a fanout ignores routingKey

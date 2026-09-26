@@ -1,4 +1,3 @@
-# cert-manager: the X.509 issuance and renewal controller. The ClusterIssuers ship with 03_gateway.
 apiVersion: argoproj.io/v1alpha1
 kind: Application
 metadata:

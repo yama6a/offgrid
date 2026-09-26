@@ -1,8 +1,8 @@
 apiVersion: v2
 name: sample-audit-logger
-description: The sample-app /auditor binary. A pure sink on the user-audit-logger fanout, no HTTP, no Postgres, no ingress.
+description: The sample-app /auditor binary. It only consumes the user-audit-logger fanout and has no HTTP, Postgres or ingress.
 type: application
-version: 0.1.0 # local chart, never bump version
+version: 0.1.0 # nothing publishes this chart, so never bump it
 
 dependencies:
   - name: rabbitmq-topology

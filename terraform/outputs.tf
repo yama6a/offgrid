@@ -1,4 +1,4 @@
-# Consumed by lib/shell/10b_cnpg_backup.sh via `terraform output -raw <name>` to seal the in-cluster S3 creds.
+# The 10b to 10e scripts read these with `terraform output -raw <name>` and seal them into the cluster.
 output "bucket" {
   description = "The backup bucket name."
   value       = aws_s3_bucket.backups.id
@@ -10,7 +10,7 @@ output "backup_access_key_id" {
 }
 
 output "backup_secret_access_key" {
-  description = "Secret access key of the scoped backup-writer IAM user (sealed into the cluster, never committed)."
+  description = "Secret access key of the scoped backup-writer IAM user. It is sealed into the cluster and never committed."
   value       = aws_iam_access_key.backup_writer.secret
   sensitive   = true
 }

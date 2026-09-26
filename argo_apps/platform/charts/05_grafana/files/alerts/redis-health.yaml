@@ -1,10 +1,9 @@
 apiVersion: 1
 groups:
-  # redis-down uses DYNAMIC severity: the redis-instance alertCritical knob stamps alert-criticality onto the
-  # pod, joined here. Everything else is a data-plane anomaly, so warning, except the two-level memory rule.
-  # These instances run noeviction with maxmemory at 80% of the container limit, so approaching maxmemory means
-  # WRITES START FAILING rather than keys being evicted. That is why the alerts are on memory percent, not on
-  # eviction rate. No replication alerts: instances are standalone by design.
+  # redis-down takes its severity from the alert-criticality pod label, set by the redis-instance alertCritical knob.
+  # The other rules are warnings, except the second level of the memory rule.
+  # Instances run noeviction with maxmemory at 80% of the container limit. At maxmemory, writes fail instead of
+  # evicting keys, so the rules watch memory percent, not eviction rate.
   - orgId: 1
     name: redis-health
     folder: offgrid
@@ -17,12 +16,12 @@ groups:
         labels:
           severity: '{{ if eq (index $labels "label_alert_criticality") "critical" }}critical{{ else }}warning{{ end }}'
         annotations:
-          summary: 'Redis {{ $labels.namespace }}/{{ $labels.pod }} is not responding (redis_up=0)'
+          summary: 'Redis {{ $labels.namespace }}/{{ $labels.pod }} is not responding: redis_up is 0'
           description: |
-            - exporter can't reach Redis: pod down, crashlooping, or OOMKilled
+            - the exporter cannot reach Redis. The pod is down, crashlooping or OOMKilled
             - check: kubectl -n {{ $labels.namespace }} get pod {{ $labels.pod }}
             - logs: kubectl -n {{ $labels.namespace }} logs {{ $labels.pod }} -c {{ $labels.namespace }}
-            - Longhorn volume may be detached mid-reschedule: check the PVC/attachment
+            - the Longhorn volume can be detached during a reschedule. Check the PVC and its attachment
         noDataState: OK
         execErrState: KeepLast
         data:
@@ -48,18 +47,18 @@ groups:
               conditions:
                 - type: query
                   evaluator: {type: gt, params: [0]}
-      # noeviction means writes fail at 100%. `> 0` guards instances with maxmemory unset.
+      # noeviction means writes fail at 100%. `> 0` skips instances with no maxmemory set.
       - uid: redis-memory-high
         title: Redis memory usage high
         condition: C
         for: 5m
         labels: {severity: warning}
         annotations:
-          summary: 'Redis {{ $labels.namespace }}/{{ $labels.pod }} above 90% of maxmemory (writes fail at 100%, noeviction)'
+          summary: 'Redis {{ $labels.namespace }}/{{ $labels.pod }} is above 90% of maxmemory: writes fail at 100%'
           description: |
-            - nearing maxmemory (80% of the container limit), and noeviction means writes fail outright at 100%
+            - nearing maxmemory, which is 80% of the container limit. With noeviction, writes fail at 100%
             - fix: raise resources.limits.memory in the workload values.yaml
-            - or shed keys: check TTLs / unbounded keys: redis-cli info keyspace
+            - or shed keys. Look for missing TTLs and unbounded keys: redis-cli info keyspace
         noDataState: OK
         execErrState: KeepLast
         data:
@@ -91,11 +90,11 @@ groups:
         for: 2m
         labels: {severity: critical}
         annotations:
-          summary: 'Redis {{ $labels.namespace }}/{{ $labels.pod }} above 98% of maxmemory: writes about to fail (noeviction)'
+          summary: 'Redis {{ $labels.namespace }}/{{ $labels.pod }} is above 98% of maxmemory: writes are about to fail'
           description: |
-            - at >98% of maxmemory, and noeviction means writes fail outright at 100% (imminent)
+            - with noeviction, writes fail at 100%
             - fix now: raise resources.limits.memory in the workload values.yaml
-            - or shed keys immediately: redis-cli info keyspace, check for missing TTLs
+            - or shed keys now. Look for missing TTLs: redis-cli info keyspace
         noDataState: OK
         execErrState: KeepLast
         data:
@@ -121,18 +120,18 @@ groups:
               conditions:
                 - type: query
                   evaluator: {type: gt, params: [98]}
-      # At maxclients Redis refuses new connections, which surfaces as app errors, so fire near-immediately.
+      # At maxclients, Redis refuses new connections and apps see errors, so this fires almost at once.
       - uid: redis-rejected-connections
         title: Redis rejected connections
         condition: C
         for: 1m
         labels: {severity: warning}
         annotations:
-          summary: 'Redis {{ $labels.namespace }}/{{ $labels.pod }} rejected connections (maxclients reached)'
+          summary: 'Redis {{ $labels.namespace }}/{{ $labels.pod }} rejected connections: maxclients reached'
           description: |
-            - hit maxclients: new connections refused, clients see errors
-            - check: redis-cli info clients (connected_clients vs maxclients)
-            - likely a client-side connection leak: check the app's pool sizing/close
+            - clients see connection errors
+            - check connected_clients against maxclients: redis-cli info clients
+            - likely a connection leak in the client. Check the pool size and that the app closes connections
         noDataState: OK
         execErrState: KeepLast
         data:
@@ -164,11 +163,11 @@ groups:
         for: 5m
         labels: {severity: warning}
         annotations:
-          summary: 'Redis {{ $labels.namespace }}/{{ $labels.pod }} using >80% of maxclients'
+          summary: 'Redis {{ $labels.namespace }}/{{ $labels.pod }} uses over 80% of maxclients'
           description: |
-            - connection count nearing maxclients: rejections imminent
-            - check: redis-cli info clients; likely a client pool leak
-            - fix the client (close/reuse connections) before it saturates
+            - the connection count nears maxclients. Rejections come next
+            - check: redis-cli info clients. Likely a leak in the client pool
+            - fix the client to close or reuse connections before Redis saturates
         noDataState: OK
         execErrState: KeepLast
         data:
@@ -194,18 +193,19 @@ groups:
               conditions:
                 - type: query
                   evaluator: {type: gt, params: [0.8]}
-      # RDB status 0 means the last background save failed (0=err, 1=ok in the exporter).
+      # The exporter reports 1 for a good last background save and 0 for a failed one.
       - uid: redis-rdb-save-failing
         title: Redis RDB save failing
         condition: C
         for: 5m
         labels: {severity: warning}
         annotations:
-          summary: 'Redis {{ $labels.namespace }}/{{ $labels.pod }} last RDB background save FAILED'
+          summary: 'Redis {{ $labels.namespace }}/{{ $labels.pod }} last RDB background save failed'
           description: |
-            - last background RDB save failed: snapshot on disk is stale
-            - usual cause: PVC full or fork failed under memory pressure
-            - check: redis-cli info persistence; df on /data; the pod's logs
+            - the last background RDB save failed, so the snapshot on disk is stale
+            - usual causes: a full PVC, or a fork that failed under memory pressure
+            - check: redis-cli info persistence
+            - check df on /data and the pod logs
         noDataState: OK
         execErrState: KeepLast
         data:
@@ -231,19 +231,20 @@ groups:
               conditions:
                 - type: query
                   evaluator: {type: gt, params: [0]}
-      # AOF write status 0 means failing. Only durable instances report a real status, RDB-only ones stay at 1,
-      # so there are no false positives. On a durable instance this is a data-loss risk.
+      # AOF write status 0 means failing. Only durable instances report a real status. RDB-only instances stay
+      # at 1, so they never fire.
       - uid: redis-aof-write-failing
         title: Redis AOF write failing
         condition: C
         for: 5m
         labels: {severity: warning}
         annotations:
-          summary: 'Redis {{ $labels.namespace }}/{{ $labels.pod }} last AOF write FAILED (data-loss risk on a durable instance)'
+          summary: 'Redis {{ $labels.namespace }}/{{ $labels.pod }} last AOF write failed: durable data at risk'
           description: |
-            - AOF write failing on a durable instance: writes since last fsync at risk
-            - usual cause: PVC full or a disk I/O error
-            - check: redis-cli info persistence (aof_last_write_status); df on /data
+            - AOF writes fail on a durable instance. Writes since the last fsync are at risk
+            - usual causes: a full PVC or a disk I/O error
+            - check aof_last_write_status: redis-cli info persistence
+            - check df on /data
         noDataState: OK
         execErrState: KeepLast
         data:
@@ -275,12 +276,12 @@ groups:
         for: 30m
         labels: {severity: warning}
         annotations:
-          summary: 'Redis {{ $labels.namespace }}/{{ $labels.pod }} memory fragmentation ratio >1.5'
+          summary: 'Redis {{ $labels.namespace }}/{{ $labels.pod }} memory fragmentation ratio is above 1.5'
           description: |
-            - RSS well above dataset: jemalloc churn not being reclaimed
-            - check: redis-cli info memory (mem_fragmentation_ratio, used_memory)
-            - active defrag is on: give it time, or restart the pod to reset RSS
-            - only alerts once the instance is >50% full, so this is real fragmentation
+            - RSS is well above the dataset size. jemalloc does not reclaim freed memory
+            - check mem_fragmentation_ratio and used_memory: redis-cli info memory
+            - active defrag is on. Give it time, or restart the pod to reset RSS
+            - fires only above 50% full, so this is real fragmentation
         noDataState: OK
         execErrState: KeepLast
         data:
@@ -290,7 +291,7 @@ groups:
             model:
               refId: A
               instant: true
-              # Only above 50% full: on a near-empty tiny instance RSS overhead inflates the ratio.
+              # Only above 50% full, because RSS overhead inflates the ratio on a small, near-empty instance.
               expr: 'redis_mem_fragmentation_ratio and (redis_memory_used_bytes / (redis_memory_max_bytes > 0) > 0.5)'
           - refId: B
             relativeTimeRange: {from: 600, to: 0}

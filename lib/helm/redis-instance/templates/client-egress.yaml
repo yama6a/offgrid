@@ -1,7 +1,7 @@
 {{- /*
-Allowlist egress from client pods to the Redis pod, the companion to networkpolicy.yaml's ingress. One CNP
-per client. SAME-NS ONLY: a namespaced CNP selects only pods in its own namespace, which is why an
-allowedClients entry carries no namespace.
+Lets each client reach the Redis pod. It pairs with the ingress rule in networkpolicy.yaml. One policy per
+client. A namespaced policy selects only pods in its own namespace, so an allowedClients entry has no
+namespace.
 */ -}}
 {{- $name := .Values.name }}
 {{- range $i, $client := .Values.allowedClients }}

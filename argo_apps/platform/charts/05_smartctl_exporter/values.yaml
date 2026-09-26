@@ -2,34 +2,26 @@ prometheus-smartctl-exporter:
   fullnameOverride: smartctl-exporter
 
   image:
-    # Every TAGGED release upstream is amd64-only, so none of them run on the Pis at all. `master` is the only
-    # multi-arch tag they publish, hence a branch build here. Renovate refreshes the digest below and nothing
-    # else: moving to a version tag, once upstream tags one with arm64, is a hand edit.
+    # `master` is the only multi-arch tag. Move to a version tag by hand once one ships arm64.
     repository: quay.io/prometheuscommunity/smartctl-exporter
     tag: master@sha256:ab19db971b40285396153ff3a8b130ef7b2c7eae936186e0223a30cf97da1103
 
-  # Which block devices to read SMART from. REQUIRED and NOT autodetectable: Longhorn attaches every replica
-  # as an iSCSI /dev/sd*, the same namespace a real SATA disk lands in, so letting smartctl scan would probe
-  # every attached volume (no SMART, and the set churns on every attach). One DaemonSet per architecture,
-  # because the answer differs: the Pis' only real disk is NVMe, the x86 box's is SATA.
-  # Instance 0 is the block below; each extraInstances entry is another DaemonSet and must repeat every key
-  # it needs, since the chart reads them off the entry and not off the top level.
+  # Autodetect would also probe Longhorn's iSCSI volumes, which look like SATA disks. One DaemonSet per
+  # architecture. An extraInstances entry must repeat every key it needs, because the chart does not inherit.
   config:
-    # Matches the scanner's device NAME (`nvme0`, `sda`), NOT a path: `^/dev/nvme` matches nothing and the
-    # exporter then finds zero devices and silently exports nothing.
-    device_include: '^nvme' # REQUIRED: (regex) real disks on arm64 nodes
+    # Matches the device name, not a path. `^/dev/nvme` silently matches nothing.
+    device_include: '^nvme' # required. Regex for the real disks on arm64 nodes.
   nodeSelector: {kubernetes.io/arch: arm64}
-  tolerations: [{operator: Exists}] # node metrics are wanted whatever the node's role or taints
+  tolerations: [{operator: Exists}]
   resources:
     requests: {cpu: 10m, memory: 16Mi}
     limits: {memory: 35Mi}
 
   extraInstances:
     - config:
-        # Named outright rather than matched: on THIS node /dev/sda is the SATA SSD, but a regex that says so
-        # would hit Longhorn's LUNs on every other node. If enumeration order ever shifts, swap it for the
-        # stable /hostdev/disk/by-path/<pci-path>; the chart mounts the host's /dev at /hostdev.
-        devices: ['/dev/sda'] # REQUIRED: (list) real disks on amd64 nodes
+        # A fixed path, because a regex would match Longhorn's LUNs. If device order changes, use
+        # /hostdev/disk/by-path/<pci-path>.
+        devices: ['/dev/sda'] # required. List of the real disks on amd64 nodes.
       nodeSelector: {kubernetes.io/arch: amd64}
       tolerations: [{operator: Exists}]
       resources:
@@ -37,14 +29,12 @@ prometheus-smartctl-exporter:
         limits: {memory: 38Mi}
 
   serviceMonitor:
-    enabled: true # the VM operator converts it to a VMServiceScrape, so a dead exporter trips `target-down`
+    enabled: true # the VM operator converts it to a VMServiceScrape, so a dead exporter fires `target-down`
 
-  # Alerting is Grafana-only here: vmalert is off, so these would render a PrometheusRule nothing evaluates.
-  # The equivalents live in 05_grafana/files/alerts/smart-health.yaml.
+  # Alerting is Grafana-only. See 05_grafana/files/alerts/smart-health.yaml.
   prometheusRules:
     enabled: false
 
-  # Would bind to an `unrestricted-psp` Role that no longer exists (PodSecurityPolicy is gone). The exporter
-  # talks to no API, so it needs no permissions at all.
+  # The chart's Role is for the removed PodSecurityPolicy, and the exporter calls no API.
   rbac:
     create: false

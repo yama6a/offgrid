@@ -1,5 +1,3 @@
-# Deployment for the /auditor binary, overriding the image's default /manager entrypoint. No HTTP, no Service,
-# no Postgres. Topology names are compile-time constants in the binary, only connection details are env.
 apiVersion: apps/v1
 kind: Deployment
 metadata:
@@ -7,10 +5,10 @@ metadata:
   namespace: {{ .Release.Namespace }}
   labels:
     app: {{ .Values.app.name }}
-    alert-criticality: critical   # app workload down -> `critical` (deployment/container outage rules). See docs/06_monitoring.md.
+    alert-criticality: critical   # an outage pages as critical, see docs/06_monitoring.md
 spec:
   replicas: {{ .Values.app.replicas }}
-  revisionHistoryLimit: 0  # recovery is a git revert, never a rollback, so kept history is dead weight
+  revisionHistoryLimit: 0  # recovery is a git revert, never a rollback
   selector:
     matchLabels:
       app: {{ .Values.app.name }}
@@ -18,11 +16,10 @@ spec:
     metadata:
       labels:
         app: {{ .Values.app.name }}
-        alert-criticality: critical   # pods carry it too, for the container-waiting-fatal outage rule. See docs/06_monitoring.md.
-        messaging-client: "true"   # opts this pod into the broker's CiliumNetworkPolicy ingress on 5672. See 08_messaging.md.
+        alert-criticality: critical   # the crashloop rule reads it from the pod
+        messaging-client: "true"   # admits this pod to the broker, see docs/08_messaging.md
     spec:
-      # Soft + hostname: bare Pi nodes have no zone label, and soft means replicas beyond the 3 nodes, or
-      # scheduling while a node is down, co-locate instead of going permanently Pending.
+      # Soft, so with a node down the pods share a node instead of staying Pending.
       affinity:
         podAntiAffinity:
           preferredDuringSchedulingIgnoredDuringExecution:
@@ -31,10 +28,9 @@ spec:
                 labelSelector:
                   matchLabels:
                     app: {{ .Values.app.name }}
-                matchLabelKeys: [pod-template-hash] # compare within one revision, so a rollout's old pod never repels the new one
+                matchLabelKeys: [pod-template-hash] # so a rollout's old pod does not repel the new one
                 topologyKey: kubernetes.io/hostname
-      # PodSecurity `restricted` baseline, the same block on every first-party pod here. 65532 matches the
-      # distroless nonroot uid the sample-app image declares.
+      # Pod Security `restricted`. 65532 is the distroless nonroot uid.
       securityContext:
         runAsNonRoot: true
         runAsUser: 65532
@@ -45,8 +41,7 @@ spec:
           image: {{ .Values.app.image | quote }}
           command: {{ .Values.app.command | toJson }}
           env:
-            # The shared broker's client Service and the shared `apps` vhost. Username and password are
-            # operator-GENERATED into `<user>-user-credentials`. The binary assembles the AMQP URI itself.
+            # The topology operator generates the credentials Secret.
             - name: RABBITMQ_HOST
               value: "rabbitmq.rabbitmq.svc.cluster.local"
             - name: RABBITMQ_PORT
@@ -63,7 +58,7 @@ spec:
                 secretKeyRef:
                   name: {{ .Values.app.name }}-user-credentials
                   key: password
-            # The prefix for the queue it derives. The exchange name is a compile-time constant in the binary.
+            # The queue name prefix. The exchange name is a constant in the binary.
             - name: WORKLOAD_NAME
               value: {{ .Values.app.name | quote }}
           securityContext:

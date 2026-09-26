@@ -1,9 +1,8 @@
 apiVersion: 1
 groups:
-  # Curated to what fires meaningfully on this 1-2 instance, streaming-only topology: connection saturation
-  # plus physical replication lag. The HA, zone-spread and logical-replication rules are deliberately absent,
-  # they need 3+ instances, zone labels, or logical replication this cluster does not use.
-  # A down CNPG pod is already caught by the generic target-down rule.
+  # Chosen for 1 or 2 instances with streaming replication only. There are no HA, zone-spread or logical
+  # replication rules, because they need 3 or more instances, zone labels, or logical replication.
+  # target-down catches a down CNPG pod.
   - orgId: 1
     name: cnpg-health
     folder: offgrid
@@ -15,11 +14,12 @@ groups:
         for: 5m
         labels: {severity: warning}
         annotations:
-          summary: 'CNPG {{ $labels.namespace }}/{{ $labels.pod }} using >80% of max_connections'
+          summary: 'CNPG {{ $labels.namespace }}/{{ $labels.pod }} uses more than 80% of max_connections'
           description: |
-            - backends nearing max_connections on {{ $labels.namespace }}/{{ $labels.pod }}: new conns rejected at 100%
-            - kubectl cnpg status <cluster> -n {{ $labels.namespace }} ; psql: select count(*) from pg_stat_activity
-            - pool clients (pgbouncer) or raise max_connections in the Cluster spec
+            - backends on {{ $labels.namespace }}/{{ $labels.pod }} near max_connections. New connections fail at 100%
+            - status: kubectl cnpg status <cluster> -n {{ $labels.namespace }}
+            - psql: select count(*) from pg_stat_activity
+            - pool clients with pgbouncer, or raise max_connections in the Cluster spec
         noDataState: OK
         execErrState: KeepLast
         data:
@@ -51,11 +51,11 @@ groups:
         for: 5m
         labels: {severity: critical}
         annotations:
-          summary: 'CNPG {{ $labels.namespace }}/{{ $labels.pod }} using >95% of max_connections'
+          summary: 'CNPG {{ $labels.namespace }}/{{ $labels.pod }} uses more than 95% of max_connections'
           description: |
-            - {{ $labels.namespace }}/{{ $labels.pod }} almost out of connection slots: imminent conn refusals
-            - find leaked/idle conns: psql, select state,count(*) from pg_stat_activity group by state
-            - kill idle: select pg_terminate_backend(pid) ...; then pool or raise max_connections
+            - {{ $labels.namespace }}/{{ $labels.pod }} is almost out of connection slots. New connections fail soon
+            - find leaked or idle connections in psql: select state,count(*) from pg_stat_activity group by state
+            - end idle ones with select pg_terminate_backend(pid). Then pool clients or raise max_connections
         noDataState: OK
         execErrState: KeepLast
         data:
@@ -81,18 +81,17 @@ groups:
               conditions:
                 - type: query
                   evaluator: {type: gt, params: [95]}
-      # Only produces series when a standby exists, so at a single instance it reads NoData, hence OK.
+      # Series exist only with a standby. A single instance reads NoData, so OK.
       - uid: cnpg-replication-lag-warning
         title: CNPG physical replication lag
         condition: C
         for: 5m
         labels: {severity: warning}
         annotations:
-          summary: 'CNPG {{ $labels.namespace }}/{{ $labels.pod }} physical replication lag >1s'
+          summary: 'CNPG {{ $labels.namespace }}/{{ $labels.pod }} physical replication lag is more than 1s'
           description: |
-            - standby of {{ $labels.namespace }}/{{ $labels.pod }} falling behind primary (>1s)
-            - kubectl cnpg status <cluster> -n {{ $labels.namespace }} -> Streaming Replication section
-            - check standby CPU/disk + network; usually transient under write bursts
+            - run kubectl cnpg status <cluster> -n {{ $labels.namespace }} and read the Streaming Replication section
+            - check standby CPU, disk and network. Write bursts often cause short lag
         noDataState: OK
         execErrState: KeepLast
         data:
@@ -124,11 +123,11 @@ groups:
         for: 5m
         labels: {severity: critical}
         annotations:
-          summary: 'CNPG {{ $labels.namespace }}/{{ $labels.pod }} physical replication lag >15s'
+          summary: 'CNPG {{ $labels.namespace }}/{{ $labels.pod }} physical replication lag is more than 15s'
           description: |
-            - standby badly behind (>15s): failover would lose data / can't promote cleanly
-            - kubectl cnpg status <cluster> -n {{ $labels.namespace }} -> replication lag + WAL
-            - inspect standby: disk pressure, stuck WAL replay, or broken stream
+            - the standby is more than 15s behind. A failover would lose data or fail to promote cleanly
+            - run kubectl cnpg status <cluster> -n {{ $labels.namespace }} and read the replication lag and WAL
+            - check the standby for disk pressure, stuck WAL replay, or a broken stream
         noDataState: OK
         execErrState: KeepLast
         data:
@@ -154,21 +153,21 @@ groups:
               conditions:
                 - type: query
                   evaluator: {type: gt, params: [15]}
-      # instance-not-ready is the CNPG OUTAGE signal, with dynamic severity via the criticality join, because
-      # CNPG has no Deployment or StatefulSet the availability rules can see. The rest are Postgres-internal
-      # anomalies, so warning.
+      # CNPG has no Deployment or StatefulSet for the availability rules, so this is its outage alert.
+      # The criticality join sets its severity. The other rules below are Postgres internals, so warnings.
       - uid: cnpg-instance-not-ready
         title: CNPG instance not ready
         condition: C
-        for: 6m   # a rolling restart/switchover on a Pi 5 takes ~2-4m per instance; 2m paged on every planned rollout
+        for: 6m   # a rolling restart or switchover takes 2 to 4m per instance on a Pi 5
         labels:
           severity: '{{ if eq (index $labels "label_alert_criticality") "critical" }}critical{{ else }}warning{{ end }}'
         annotations:
-          summary: 'CNPG {{ $labels.namespace }}/{{ $labels.pod }} is up but not ready (Postgres not serving)'
+          summary: 'CNPG {{ $labels.namespace }}/{{ $labels.pod }} is up but not ready. Postgres is not serving'
           description: |
-            - pod running but collector down: Postgres not serving on {{ $labels.namespace }}/{{ $labels.pod }}
-            - kubectl cnpg status <cluster> -n {{ $labels.namespace }} ; kubectl -n {{ $labels.namespace }} logs {{ $labels.pod }}
-            - check startup/recovery, PVC health, or a stuck postmaster
+            - the pod runs but the collector is down. Postgres is not serving on {{ $labels.namespace }}/{{ $labels.pod }}
+            - status: kubectl cnpg status <cluster> -n {{ $labels.namespace }}
+            - logs: kubectl -n {{ $labels.namespace }} logs {{ $labels.pod }}
+            - check startup or recovery, PVC health, or a stuck postmaster
         noDataState: OK
         execErrState: KeepLast
         data:
@@ -194,20 +193,18 @@ groups:
               conditions:
                 - type: query
                   evaluator: {type: gt, params: [0]}
-      # Every row carries the transaction ID that wrote it, and autovacuum is what resets those counters. If it
-      # falls far enough behind, Postgres shuts itself down to avoid the counter wrapping, at ~2.1B IDs of age.
-      # Normal here is roughly 50k, so 300M is early warning with a lot of room left.
+      # Normal xid age here is about 50k, so 300M is an early warning.
       - uid: cnpg-txid-wraparound-warning
         title: CNPG transaction-ID age high
         condition: C
         for: 30m
         labels: {severity: warning}
         annotations:
-          summary: 'CNPG {{ $labels.namespace }}/{{ $labels.pod }} db {{ $labels.datname }} xid age >300M (wraparound risk)'
+          summary: 'CNPG {{ $labels.namespace }}/{{ $labels.pod }} db {{ $labels.datname }} xid age is more than 300M. Wraparound risk'
           description: |
-            - db {{ $labels.datname }} xid age climbing: autovacuum falling behind (forced shutdown ~2.1B)
+            - xid age of db {{ $labels.datname }} grows. Autovacuum falls behind. Postgres shuts down at about 2.1B
             - psql: select datname,age(datfrozenxid) from pg_database order by 2 desc
-            - VACUUM (FREEZE) the oldest tables; check for a slot/long-txn blocking vacuum
+            - run VACUUM (FREEZE) on the oldest tables. Check for a slot or long transaction that blocks vacuum
         noDataState: OK
         execErrState: KeepLast
         data:
@@ -239,11 +236,11 @@ groups:
         for: 15m
         labels: {severity: critical}
         annotations:
-          summary: 'CNPG {{ $labels.namespace }}/{{ $labels.pod }} db {{ $labels.datname }} xid age >1B: wraparound shutdown approaching'
+          summary: 'CNPG {{ $labels.namespace }}/{{ $labels.pod }} db {{ $labels.datname }} xid age is more than 1B. Wraparound shutdown is close'
           description: |
-            - db {{ $labels.datname }} halfway to wraparound shutdown: Postgres self-stops near 2.1B
-            - psql: VACUUM (FREEZE, VERBOSE) on the highest-age tables NOW
-            - unblock vacuum: drop inactive slots, kill long/idle-in-transaction backends
+            - db {{ $labels.datname }} is halfway to wraparound shutdown. Postgres stops itself near 2.1B
+            - in psql, run VACUUM (FREEZE, VERBOSE) on the tables with the highest age now
+            - unblock vacuum. Drop inactive slots and end long or idle-in-transaction backends
         noDataState: OK
         execErrState: KeepLast
         data:
@@ -269,16 +266,15 @@ groups:
               conditions:
                 - type: query
                   evaluator: {type: gt, params: [1000000000]}
-      # An inactive slot retains WAL, which fills pg_wal and turns the primary read-only.
       - uid: cnpg-replication-slot-inactive
         title: CNPG replication slot inactive
         condition: C
         for: 10m
         labels: {severity: warning}
         annotations:
-          summary: 'CNPG {{ $labels.namespace }}/{{ $labels.pod }} physical slot {{ $labels.slot_name }} inactive (WAL retention risk)'
+          summary: 'CNPG {{ $labels.namespace }}/{{ $labels.pod }} physical slot {{ $labels.slot_name }} is inactive and retains WAL'
           description: |
-            - slot {{ $labels.slot_name }} inactive: it retains WAL, which fills pg_wal and turns the primary read-only
+            - it fills pg_wal, which makes the primary read-only
             - psql: select slot_name,active,wal_status from pg_replication_slots
             - recover the standby, or drop the dead slot: select pg_drop_replication_slot('{{ $labels.slot_name }}')
         noDataState: OK
@@ -290,9 +286,8 @@ groups:
             model:
               refId: A
               instant: true
-              # Primary only: CNPG copies the primary's slots onto every standby so a failover keeps them, and on
-              # a standby those copies read inactive forever. Without the `unless` every standby alerts on every
-              # OTHER standby's slot.
+              # Primary only. CNPG copies the primary's slots to every standby, where they always read inactive.
+              # Without the `unless`, every standby alerts on the slots of every other standby.
               expr: 'max by (namespace, pod, slot_name) ((cnpg_pg_replication_slots_active{slot_type="physical"} == bool 0) unless on (namespace, pod) (cnpg_pg_replication_in_recovery == 1))'
           - refId: B
             relativeTimeRange: {from: 600, to: 0}
@@ -309,18 +304,17 @@ groups:
               conditions:
                 - type: query
                   evaluator: {type: gt, params: [0]}
-      # Holds locks and blocks autovacuum.
       - uid: cnpg-long-running-transaction
         title: CNPG long-running transaction
         condition: C
         for: 5m
         labels: {severity: warning}
         annotations:
-          summary: 'CNPG {{ $labels.namespace }}/{{ $labels.pod }} has a transaction running >5m'
+          summary: 'CNPG {{ $labels.namespace }}/{{ $labels.pod }} has a transaction running for more than 5m'
           description: |
-            - long/idle-in-transaction on {{ $labels.namespace }}/{{ $labels.pod }}: holds locks + blocks autovacuum
+            - a long or idle-in-transaction session on {{ $labels.namespace }}/{{ $labels.pod }} holds locks and blocks autovacuum
             - psql: select pid,state,now()-xact_start as age,query from pg_stat_activity order by age desc
-            - fix the client; if stuck: select pg_terminate_backend(pid)
+            - fix the client. If it is stuck, run select pg_terminate_backend(pid)
         noDataState: OK
         execErrState: KeepLast
         data:
@@ -354,9 +348,9 @@ groups:
         annotations:
           summary: 'CNPG {{ $labels.namespace }}/{{ $labels.pod }} has backends blocked waiting on locks'
           description: |
-            - backends on {{ $labels.namespace }}/{{ $labels.pod }} stuck waiting on locks: throughput stalls
+            - backends on {{ $labels.namespace }}/{{ $labels.pod }} wait on locks, so throughput stalls
             - psql: select pid,wait_event_type,wait_event,query from pg_stat_activity where wait_event is not null
-            - find the blocker via pg_blocking_pids(pid); terminate it if needed
+            - find the blocker with pg_blocking_pids(pid). End it if needed
         noDataState: OK
         execErrState: KeepLast
         data:
@@ -388,11 +382,11 @@ groups:
         for: 2m
         labels: {severity: warning}
         annotations:
-          summary: 'CNPG {{ $labels.namespace }}/{{ $labels.pod }} db {{ $labels.datname }}: >5 deadlocks in 10m'
+          summary: 'CNPG {{ $labels.namespace }}/{{ $labels.pod }} db {{ $labels.datname }} has more than 5 deadlocks in 10m'
           description: |
-            - deadlocks in db {{ $labels.datname }}: conflicting lock orders between transactions
-            - kubectl -n {{ $labels.namespace }} logs {{ $labels.pod }} | grep -i deadlock (shows the two queries)
-            - fix app: lock rows in a consistent order / shorten transactions
+            - deadlocks in db {{ $labels.datname }}. Transactions lock rows in conflicting order
+            - find the two queries: kubectl -n {{ $labels.namespace }} logs {{ $labels.pod }} | grep -i deadlock
+            - fix the app. Lock rows in a consistent order, or shorten transactions
         noDataState: OK
         execErrState: KeepLast
         data:
@@ -424,11 +418,11 @@ groups:
         for: 5m
         labels: {severity: warning}
         annotations:
-          summary: 'CNPG {{ $labels.namespace }}/{{ $labels.pod }}: operator flagged a manual switchover'
+          summary: 'CNPG operator asks for a manual switchover of {{ $labels.namespace }}/{{ $labels.pod }}'
           description: |
-            - operator needs a manual switchover for {{ $labels.namespace }}/{{ $labels.pod }} (e.g. pending restart)
-            - kubectl cnpg status <cluster> -n {{ $labels.namespace }} -> why it's flagged
-            - kubectl cnpg promote <cluster> <newPrimary> -n {{ $labels.namespace }} when a healthy standby exists
+            - usually for a pending restart
+            - find the reason: kubectl cnpg status <cluster> -n {{ $labels.namespace }}
+            - when a healthy standby exists, run kubectl cnpg promote <cluster> <newPrimary> -n {{ $labels.namespace }}
         noDataState: OK
         execErrState: KeepLast
         data:
@@ -460,11 +454,11 @@ groups:
         for: 5m
         labels: {severity: warning}
         annotations:
-          summary: 'CNPG {{ $labels.namespace }}/{{ $labels.pod }} is fenced (I/O paused)'
+          summary: 'CNPG {{ $labels.namespace }}/{{ $labels.pod }} is fenced. Its I/O is paused'
           description: |
-            - {{ $labels.namespace }}/{{ $labels.pod }} fenced: Postgres I/O paused (usually operator maintenance)
-            - kubectl cnpg status <cluster> -n {{ $labels.namespace }} -> Fencing
-            - if not intended, unfence: kubectl cnpg fencing off <cluster> -n {{ $labels.namespace }}
+            - usually operator maintenance
+            - run kubectl cnpg status <cluster> -n {{ $labels.namespace }} and read Fencing
+            - if nobody meant it, unfence: kubectl cnpg fencing off <cluster> -n {{ $labels.namespace }}
         noDataState: OK
         execErrState: KeepLast
         data:

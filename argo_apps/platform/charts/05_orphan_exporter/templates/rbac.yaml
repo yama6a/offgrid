@@ -1,5 +1,4 @@
-# Cluster-wide READ on the protected stateful CRs, Argo Applications, and the ObjectStores whose status
-# carries backup recoverability. No write, nothing else.
+# Cluster-wide and read-only. The exporter writes nothing.
 apiVersion: rbac.authorization.k8s.io/v1
 kind: ClusterRole
 metadata:
@@ -20,16 +19,14 @@ rules:
   - apiGroups: ["argoproj.io"]
     resources: ["applications"]
     verbs: ["get", "list"]
-  # PVs are cluster-scoped, so there is no narrower grant than this. Read only: the exporter reports an
-  # abandoned PV, `make cleanup-abandoned-pvs` is what deletes one.
+  # PVs are cluster-scoped, so no narrower grant exists.
   - apiGroups: [""]
     resources: ["persistentvolumes"]
     verbs: ["get", "list"]
-  # Both, because an orphaned backupvolume is only visible by diffing the two.
+  # Both, because only the difference between the two shows an orphaned backupvolume.
   - apiGroups: ["longhorn.io"]
     resources: ["volumes", "backupvolumes"]
     verbs: ["get", "list"]
-# ConfigMap access is deliberately not cluster-wide: see the namespaced Role below.
 ---
 apiVersion: rbac.authorization.k8s.io/v1
 kind: ClusterRoleBinding
@@ -44,9 +41,7 @@ subjects:
     name: orphan-exporter
     namespace: {{ .Release.Namespace }}
 ---
-# The one ConfigMap 07_redis_backup publishes its per-instance outcome into. Pinned to that object name: a
-# cluster-wide configmaps read would hand the exporter every ConfigMap in the cluster for one gauge.
-# The RoleBinding reaches across namespaces to the exporter's ServiceAccount.
+# Only the one ConfigMap 07_redis_backup writes. A cluster-wide grant would expose every ConfigMap for one gauge.
 apiVersion: rbac.authorization.k8s.io/v1
 kind: Role
 metadata:

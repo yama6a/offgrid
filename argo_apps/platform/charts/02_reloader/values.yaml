@@ -2,29 +2,28 @@ reloader:
   fullnameOverride: reloader
 
   reloader:
-    # Every Deployment/StatefulSet/DaemonSet is watched without needing an annotation. Opt a workload OUT with
-    # `reloader.stakater.com/auto: "false"` on its POD TEMPLATE; see docs/03_secrets.md for who is opted out and why.
+    # Watches every Deployment, StatefulSet and DaemonSet with no annotation needed. To opt a workload out, set
+    # `reloader.stakater.com/auto: "false"` on its pod template. docs/03_secrets.md lists the opt-outs.
     autoReloadAll: true
 
-    # On a CronJob, reloader starts a job RUN rather than restarting anything, and both of ours are heavy
-    # (redis-backup dumps every durable Redis in the cluster). Each run is a fresh pod, so it reads the new
-    # credential anyway. Same for the Helm hook Jobs, which must not re-run.
+    # On a CronJob, Reloader starts a new run. Both CronJobs here are heavy, and each run is a new pod that
+    # reads the new credential anyway. Helm hook Jobs must not run again.
     ignoreJobs: true
     ignoreCronJobs: true
 
-    # How the restart is forced: stamp a hash annotation on the pod template. The `default` strategy instead
-    # injects a STAKATER_* env var into every container, which ArgoCD selfHeal would fight.
+    # Forces the restart with a hash annotation on the pod template. The `default` strategy adds a STAKATER_*
+    # env var to every container, and Argo CD selfHeal would remove it.
     reloadStrategy: annotations
 
     logFormat: json
-    watchGlobally: true          # it has to see the platform namespaces, not just its own
-    readOnlyRootFileSystem: true # it only talks to the API server, it writes no files
+    watchGlobally: true          # it must see every namespace, not only its own
+    readOnlyRootFileSystem: true # it only talks to the API server and writes no files
 
     podMonitor:
       enabled: true # the chart's serviceMonitor is deprecated upstream
 
     deployment:
-      priorityClassName: platform-critical # while it is gone, a rotated secret silently never reaches its pod
+      priorityClassName: platform-critical # while it is down, a rotated secret does not reach its pods
       resources:
         requests: {cpu: 10m, memory: 56Mi}
         limits:   {memory: 86Mi}

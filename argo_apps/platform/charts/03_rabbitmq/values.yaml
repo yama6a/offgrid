@@ -1,12 +1,6 @@
-# Two halves: `rabbitmq-cluster-operator:` goes to the upstream subchart (which also installs the CRDs), the
-# top-level keys drive this chart's OWN templates, which render the broker.
-
 rabbitmq-cluster-operator:
-  # Fixes a real bug in the self-signed path: that one mints the webhook cert with Helm genSignedCert at
-  # TEMPLATE time, so ArgoCD re-renders a fresh cert every reconcile, leaving the Secret and caBundle
-  # perpetually OutOfSync and transiently rejecting topology CR writes (failurePolicy: Fail).
-  # Trade-off: a cross-wave dependency on cert-manager (wave 2, this app is wave 3). Waves are advisory, so on
-  # a cold boot the Certificate may sit pending until the app's unbounded retry converges.
+  # The self-signed path mints a new webhook cert on every Argo CD render, so topology CR writes fail at
+  # times. The cost is a dependency on cert-manager from wave 2.
   useCertManager: true
 
   clusterOperator:
@@ -21,8 +15,8 @@ rabbitmq-cluster-operator:
     metrics:
       podMonitor:
         enabled: true
-    # Ours is in templates/networkpolicy-cluster-operator.yaml. The subchart's bundled vanilla NetworkPolicy
-    # defaults to allow-all-egress, which Cilium UNIONs with our CNP and blows default-deny open.
+    # templates/networkpolicy-cluster-operator.yaml replaces it. The subchart's policy allows all egress, and
+    # Cilium would merge it with ours.
     networkPolicy:
       enabled: false
 
@@ -30,9 +24,8 @@ rabbitmq-cluster-operator:
     enabled: true
     replicaCount: 1
     revisionHistoryLimit: 0
-    # At INFO it logs Start/declare/Finished per topology CR every SYNC_PERIOD, which dominates cluster log
-    # volume with pure success chatter. This also drops WARN; real failures still surface via CR status
-    # conditions, k8s events, and the queue/DLQ alerts.
+    # At info it logs each topology CR on every SYNC_PERIOD, most of the cluster's log volume. Error also drops
+    # warn. Failures still show in CR status conditions, Kubernetes events and the queue and DLQ alerts.
     logLevel: error
     resources:
       requests:
@@ -41,55 +34,46 @@ rabbitmq-cluster-operator:
       limits:
         memory: 110Mi
     extraEnvVars:
-      - name: SYNC_PERIOD # re-reconciles all topology CRs, so a declare that failed on out-of-order deps self-heals
+      - name: SYNC_PERIOD # reconciles every topology CR again, so a declare that failed on ordering recovers
         value: "1m"
-    # metrics stay off: the topology operator's endpoint requires TLS, which the plaintext vmagent scrape
-    # cannot consume without extra config.
+    # No metrics. The endpoint needs TLS, and the plain vmagent scrape cannot use it without extra config.
     networkPolicy:
-      enabled: false # same allow-all-egress problem as clusterOperator above
+      enabled: false # the same all-egress policy as for clusterOperator above
 
-# ---- the single shared broker, rendered by this chart's own templates ----
+# ---- the shared broker, rendered by this chart's own templates ----
 
-# Also the client Service name workloads dial on 5672, and the management UI on 15672. The rabbitmq-topology
-# chart hardcodes this, so changing it means changing that chart too.
+# Also the Service name. The rabbitmq-topology chart hardcodes it, so change both together.
 name: rabbitmq
 
-# Quorum queues use Raft and need a MAJORITY, so 3 tolerates losing 1. Two would pay the cost of a cluster with
-# no quorum benefit; one has no HA. Not tied to the node count: hostname anti-affinity just needs 3 nodes to
-# choose from, and extra nodes beyond that are spare capacity, not more brokers.
+# Quorum queues need a Raft majority, so 3 brokers survive the loss of 1. More nodes do not need more brokers.
 replicas: 3
 
-# `-management` bundles the 15672 UI, `-alpine` is the small variant. Track the server line the operator
-# subchart is tested against, bump deliberately.
+# Keep the version the operator subchart is tested with.
 image: rabbitmq:4.3.6-management-alpine
 
-# RabbitMQ blocks publishers as it nears its memory LIMIT, so keep request EQUAL to limit: a smaller request lets
-# the scheduler pack the node as if the broker needed less, and the kernel OOMKills it before it ever throttles.
-# 480Mi, not KRR's split rec (234Mi req / 479Mi lim): a lower request here would violate that invariant.
+# RabbitMQ throttles publishers only near its memory limit. With a request below the limit, the scheduler
+# overpacks the node and the kernel OOM-kills the broker first. So request equals limit, whatever KRR says.
+# Idle RSS swings from 105Mi to 280Mi from allocator slack, while live data is about 75Mi. Do not switch
+# vm_memory_calculation_strategy to allocated. It reads the 75Mi and never blocks, while the kernel kills on RSS.
 resources:
   requests:
     cpu: 200m
     memory: 480Mi
   limits:
-    memory: 480Mi # must stay Mi, the broker's memory override parses it. Publishers block at 0.85x, see additionalConfig
+    memory: 480Mi # must be in Mi, because the memory override parses it. See additionalConfig for the 0.85 block point.
 
-# The -local class keeps one replica on the broker's own node, so the fsync path stays on that SSD; a queue
-# drained by its consumers holds almost nothing, so the copy Longhorn drags along on a reschedule is cheap.
-# Longhorn at all, despite Raft already replicating every message across the 3 brokers, because a node-local
-# volume cannot follow its broker to a surviving node: the pod would sit Pending on a dead machine until a
-# human wiped it. See docs/05_storage.md.
+# The -local class keeps one replica on the broker's node, so fsync stays local. Why Longhorn under Raft:
+# docs/05_storage.md.
 storage:
   className: longhorn-r2-ephemeral-local
-  size: 10Gi # a ceiling, not a reservation. The operator hardcodes a 2GB disk_free_limit, so publishers block
-             # once ANY broker's volume hits 8Gi used, which is the real backlog budget this number buys
+  size: 10Gi # a ceiling, not a reservation. The operator sets a 2GB disk_free_limit, so publishers block when
+             # any broker's volume has 8Gi used. That is the real backlog budget.
 
-# Every workload's users/exchanges/queues live here, kept out of the default `/`, which stays admin-only.
+# The users, exchanges and queues of every workload live here. The default `/` vhost stays admin-only.
 # The rabbitmq-topology chart hardcodes this name too.
 vhost: apps
 
-# Scrapes EACH broker pod on both /metrics and /metrics/detailed: the aggregated endpoint carries no `queue`
-# label, so the queue and DLQ alerts need the detailed one. Per-pod, NOT via the LB Service, because detailed
-# per-queue metrics are only reported by the node hosting that queue's leader.
+# The queue and DLQ alerts need the `queue` label, which only /metrics/detailed has.
 metrics:
   podMonitor:
     enabled: true

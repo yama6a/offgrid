@@ -1,8 +1,8 @@
 apiVersion: v2
 name: grafana
-description: Grafana, the dashboards UI and the alerting owner for the monitoring core (no Alertmanager, no vmalert). Its own auth is off; the platform-ingress SSO is the only gate.
+description: Grafana, the dashboards UI and the only alerting engine. Its own login is off. The platform-ingress SSO is the only gate.
 type: application
-version: 0.1.0 # local chart, never bump version
+version: 0.1.0 # nothing publishes this chart, so never bump it
 
 dependencies:
   - name: grafana

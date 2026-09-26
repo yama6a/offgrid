@@ -1,5 +1,4 @@
-# Default-deny both ways for the OpsTree redis-operator. The surface is thin because no PodMonitor ships and
-# the admission webhook is off (both in values.yaml), so there is no metrics and no apiserver-webhook ingress.
+# No metrics or webhook ingress: values.yaml turns both off.
 apiVersion: cilium.io/v2
 kind: CiliumNetworkPolicy
 metadata:
@@ -8,15 +7,13 @@ metadata:
 spec:
   endpointSelector:
     matchLabels:
-      name: redis-operator # the POD label. app.kubernetes.io/name is only on the Deployment, so it selects zero pods
+      name: redis-operator # the pod label. app.kubernetes.io/name is only on the Deployment and selects no pods.
   ingress:
-    # Kubelet /healthz and /readyz probes, from the node.
     - fromEntities: [host, remote-node]
       toPorts:
         - ports:
             - { port: "8081", protocol: TCP }
   egress:
-    # DNS.
     - toEndpoints:
         - matchLabels:
             k8s:io.kubernetes.pod.namespace: kube-system
@@ -25,11 +22,8 @@ spec:
         - ports:
             - { port: "53", protocol: UDP }
             - { port: "53", protocol: TCP }
-    # Watches Redis CRs and manages their StatefulSets and Services.
     - toEntities: [kube-apiserver]
-    # Reconciles each managed Redis. Instances live in WORKLOAD namespaces, and an empty {} selector means
-    # same-namespace-only in Cilium, hence the explicit ns-Exists matchExpression. Broad on the port rather
-    # than pinned to the operator's per-instance pod label, which we would then depend on.
+    # Redis instances live in workload namespaces, so the rule needs the namespace Exists expression.
     - toEndpoints:
         - matchExpressions:
             - { key: k8s:io.kubernetes.pod.namespace, operator: Exists }

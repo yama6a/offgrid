@@ -1,21 +1,8 @@
 {{- /*
-Makes files/alerts/ authoritative, as an ArgoCD PostSync hook.
-
-Grafana's alerting file provisioning is an upsert: on boot and on every sidecar reload it creates and
-updates the rules the files name, and never deletes one that has disappeared from them. A rule dropped
-from a file therefore keeps firing in the running instance forever. Deleting it needs either a
-`deleteRules:` tombstone carrying its UID, which is a step nobody remembers to write, or a restart.
-
-persistence is off, so a restart re-provisions from an empty database and the files become the whole
-truth. That is what this hook does, and it is why no tombstone list is needed anywhere in this chart.
-
-It restarts only when the rendered alert files actually changed. The checksum of the whole files/alerts/
-directory is compared against the one the last successful restart recorded, so an unrelated sync of this
-chart is a no-op and a firing alert is not re-notified for nothing. The marker ConfigMap is deliberately
-not part of this chart: Argo would reconcile it back on every sync and the comparison would never differ.
-
-The marker is written only after the rollout succeeds, so a failed restart is retried by the next sync.
-On a first install there is no marker and grafana is rolled once, seconds after it was created.
+Grafana file provisioning never deletes a rule that left the files. A restart with persistence off does.
+The Job restarts grafana only when the files/alerts/ checksum differs from the marker ConfigMap.
+An unrelated sync then does not re-send firing alerts.
+The chart must not own the marker, or Argo CD resets it on every sync and the checksums never match.
 */ -}}
 {{- $checksum := (.Files.Glob "files/alerts/*.yaml").AsConfig | sha256sum | trunc 12 }}
 apiVersion: v1
@@ -32,11 +19,11 @@ metadata:
 rules:
   - apiGroups: ["apps"]
     resources: ["deployments"]
-    # patch is what `rollout restart` does to the pod template; watch is what `rollout status` blocks on.
+    # `rollout restart` needs patch. `rollout status` needs watch.
     verbs: ["get", "list", "watch", "patch"]
   - apiGroups: [""]
     resources: ["configmaps"]
-    # Only the marker below. There is no resourceNames on create, so the verb set is the narrowing.
+    # For the marker only. resourceNames cannot restrict create, so the short verb list is the limit.
     verbs: ["get", "create", "update", "patch"]
 ---
 apiVersion: rbac.authorization.k8s.io/v1
@@ -53,7 +40,7 @@ subjects:
     name: grafana-alerts-reload
     namespace: {{ .Release.Namespace }}
 ---
-{{- /* Default-deny both ways. It talks to the apiserver and nothing talks to it. */}}
+{{- /* Default-deny both ways. The Job talks only to the apiserver. */}}
 apiVersion: cilium.io/v2
 kind: CiliumNetworkPolicy
 metadata:
@@ -65,7 +52,7 @@ spec:
       app.kubernetes.io/name: grafana-alerts-reload
   ingress: []
   egress:
-    # DNS, to resolve the in-cluster apiserver Service.
+    # DNS, for the in-cluster apiserver Service name.
     - toEndpoints:
         - matchLabels:
             k8s:io.kubernetes.pod.namespace: kube-system
@@ -83,8 +70,7 @@ metadata:
   namespace: {{ .Release.Namespace }}
   annotations:
     argocd.argoproj.io/hook: PostSync
-    # BeforeHookCreation, not HookSucceeded: a Job is immutable, so the previous one has to go before this
-    # one is created, and keeping it until then leaves the last run's logs readable.
+    # A Job is immutable, so the old one goes right before the new one. Its logs stay readable until then.
     argocd.argoproj.io/hook-delete-policy: BeforeHookCreation
 spec:
   backoffLimit: {{ .Values.alertsReloadHook.backoffLimit }}
@@ -135,7 +121,7 @@ spec:
             - { name: MARKER, value: grafana-alerts-revision }
             - { name: WANT, value: {{ $checksum | quote }} }
             - { name: ROLLOUT_TIMEOUT, value: {{ .Values.alertsReloadHook.rolloutTimeout | quote }} }
-            # kubectl's discovery cache wants a writable HOME; the image's default is root-owned.
+            # kubectl writes its discovery cache under HOME. The image's default HOME is root-owned.
             - { name: HOME, value: /tmp }
           securityContext:
             allowPrivilegeEscalation: false

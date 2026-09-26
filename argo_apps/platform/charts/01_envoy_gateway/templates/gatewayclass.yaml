@@ -1,5 +1,3 @@
-# The cluster's single Gateway API class. parametersRef points at the EnvoyProxy, so every Gateway of this
-# class inherits the merged-proxy and pinned-LB-IP provider config.
 apiVersion: gateway.networking.k8s.io/v1
 kind: GatewayClass
 metadata:

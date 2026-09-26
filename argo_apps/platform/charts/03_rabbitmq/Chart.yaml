@@ -1,8 +1,8 @@
 apiVersion: v2
 name: rabbitmq
-description: RabbitMQ, both operators and their CRDs plus the single shared broker and vhost, in ONE chart so the CRDs and the CRs land in one sync.
+description: RabbitMQ, both operators and their CRDs, the shared broker and the vhost. One chart puts the CRDs and CRs in one sync.
 type: application
-version: 0.1.0 # local chart, never bump version
+version: 0.1.0 # nothing publishes this chart, so never bump it
 
 dependencies:
   - name: rabbitmq-cluster-operator

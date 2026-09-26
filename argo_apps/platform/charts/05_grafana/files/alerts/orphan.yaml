@@ -1,9 +1,8 @@
 apiVersion: 1
 groups:
-  # A workload's manifests leaving git ORPHANS every CR carrying deletionProtection instead of deleting it: it
-  # keeps running, unmanaged, so the data survives a restore. These alerts make that silent state loud.
-  # Vector 1 (CR removed from a live app, app stays OutOfSync) is covered in argocd-health.yaml. Here are
-  # vector 2 (owning app gone), the untracked guard, and the exporter deadman. Fed by 05_orphan_exporter.
+  # Removing a workload from git orphans every CR with deletionProtection. The CR keeps running, unmanaged.
+  # argocd-health.yaml covers a CR removed from a live app. These rules read 05_orphan_exporter and cover
+  # a deleted owning app, a CR with no tracking metadata, and a silent exporter.
   - orgId: 1
     name: orphan
     folder: offgrid
@@ -15,11 +14,12 @@ groups:
         for: 10m
         labels: {severity: warning}
         annotations:
-          summary: 'CNPG {{ $labels.res_namespace }}/{{ $labels.res_cluster }} is orphaned (owning Argo app {{ $labels.res_app }} gone)'
+          summary: 'CNPG {{ $labels.res_namespace }}/{{ $labels.res_cluster }} is orphaned: its Argo CD app {{ $labels.res_app }} is gone'
           description: |
-            - the DB is running but no ArgoCD app manages it: its manifests were pruned from git (data is safe)
-            - restore the workload files in git to re-adopt it, OR if the removal was intentional finish it:
-            - kubectl -n {{ $labels.res_namespace }} get cluster {{ $labels.res_cluster }} ; then delete once data is elsewhere
+            - the database runs, but no Argo CD app manages it. Its manifests left git. The data is safe.
+            - to re-adopt it: restore the workload files in git
+            - if the removal was intended: move the data elsewhere, then delete the Cluster
+            - kubectl -n {{ $labels.res_namespace }} get cluster {{ $labels.res_cluster }}
         noDataState: OK
         execErrState: KeepLast
         data:
@@ -45,19 +45,19 @@ groups:
               conditions:
                 - type: query
                   evaluator: {type: gt, params: [0]}
-      # No tracking metadata means the exporter cannot tell whether it is orphaned, so it says so loudly
-      # rather than letting unknown read as healthy.
+      # Without tracking metadata, orphan state is unknown. Unknown must not read as healthy.
       - uid: cnpg-cluster-untracked
         title: CNPG cluster untracked by ArgoCD
         condition: C
         for: 15m
         labels: {severity: warning}
         annotations:
-          summary: 'CNPG {{ $labels.res_namespace }}/{{ $labels.res_cluster }} carries no ArgoCD tracking metadata'
+          summary: 'CNPG {{ $labels.res_namespace }}/{{ $labels.res_cluster }} carries no Argo CD tracking metadata'
           description: |
-            - the orphan detector cannot resolve this Cluster to an Argo app, so orphan state is unknown
-            - if Argo-managed: check why the tracking annotation/label is missing (manual kubectl apply? SSA field drop?)
-            - if a deliberate manual/test cluster, move it out of an Argo-managed namespace
+            - the orphan exporter cannot map this Cluster to an Argo CD app, so its orphan state is unknown
+            - if Argo CD manages it: find why the tracking annotation or label is missing
+            - usual causes: a manual kubectl apply, or a server-side apply that dropped the field
+            - if it is a manual or test cluster: move it out of the Argo CD-managed namespace
         noDataState: OK
         execErrState: KeepLast
         data:
@@ -83,19 +83,21 @@ groups:
               conditions:
                 - type: query
                   evaluator: {type: gt, params: [0]}
-      # Deadman: with the exporter silent, no orphaned_* metric can fire, so silence would look like health.
-      # noDataState: Alerting makes an ABSENT heartbeat alert; a scan error emits 0 and trips the same threshold.
+      # A silent exporter means no orphaned_* rule can fire. noDataState: Alerting fires on a missing heartbeat.
+      # A scan error emits 0 and trips the same threshold.
       - uid: orphan-exporter-down
         title: Orphan exporter down
         condition: C
         for: 15m
         labels: {severity: warning}
         annotations:
-          summary: 'orphan-exporter is not reporting (orphan detection is blind)'
+          summary: 'orphan-exporter is not reporting: orphan detection is blind'
           description: |
-            - no heartbeat from the exporter, so the orphaned_* alerts cannot fire and orphans go undetected
-            - kubectl -n orphan-exporter get pods ; kubectl -n orphan-exporter logs deploy/orphan-exporter
-            - check the ClusterRole/binding (get,list on clusters + redis + vm/vl stores + applications) and the PodMonitor scrape
+            - no heartbeat from the exporter, so the orphaned_* alerts cannot fire
+            - kubectl -n orphan-exporter get pods
+            - kubectl -n orphan-exporter logs deploy/orphan-exporter
+            - check the PodMonitor scrape
+            - check the ClusterRole binding: get and list on CNPG clusters, Redis, the VM and VL stores, Argo CD applications
         noDataState: Alerting
         execErrState: KeepLast
         data:
@@ -121,19 +123,20 @@ groups:
               conditions:
                 - type: query
                   evaluator: {type: lt, params: [1]}
-      # Same two vectors for Redis. The label key is `redis`, not `instance`, which the scrape already owns.
-      # A durable instance has a daily S3 dump, so an orphan is recoverable; this just makes it visible.
+      # The same two rules for Redis. The label key is `redis`, because the scrape already owns `instance`.
+      # A durable instance has a daily S3 dump, so an orphan is recoverable.
       - uid: redis-instance-orphaned
         title: Redis instance orphaned
         condition: C
         for: 10m
         labels: {severity: warning}
         annotations:
-          summary: 'Redis {{ $labels.res_namespace }}/{{ $labels.res_redis }} is orphaned (owning Argo app {{ $labels.res_app }} gone)'
+          summary: 'Redis {{ $labels.res_namespace }}/{{ $labels.res_redis }} is orphaned: its Argo CD app {{ $labels.res_app }} is gone'
           description: |
-            - the instance is running but no ArgoCD app manages it: its manifests were pruned from git (data is safe)
-            - restore the workload files in git to re-adopt it, OR if the removal was intentional finish it:
-            - kubectl -n {{ $labels.res_namespace }} get redis {{ $labels.res_redis }} ; then delete once data is elsewhere
+            - the instance runs, but no Argo CD app manages it. Its manifests left git. The data is safe.
+            - to re-adopt it: restore the workload files in git
+            - if the removal was intended: move the data elsewhere, then delete the Redis
+            - kubectl -n {{ $labels.res_namespace }} get redis {{ $labels.res_redis }}
         noDataState: OK
         execErrState: KeepLast
         data:
@@ -159,18 +162,17 @@ groups:
               conditions:
                 - type: query
                   evaluator: {type: gt, params: [0]}
-      # As above: unknown must not read as healthy.
       - uid: redis-instance-untracked
         title: Redis instance untracked by ArgoCD
         condition: C
         for: 15m
         labels: {severity: warning}
         annotations:
-          summary: 'Redis {{ $labels.res_namespace }}/{{ $labels.res_redis }} carries no ArgoCD tracking metadata'
+          summary: 'Redis {{ $labels.res_namespace }}/{{ $labels.res_redis }} carries no Argo CD tracking metadata'
           description: |
-            - cannot tell whether this instance is orphaned; it is unmanaged as far as the exporter can see
+            - the orphan exporter cannot tell whether this instance is orphaned, so it counts as unmanaged
             - kubectl -n {{ $labels.res_namespace }} get redis {{ $labels.res_redis }} -o yaml | grep -A3 'annotations:'
-            - expected argocd.argoproj.io/tracking-id or the app.kubernetes.io/instance label
+            - expected: the argocd.argoproj.io/tracking-id annotation or the app.kubernetes.io/instance label
         noDataState: OK
         execErrState: KeepLast
         data:
@@ -196,19 +198,20 @@ groups:
               conditions:
                 - type: query
                   evaluator: {type: gt, params: [0]}
-      # Same two vectors for the VM/VL stores, which share one metric pair with a `kind` label. Both have a
-      # daily S3 export, so an orphan is recoverable.
+      # The same two rules for the VictoriaMetrics and VictoriaLogs stores. They share one metric pair with a
+      # `kind` label. Both have a daily S3 export, so an orphan is recoverable.
       - uid: vm-resource-orphaned
         title: VM/VL store orphaned
         condition: C
         for: 10m
         labels: {severity: warning}
         annotations:
-          summary: '{{ $labels.res_kind }} {{ $labels.res_namespace }}/{{ $labels.res_name }} is orphaned (owning Argo app {{ $labels.res_app }} gone)'
+          summary: '{{ $labels.res_kind }} {{ $labels.res_namespace }}/{{ $labels.res_name }} is orphaned: its Argo CD app {{ $labels.res_app }} is gone'
           description: |
-            - the store is running but no ArgoCD app manages it: its manifests were pruned from git (data is safe)
-            - restore the app files in git to re-adopt it, OR if the removal was intentional finish it:
-            - kubectl -n {{ $labels.res_namespace }} delete {{ $labels.res_kind }} {{ $labels.res_name }} ; then its PVC
+            - the store runs, but no Argo CD app manages it. Its manifests left git. The data is safe.
+            - to re-adopt it: restore the app files in git
+            - if the removal was intended: delete the store, then its PVC
+            - kubectl -n {{ $labels.res_namespace }} delete {{ $labels.res_kind }} {{ $labels.res_name }}
         noDataState: OK
         execErrState: KeepLast
         data:
@@ -234,18 +237,17 @@ groups:
               conditions:
                 - type: query
                   evaluator: {type: gt, params: [0]}
-      # As above: unknown must not read as healthy.
       - uid: vm-resource-untracked
         title: VM/VL store untracked by ArgoCD
         condition: C
         for: 15m
         labels: {severity: warning}
         annotations:
-          summary: '{{ $labels.res_kind }} {{ $labels.res_namespace }}/{{ $labels.res_name }} carries no ArgoCD tracking metadata'
+          summary: '{{ $labels.res_kind }} {{ $labels.res_namespace }}/{{ $labels.res_name }} carries no Argo CD tracking metadata'
           description: |
-            - cannot tell whether this store is orphaned; it is unmanaged as far as the exporter can see
+            - the orphan exporter cannot tell whether this store is orphaned, so it counts as unmanaged
             - kubectl -n {{ $labels.res_namespace }} get {{ $labels.res_kind }} {{ $labels.res_name }} -o yaml | grep -A3 'annotations:'
-            - expected argocd.argoproj.io/tracking-id or the app.kubernetes.io/instance label
+            - expected: the argocd.argoproj.io/tracking-id annotation or the app.kubernetes.io/instance label
         noDataState: OK
         execErrState: KeepLast
         data:
@@ -271,21 +273,20 @@ groups:
               conditions:
                 - type: query
                   evaluator: {type: gt, params: [0]}
-      # 24h, not minutes: a chart that renames a PVC leaves the old PV Released for the length of the rollout,
-      # and paging through a normal migration would train you to ignore this. A Grafana restart resets the
-      # pending timer, so a PV abandoned right before one takes another 24h to surface.
+      # 24h, because a chart that renames a PVC leaves the old PV Released during a normal rollout.
+      # A Grafana restart resets the pending timer, so a PV abandoned just before one takes another 24h.
       - uid: pv-abandoned
         title: PersistentVolume abandoned
         condition: C
         for: 24h
         labels: {severity: warning}
         annotations:
-          summary: 'PV {{ $labels.res_pv }} is {{ $labels.res_phase }} and nothing will bind it ({{ $labels.res_claim }})'
+          summary: 'PV {{ $labels.res_pv }} is {{ $labels.res_phase }} and nothing will bind it. Old claim: {{ $labels.res_claim }}'
           description: |
-            - its claim {{ $labels.res_claim }} is gone and the class reclaims {{ $labels.res_reclaim }}, so the PV and its data are still on disk
-            - a Longhorn PV also leaves the volume behind, which keeps failing its recurring backup: longhorn-backup-stale is the second symptom
-            - list and clean up: make cleanup-abandoned-pvs
+            - claim {{ $labels.res_claim }} is gone and the reclaim policy is {{ $labels.res_reclaim }}, so the PV and its data stay on disk
+            - a Longhorn PV also leaves its volume behind. The volume keeps failing its recurring backup, so longhorn-backup-stale fires too
             - inspect first: kubectl describe pv {{ $labels.res_pv }}
+            - list and clean up: make cleanup-abandoned-pvs
         noDataState: OK
         execErrState: KeepLast
         data:
@@ -311,24 +312,22 @@ groups:
               conditions:
                 - type: query
                   evaluator: {type: gt, params: [0]}
-      # The S3 backup of a volume that no longer exists. Nothing deletes it on its own: a recurring job's
-      # `retain` only prunes volumes that still exist, and the bucket lifecycle expires nothing under
-      # longhorn/ on purpose (terraform/main.tf). So this is the only thing that will ever tell you.
-      # 30d because keeping a dead volume's backup for a month is the point; keeping it for a year is not.
-      # `> 0` so a backupvolume that never completed a backup stays quiet rather than reading as ancient.
+      # Nothing else reports this. `retain` prunes only live volumes.
+      # The bucket lifecycle in terraform/main.tf skips longhorn/ on purpose.
+      # 30d keeps a dead volume's backup for a month, not a year. `> 0` skips a backupvolume with no backup.
       - uid: backupvolume-orphaned
         title: Backup of a deleted volume kept
         condition: C
         for: 1h
         labels: {severity: warning}
         annotations:
-          summary: 'S3 backup {{ $labels.res_backupvolume }} has outlived its volume by >30d'
+          summary: 'S3 backup {{ $labels.res_backupvolume }} has outlived its volume by more than 30 days'
           description: |
-            - volume {{ $labels.res_volume }} is gone, its backup is still in the bucket and still being paid for
-            - nothing will prune it: the recurring job retains per volume, and the longhorn/ prefix has no lifecycle expiry
-            - deleting the BackupVolume also deletes the S3 data, and it is the only correct way to remove it:
+            - volume {{ $labels.res_volume }} is gone. Its backup is still in the bucket and still costs money
+            - nothing prunes it. The recurring job retains per volume, and the longhorn/ prefix has no lifecycle expiry
+            - to remove it, delete the BackupVolume. That is the only correct way, and it deletes the S3 data too:
             - kubectl -n longhorn-system delete backupvolume {{ $labels.res_backupvolume }}
-            - to keep the data instead, move its folder out of longhorn/backupstore/volumes/ in the bucket
+            - to keep the data instead: move its folder out of longhorn/backupstore/volumes/ in the bucket
         noDataState: OK
         execErrState: KeepLast
         data:

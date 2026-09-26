@@ -13,9 +13,9 @@ groups:
         annotations:
           summary: 'Node {{ $labels.node }} is NotReady'
           description: |
-            - kubelet not reporting Ready: pods on {{ $labels.node }} may be evicted/unschedulable
-            - kubectl describe node {{ $labels.node }} -> check Conditions + kubelet
-            - the node's kernel log and overall health, however your OS exposes them
+            - the kubelet does not report Ready. Pods on {{ $labels.node }} may be evicted or fail to schedule
+            - run kubectl describe node {{ $labels.node }}, then check Conditions and the kubelet
+            - check the node's kernel log and health, however your OS exposes them
         noDataState: OK
         execErrState: KeepLast
         data:
@@ -49,9 +49,10 @@ groups:
         annotations:
           summary: 'Node {{ $labels.instance }} memory usage above 90%'
           description: |
-            - node RAM >90% used: OOM/eviction risk on {{ $labels.instance }}
-            - kubectl top nodes ; kubectl top pods -A --sort-by=memory
-            - shed or right-size the biggest pods, or reduce scheduled load
+            - more than 90% of node RAM is used. Pods on {{ $labels.instance }} risk OOM kills and eviction
+            - nodes: kubectl top nodes
+            - pods: kubectl top pods -A --sort-by=memory
+            - move or right-size the biggest pods, or schedule less load
         noDataState: OK
         execErrState: KeepLast
         data:
@@ -85,9 +86,10 @@ groups:
         annotations:
           summary: 'Node {{ $labels.instance }} CPU above 90%'
           description: |
-            - sustained CPU saturation on {{ $labels.instance }}: throttling / slow scheduling
-            - kubectl top nodes ; kubectl top pods -A --sort-by=cpu
-            - add CPU limits to the hog, or spread the load across nodes
+            - the CPU on {{ $labels.instance }} stays saturated. Expect throttling and slow scheduling
+            - nodes: kubectl top nodes
+            - pods: kubectl top pods -A --sort-by=cpu
+            - add CPU limits to the busiest pod, or spread the load across nodes
         noDataState: OK
         execErrState: KeepLast
         data:
@@ -121,9 +123,9 @@ groups:
         annotations:
           summary: 'PVC {{ $labels.namespace }}/{{ $labels.persistentvolumeclaim }} above 85% used'
           description: |
-            - volume {{ $labels.namespace }}/{{ $labels.persistentvolumeclaim }} >85% full: writes fail at 100%
-            - kubectl -n {{ $labels.namespace }} get pvc {{ $labels.persistentvolumeclaim }}
-            - grow the PVC (Longhorn supports expansion) or clear data on the volume
+            - writes fail at 100%
+            - check: kubectl -n {{ $labels.namespace }} get pvc {{ $labels.persistentvolumeclaim }}
+            - grow the PVC or delete data on the volume. Longhorn supports volume expansion
         noDataState: OK
         execErrState: KeepLast
         data:
@@ -157,9 +159,10 @@ groups:
         annotations:
           summary: 'Target {{ $labels.job }} / {{ $labels.instance }} is down'
           description: |
-            - scrape target {{ $labels.job }} / {{ $labels.instance }} unreachable: metrics gap or app down
-            - kubectl get pods -A -o wide | grep <app> ; check the ServiceMonitor/endpoint
-            - verify the exporter port is up and CiliumNetworkPolicy allows the scrape
+            - scrape target {{ $labels.job }} / {{ $labels.instance }} is unreachable. Metrics have a gap or the app is down
+            - pods: kubectl get pods -A -o wide | grep <app>
+            - check the ServiceMonitor and the endpoint
+            - check that the exporter port is up and a CiliumNetworkPolicy allows the scrape
         noDataState: OK
         execErrState: KeepLast
         data:
@@ -185,10 +188,9 @@ groups:
               conditions:
                 - type: query
                   evaluator: {type: gt, params: [0]}
-      # Node capacity and health, all warning: infra headroom, not a workload being down.
-      # Real disks only: an immutable OS can expose a dozen or more tmpfs/rootfs mounts, so filter by
-      # filesystem type. Edit the regex if your nodes use something other than ext4 or xfs.
-      # `instance` is the node IP:9100, node-exporter has no `node` label.
+      # Node capacity rules are all warnings, because no workload is down yet.
+      # The fstype filter keeps ext4 and xfs disks only. Extend it if your nodes use another filesystem.
+      # `instance` is the node IP:9100. node-exporter has no `node` label.
       - uid: node-disk-space
         title: Node disk almost full
         condition: C
@@ -197,9 +199,8 @@ groups:
         annotations:
           summary: 'Disk {{ $labels.mountpoint }} on {{ $labels.instance }} above 85% used'
           description: |
-            - filesystem {{ $labels.mountpoint }} on {{ $labels.instance }} >85% full
-            - check disk usage on {{ $labels.instance }}, the Longhorn data path first
-            - prune images/logs or expand the underlying disk
+            - check disk usage on {{ $labels.instance }}. Start with the Longhorn data path
+            - prune images and logs, or expand the disk
         noDataState: OK
         execErrState: KeepLast
         data:
@@ -225,7 +226,6 @@ groups:
               conditions:
                 - type: query
                   evaluator: {type: gt, params: [85]}
-      # A separate signal: inode exhaustion fills a disk that still has free bytes (many small files).
       - uid: node-disk-inodes
         title: Node disk inodes almost exhausted
         condition: C
@@ -234,9 +234,9 @@ groups:
         annotations:
           summary: 'Inodes on {{ $labels.mountpoint }} / {{ $labels.instance }} above 85% used'
           description: |
-            - inodes on {{ $labels.mountpoint }} ({{ $labels.instance }}) >85%: many small files, bytes may still be free
-            - check inode usage on {{ $labels.instance }}, then find the directory that exploded
-            - delete stale small files (caches, tmp, old logs)
+            - free bytes may remain, so df -h looks fine
+            - check inode usage on {{ $labels.instance }}, then find the directory with the most files
+            - delete stale small files, for example caches, tmp and old logs
         noDataState: OK
         execErrState: KeepLast
         data:
@@ -262,20 +262,18 @@ groups:
               conditions:
                 - type: query
                   evaluator: {type: gt, params: [85]}
-      # Predictive, for a disk already under 50% free: A yields the predicted free bytes at the last 24h trend,
-      # and `lt 0` means it will run out inside 24h. A 24h window so a few GiB of image pulls landing in one
-      # step (a deploy day) is not extrapolated into a fill; a leak of 1 GiB/h still trips it.
+      # For a disk under 50% free, A predicts free bytes in 24h from the last 24h trend. `lt 0` means it fills.
+      # The 24h window ignores a few GiB of image pulls on a deploy day. A leak of 1 GiB/h still fires it.
       - uid: node-disk-fill-predict
         title: Node disk will fill within 24h
         condition: C
         for: 30m
         labels: {severity: warning}
         annotations:
-          summary: 'Disk {{ $labels.mountpoint }} on {{ $labels.instance }} will fill within 24h at current rate'
+          summary: 'Disk {{ $labels.mountpoint }} on {{ $labels.instance }} will fill within 24h at the current rate'
           description: |
-            - predictive: {{ $labels.mountpoint }} on {{ $labels.instance }} trends to 0 free within 24h
-            - find the writer: disk usage on {{ $labels.instance }}, then du on the mount
-            - act before full: prune/rotate data or expand the disk
+            - find the writer. Check disk usage on {{ $labels.instance }}, then run du on the mount
+            - before it fills, prune or rotate data, or expand the disk
         noDataState: OK
         execErrState: KeepLast
         data:
@@ -301,10 +299,10 @@ groups:
               conditions:
                 - type: query
                   evaluator: {type: lt, params: [0]}
-      # COMMITTED, not used: sum of pod requests over allocatable. High commit means the scheduler cannot place
-      # more, and eviction risk if actual use spikes.
-      # kube_pod_container_resource_requests keeps emitting for Completed/Failed pods until the Pod object is
-      # GC'd, and the scheduler counts none of those, so join on phase or finished CronJob pods inflate this.
+      # Requested memory, not used memory: pod requests divided by allocatable.
+      # A high value means the scheduler cannot place more pods, and a spike in use risks eviction.
+      # kube_pod_container_resource_requests still reports Completed and Failed pods until they are deleted.
+      # The scheduler ignores those, so the phase join keeps finished CronJob pods out.
       - uid: node-memory-committed
         title: Node memory requests committed >80%
         condition: C
@@ -313,9 +311,9 @@ groups:
         annotations:
           summary: 'Node {{ $labels.node }} memory requests committed above 80% of allocatable'
           description: |
-            - pod memory requests on {{ $labels.node }} >80% of allocatable: little room to schedule more
-            - kubectl describe node {{ $labels.node }} -> Allocated resources
-            - lower over-sized requests or rebalance pods across nodes
+            - pod memory requests on {{ $labels.node }} are more than 80% of allocatable. Little room is left to schedule pods
+            - run kubectl describe node {{ $labels.node }} and read Allocated resources
+            - lower requests that are too large, or move pods to other nodes
         noDataState: OK
         execErrState: KeepLast
         data:
@@ -341,7 +339,6 @@ groups:
               conditions:
                 - type: query
                   evaluator: {type: gt, params: [80]}
-      # The kernel is squeezing mem/disk/PIDs, so evictions are imminent.
       - uid: node-pressure
         title: Node under resource pressure
         condition: C
@@ -350,9 +347,9 @@ groups:
         annotations:
           summary: 'Node {{ $labels.node }} reports {{ $labels.condition }}'
           description: |
-            - kubelet signals {{ $labels.condition }} on {{ $labels.node }}: evictions imminent
-            - kubectl describe node {{ $labels.node }} -> Conditions + recent events
-            - relieve the pressured resource (mem/disk/PIDs) fast
+            - evictions come next
+            - run kubectl describe node {{ $labels.node }} and read Conditions and recent events
+            - free memory, disk or PIDs, whichever is short, fast
         noDataState: OK
         execErrState: KeepLast
         data:
@@ -378,20 +375,19 @@ groups:
               conditions:
                 - type: query
                   evaluator: {type: gt, params: [0]}
-      # N-1 headroom: total requests exceeding capacity-minus-LARGEST-node means a single node loss cannot be
-      # absorbed, because the survivors cannot fit the evacuated pods. Subtracting the largest is what makes it
-      # the worst case, and what keeps it right as nodes are added or as one node gets much bigger than the rest.
+      # Fires when total requests exceed capacity minus the largest node. The other nodes then cannot fit its pods.
+      # Subtracting the largest node gives the worst case, and stays right as nodes are added or resized.
       - uid: cluster-memory-overcommit
         title: Cluster can't tolerate one node loss (memory)
         condition: C
         for: 15m
         labels: {severity: warning}
         annotations:
-          summary: 'Cluster memory requests exceed capacity minus one node: a node loss would not fit'
+          summary: 'Cluster memory requests exceed capacity minus one node. Its pods would not fit after a node loss'
           description: |
-            - no N-1 headroom: losing the largest node can't reschedule its pods
-            - kubectl top nodes ; kubectl describe nodes | grep -A5 Allocated
-            - trim memory requests or add capacity to restore single-node tolerance
+            - usage: kubectl top nodes
+            - requests: kubectl describe nodes | grep -A5 Allocated
+            - lower memory requests or add capacity until one node can fail
         noDataState: OK
         execErrState: KeepLast
         data:

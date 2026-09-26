@@ -1,35 +1,28 @@
-# Grafana also OWNS alerting here: there is no Alertmanager and no vmalert, so datasources, contact point,
-# notification policy and rules are all provisioned as code.
 grafana:
   revisionHistoryLimit: 0
-  # Ephemeral. Datasources, dashboards and rules are re-provisioned on every start. Alert STATE (firing
-  # history, silences) and any UI-created dashboard reset on restart; file-provisioned rules survive.
   persistence:
-    enabled: false
+    enabled: false # a restart loses alert state and UI-made dashboards. See docs/06_monitoring.md
 
   initChownData:
-    enabled: false # with persistence off the data dir is an emptyDir and the pod already sets fsGroup 472
+    enabled: false # the data dir is an emptyDir, and the pod already sets fsGroup 472
 
   serviceMonitor:
     enabled: true
 
-  # Pinned so the chart stops generating a random password each render, which churns the secret checksum and
-  # rolls the pod every sync. The value is irrelevant, login is disabled.
+  # A fixed password stops the chart from generating a new one per render, which rolls the pod on every sync.
+  # The value does not matter, because the login form is off.
   adminUser: admin
   adminPassword: offgrid
 
-  # Grafana's OWN auth is OFF. The Google SSO policy on its edge is the only barrier, so every request arrives
-  # already authenticated and is served as an anonymous Admin. Dotted keys here are grafana.ini SECTION names.
   grafana.ini:
-    # Per-poll "Plugin Request Completed" datasource calls dominate. No HTTP access logs are lost, inbound
-    # traffic is logged by the Envoy gateway, which stays at INFO on purpose.
+    # At info, a "Plugin Request Completed" line per datasource poll fills the log.
     log:
       level: warn
-    # Kills the phone-home at the source; log.level above only silences the line.
+    # Stops usage reports and update checks. log.level above only hides their log lines.
     analytics:
       reporting_enabled: false
       check_for_updates: false
-    # No outbound calls on UI load: drop the grafana.com news feed and the gravatar avatar fetches.
+    # Stops the grafana.com news feed and gravatar fetches when the UI loads.
     news:
       news_feed_enabled: false
     security:
@@ -42,29 +35,26 @@ grafana:
     auth.anonymous:
       enabled: true
       org_name: Main Org.
-      org_role: Admin                # everyone who clears the SSO allowlist gets full admin
+      org_role: Admin                # every user on the SSO allowlist is a full admin
     auth.basic:
-      # ON so the sidecars can authenticate their provisioning-reload POST: /api/admin/provisioning/*/reload
-      # is Basic-Auth-ONLY, and with it off the reload 403s and provisioning silently only applies on restart.
-      # Not a hole: the SSO edge gates all browser traffic and only the in-cluster sidecar uses the creds.
+      # The sidecars' POST to /api/admin/provisioning/*/reload accepts only basic auth. Off, it returns 403
+      # and changes apply only on restart. The SSO edge still gates all browser traffic.
       enabled: true
 
-  # Interpolated into the ntfy contact point as ${GF_NTFY_TOKEN}, so the write token never lands in git.
-  # The Secret comes from templates/grafana-ntfy-sealedsecret.yaml, written by 06_ntfy_auth.sh.
+  # The ntfy contact point reads this as ${GF_NTFY_TOKEN}, so the write token stays out of git.
+  # 06_ntfy_auth.sh writes its SealedSecret to templates/grafana-ntfy-sealedsecret.yaml.
   envValueFrom:
     GF_NTFY_TOKEN:
       secretKeyRef:
         name: grafana-ntfy
         key: token
-        optional: true   # so Grafana starts before the token is sealed; ntfy publishing just fails until then
+        optional: true   # Grafana starts before the token exists. ntfy publishing fails until then.
 
-  # VictoriaLogs is not built in (unlike Loki). Commercially signed, so no allow-unsigned needed. The
-  # space-separated form is what pins the version via grafana-cli.
+  # grafana-cli pins the version only in the space-separated form.
   plugins:
     - victoriametrics-logs-datasource 0.29.0
 
-  # UIDs are PINNED to the k8s-stack's defaults so both the synced default dashboards AND the alert rules
-  # resolve their datasource.
+  # The UIDs match the k8s-stack defaults. The synced dashboards and the alert rules look datasources up by UID.
   datasources:
     datasources.yaml:
       apiVersion: 1
@@ -76,7 +66,7 @@ grafana:
           url: http://vmsingle-victoria-metrics-k8s-stack.monitoring.svc:8428
           isDefault: true
           jsonData:
-            prometheusType: Prometheus # VM is PromQL-compatible; this enables the right query editor features
+            prometheusType: Prometheus # VictoriaMetrics speaks PromQL. This picks the matching query editor.
         - name: VictoriaLogs
           type: victoriametrics-logs-datasource
           uid: VictoriaLogs
@@ -84,8 +74,8 @@ grafana:
           url: http://vlsingle-victoria-logs.monitoring.svc:9428
 
   sidecar:
-    logLevel: WARN # at INFO both sidecars log "Loading incluster config" every 30s, 4% of cluster log volume
-    # One knob shared by the dashboards and alerts sidecars; sized to the higher of the two (dashboards).
+    logLevel: WARN # at INFO, both sidecars log "Loading incluster config" every 30s, 4% of all cluster logs
+    # The dashboards and alerts sidecars share this. It fits the dashboards sidecar, the larger of the two.
     resources:
       requests: {cpu: 10m, memory: 84Mi}
       limits: {memory: 127Mi}
@@ -96,8 +86,7 @@ grafana:
     datasources:
       enabled: false # provisioned directly above instead
 
-    # The contact point, notification policy and every rule group live in files/alerts/*.yaml, shipped as
-    # ConfigMaps by templates/alerts-configmaps.yaml. No searchNamespace, so this release's namespace.
+    # With no searchNamespace, the sidecar watches this release's namespace only.
     alerts:
       enabled: true
       label: grafana_alert
@@ -105,10 +94,10 @@ grafana:
   service:
     enabled: true
     type: ClusterIP
-    port: 80 # what the grafana edge backendRef targets in 06_platform_ingress
+    port: 80 # the port the grafana edge backendRef in 06_platform_ingress targets
 
   testFramework:
-    enabled: false # a helm.sh/hook: test resource ArgoCD ignores anyway
+    enabled: false # a helm.sh/hook test resource, which Argo CD ignores
 
   resources:
     requests:
@@ -117,9 +106,8 @@ grafana:
     limits:
       memory: 567Mi
 
-  # Pre-staged placement only. Actually running replicas>1 first needs unified-alerting HA (grafana.ini
-  # unified_alerting.ha_*), else each replica evaluates rules independently and double-sends; and with
-  # persistence off, UI-created annotations and silences are not shared.
+  # Placement for more than one replica, which first needs unified_alerting.ha_* in grafana.ini.
+  # Without it, each replica evaluates every rule and sends each alert twice.
   affinity:
     podAntiAffinity:
       preferredDuringSchedulingIgnoredDuringExecution:
@@ -128,16 +116,15 @@ grafana:
             labelSelector:
               matchLabels:
                 app.kubernetes.io/name: grafana
-            matchLabelKeys: [pod-template-hash] # compare within one revision, so a rollout's old pod never repels the new one
+            matchLabelKeys: [pod-template-hash] # compare within one revision, so the old pod never repels the new one
             topologyKey: kubernetes.io/hostname
 
-# Restarts grafana after a sync that changed files/alerts/, which is what removes a rule that was deleted
-# from those files. See templates/alerts-reload-hook.yaml for why a restart is the mechanism.
+# A PostSync Job that restarts grafana when files/alerts/ changed. The restart removes deleted rules.
 alertsReloadHook:
-  image: "alpine/k8s:1.37.0" # needs kubectl; renovate-annotated in templates/alerts-reload-hook.yaml
-  rolloutTimeout: 5m
-  backoffLimit: 1
-  activeDeadlineSeconds: 600 # rolloutTimeout plus room for the image pull
+  image: "alpine/k8s:1.37.0" # any image with kubectl and sh. Renovate reads the annotation in the template.
+  rolloutTimeout: 5m         # how long the Job waits for the restarted grafana to become ready
+  backoffLimit: 1            # Job retries before the sync hook fails
+  activeDeadlineSeconds: 600 # hard Job limit in seconds: rolloutTimeout plus time for the image pull
   resources:
     requests: {cpu: 25m, memory: 64Mi}
     limits: {memory: 128Mi}

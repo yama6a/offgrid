@@ -1,9 +1,9 @@
 {{- /*
-The central backup CronJob, rendered only when a bucket is configured. Three stages share an emptyDir /work so
-partial success still uploads: list the instances, dump each over its Service, then upload every dump.
-The dump stage continues past a failed instance and records it; the upload stage exits non-zero if ANY instance
-failed, which fails the Job and fires the Grafana alert.
-redis-cli --rdb only streams bytes, so the dump image need not match the server major.
+The Redis backup CronJob. It renders only when a bucket is set. Three stages share an emptyDir /work, so a
+partial success still uploads: list the instances, dump each through its Service, then upload every dump.
+The dump stage records a failed instance and goes on. The upload stage exits non-zero if any instance failed,
+which fails the Job and fires the Grafana alert.
+redis-cli --rdb only streams bytes, so the dump image need not match the server's major version.
 */ -}}
 {{- if .Values.bucket }}
 apiVersion: batch/v1
@@ -16,15 +16,15 @@ metadata:
     app.kubernetes.io/component: redis-backup
 spec:
   schedule: {{ .Values.schedule | quote }}
-  concurrencyPolicy: Forbid          # never overlap runs
-  startingDeadlineSeconds: 300        # skip (don't stampede) a run the scheduler missed by >5m
+  concurrencyPolicy: Forbid
+  startingDeadlineSeconds: 300
   successfulJobsHistoryLimit: 3
   failedJobsHistoryLimit: 3
   jobTemplate:
     spec:
       backoffLimit: 1
-      activeDeadlineSeconds: 1800     # a whole-fleet dump+upload that runs >30m is wedged, fail it
-      ttlSecondsAfterFinished: 86400  # GC finished jobs after a day
+      activeDeadlineSeconds: 1800
+      ttlSecondsAfterFinished: 86400
       template:
         metadata:
           labels:
@@ -99,35 +99,31 @@ spec:
                   while read -r ns name; do
                     [ -n "$ns" ] || continue
                     f="/work/${ns}__${name}.rdb"
-                    [ -f "$f" ] || { echo "no dump for $ns/$name (already recorded as failed)"; continue; }
+                    [ -f "$f" ] || { echo "no dump for $ns/$name, already recorded as failed"; continue; }
                     key="${PREFIX}${ns}/${name}/${ts}.rdb"
-                    echo "uploading $ns/$name -> s3://${BUCKET}/${key}"
+                    echo "uploading $ns/$name to s3://${BUCKET}/${key}"
                     if aws s3 cp "$f" "s3://${BUCKET}/${key}"; then
                       echo "  ok"
-                      # Record the SIZE, not just success: an upload can succeed with an RDB that holds no
-                      # keys, and the byte count is the only way to tell that from a real backup. Written per
-                      # instance, so a partial run still reports the ones that worked.
+                      # The size, because an upload can succeed with an RDB that holds no keys.
                       echo "${ns}_${name}=${now} $(wc -c < "$f" | tr -d ' ')" >> /work/status.txt
                     else
                       echo "  UPLOAD FAILED $ns/$name"; echo "$ns/$name upload" >> /work/failed.txt
                     fi
                   done < /work/instances.txt
-                  # Nothing in-cluster otherwise knows whether a dump exists, so orphan-exporter reads this
-                  # ConfigMap. Written even on a failed run, so surviving instances still report.
-                  # Deliberately NOT annotations on the Redis CRs: those are Argo-managed with selfHeal, which
-                  # would strip them and make the metric flap.
+                  # For orphan-exporter, written even on a failed run. Annotations on the Redis CRs would flap,
+                  # because Argo CD selfHeal strips them.
                   kubectl -n "$NAMESPACE" create configmap redis-backup-status \
                     --from-env-file=/work/status.txt --dry-run=client -o yaml \
                     | kubectl apply -f - >/dev/null \
                     && echo "recorded per-instance status for $(grep -c . /work/status.txt || echo 0) instance(s)" \
-                    || echo "WARNING could not write the redis-backup-status ConfigMap (metric will go stale)"
+                    || echo "WARNING: could not write the redis-backup-status ConfigMap. The metric will go stale."
                   if [ -s /work/failed.txt ]; then echo "FAILURES:"; cat /work/failed.txt; exit 1; fi
                   echo "all backups ok"
               env:
                 - { name: HOME,   value: /work }
                 - { name: BUCKET, value: {{ .Values.bucket | quote }} }
                 - { name: PREFIX, value: {{ .Values.prefix | quote }} }
-                - { name: NAMESPACE, value: {{ .Release.Namespace | quote }} }   # where the status ConfigMap lands
+                - { name: NAMESPACE, value: {{ .Release.Namespace | quote }} }
                 - { name: AWS_DEFAULT_REGION, value: {{ .Values.region | quote }} }
                 - name: AWS_ACCESS_KEY_ID
                   valueFrom:

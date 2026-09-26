@@ -1,4 +1,3 @@
-# One CronJob that exports VMSingle + VLSingle over HTTP and streams each gzip'd to S3.
 apiVersion: argoproj.io/v1alpha1
 kind: Application
 metadata:

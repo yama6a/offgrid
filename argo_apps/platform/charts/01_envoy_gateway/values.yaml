@@ -4,18 +4,14 @@ gatewayClass:
 envoyProxy:
   name: eg-proxy-config
   namespace: envoy-gateway-system
-  loadBalancerIP: "" # MUST sit inside the Cilium LB-IPAM pool (00_cilium loadBalancer.ipPool)
-  # This is the cluster's SINGLE merged ingress proxy, so keep a generous memory limit: a too-tight one
-  # OOM-kills all ingress at once.
-  # The shutdown-manager sidecar Envoy Gateway injects into this pod has no separate resources knob here,
-  # it inherits nothing from this block; leave it ungoverned until the chart exposes one.
+  loadBalancerIP: "" # must be inside the Cilium LB-IPAM pool, loadBalancer.ipPool in 00_cilium
+  # This proxy carries all ingress, so the memory limit stays generous. The shutdown-manager sidecar gets none
+  # of this, and the chart has no knob for it.
   resources:
     requests: { cpu: 18m, memory: 91Mi }
     limits:   { memory: 158Mi }
 
-  # Soft + hostname: bare Pi nodes have no zone label, and soft means raising replicas never wedges a pod
-  # Pending on 3 nodes. The selector is Envoy Gateway's own EnvoyAppLabelSelector; verify against a live pod
-  # before relying on it (`kubectl -n envoy-gateway-system get pods --show-labels`).
+  # The selector is Envoy Gateway's EnvoyAppLabelSelector. Check it on a live pod after an upgrade.
   affinity:
     podAntiAffinity:
       preferredDuringSchedulingIgnoredDuringExecution:
@@ -26,17 +22,15 @@ envoyProxy:
                 app.kubernetes.io/name: envoy
                 app.kubernetes.io/component: proxy
                 app.kubernetes.io/managed-by: envoy-gateway
-            matchLabelKeys: [pod-template-hash] # compare within one revision, so a rollout's old pod never repels the new one
+            matchLabelKeys: [pod-template-hash] # so a rollout's old pod does not repel the new one
             topologyKey: kubernetes.io/hostname
 
-  # Envoy's default cluster stats already carry envoy_cluster_name="httproute/<ns>/<route>/rule/N", so the
-  # ingress-http alerts are per-HTTPRoute with no extra telemetry config.
+  # The default stats name each HTTPRoute in envoy_cluster_name, so the ingress-http alerts work per route.
   podMonitor:
     enabled: true
 
 gateway-helm:
-  # The CONTROLLER's own logs as it turns Gateway/HTTPRoute objects into Envoy config, not the proxy's. WARN
-  # keeps routing/translation errors; the per-Gateway Envoy access logs are emitted separately and untouched.
+  # The controller's logs only, not the proxy access logs.
   config:
     envoyGateway:
       logging:
@@ -49,8 +43,6 @@ gateway-helm:
         limits:   { memory: 144Mi }
     replicas: 1
     priorityClassName: platform-critical # the single ingress control plane
-    # Controller only; the data-plane proxy spreads via the EnvoyProxy CR above. Soft + hostname for the same
-    # reason: no zone label, and soft means a scale-up never wedges Pending.
     pod:
       affinity:
         podAntiAffinity:
@@ -60,10 +52,9 @@ gateway-helm:
                 labelSelector:
                   matchLabels:
                     control-plane: envoy-gateway
-                matchLabelKeys: [pod-template-hash] # compare within one revision, so a rollout's old pod never repels the new one
+                matchLabelKeys: [pod-template-hash] # so a rollout's old pod does not repel the new one
                 topologyKey: kubernetes.io/hostname
-  # Injects topology.kubernetes.io/zone for zone-aware routing. Bare Pi nodes have no zone label and we use no
-  # zoneAware traffic policies, so it is a webhook round-trip plus cert plumbing for nothing.
+  # Zone-aware routing needs zone labels, and the nodes have none.
   topologyInjector:
     enabled: false
   certgen:

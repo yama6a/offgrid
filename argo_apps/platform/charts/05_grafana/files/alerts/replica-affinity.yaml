@@ -1,14 +1,13 @@
 apiVersion: 1
 groups:
-  # longhorn-replica-affinity: pods scheduled onto a node that already holds their Longhorn replica.
-  # All warning: nothing here is an outage, it is IO crossing the network that did not have to.
+  # All warnings. A miss is not an outage, only IO that crosses the network without need.
   - orgId: 1
     name: replica-affinity
     folder: offgrid
     interval: 5m
     rules:
-      # Dead-man's switch. Without it, a dead webhook is invisible: failurePolicy is Ignore, so pods keep
-      # scheduling and only the locality silently stops improving.
+      # Heartbeat check. failurePolicy is Ignore, so pods keep scheduling past a dead webhook.
+      # Without this rule, only the locality stops improving and nothing shows it.
       - uid: lra-down
         title: Replica-affinity webhook not reporting
         condition: C
@@ -17,7 +16,7 @@ groups:
         annotations:
           summary: 'longhorn-replica-affinity is not reporting: new pods get no locality preference'
           description: |
-            - failurePolicy is Ignore, so nothing is broken; placement has just gone back to random
+            - failurePolicy is Ignore, so nothing is broken. Placement is back to random
             - kubectl -n longhorn-replica-affinity get pods
             - kubectl -n longhorn-replica-affinity logs deploy/longhorn-replica-affinity-webhook
         noDataState: OK
@@ -42,7 +41,7 @@ groups:
               conditions:
                 - type: query
                   evaluator: {type: gt, params: [0]}
-      # The scoreboard. Fires slowly and on purpose: pods only move on restart, so this is a trend, not an event.
+      # Fires slowly on purpose. Pods move only on restart, so this tracks a trend, not an event.
       - uid: lra-locality-low
         title: Most Longhorn volumes are not local to their pod
         condition: C
@@ -51,8 +50,8 @@ groups:
         annotations:
           summary: 'Only {{ printf "%.0f" $values.B.Value }}% of attached volumes have a replica on their own node'
           description: |
-            - every miss is reads AND writes crossing the 1GbE for the life of that pod
-            - a labelled workload converges on its next restart; an unlabelled one never does
+            - for each miss, reads and writes cross the 1GbE network for the life of that pod
+            - a labelled workload converges on its next restart. An unlabelled one never does
             - which ones: sum by (namespace, pvc) (lra_volume_local == 0)
             - opt a workload in with the pod label longhorn-replica-affinity/enabled=true
         noDataState: OK
@@ -80,20 +79,19 @@ groups:
               conditions:
                 - type: query
                   evaluator: {type: lt, params: [60]}
-      # A volume the reconciler looked at and will not move, so it needs a human decision.
       - uid: lra-unfixable
         title: Longhorn volume stuck off its data
         condition: C
         for: 2h
         labels: {severity: warning}
         annotations:
-          summary: '{{ $labels.namespace }}/{{ $labels.pvc }} cannot be made local ({{ $labels.reason }})'
+          summary: '{{ $labels.namespace }}/{{ $labels.pvc }} cannot be made local. Reason: {{ $labels.reason }}'
           description: |
-            - too-large: over maxMoveBytes, so moving it would be a big copy; decide by hand
-            - longhorn-managed: dataLocality is already best-effort or strict-local, Longhorn owns the outcome
-            - rwx-share-manager-moves: the share-manager moves to the data, never the reverse; clears when
-              Longhorn next recreates it, so only act if it persists
-            - otherwise the pod is pinned by something hard and will not move to the data on its own
+            - too-large: over maxMoveBytes, so a move is a big copy. Decide by hand
+            - longhorn-managed: dataLocality is already best-effort or strict-local, so Longhorn owns the outcome
+            - rwx-share-manager-moves: the share-manager moves to the data, never the reverse. This clears when
+              Longhorn next recreates it, so act only if it persists
+            - any other reason: a hard constraint pins the pod, and it will not move to the data by itself
         noDataState: OK
         execErrState: KeepLast
         data:
