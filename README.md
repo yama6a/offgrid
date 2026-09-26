@@ -1,7 +1,7 @@
 # offgrid
 
-**A complete self-hosted Kubernetes platform: networked by [Cilium](https://cilium.io/), delivered by
-[Argo CD](https://argo-cd.readthedocs.io/), on a cluster you already have.**
+A self-hosted Kubernetes platform for a cluster you already have. [Cilium](https://cilium.io/) is the network, and
+[Argo CD](https://argo-cd.readthedocs.io/) delivers everything else.
 
 ![Kubernetes](https://img.shields.io/badge/Kubernetes-326ce5?logo=kubernetes&logoColor=white)
 ![CNI: Cilium](https://img.shields.io/badge/CNI-Cilium-f8c517?logo=cilium&logoColor=white)
@@ -9,17 +9,17 @@
 ![License: MIT](https://img.shields.io/badge/License-MIT-green.svg)
 ![Last commit](https://img.shields.io/github/last-commit/yama6a/offgrid)
 
-> The platform: everything that runs *on* a Kubernetes cluster, delivered by Argo CD from this repo. Ingress,
-> TLS, SSO, storage, databases, messaging, monitoring, backups, and a sample workload on top.
+> The platform is everything that runs on a Kubernetes cluster: ingress, TLS, SSO, storage, databases, messaging,
+> monitoring, backups, and a sample workload. Argo CD delivers it from this repo.
 >
-> It starts from a cluster that already exists and does not build, upgrade or recover one. Bring your own,
-> from any tooling, so long as it meets **[What this expects of your cluster](#what-this-expects-of-your-cluster)**.
-> The defaults were developed against a small bare-metal [Talos Linux](https://www.talos.dev/) cluster, and
-> every host-level assumption that implies is a knob in `.env`.
+> This repo starts from a cluster that already exists. It does not build, upgrade or recover one. Any tooling can
+> build your cluster, if the result meets [What this expects of your cluster](#what-this-expects-of-your-cluster).
+> The defaults come from a small bare-metal [Talos Linux](https://www.talos.dev/) cluster. Every host-level
+> assumption from that is a knob in `.env`.
 >
-> Every per-deployment value lives in `.env`, and `make configure-values` stamps it into the chart values Argo CD
-> renders, so a fork changes one gitignored file and nothing else.
-> See **[Make it your own](#make-it-your-own)** to get started.
+> Every per-deployment value lives in `.env`. `make configure-values` writes those values into the chart values
+> that Argo CD renders. So a fork changes one gitignored file and nothing else.
+> To start, see [Make it your own](#make-it-your-own).
 
 ## Contents
 
@@ -39,103 +39,102 @@
 
 ## Overview
 
-- Starts from a Kubernetes cluster that already exists. Building it is somebody else's job, see
+- Starts from a Kubernetes cluster that already exists. Another tool builds it. See
   [What this expects of your cluster](#what-this-expects-of-your-cluster).
-- `01_cilium.sh` and `02a_argocd.sh` are the only imperative steps: install the CNI, then install Argo CD.
-- Everything after that is GitOps. Argo CD reconciles `argo_apps/` and delivers the platform (ingress, TLS, SSO,
-  storage, databases, messaging, monitoring) plus the workloads on top.
-- Config is one gitignored file, `.env`, copied from the committed `.env.example`. `make configure-values`
-  stamps it into every chart value Argo CD renders. Nothing is hardcoded in a script.
-- Every app is a thin Helm wrapper chart pinning its upstream version. `docs/01` to `docs/12` hold the why.
+- Two imperative steps only: `01_cilium.sh` installs the CNI, then `02a_argocd.sh` installs Argo CD.
+- Everything after that is GitOps. Argo CD reconciles `argo_apps/` and delivers the platform and the workloads.
+- Config is one gitignored file, `.env`, copied from the committed `.env.example`. `make configure-values` writes
+  it into every chart value that Argo CD renders. No script holds a hardcoded value.
+- Every app is a thin Helm wrapper chart that pins its upstream version. `docs/` holds the reasons behind each
+  step.
 
 ## The stack
 
-Everything after `01`/`02a` is an Argo CD-delivered wrapper chart, each pinning its upstream version in its own
-`Chart.yaml`. That file is the source of truth; no version is restated anywhere else.
+Argo CD delivers everything after steps `01` and `02a`. Each app is a wrapper chart that pins its upstream version
+in its own `Chart.yaml`. That file is the only place that states the version.
 
 | Layer             | Component                      | Role                                                                                                         |
 |-------------------|--------------------------------|--------------------------------------------------------------------------------------------------------------|
-| **Network**       | Cilium                         | CNI + kube-proxy replacement, LB-IPAM + L2 announcements (LoadBalancer IPs), node-to-node WireGuard, Hubble. |
-| **GitOps**        | Argo CD                        | Delivery engine; self-manages after bootstrap. Two-tree app-of-apps (platform and workloads).                |
-| **Ingress**       | Envoy Gateway                  | Gateway API data plane; one Envoy on a single pinned LoadBalancer IP.                                        |
-| **TLS**           | cert-manager                   | Let's Encrypt certificates via ClusterIssuers (HTTP-01, plus Cloudflare DNS-01 for wildcards).               |
-| **Auth**          | Google SSO                     | Central OIDC (one Envoy `SecurityPolicy`, one email allowlist, per-host gating).                                 |
-| **Secrets**       | Sealed Secrets                 | Encrypted secrets committed to git.                                                                          |
-| **Config reload** | Reloader                       | Restarts a workload when a ConfigMap or Secret it mounts changes, which Kubernetes never does on its own.    |
-| **Storage**       | Longhorn                       | Replicated block storage, for everything stateful, so a volume outlives the machine under it.                |
-| **Node health**   | dead-node-watcher              | Custom Deployment that taints a genuinely dead node, cutting volume handover from ~6 min to ~2.               |
-| **Data locality** | longhorn-replica-affinity      | Mutating webhook that schedules a pod onto a node already holding its Longhorn replica, keeping its IO off the net. |
-| **Database**      | CloudNativePG                  | Kubernetes-native PostgreSQL operator.                                                                       |
-| **Cache**         | OpsTree Redis operator         | Standalone Redis instances, one per workload alias.                                                          |
-| **Messaging**     | RabbitMQ                       | One shared broker; workloads declare their own topology.                                                     |
-| **Metrics API**   | metrics-server                 | `metrics.k8s.io` for `kubectl top` and HPAs.                                                                 |
-| **Observability** | VictoriaMetrics + VictoriaLogs | PromQL-compatible metrics and logs backend (over Prometheus/Mimir + Loki, for 8 GB nodes).                   |
-| **Observability** | Grafana                        | Dashboards + alerting, provisioned as code. No persistence layer.                                            |
-| **Alerting**      | ntfy                           | Self-hosted mobile push. No email.                                                                           |
-| **Observability** | blackbox-exporter              | Probes every ingress host over its public name, so a broken edge is caught without traffic.                  |
-| **Workloads**     | sample-user-manager + 2 more   | Demo app + Postgres + Redis + messaging + open/SSO ingress: the template for real workloads.                 |
+| Network           | Cilium                         | CNI and kube-proxy replacement. LB-IPAM and L2 announcements for LoadBalancer IPs. Node-to-node WireGuard. Hubble. |
+| GitOps            | Argo CD                        | Delivery engine. Manages itself after bootstrap. Two trees of apps: platform and workloads.                  |
+| Ingress           | Envoy Gateway                  | Gateway API data plane. One Envoy on one pinned LoadBalancer IP.                                             |
+| TLS               | cert-manager                   | Let's Encrypt certificates from ClusterIssuers. HTTP-01, plus Cloudflare DNS-01 for wildcards.               |
+| Auth              | Google SSO                     | One central OIDC login: one Envoy `SecurityPolicy`, one email allowlist, gating per host.                    |
+| Secrets           | Sealed Secrets                 | Encrypted secrets committed to git.                                                                          |
+| Config reload     | Reloader                       | Restarts a workload when a ConfigMap or Secret it mounts changes. Kubernetes never does this by itself.      |
+| Storage           | Longhorn                       | Replicated block storage for everything stateful, so a volume outlives the machine under it.                 |
+| Node health       | dead-node-watcher              | Custom Deployment. Taints a node that is really dead, which cuts volume handover from about 6 min to about 2. |
+| Data locality     | longhorn-replica-affinity      | Mutating webhook. Schedules a pod onto a node that already holds its Longhorn replica, so its IO stays off the network. |
+| Database          | CloudNativePG                  | Kubernetes-native PostgreSQL operator.                                                                       |
+| Cache             | OpsTree Redis operator         | Standalone Redis instances, one for each workload alias.                                                     |
+| Messaging         | RabbitMQ                       | One shared broker. Each workload declares its own topology.                                                  |
+| Metrics API       | metrics-server                 | `metrics.k8s.io` for `kubectl top` and HPAs.                                                                 |
+| Observability     | VictoriaMetrics, VictoriaLogs  | PromQL-compatible metrics and logs backend. Chosen over Prometheus, Mimir and Loki to fit 8 GB nodes.        |
+| Observability     | Grafana                        | Dashboards and alerting, provisioned as code. No persistent storage.                                         |
+| Alerting          | ntfy                           | Self-hosted mobile push. No email.                                                                           |
+| Observability     | blackbox-exporter              | Probes every ingress host by its public name. It catches a broken edge before users send traffic.            |
+| Workloads         | sample-user-manager and 2 more | Demo app with Postgres, Redis, messaging, and open and SSO ingress. The template for real workloads.         |
 
-Five shared charts under `lib/helm/` are consumed as `file://` dependencies, all `type: application`:
+Five shared charts under `lib/helm/` are `file://` dependencies of other charts. All are `type: application`:
 
 - `ingress`: the ingress edge (Gateway, HTTPRoute, ReferenceGrant, Certificate) from an `ingresses[]` list
 - `pg-cluster`: a curated CloudNativePG Postgres wrapper
 - `redis-instance`: a curated standalone OpsTree Redis wrapper
-- `rabbitmq-topology`: a workload's messaging topology against the shared broker
-- `nfs-volume`: static PVs + PVCs for NFS exports that already exist off-cluster, from a `volumes[]` list
+- `rabbitmq-topology`: the messaging topology of one workload on the shared broker
+- `nfs-volume`: static PVs and PVCs for NFS exports that already exist off-cluster, from a `volumes[]` list
 
 ## What this expects of your cluster
 
-Bring your own Kubernetes. This repo installs the CNI and everything above it, so the cluster underneath has to
-satisfy a short list. Each row says what to change when yours differs; the knobs live in `.env` and
-`make configure-values` stamps them into the chart values Argo CD renders.
+This repo installs the CNI and everything above it. The cluster underneath must meet the list below. Each row
+says what to change when your cluster differs. The knobs live in `.env`, and `make configure-values` writes them
+into the chart values.
 
 | Requirement | Why | If your cluster differs |
 |---|---|---|
-| The API reachable at `KUBE_API_HOST:KUBE_API_PORT` from every node | Cilium runs `kubeProxyReplacement`, so it needs the API *before* pod networking exists | set both in `.env`. The default `localhost:7445` is Talos KubePrism; elsewhere use your API endpoint, or a node-local proxy |
-| No CNI installed, kube-proxy disabled | Cilium provides both. Nodes stay `NotReady` until `01_cilium.sh` runs, which is expected | if your distribution ships a CNI, remove it first, or skip `01_cilium.sh` and adapt the Cilium values to coexist |
-| `iscsid`, `fstrim` and an NFSv4 client on every node | Longhorn attaches volumes over iSCSI and trims them, an RWX volume is mounted over NFS, and `lib/helm/nfs-volume` mounts off-cluster exports the same way | install `open-iscsi`, `util-linux` and `nfs-common` (`nfs-utils` / `nfs-client` elsewhere); on an immutable OS add the equivalent extensions. Talos has the NFS client in-kernel. `kubectl get nodes.longhorn.io -n longhorn-system` reports all three as conditions |
-| A filesystem at `LONGHORN_DATA_PATH`, bind-mounted into the kubelet with `rshared` | Longhorn creates one sub-mount per replica and the kubelet has to see them | any path works. Longhorn's own default is `/var/lib/longhorn`. With a containerized kubelet the mount propagation must be bidirectional |
-| A 4K-page kernel | Longhorn and XFS do not cope with 16K pages | almost every distribution already is. Only a concern on SBC kernels built with 16K |
-| Namespaces can carry `pod-security.kubernetes.io/enforce: privileged` | Longhorn, Cilium and the node agents need privileged pods | the app manifests set it themselves, so nothing to do unless a policy engine overrides them |
-| Kubelets with self-signed certs and no CSR approver | metrics-server cannot verify kubelet identity, so it is told not to try | set `KUBELET_TLS_INSECURE=false` if your kubelets carry certs signed by a CA the apiserver trusts |
-| Control-plane metrics reachable per node, etcd on `ETCD_METRICS_PORT` | the monitoring stack scrapes controller-manager, scheduler and etcd directly | exposing them is a host-level change. If yours cannot, set `enabled: false` on the three in `05_victoria_metrics_k8s_stack` |
-| 3 or more nodes | Longhorn runs 2 replicas with hard anti-affinity, so it needs a spare to rebuild onto | 2 nodes works but leaves no spare. 1 node needs the replica count and the anti-affinity relaxed |
-| An S3 bucket, optional | off-cluster backups | leave the `AWS_DEPLOY_*` keys empty and every backup step is skipped |
+| The API reachable at `KUBE_API_HOST:KUBE_API_PORT` from every node | Cilium runs `kubeProxyReplacement`, so it needs the API before pod networking exists | Set both in `.env`. The default `localhost:7445` is Talos KubePrism. Elsewhere, use your API endpoint or a node-local proxy |
+| No CNI installed, kube-proxy disabled | Cilium provides both. Nodes stay `NotReady` until `01_cilium.sh` runs, and that is expected | If your distribution ships a CNI, remove it first. Or skip `01_cilium.sh` and adapt the Cilium values so the two coexist |
+| `iscsid`, `fstrim` and an NFSv4 client on every node | Longhorn attaches volumes over iSCSI and trims them. It mounts an RWX volume over NFS. `lib/helm/nfs-volume` mounts off-cluster exports over NFS too | Install `open-iscsi`, `util-linux` and `nfs-common`. Other distributions name the last one `nfs-utils` or `nfs-client`. On an immutable OS, add the equivalent extensions. Talos has the NFS client in the kernel. `kubectl get nodes.longhorn.io -n longhorn-system` reports all three as conditions |
+| A filesystem at `LONGHORN_DATA_PATH`, bind-mounted into the kubelet with `rshared` | Longhorn creates one sub-mount per replica, and the kubelet must see them | Any path works. The Longhorn default is `/var/lib/longhorn`. With a containerized kubelet, the mount propagation must be bidirectional |
+| A kernel with 4K pages | Longhorn and XFS fail with 16K pages | Almost every distribution uses 4K. Only SBC kernels built with 16K pages are a concern |
+| Namespaces can carry `pod-security.kubernetes.io/enforce: privileged` | Longhorn, Cilium and the node agents need privileged pods | The app manifests set the label themselves. Act only if a policy engine overrides them |
+| Kubelets with self-signed certs and no CSR approver | metrics-server cannot verify the kubelet identity, so it does not try | Set `KUBELET_TLS_INSECURE=false` if a CA that the apiserver trusts signs your kubelet certs |
+| Control-plane metrics reachable on each node, etcd on `ETCD_METRICS_PORT` | The monitoring stack scrapes controller-manager, scheduler and etcd directly | Exposing them is a host-level change. If you cannot, set `enabled: false` on those three in `05_victoria_metrics_k8s_stack` |
+| 3 or more nodes | Longhorn runs 2 replicas with hard anti-affinity, so it needs a spare node to rebuild onto | 2 nodes work but leave no spare. 1 node needs a lower replica count and relaxed anti-affinity |
+| An S3 bucket, optional | Off-cluster backups | Leave the `AWS_DEPLOY_*` keys empty, and every backup step is skipped |
 
-Two more things are assumed rather than configured, because they are one-line edits when wrong:
+The platform also assumes two things without a knob. Each is a one-line edit if it is wrong for you:
 
-- **Node system logs as files under `/var/log`.** The log collector tails them. On a journald distribution
-  there are no such files, so drop that `fileCollector` entry in `05_victoria_logs/values.yaml` and collect
-  from journald instead.
-- **Node filesystems are `ext4` or `xfs`.** The disk-usage alerts filter on that to skip an immutable OS's
-  many tmpfs mounts. Edit the regex in `05_grafana/files/alerts/cluster-health.yaml` if yours differ.
+- **Node system logs are files under `/var/log`.** The log collector tails them. A journald distribution has no
+  such files. There, drop that `fileCollector` entry in `05_victoria_logs/values.yaml` and collect from journald.
+- **Node filesystems are `ext4` or `xfs`.** The disk-usage alerts filter on these types to skip the many tmpfs
+  mounts of an immutable OS. If yours differ, edit the regex in `05_grafana/files/alerts/cluster-health.yaml`.
 
-Architecture is not assumed. `make check-multiarch` verifies every running image has a manifest for every
-architecture in the cluster, and takes `ARCH=` to check before a node of a new architecture joins.
+The platform assumes no CPU architecture. `make check-multiarch` checks that every running image has a manifest
+for every architecture in the cluster. Pass `ARCH=` to check before a node of a new architecture joins.
 
 ## What this does not do
 
-It does not build, configure, upgrade or recover the machines. No node provisioning, no OS config, no etcd
-management, no kubelet upgrades. That belongs to whatever tooling you use, and this repo never talks to it.
+This repo does not build, configure, upgrade or recover the machines. It does no node provisioning, no OS config,
+no etcd management and no kubelet upgrades. Your own tooling does that, and this repo never talks to it.
 
-Two seams exist so the two sides can cooperate without knowing each other:
+Three make targets let the two sides cooperate without knowing each other:
 
-| Seam | What it is for |
+| Target | Use |
 |---|---|
-| `make check-replication-health` | Exits non-zero until Longhorn, CNPG and RabbitMQ are healthy and in sync. Point your node tooling's pre-drain gate at it, so a rolling reboot never takes a volume's last healthy replica |
-| `make evacuate-node NODE=<host>` | Switches any Postgres primary off that node first. Point your tooling's pre-drain evacuate hook at it: a primary force-killed mid-drain can fail to `pg_rewind` afterwards and never rejoin |
-| `make reconcile-storage NODE=<host>` | Run after your tooling rejoins a replaced machine. Longhorn records a disk UUID that a reflash invalidates, and nothing else fixes it |
+| `make check-replication-health` | Exits non-zero until Longhorn, CNPG and RabbitMQ are healthy and in sync. Point the pre-drain gate of your node tooling at it. Then a rolling reboot never takes the last healthy replica of a volume |
+| `make evacuate-node NODE=<host>` | Moves any Postgres primary off that node. Point the pre-drain evacuate hook of your tooling at it. A primary that is force-killed during a drain can fail `pg_rewind` and never rejoin |
+| `make reconcile-storage NODE=<host>` | Run it after your tooling rejoins a replaced machine. Longhorn records a disk UUID that a reflash makes invalid, and nothing else fixes it |
 
-Neither is required. Skip both and node maintenance still works; you just lose the interlock.
+None of them is required. Without them, node maintenance still works, but without these safety checks.
 
 ## Architecture
 
-The shell bootstrap exists only to reach Argo CD. From there, git is the source of truth.
+The shell bootstrap only gets the cluster to Argo CD. From there, git is the source of truth.
 
-The root-of-roots creates the platform root first, then the workloads root about 5s later. It does NOT wait for
-platform health: there is no `argoproj.io/Application` health gate, on purpose. So the boundary is advisory
-creation-ordering. A workload that races ahead of a not-yet-present platform CRD fails its sync and converges on
-its own via unbounded retry.
+The root-of-roots is the Argo CD Application that creates the other roots. It creates the platform root first,
+then the workloads root about 5s later. It does not wait for platform health, because there is deliberately no
+health gate on `argoproj.io/Application`. So the order is advisory. A workload can sync before a platform CRD it
+needs exists. That sync fails, and unbounded retry converges it later.
 
 ```mermaid
 flowchart LR
@@ -163,98 +162,105 @@ flowchart LR
 
 ```
 .
-|-- Makefile            # thin dispatcher over lib/shell; run `make help`
-|-- .env.example        # template for config + secrets; copy to .env
-|-- .env                # your config + secrets (gitignored)
-|-- docs/               # the numbered runbook + decision records (01 to 13)
-|-- terraform/          # the S3 backup bucket + its scoped IAM writer
+|-- Makefile            # thin dispatcher over lib/shell. Run `make help`
+|-- .env.example        # template for config and secrets. Copy it to .env
+|-- .env                # your config and secrets (gitignored)
+|-- docs/               # the numbered runbook and decision records (01 to 15)
+|-- terraform/          # the S3 backup bucket and its scoped IAM writer
 |-- lib/
-|   |-- shell/          # bootstrap shell scripts + helpers
+|   |-- shell/          # bootstrap shell scripts and helpers
 |   |-- krr/            # the custom KRR rightsizing strategy
-|   `-- helm/           # the 4 shared charts consumed as file:// dependencies
+|   `-- helm/           # the 5 shared charts, used as file:// dependencies
 |-- argo_apps/          # everything Argo CD delivers (two-tree GitOps)
-|   |-- root.yaml       #   root-of-roots (applied once by the 05 script)
-|   |-- roots/          #   0_platform -> 1_workloads
+|   |-- root.yaml       #   root-of-roots, applied once by 02a_argocd.sh
+|   |-- roots/          #   0_platform, then 1_workloads
 |   |-- platform/{apps,charts}/   # apps/ is a chart: Applications in templates/, repoURL in values.yaml
 |   `-- workloads/{apps,charts}/
-`-- secrets/            # gitignored: this repo's sealed-secrets key + webhook secret (own off-repo store)
+`-- secrets/            # gitignored: the sealed-secrets key and webhook secret of this repo (off-repo store)
 ```
 
-The `NN_` prefixes mirror the sync-wave: the order Argo *creates* the apps in, roughly 5s apart, with no health
-gate, so a later app that races ahead of a dependency just retries until it lands. See
+The `NN_` prefix of an app matches its sync-wave. The wave is the order in which Argo CD creates the apps, about 5s
+apart. There is no health gate. A later app that starts before a dependency exists retries until it syncs. See
 [02_gitops](docs/02_gitops.md).
 
 ## Getting started
 
-**Prerequisite: a running Kubernetes cluster meeting
-[What this expects of your cluster](#what-this-expects-of-your-cluster), and a kubectl context pointing at
-it.** Build it however you like; this repo never talks to that tooling. The only thing that crosses over is
-the context in your `~/.kube/config`.
+Prerequisite: a running Kubernetes cluster that meets
+[What this expects of your cluster](#what-this-expects-of-your-cluster), and a kubectl context for it.
 
-Nothing else is shared on disk. The sealed-secrets key this repo mints lives in its own off-repo `secrets/`
-store and never leaves.
+- Any tooling can build the cluster. This repo never talks to that tooling. Only the context in your
+  `~/.kube/config` crosses over.
+- Nothing else is shared on disk. The sealed-secrets key that this repo creates stays in its own off-repo
+  `secrets/` store.
+- `KUBE_CONTEXT` in `.env` pins the cluster this repo may touch. It is not your currently selected context.
+- The pin exists because your `~/.kube/config` can hold work clusters too, and nothing here is read-only. So you
+  state the target once. The scripts never inherit it from the last `kubectl config use-context`.
+- Leave `KUBE_CONTEXT` empty and the first run lists your contexts, asks you to pick one, and writes it to `.env`.
+- Every script then writes a kubeconfig with only that context to gitignored `.cache/kubeconfig`. No other
+  cluster is reachable while the script runs.
 
-Which cluster this repo may touch is then pinned by `KUBE_CONTEXT` in `.env`, and it is not the same thing as
-your currently-selected context. Your `~/.kube/config` probably holds work clusters too, and nothing here is
-read-only, so the target is stated once rather than inherited from whatever `kubectl config use-context` last
-ran. Leave `KUBE_CONTEXT` empty and the first run lists your contexts, asks, and writes the answer back to
-`.env`. Every script then derives a single-context kubeconfig from it into gitignored `.cache/kubeconfig`, so
-no other cluster is reachable for the length of the run.
-
-Only ever run on macOS, so Linux or WSL may need tweaks. The scripts assume a bash/zsh shell, GNU `make`, and a
-POSIX-y environment. On your machine: `git`, `kubectl`, `helm`, `yq`, `kubeseal`.
+The scripts were only tested on macOS, so Linux or WSL can need changes. They expect bash or zsh, GNU `make`, and
+a POSIX-like environment. Install `git`, `kubectl`, `helm`, `yq` and `kubeseal` on your machine.
 
 ```bash
 # 1. Configure
-cp .env.example .env                # then edit: KUBE_CONTEXT, repo URL, domains, ingress IP, secrets. Go over everything.
+cp .env.example .env                # then check every value: KUBE_CONTEXT, repo URL, domains, ingress IP, secrets
 
 # 2. Recommended: point `secrets/` at storage that outlives this checkout
-ln -s /path/to/your/synced/store secrets   # skip it and bootstrap creates a plain gitignored dir, warning you
+ln -s /path/to/your/synced/store secrets   # if you skip this, bootstrap creates a plain gitignored dir and warns you
 
 # 3. Install the platform
-make bootstrap-cluster              # CNI -> stamp values -> push -> Argo CD -> seal secrets -> converge
+make bootstrap-cluster              # CNI, write values, push, Argo CD, seal secrets, wait for convergence
 
 # 4. Verify
-kubectl get applications -n argocd  # watch Argo CD deliver the platform, then workloads
-make view-credentials               # login URLs + credentials
+kubectl get applications -n argocd  # watch Argo CD deliver the platform, then the workloads
+make view-credentials               # login URLs and credentials
 ```
 
-Instead of `make bootstrap-cluster` you can run the steps in runbook order. Every target maps to a script in
-`lib/shell/`; `make help` lists them all. Per-phase reasoning and verification is in [the docs](#documentation).
+Instead of `make bootstrap-cluster`, you can run the steps one by one in runbook order. Every target maps to a
+script in `lib/shell/`. `make help` lists them all. [The docs](#documentation) hold the reasons and the
+verification for each phase.
 
 ## Make it your own
 
-Fork the repo, then edit exactly one gitignored file, copied from a committed template:
+Fork the repo. Then edit one gitignored file, copied from a committed template:
 
 ```bash
 cp .env.example .env                 # repo URL, domains, ingress IP, secrets
-make configure-values                # stamps it into every chart value Argo CD renders
-git add -A && git commit && git push # Argo CD reconciles the REMOTE, never your working tree
+make configure-values                # writes it into every chart value that Argo CD renders
+git add -A && git commit && git push # Argo CD reconciles the remote, never your working tree
 ```
 
-`make configure-values` is the whole story for per-deployment config: it writes your repo URL into all five
-places that carry it, your `BASE_DOMAIN` into every public hostname, the SSO allowlist, the ingress IP, the
-ACME email and the Cloudflare zones. It is idempotent, and re-running it after any `.env` change is the
-supported way to re-apply config. Because a fork only ever edits `.env`, rebasing on upstream does not conflict.
+`make configure-values` handles all per-deployment config. It writes:
 
-What to put in it:
+- your repo URL into all five places that carry it
+- your `BASE_DOMAIN` into every public hostname
+- the SSO allowlist, the ingress IP, the ACME email and the Cloudflare zones
 
-- Git remote: `REPO_URL`, your fork. Nothing else references a repo URL by hand.
-- Domains: `BASE_DOMAIN` is a registrable domain you own. Platform UIs land on `*.ops.<base>` and workloads on
-  `*.app.<base>`; both tiers must stay under the base domain, because one SSO cookie covers them all. A workload
-  on its own domain goes in `04_google_sso`'s `extraDomains` (`docs/04_ingress.md`). `INGRESS_LB_IP` is the
-  single IP every host resolves to, and must sit inside `LB_RANGE_START`/`LB_RANGE_STOP`.
-- TLS and login: `LE_EMAIL`, `SSO_ALLOWLIST`, plus your Google OAuth app (`GOOGLE_SSO_CLIENT_ID` +
-  `GOOGLE_SSO_CLIENT_SECRET`). Which hosts are gated is policy, so that list lives in
+It is idempotent. After any change to `.env`, run it again to apply the config. A fork only edits `.env`, so a
+rebase on upstream causes no conflicts.
+
+What to put in `.env`:
+
+- **Git remote:** `REPO_URL` is your fork. No other file holds a hand-written repo URL.
+- **Domains:** `BASE_DOMAIN` is a registrable domain you own. Platform UIs get `*.ops.<base>` and workloads get
+  `*.app.<base>`. Both tiers must stay under the base domain, because one SSO cookie covers them all. A workload
+  on its own domain goes in `extraDomains` of `04_google_sso` (see `docs/04_ingress.md`).
+- **Ingress IP:** `INGRESS_LB_IP` is the one IP that every host resolves to. It must be between `LB_RANGE_START`
+  and `LB_RANGE_STOP`.
+- **TLS and login:** `LE_EMAIL`, `SSO_ALLOWLIST`, and your Google OAuth app (`GOOGLE_SSO_CLIENT_ID` and
+  `GOOGLE_SSO_CLIENT_SECRET`). The list of gated hosts is policy, so it lives in
   `argo_apps/platform/charts/04_google_sso`.
-- Registry: `GHCR_USER`, and the GHCR tokens if you use private images.
-- Alerting: alerts reach your phone via self-hosted ntfy, no email. Set `NTFY_PHONE_PASSWORD_SECRET`, then
-  post-boot run `make configure-ntfy-auth`. See `docs/06_monitoring.md`.
-- Backups: off-cluster S3 needs the `AWS_DEPLOY_*` creds plus `S3_BACKUP_BUCKET`. See `docs/10_backups.md`.
-- Secrets: every secret is optional. Leaving one empty disables the feature it enables.
+- **Registry:** `GHCR_USER`, and the GHCR tokens if you use private images.
+- **Alerting:** alerts reach your phone through self-hosted ntfy. There is no email. Set
+  `NTFY_PHONE_PASSWORD_SECRET`. After the platform is up, run `make configure-ntfy-auth`. See
+  `docs/06_monitoring.md`.
+- **Backups:** off-cluster S3 needs the `AWS_DEPLOY_*` credentials and `S3_BACKUP_BUCKET`. See
+  `docs/10_backups.md`.
+- **Secrets:** every secret is optional. An empty secret disables the feature that it enables.
 
-Node topology, machine addressing and the Kubernetes version itself are NOT here. They belong to whatever
-built the cluster.
+Node topology, machine addresses and the Kubernetes version are not in `.env`. The tooling that built the cluster
+owns them.
 
 ## Day-2 operations
 
@@ -267,51 +273,50 @@ built the cluster.
 | Re-seed ntfy auth           | `make configure-ntfy-auth`                                             |
 | Back up the sealing key     | `make backup-secrets-key`                                              |
 | Redeliver the whole platform| `make rebuild-cluster`                                                 |
-| Credentials + login URLs    | `make view-credentials`                                                |
+| Credentials and login URLs  | `make view-credentials`                                                |
 
-Anything about the nodes themselves (OS or Kubernetes upgrades, adding or recovering a node, resetting the
-cluster) belongs to whatever built them. The two seams where that tooling and this repo meet are in
-[What this does not do](#what-this-does-not-do).
+The tooling that built the nodes owns all node work: OS or Kubernetes upgrades, adding or recovering a node,
+resetting the cluster. [What this does not do](#what-this-does-not-do) lists the targets where that tooling and
+this repo meet.
 
 ## Troubleshooting
 
-- **Nodes are `NotReady`**: expected until the Cilium CNI lands (`make install-cilium`, 01).
-- **An Argo CD app is `OutOfSync` or "path does not exist"**: you did not git-push. Commit and push
-  `argo_apps/**`, including any `Chart.lock` ([docs/02](docs/02_gitops.md)).
-- **An app is permanently `OutOfSync` with nothing apparently wrong**: that is the orphan-not-delete signal. A
-  stateful CR removed from a live app is kept, not pruned ([docs/10](docs/10_backups.md)).
-- **LoadBalancer IP stuck `<pending>`**: `INGRESS_LB_IP` must be inside the Cilium LB pool, on the nodes' L2,
-  avoiding the DHCP range and the VIP ([docs/01](docs/01_networking.md)).
-- **A gated host loops through Google forever**: its subdomain must sit under the domain it is listed against,
-  because each SSO policy sets one cookie domain ([docs/04](docs/04_ingress.md)).
-- **`make bootstrap-cluster` refuses to start**: it found no reachable cluster. Build one first, and point
+- **Nodes are `NotReady`:** expected until the Cilium CNI is installed (`make install-cilium`, step 01).
+- **An Argo CD app is `OutOfSync` or reports "path does not exist":** you did not push. Commit and push
+  `argo_apps/**`, and any `Chart.lock` with it ([docs/02](docs/02_gitops.md)).
+- **An app stays `OutOfSync` and nothing looks wrong:** Argo CD keeps a stateful CR that you removed from a live
+  app, and does not prune it. The permanent `OutOfSync` is the signal ([docs/10](docs/10_backups.md)).
+- **A LoadBalancer IP stays `<pending>`:** `INGRESS_LB_IP` must be in the Cilium LB pool and on the L2 network of
+  the nodes. It must not be in the DHCP range or be the VIP ([docs/01](docs/01_networking.md)).
+- **A gated host loops through Google forever:** its subdomain must be under the domain it is listed against.
+  Each SSO policy sets one cookie domain ([docs/04](docs/04_ingress.md)).
+- **`make bootstrap-cluster` refuses to start:** it found no reachable cluster. Build one first, and point
   `KUBE_CONTEXT` at it ([What this expects of your cluster](#what-this-expects-of-your-cluster)).
 
 ## Documentation
 
-Each doc holds the why behind a step, with verification commands:
+Each doc gives the reasons behind a step, with commands to verify it:
 
 | Doc                                                | Covers                                                                          |
 |----------------------------------------------------|---------------------------------------------------------------------------------|
-| [01_networking](docs/01_networking.md)             | Cilium as CNI + LoadBalancer + WireGuard (the last imperative infra).           |
-| [02_gitops](docs/02_gitops.md)                     | Argo CD, the two-tree app-of-apps, sync-wave convention.                        |
-| [03_secrets](docs/03_secrets.md)                   | Sealed Secrets + the master-key custody you can't lose.                         |
+| [01_networking](docs/01_networking.md)             | Cilium as CNI, LoadBalancer and WireGuard. The last imperative infra step.      |
+| [02_gitops](docs/02_gitops.md)                     | Argo CD, the two trees of apps, the sync-wave convention.                       |
+| [03_secrets](docs/03_secrets.md)                   | Sealed Secrets, and custody of the master key you must not lose.                |
 | [04_ingress](docs/04_ingress.md)                   | Envoy Gateway, cert-manager, Let's Encrypt, central Google SSO.                 |
 | [05_storage](docs/05_storage.md)                   | Longhorn, why nothing is node-local, CloudNativePG.                             |
-| [06_monitoring](docs/06_monitoring.md)             | VictoriaMetrics + VictoriaLogs, Grafana, alerting, metrics-server.              |
-| [07_sample_workload](docs/07_sample_workload.md)   | An end-to-end app + Postgres behind the Gateway.                                |
-| [08_messaging](docs/08_messaging.md)               | The shared RabbitMQ broker and the per-workload topology chart.                 |
+| [06_monitoring](docs/06_monitoring.md)             | VictoriaMetrics, VictoriaLogs, Grafana, alerting, metrics-server.               |
+| [07_sample_workload](docs/07_sample_workload.md)   | An end-to-end app with Postgres behind the Gateway.                             |
+| [08_messaging](docs/08_messaging.md)               | The shared RabbitMQ broker and the topology chart for each workload.            |
 | [09_redis](docs/09_redis.md)                       | Standalone Redis instances, persistence modes, resizing.                        |
 | [10_backups](docs/10_backups.md)                   | Off-cluster S3 backups for Postgres, Redis, Longhorn and the monitoring stores. |
-| [11_renovate](docs/11_renovate.md)                 | Automated dependency updates and when Renovate is allowed to self-merge.        |
-| [12_storage_bench](docs/12_storage_bench.md)       | Measuring what Longhorn r2 costs CNPG and RabbitMQ in write latency.            |
-| [13_node_loss](docs/13_node_loss.md)               | What the workloads do when a machine dies, measured, and reconciling a replaced one. |
-| [14_igpu](docs/14_igpu.md)                         | The Intel iGPU: what the driver needs, how a pod claims it, and why no NFD.        |
-| [15_replica_affinity](docs/15_replica_affinity.md) | Scheduling pods onto the node that already holds their Longhorn replica.           |
+| [11_renovate](docs/11_renovate.md)                 | Automated dependency updates, and when Renovate may merge by itself.            |
+| [12_storage_bench](docs/12_storage_bench.md)       | What Longhorn with 2 replicas costs CNPG and RabbitMQ in write latency.         |
+| [13_node_loss](docs/13_node_loss.md)               | What the workloads do when a machine dies, measured, and how to reconcile a replaced one. |
+| [14_igpu](docs/14_igpu.md)                         | The Intel iGPU: what the driver needs, how a pod claims it, and why no NFD.     |
+| [15_replica_affinity](docs/15_replica_affinity.md) | Scheduling pods onto the node that already holds their Longhorn replica.        |
 
-Repo-wide conventions (layout, where a value lives, chart and Argo CD rules) are in
-[CONTRIBUTING.md](CONTRIBUTING.md).
-
+[CONTRIBUTING.md](CONTRIBUTING.md) holds the conventions for the whole repo: layout, where a value lives, and the
+rules for charts and Argo CD.
 
 ## Credits
 

@@ -1,15 +1,24 @@
 # Replica affinity
 
-A Longhorn PV is network-attachable and carries no `nodeAffinity`, so the scheduler cannot see which 2 of the 4
-nodes hold a volume's replicas. Pods land anywhere; their IO crosses the 1GbE for the life of the pod.
+A Longhorn PV attaches over the network and carries no `nodeAffinity`. So the scheduler cannot see which 2 of
+the 4 nodes hold a volume's replicas. Pods land on any node, and their IO crosses the 1GbE link for the life of
+the pod.
 
-Measured before deploying this: **16 of 31 attached volumes (52%) had no replica on their pod's node**, 12 of
-them on the amd64 worker. That node joined after the Pis and `replica-auto-balance` is `disabled`, so replicas
-never followed it while the scheduler kept placing pods there for its larger CPU and memory.
+Measured before this app ran:
 
-A mutating webhook adds a soft `nodeAffinity` toward nodes that already hold the data, so the pod moves instead
-of the volume. `dataLocality: best-effort` is the other direction and costs a full volume transfer per pod
-move; [05_storage.md](05_storage.md) already rejects it for anything that can grow.
+| Volumes | Count |
+|---|---|
+| attached | 31 |
+| with no replica on their pod's node | 16 (52%) |
+| of those, on the amd64 worker | 12 |
+
+- The amd64 worker joined after the Pis.
+- `replica-auto-balance` is `disabled`, so no replicas moved to it.
+- The scheduler still placed pods there for its larger CPU and memory.
+
+A mutating webhook adds a soft `nodeAffinity` toward nodes that already hold the data. So the pod moves, not the
+volume. `dataLocality: best-effort` works the other way. It copies the full volume on every pod move.
+[05_storage.md](05_storage.md) rejects it for any volume that can grow.
 
 | | |
 |---|---|
@@ -18,23 +27,24 @@ move; [05_storage.md](05_storage.md) already rejects it for anything that can gr
 | Upstream chart | `oci://ghcr.io/yama6a/charts/longhorn-replica-affinity`, same version as its image |
 | Behaviour, values, metrics | [upstream README](https://github.com/yama6a/longhorn-replica-affinity) |
 
-The wrapper adds one thing: the `CiliumNetworkPolicy`. Upstream ships none, since it cannot know the policy
-engine. Renovate tracks the dependency through `Chart.yaml`/`Chart.lock` like every other chart here.
+The wrapper adds one thing: the `CiliumNetworkPolicy`. Upstream ships none, because it cannot know which policy
+engine a cluster runs. Renovate tracks the dependency through `Chart.yaml` and `Chart.lock`, like every other
+chart here.
 
 ## What this cluster sets
 
-Everything else is an upstream default.
+All other values are upstream defaults.
 
 | Value | Why |
 |---|---|
 | `weight: 30` | stays under a hand-written weight-100 `nodeAffinity`, so a workload's own placement still wins |
-| `tls.mode: self-signed` | no cert-manager ordering constraint at wave 3; see below |
+| `tls.mode: self-signed` | no ordering constraint on cert-manager at wave 3. See below |
 | `priorityClassName: platform-critical` | an evicted webhook drops the preference with no error anywhere |
-| `podMonitor.enabled: true` | feeds `lra_*` to VictoriaMetrics |
+| `podMonitor.enabled: true` | sends `lra_*` metrics to VictoriaMetrics |
 
 ## The ArgoCD exception
 
-In `self-signed` mode the webhook patches its own `caBundle`, so the Application carries:
+In `self-signed` mode the webhook writes its own `caBundle`. So the Application carries:
 
 ```yaml
 ignoreDifferences:
@@ -44,14 +54,14 @@ ignoreDifferences:
     jqPathExpressions: [".webhooks[].clientConfig.caBundle"]
 ```
 
-Without it, `selfHeal` blanks `caBundle` every sync and the apiserver stops trusting the endpoint. With
-`failurePolicy: Ignore` that fails silently: no error anywhere, placement just goes back to random. **Check
-this first if locality stops working.**
+Without it, `selfHeal` clears `caBundle` on every sync, and the apiserver stops trusting the endpoint. With
+`failurePolicy: Ignore` this fails silently. No error shows anywhere, and placement goes back to random. Check
+this first if locality stops working.
 
-## Opting a workload in
+## Opt a workload in
 
-Nothing is mutated without the pod label `longhorn-replica-affinity/enabled: "true"`. It must reach the pod,
-and where that lives depends on who creates it:
+The webhook mutates only pods with the label `longhorn-replica-affinity/enabled: "true"`. The label must reach
+the pod. Where you set it depends on what creates the pod:
 
 | Owner | Where |
 |---|---|
@@ -61,12 +71,12 @@ and where that lives depends on who creates it:
 | OpsTree Redis (`lib/helm/redis-instance`) | the CR's pod label field |
 | VictoriaMetrics | `spec.podMetadata.labels` |
 
-`spec.affinity` is immutable, so labelling changes nothing until the pod is recreated. Existing pods drift into
-place on ordinary churn. No descheduler evicts them, deliberately: it would decide on its own to restart
-Postgres primaries.
+- `spec.affinity` is immutable. A new label has no effect until the pod is recreated.
+- Existing pods move into place as they restart for normal reasons.
+- No descheduler evicts them. A descheduler would restart Postgres primaries on its own decision.
 
-Label a workload even when it can never move, for example one pinned to a single node by a device-plugin
-resource. The label is what tells the reconciler to bring a replica to it instead, a one-time copy bounded by
+Label a workload even when it can never move, for example a pod pinned to one node by a device-plugin resource.
+The label tells the reconciler to bring a replica to that node instead. This is a one-time copy, capped by
 `maxMoveBytes`.
 
 ## Verify
@@ -80,10 +90,14 @@ kubectl -n <ns> get pod <pod> \
   -o jsonpath='{.spec.affinity.nodeAffinity.preferredDuringSchedulingIgnoredDuringExecution}' | jq
 ```
 
-The injected hostnames must be that pod's replica nodes, or for RWX the share-manager's node
-(`kubectl -n longhorn-system get pods -l longhorn.io/component=share-manager -o wide`).
+The injected hostnames must be the nodes that hold that pod's replicas. For an RWX volume, it is the
+share-manager's node:
 
-Fail-open, the one thing that must not be wrong:
+```bash
+kubectl -n longhorn-system get pods -l longhorn.io/component=share-manager -o wide
+```
+
+Test fail-open. Pods must still schedule when the webhook is down:
 
 ```bash
 kubectl -n longhorn-replica-affinity scale deploy longhorn-replica-affinity-webhook --replicas=0
@@ -91,8 +105,11 @@ kubectl -n sample-user-manager rollout restart deploy/sample-user-manager   # mu
 kubectl -n longhorn-replica-affinity scale deploy longhorn-replica-affinity-webhook --replicas=2
 ```
 
-Scoreboard: `sum(lra_volume_local) / count(lra_volume_local)`. For RWX that reports the share-manager hop, since
-its attached node is the share-manager's; the `access_mode` label separates the two.
+Locality ratio: `sum(lra_volume_local) / count(lra_volume_local)`. For an RWX volume the attached node is the
+share-manager's, so the metric reports the share-manager hop. The `access_mode` label separates the two cases.
 
-Alerts in `05_grafana/files/alerts/replica-affinity.yaml`: webhook not reporting, locality under 60% for 6h,
-and a volume the reconciler will not move.
+Alerts in `05_grafana/files/alerts/replica-affinity.yaml`:
+
+- the webhook stops reporting
+- locality stays under 60% for 6h
+- the reconciler will not move a volume

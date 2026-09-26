@@ -1,74 +1,92 @@
-# GitOps: ArgoCD
+# GitOps: Argo CD
 
-ArgoCD is the last component installed imperatively. From here on everything is GitOps. It manages itself from a
-wrapper chart in this repo, adopts the already-running Cilium, and becomes the delivery path for every later app.
-`02a_argocd.sh` does the one-time bootstrap.
+Argo CD is the last component installed imperatively. After it, everything is GitOps.
 
-Source of truth is `argo_apps/platform/charts/01_argocd/`. The script installs that chart by hand, then hands off
-to git: ArgoCD adopts the same release (same chart, namespace, release name, values) so Argo sees it in-sync
-rather than fighting it. No version and no value lives in the script.
+- Argo CD manages itself from a wrapper chart in this repo.
+- It adopts the Cilium release that is already running.
+- It delivers every later app.
+- `02a_argocd.sh` does the one-time bootstrap.
+
+The source of truth is `argo_apps/platform/charts/01_argocd/`. The script installs that chart by hand, then hands
+off to git. Argo CD adopts the same release, with the same chart, namespace, release name and values. So Argo CD
+sees it as in sync and does not fight it. The script holds no version and no value.
 
 | Path                 | Holds                                                                                      |
 |----------------------|--------------------------------------------------------------------------------------------|
 | `Chart.yaml`         | the argo-cd chart, declared as a dependency on argo-helm                                    |
-| `values.yaml`        | the HA-lite values under the `argo-cd:` key, see below                                      |
-| `Chart.lock`         | the resolved dependency; must be committed, ArgoCD's repo-server needs it                   |
+| `values.yaml`        | the HA-lite values under the `argo-cd:` key. See [HA-lite](#ha-lite-sized-for-3x-8-gb-pis) |
+| `Chart.lock`         | the resolved dependency. Commit it, because Argo CD's repo-server needs it                  |
 
 ## The `argo_apps/` app-of-apps model: two trees
 
+An **app of apps** is an Argo CD Application that renders other Applications. A **leaf** is an Application that
+renders a chart of real resources.
+
 ```
 argo_apps/
-  root.yaml              # the ROOT-OF-ROOTS (applied once by 02a_argocd.sh); recurses roots/
+  root.yaml              # the root of roots, applied once by 02a_argocd.sh. It syncs roots/
   roots/
     0_platform.yaml      #   Application "platform"  (sync-wave 0), renders platform/apps
     1_workloads.yaml     #   Application "workloads" (sync-wave 1), renders workloads/apps
   platform/
     apps/                #   a chart: repoURL in values.yaml, one Application per app in templates/
-      values.yaml        #     the ONE repoURL for this tree, written by 04_values.sh
+      values.yaml        #     the one repoURL for this tree, written by 04_values.sh
       templates/
-        00_cilium.yaml   #     adopts Cilium      (auto-sync, selfHeal+prune), wave 0
-        01_argocd.yaml   #     ArgoCD self-manage (automated),                 wave 1
+        00_cilium.yaml   #     adopts Cilium          (auto-sync, selfHeal and prune), wave 0
+        01_argocd.yaml   #     Argo CD manages itself (automated),                    wave 1
     charts/              #   the wrapper charts those Applications point at
   workloads/
-    apps/                #   same shape: values.yaml + templates/ (un-numbered, wave-less)
+    apps/                #   same shape: values.yaml and templates/, with no number and no wave
       templates/
         sample_user_manager.yaml
     charts/
-      sample_user_manager/   #  the sample app + its Postgres + Redis + messaging + ingress
+      sample_user_manager/   #  the sample app with its Postgres, Redis, messaging and ingress
 ```
 
-`root.yaml` recurses `argo_apps/roots/` and manages the two child root Applications it finds. Their sync-waves
-order CREATION only, 5s apart via `ARGOCD_SYNC_WAVE_DELAY` set in `01_argocd` values: `platform` at wave 0, then
-`workloads` at wave 1. It does NOT wait for platform health.
+`root.yaml` syncs `argo_apps/roots/` and manages the two child root Applications there.
 
-- Each child Application points at a wrapper chart under its own tree's `charts/`.
-- Adding a platform app means a wrapper chart under `argo_apps/platform/charts/NN_name/` plus an Application
-  manifest under `argo_apps/platform/apps/templates/NN_name.yaml`, then commit and push. The `NN` prefix is the app's
-  `sync-wave` number; keep the filename, chart dir and annotation in agreement.
-- Adding a workload means a wrapper chart under `argo_apps/workloads/charts/name/` plus an Application under
-  `argo_apps/workloads/apps/templates/name.yaml`, with no number and no `sync-wave`. Workloads all reconcile in parallel. If
-  a workload depends on another workload, it belongs in platform instead.
+- Their sync waves order creation only. `platform` is wave 0, `workloads` is wave 1.
+- The waves are 5s apart. `ARGOCD_SYNC_WAVE_DELAY` in the `01_argocd` values sets the gap.
+- `workloads` does not wait for `platform` to be healthy.
+
+To add an app:
+
+- **Platform app.** Add a wrapper chart under `argo_apps/platform/charts/NN_name/`. Add an Application manifest
+  under `argo_apps/platform/apps/templates/NN_name.yaml`. Commit and push.
+  - The `NN` prefix is the app's `sync-wave` number.
+  - Keep the file name, the chart directory and the annotation in agreement.
+- **Workload.** Add a wrapper chart under `argo_apps/workloads/charts/name/`. Add an Application under
+  `argo_apps/workloads/apps/templates/name.yaml`.
+  - No number and no `sync-wave`. All workloads reconcile in parallel.
+  - If a workload depends on another workload, it belongs in platform.
 
 ### No Application health gate, deliberately
 
-ArgoCD ships no built-in health assessment for `argoproj.io/Application`, so a parent app-of-apps sees its child
-Applications as health-less and a wave never waits on child health.
+Argo CD has no built-in health check for `argoproj.io/Application`. So a parent app of apps sees its child
+Applications as having no health, and a wave never waits for child health.
 
-Do not restore it with `resource.customizations.health.argoproj.io_Application` to make the wave-0 to wave-1
-gate wait. That gate is fragile: a child that transiently reports Degraded or Progressing LATCHES a stale
-health status, because a quiescent Synced app only recomputes health on the `timeout.reconciliation` poll and
-there is no separate health-refresh. Measured, it froze the whole tree about 9 min per wave and stretched a
-cold boot to about 51 min.
+Do not add one with `resource.customizations.health.argoproj.io_Application`. That gate is fragile.
 
-Ordering is now eventual. `workloads` is created while the platform may still be coming up, and a workload whose
-platform CRD is not registered yet fails its sync and converges via UNBOUNDED `syncPolicy.retry` (`limit: -1`,
-`refresh: true`), typically within 1 to 2 min. Only within-operation retry re-drives a failed sync; selfHeal and
-the poll do NOT, verified against ArgoCD. Which is why every app's `retry.limit` is `-1`.
+- A child that briefly reports Degraded or Progressing keeps that stale health status.
+- A quiet, Synced app only recomputes health on the `timeout.reconciliation` poll. There is no separate health
+  refresh.
+- Measured on this cluster, the gate froze the whole tree for about 9 min per wave. A cold boot took about 51
+  min.
+
+So ordering is eventual:
+
+- Argo CD creates `workloads` while the platform may still be coming up.
+- A workload that needs a platform CRD that is not registered yet fails its sync.
+- Unbounded `syncPolicy.retry` (`limit: -1`, `refresh: true`) then re-drives it. It typically converges in 1 to 2
+  min.
+- Only the retry inside a sync operation re-drives a failed sync. `selfHeal` and the poll do not. This was
+  verified against Argo CD.
+- So every app sets `retry.limit: -1`.
 
 ### Removing or renaming an app
 
-Every Application manifest in this repo, the root-of-roots, both roots, and every `platform/apps/**` and
-`workloads/apps/**` leaf, carries:
+Every Application manifest in this repo carries the resources finalizer. That covers the root of roots, both
+roots, and every leaf under `platform/apps/**` and `workloads/apps/**`:
 
 ```yaml
 metadata:
@@ -76,347 +94,438 @@ metadata:
     - resources-finalizer.argocd.argoproj.io
 ```
 
-This exists because deleting or renaming an app touches two different mechanisms and only one of them cleans up:
+Deleting or renaming an app touches two mechanisms. Only one of them cleans up.
 
-- `syncPolicy.automated.prune` prunes resources WITHIN a live app when they leave that app's rendered manifests.
-  It says nothing about an app's resources when the Application object itself is deleted, and a deleted
-  Application has no sync loop left to prune anything.
-- Whether deleting an Application also deletes what it deployed is governed ONLY by the finalizer. With it,
-  deletion cascades: ArgoCD deletes the managed resources first, then removes the finalizer, then the object goes.
-  Without it, deletion is non-cascading: ArgoCD removes the Application and leaves its resources running,
-  unmanaged.
+- **`syncPolicy.automated.prune`** deletes resources inside a live app when they leave that app's rendered
+  manifests. It does nothing when the Application object itself is deleted. A deleted Application has no sync
+  loop left to prune anything.
+- **The finalizer** alone decides whether deleting an Application also deletes what it deployed.
+  - With it, deletion cascades. Argo CD deletes the managed resources, then removes the finalizer, then the
+    Application goes.
+  - Without it, Argo CD removes the Application and leaves its resources running, unmanaged.
 
-When you rename a wrapper chart or drop an app from a tree, the parent prunes the child Application object, and
-that part works. But without the finalizer on that child, its Kubernetes resources are orphaned rather than
-deleted.
+When you rename a wrapper chart or drop an app from a tree, the parent prunes the child Application. Without the
+finalizer on that child, its Kubernetes resources stay behind as orphans.
 
-This bit us when merging the two RabbitMQ apps into one. Renaming the operator's Helm release changed every
-operator-subchart resource name, so the old app's Deployments and `ValidatingWebhookConfiguration` were not
-re-adopted by the new app. They were left running by a now-deleted Application, and the duplicate `failurePolicy:
-Fail` webhook blocked all topology-CR admissions cluster-wide. Resources whose name does NOT change get re-adopted
-by the renamed app and survive fine; it is the release-named ones that orphan.
+Example: renaming an app also renames its Helm release.
 
-The finalizer makes removal and rename self-cleaning, and it propagates: deleting the root-of-roots cascades to
-the two roots, which cascade to every leaf. Two things to know:
+- Every resource named after the release gets a new name. The new app does not adopt the old ones.
+- The old Deployments and `ValidatingWebhookConfiguration` keep running, with no Application behind them.
+- For the RabbitMQ operator, the leftover `failurePolicy: Fail` webhook blocks every topology CR admission in the
+  cluster.
+- Resources whose name does not change are adopted by the renamed app and survive.
 
-- Teardown needs the controller alive. The finalizer is processed by the application-controller, so deleting an app
-  while the controller is gone, mid-teardown or the `argocd` app itself, leaves it stuck `Terminating`. Clear it
-  with `kubectl -n argocd patch app <name> --type=merge -p '{"metadata":{"finalizers":[]}}'`. A full cluster wipe
-  removes the OS underneath anyway, so this only matters for a targeted delete on a live cluster.
-- It changes nothing during normal sync. The finalizer is inert until the Application is actually deleted.
+The finalizer makes removal and rename clean up after themselves. It also propagates. Deleting the root of roots
+cascades to the two roots, and they cascade to every leaf.
+
+- **Teardown needs the controller alive.** The application-controller processes the finalizer.
+  - If the controller is gone, the app stays stuck `Terminating`. This happens mid-teardown, or when you delete
+    the `argocd` app itself.
+  - Clear it with `kubectl -n argocd patch app <name> --type=merge -p '{"metadata":{"finalizers":[]}}'`.
+  - A full cluster wipe removes the OS anyway. So this only matters for a targeted delete on a live cluster.
+- **It changes nothing during a normal sync.** The finalizer does nothing until the Application is deleted.
 
 ### sync-wave convention
 
-Ordering across platform apps is `argocd.argoproj.io/sync-wave`, lower being earlier. Since there is no
-Application health gate, a wave does NOT wait for the prior wave to be Healthy. Waves only order the CREATION of
-the child Application objects, 5s apart.
+`argocd.argoproj.io/sync-wave` orders platform apps. A lower wave comes earlier.
 
-That head-start still helps, since CRD and operator apps get applied before their consumers, but it is advisory:
-an app that races ahead of a CRD it needs fails and retries until the CRD lands. The `NN` prefix on each
-`platform/apps/templates/NN_*.yaml` equals its wave number, so one glance at the dir listing tells you the order.
+- There is no Application health gate. So a wave does not wait for the prior wave to be Healthy.
+- Waves only order the creation of the child Application objects, 5s apart.
+- The head start still helps, because CRD and operator apps get applied before their consumers.
+- But it is advisory. An app that races ahead of a CRD it needs fails, then retries until the CRD lands.
+- The `NN` prefix on each `platform/apps/templates/NN_*.yaml` equals its wave number. The directory listing shows
+  the order.
 
-The gap is `ARGOCD_SYNC_WAVE_DELAY`, set to 5 seconds via the `controller.sync.wave.delay.seconds` param in
-`01_argocd/values.yaml`. A head-start buffer, not a readiness gate: it is a fixed timer, and retry is what
-actually guarantees CRD-before-consumer. Controller-wide, so it also spaces resource-level waves inside every
-chart.
+`ARGOCD_SYNC_WAVE_DELAY` sets the gap. `01_argocd/values.yaml` sets it to 5 seconds with the
+`controller.sync.wave.delay.seconds` param.
 
-- Cilium is wave 0. The CNI underpins everything, so it is created first.
-- ArgoCD is wave 1, adopting the already-running, self-managed ArgoCD.
-- Later platform apps go at wave 2 and up, created after the CNI and engine.
-- Keep every app auto-syncing with `retry: -1` and `refresh: true` so it converges. Without the health gate an
-  OutOfSync or Degraded app no longer stalls later waves or the roots, but auto-sync plus unbounded retry is still
-  the only thing that recovers it, so a manual-sync app would never converge on its own.
-- Caveat: if you break-glass-fix Cilium out of band and do not commit the fix, `selfHeal` reverts it on the next
-  reconcile. Always commit the fix back to git.
+- It is a fixed timer, not a readiness gate. Retry is what makes a CRD land before its consumer.
+- It applies to the whole controller. So it also spaces resource-level waves inside every chart.
+
+Wave assignments:
+
+- **Wave 0: Cilium.** The CNI underpins everything, so Argo CD creates it first.
+- **Wave 1: Argo CD.** It adopts the Argo CD that is already running.
+- **Wave 2 and up: every later platform app.** Argo CD creates them after the CNI and itself.
+
+Rules:
+
+- Keep every app auto-syncing with `retry: -1` and `refresh: true`, so it converges.
+  - With no health gate, an OutOfSync or Degraded app does not stall later waves or the roots.
+  - But auto-sync with unbounded retry is still the only thing that recovers it. A manual-sync app would never
+    converge on its own.
+- If you fix Cilium out of band and do not commit the fix, `selfHeal` reverts it on the next reconcile. Always
+  commit the fix to git.
 
 ## HA-lite: sized for 3x 8 GB Pis
 
-ArgoCD is not in the data path of running apps. Once an app is synced it runs regardless of Argo, so a few seconds
-without reconciliation is fine. We spend the RAM only where an outage would hurt.
+**HA-lite** means: high availability only for the parts where an outage hurts. The cluster is 3 Pis with 8 GB of
+RAM each.
 
-| Component                  | Setting                           | Why                                                                     |
-|----------------------------|-----------------------------------|-------------------------------------------------------------------------|
-| application-controller     | 1 replica                         | the reconciler; a singleton that self-heals on restart                  |
-| redis                      | single (`redis-ha.enabled: false`)| only a cache, rebuilds in seconds. redis-ha would add about 5 pods      |
-| repo-server                | 2 replicas + PDB                  | manifest generation; kept up across a node drain                        |
-| server (API/UI)            | 2 replicas + PDB                  | the UI and API; kept up across a node drain                             |
-| applicationSet-controller  | 2 replicas                        | leader-elected; 2 for fast failover, drop to 1 if RAM gets tight        |
-| dex, notifications         | disabled                          | no SSO and no notifications here, so 2 fewer pods                       |
+Argo CD is not in the data path of running apps. A synced app runs with or without Argo CD. So a few seconds
+without reconciliation is fine.
 
-The 2-replica components carry `global.topologySpreadConstraints` (`maxSkew 1`, `kubernetes.io/hostname`,
-`DoNotSchedule`), which over 3 nodes forces each pair onto two distinct nodes. Singletons satisfy it trivially.
+| Component                  | Setting                              | Why                                                                     |
+|----------------------------|--------------------------------------|-------------------------------------------------------------------------|
+| application-controller     | 1 replica                            | the reconciler. A singleton that heals itself on restart                |
+| redis                      | single (`redis-ha.enabled: false`)   | only a cache. It rebuilds in seconds. redis-ha would add about 5 pods   |
+| repo-server                | 2 replicas and a PDB                 | generates manifests. Stays up during a node drain                       |
+| server (API and UI)        | 2 replicas and a PDB                 | the UI and API. Stays up during a node drain                            |
+| applicationSet-controller  | 2 replicas                           | leader-elected. 2 for fast failover. Drop to 1 if RAM gets tight        |
+| dex, notifications         | disabled                             | this repo uses neither, so 2 fewer pods                                 |
+
+The 2-replica components carry `global.topologySpreadConstraints`: `maxSkew 1`, `kubernetes.io/hostname`,
+`DoNotSchedule`. With 3 nodes, that forces each pair onto two different nodes. Singletons meet it by default.
 
 ## Decision notes
 
-- Git auth is anonymous by default, with a single-repo PAT for private repos. The repo is public, so ArgoCD clones
-  it anonymously over HTTPS with no secret. To run this against a private repo, or to lift the anonymous git rate
-  limit, `02a_argocd.sh` seeds a read-only PAT before hand-off. See [Git auth](#git-auth).
-- Cilium auto-syncs with full `selfHeal` and `prune`, the same as every leaf, chosen for convenience even though
-  it is the one app that can cut Argo and the cluster off its own network. That circular dependency is called out
-  in [01_networking.md](01_networking.md). Auto-sync gives hands-off upgrades; the knowingly-accepted danger is
-  that `selfHeal: true` reverts an out-of-band break-glass fix unless you commit it fast, and `prune: true`
-  cascade-deletes any resource or CRD dropped from the chart. A bad Cilium change pushed to git applies unattended
-  AND is self-healed in place, so mind your pushes. First sync auto-adopts the running release with no pod churn,
-  because the chart's `values.yaml` already commits `loadBalancer.enabled: true`, so Argo's rendered desired state
-  matches live.
-- `Chart.lock` must be committed for any wrapper chart with a REMOTE dependency, because ArgoCD's repo-server
-  renders with `helm dependency build`, which requires it. `01_argocd`'s is generated on the first run of
-  `02a_argocd.sh`; commit it before the `argocd` app reconciles, and the script reminds you.
-- `global.networkPolicy.create` is pinned `false`. The chart defaults it true, which renders standard k8s
-  NetworkPolicy objects, and the server's is `ingress: - {}`, allow-all. Cilium enforces those too and UNIONs them
-  with our own default-deny policy for the argocd namespace, so an allow-all NP would blow the default-deny open
-  on this cluster-admin and git-creds namespace. Cilium is the sole policy engine here, so we opt back out.
-- UI over port-forward during bootstrap. `server.insecure: true` serves plain HTTP, so there is no TLS to fumble
-  through a port-forward. Flip it to `false` and front it with TLS only if you ever terminate TLS at ArgoCD
-  instead of the Gateway. See [Exposure](#exposure-the-argocd-ui-behind-google-sso).
+- **Git auth is anonymous by default.** The repo is public, so Argo CD clones it over HTTPS with no secret. For a
+  private repo, or to lift the anonymous git rate limit, `02a_argocd.sh` seeds a read-only PAT before hand-off.
+  See [Git auth](#git-auth).
+- **Cilium auto-syncs with full `selfHeal` and `prune`, like every leaf.** This is for convenience. Cilium is still
+  the one app that can cut Argo CD and the cluster off their own network.
+  [01_networking.md](01_networking.md) describes that circular dependency.
+  - Auto-sync gives hands-off upgrades.
+  - `selfHeal: true` reverts an out-of-band fix unless you commit it quickly.
+  - `prune: true` deletes any resource or CRD that leaves the chart.
+  - A bad Cilium change pushed to git applies unattended, and `selfHeal` keeps it in place. Check every push.
+  - The first sync adopts the running release with no pod restarts. The chart's `values.yaml` already commits
+    `loadBalancer.enabled: true`, so the state Argo CD renders matches the live one.
+- **Commit `Chart.lock` for every wrapper chart with a remote dependency.** Argo CD's repo-server renders with
+  `helm dependency build`, which needs it. The first run of `02a_argocd.sh` generates the `01_argocd` lock and
+  reminds you. Commit it before the `argocd` app reconciles.
+- **`global.networkPolicy.create` is pinned to `false`.**
+  - The chart defaults it to true, which renders standard Kubernetes NetworkPolicy objects.
+  - The server's policy is `ingress: - {}`, which allows all traffic.
+  - Cilium enforces those too, and unions them with this repo's default-deny policy for the `argocd` namespace.
+  - That namespace holds cluster-admin and git credentials. An allow-all policy there would open the default-deny.
+  - Cilium is the only policy engine here, so the chart's policies stay off.
+- **The UI is reached over port-forward during bootstrap.** `server.insecure: true` serves plain HTTP, so there is
+  no TLS to deal with through a port-forward. Set it to `false` and add TLS only if Argo CD itself ever terminates
+  TLS instead of the Gateway. See [Exposure](#exposure-the-argo-cd-ui-behind-google-sso).
 
 ## Roll-forward only: `revisionHistoryLimit: 0` everywhere
 
-Recovery here is always roll-forward, a git revert re-synced by Argo, never `argocd app rollback` or `kubectl
-rollout undo`. So the retained revision history every resource keeps by default (10 Argo `status.history` entries,
-10 old ReplicaSets or ControllerRevisions per workload) is pure dead weight: orphaned ReplicaSets pile up and Argo
+Recovery is always roll-forward: a git revert that Argo CD syncs. It is never `argocd app rollback` or
+`kubectl rollout undo`.
+
+So the revision history every resource keeps by default is dead weight. That is 10 Argo CD `status.history`
+entries, plus 10 old ReplicaSets or ControllerRevisions per workload. Orphaned ReplicaSets pile up, and Argo CD
 carries rollback state nobody uses.
 
-Disabled in three layers:
+Three layers turn it off:
 
-1. Every `Application` (`root.yaml`, `roots/*.yaml`, `platform/apps/**`, `workloads/apps/**`) sets
-   `spec.revisionHistoryLimit: 0`, so no Argo rollback history.
-2. Every first-party workload we template sets it on the workload `spec`: the 3 sample-app Deployments,
-   `05_ntfy`, `05_orphan_exporter`, `02_dead_node_watcher`, and the `04_google_sso` callbacks.
-3. Upstream charts set it via their values knob where one exists: `01_argocd` (both `global.` AND `controller.`,
-   because the controller StatefulSet ignores global's `0` since Helm's `default` treats `0` as empty),
-   `02_cert_manager` (`global.`, applied to all 3 Deployments), `02_metrics_server`, `03_rabbitmq` (both
-   operators), `05_grafana`, and `05_victoria_metrics_k8s_stack` (VMSingle and VMAgent CRs via
-   `spec.revisionHistoryLimitCount`, note the different field name, plus the `kube-state-metrics` and
-   `prometheus-node-exporter` subcharts).
+1. Every `Application` sets `spec.revisionHistoryLimit: 0`. That covers `root.yaml`, `roots/*.yaml`,
+   `platform/apps/**` and `workloads/apps/**`.
+2. Every first-party workload sets it on the workload `spec`:
+   - the 3 sample-app Deployments
+   - `05_ntfy`, `05_orphan_exporter`, `02_dead_node_watcher`
+   - the `04_google_sso` callbacks
+3. Upstream charts set it through their values knob, where one exists:
+   - `01_argocd`, under both `global.` and `controller.`. The controller StatefulSet ignores the global `0`,
+     because Helm's `default` treats `0` as empty.
+   - `02_cert_manager`, under `global.`, which applies to all 3 Deployments.
+   - `02_metrics_server`, `03_rabbitmq` for both operators, and `05_grafana`.
+   - `05_victoria_metrics_k8s_stack`. The VMSingle and VMAgent CRs use a different field name,
+     `spec.revisionHistoryLimitCount`. The `kube-state-metrics` and `prometheus-node-exporter` subcharts also set
+     it.
 
-Documented exceptions, so there are no silent caps. The repo is pure Helm with no kustomize or postRenderer, and
-adding one just to force this would break the clean wrapper pattern, so these stay at the k8s default of 10:
+The exceptions below keep the Kubernetes default of 10. The repo is pure Helm, with no kustomize and no
+postRenderer. Adding one just to force this value would break the wrapper pattern.
 
-- No `revisionHistoryLimit` value at all: cilium, envoy-gateway, victoria-metrics-operator, cloudnative-pg,
-  longhorn, redis-operator, victoria-logs-collector.
-- The knob exists but `0` is silently dropped, because the template guards with `{{- if ... }}` and `0` is falsy in
-  Helm: sealed-secrets. Any non-zero value works; `0` does not.
-- Vendored verbatim: the `03_barman_cloud_plugin` plugin Deployment lives in a re-curled upstream manifest marked
-  DO NOT EDIT BY HAND, so a hand-edit would be erased on the next re-vendor.
+| Exception | Why |
+|---|---|
+| cilium, envoy-gateway, victoria-metrics-operator, cloudnative-pg, longhorn, redis-operator, victoria-logs-collector | the chart has no `revisionHistoryLimit` value |
+| sealed-secrets | the template guards the knob with `{{- if ... }}`, and `0` is falsy in Helm. Any non-zero value works, `0` does not |
+| the `03_barman_cloud_plugin` Deployment | it lives in a vendored upstream manifest. A hand edit would be lost on the next re-vendor |
 
 ## Git auth
 
-This repo is public, so ArgoCD clones it anonymously over HTTPS with no credential. Anonymous `git ls-remote` is
-git smart-HTTP rather than the REST API, so even the fast-poll setting stays well under GitHub's limits. Sync is
-webhook-driven anyway, with the poll only a slow fallback.
+This repo is public, so Argo CD clones it anonymously over HTTPS with no credential.
 
-For a private repo, or to lift the anonymous rate limit, `02a_argocd.sh` seeds a credential: at hand-off it reads
-`ARGOCD_GITHUB_PAT_SECRET`, a fine-grained read-only single-repo PAT, from the gitignored `.env`. Leave it empty
-for a public repo. It then creates an ArgoCD `repository` Secret, labelled `argocd.argoproj.io/secret-type:
-repository` with `url` equal to the polled `repoURL`, before applying the root app.
+- Anonymous `git ls-remote` uses git smart HTTP, not the REST API. So even the fast poll stays well under
+  GitHub's limits.
+- A webhook drives sync anyway. The poll is only a slow fallback.
+
+For a private repo, or to lift the anonymous rate limit, `02a_argocd.sh` seeds a credential at hand-off:
+
+- It reads `ARGOCD_GITHUB_PAT_SECRET` from the gitignored `.env`. That is a fine-grained, read-only PAT for this
+  one repo. Leave it empty for a public repo.
+- It creates the Argo CD Secret `repo-creds`, labelled `argocd.argoproj.io/secret-type: repo-creds`. This is a
+  credential template, and Argo CD matches its `url` as a prefix.
+- `url` is the full `REPO_URL`, not the `github.com/<user>` prefix. So the credential covers exactly this repo.
+- It does this before it applies the root app.
 
 ```text
-# Create the PAT first: GitHub -> Settings -> Developer settings -> Fine-grained tokens
-#   Repository access: Only select repositories -> this repo
-#   Permissions: Repository -> Contents -> Read-only   (nothing else)
-# Put it in .env:  ARGOCD_GITHUB_PAT_SECRET="github_pat_..."   (gitignored; empty = anonymous clone)
-# Then run the script (no prompt):
+# Create the PAT first: GitHub > Settings > Developer settings > Fine-grained tokens
+#   Repository access: Only select repositories, then pick this repo
+#   Permissions: Repository > Contents > Read-only. Nothing else.
+# Put it in .env, which is gitignored. Empty means an anonymous clone:
+#   ARGOCD_GITHUB_PAT_SECRET="github_pat_..."
+# Then run the script. It does not prompt:
 lib/shell/02a_argocd.sh
 ```
 
-Why the credential is seeded imperatively rather than via sealed-secrets: a private repo's clone credential cannot
-live in that repo, and ArgoCD needs it for the first clone. On bare metal there is no cloud identity to fall back
-on, so exactly one secret must be seeded out of band at bootstrap, and the script's `kubectl apply` of the
-`repository` Secret is that seed. Same role as the kubeconfig.
+The script seeds the credential imperatively, not through sealed-secrets:
 
-Sealed-secrets does not remove this step. Its controller decrypts `SealedSecret`s, but getting the repo
-`SealedSecret` into the cluster still needs either an ArgoCD clone, which deadlocks, or a manual apply, which is
-the same out-of-band seed with extra indirection.
+- A private repo's clone credential cannot live in that repo. Argo CD needs it for the first clone.
+- Bare metal has no cloud identity to fall back on. So exactly one secret must be seeded out of band at
+  bootstrap. The script's `kubectl apply` of the credential Secret is that seed.
+- Sealed-secrets does not remove this step. Its controller decrypts `SealedSecret`s. But the repo `SealedSecret`
+  still has to reach the cluster. An Argo CD clone would deadlock. A manual apply is the same out-of-band seed
+  with an extra step.
 
-Least privilege: single-repo, `Contents: Read-only`. Rotate by re-running with a new token. A GitHub App is the
-upgrade path if you outgrow a PAT.
+Least privilege: one repo, `Contents: Read-only`. To rotate, re-run the script with a new token. A GitHub App is
+the upgrade if a PAT is no longer enough.
 
 ## Webhook-driven sync (and the poll fallback)
 
-ArgoCD detects new commits two ways: it polls git on `timeout.reconciliation`, or a git webhook pushes it a `POST
-/api/webhook` on every push, refreshing in seconds instead of waiting out the poll. We run webhook-driven, with
-the poll demoted to a slow safety net.
+Argo CD detects new commits in two ways:
 
-Poll is the slow fallback, toggled from `.env`. `POLL_SYNC_ENABLED` drives `timeout.reconciliation`: `false`, the
-default, gives `300s` as a 5-minute net for a dropped webhook, and `true` gives a `60s` fast poll.
-`02b_argocd_webhook.sh` writes it into `01_argocd/values.yaml`, which is the single source ArgoCD reads, so do not
-hand-edit `timeout.reconciliation`; flip the `.env` knob and re-run the script.
+- **Poll.** It polls git every `timeout.reconciliation`.
+- **Webhook.** GitHub sends `POST /api/webhook` on every push. Argo CD refreshes in seconds instead of waiting for
+  the poll.
 
-We keep the `300s` default rather than `60s`: the poll re-drives OutOfSync apps and recomputes stale health, but it
-does NOT re-drive a FAILED sync, which is `syncPolicy.retry`'s job. So a faster poll would not speed cold-boot
-convergence, and it costs controller CPU that scales with object count. We also do not use `0s`, fully off,
-because a lost webhook would then never recover and `0s` also needs `ARGOCD_DEFAULT_CACHE_EXPIRATION` tuned.
+This repo runs on the webhook. The poll is a slow safety net.
 
-The webhook secret is generated, not configured. `02b_argocd_webhook.sh` mints a random shared secret, writes the
-plaintext to `secrets/argocd-github-webhook-secret.txt` (the gitignored off-repo store, for pasting into GitHub)
-and seals it into `argocd-secret`'s `webhook.github.secret` key. Re-running reuses the stored value, so the secret
-you configured in GitHub keeps working. Delete the file to rotate.
+### Poll cadence
 
-`createSecret: false`, plus a SEEDED then MERGED `argocd-secret`. ArgoCD reads `webhook.github.secret` only from
-the Secret named `argocd-secret`. We set `configs.secret.createSecret: false` so the chart does not own that
-Secret, since ArgoCD self-heal would otherwise fight the key we merge in.
+`POLL_SYNC_ENABLED` in `.env` sets `timeout.reconciliation`:
 
-The catch: `argocd-server` reads `argocd-secret` at startup and FATALS if it is absent. It only populates
-`server.secretkey` and TLS into a secret that already exists, and does not reliably create it on a cold cluster.
-With `createSecret: false` nothing else creates it before boot, so `02a_argocd.sh` seeds an empty `argocd-secret`
-BEFORE the Helm install, and `argocd-server` then writes its own `server.secretkey` into it.
+| `POLL_SYNC_ENABLED` | `timeout.reconciliation` | Use |
+|---|---|---|
+| `false` (default) | `300s` | a 5-minute net for a dropped webhook |
+| `true` | `60s` | fast poll |
 
-The webhook key arrives separately: the wave-3 `argocd-webhook-secret` app seals in PATCH mode
-(`sealedsecrets.bitnami.com/patch: "true"`), which merges `webhook.github.secret` in and leaves `server.secretkey`
-intact. Patch mode only works if the LIVE Secret already carries that annotation, because the controller checks
-the existing object rather than the SealedSecret template, so `02a_argocd.sh` sets it on the seeded secret up front
-in both bootstrap and rebuild.
+`02b_argocd_webhook.sh` writes the value into `01_argocd/values.yaml`, the one file Argo CD reads. Do not edit
+`timeout.reconciliation` by hand. Change the `.env` knob and re-run the script.
 
-The sealed secret lives in a SEPARATE wave-3 app, not the wave-1 argocd chart. The `SealedSecret` is delivered by
-`argo_apps/platform/charts/03_argocd_webhook_secret/`. If it lived in the argocd chart, the imperative `helm
-upgrade --install` and the wave-1 self-heal would try to render it on a COLD cluster before the sealed-secrets
-controller installs its CRD at wave 2, so helm aborts with `no matches for kind "SealedSecret"` and the whole
-bootstrap wedges. This bit a from-scratch rebuild once. Wave 3 is the first slot strictly after sealed-secrets;
-`argocd-secret` already exists by then and has been annotated patch-managed, so the merge just works.
+Why `300s` and not `60s`:
 
-Bootstrap nudge: with the poll relaxed to 300s and no GitHub webhook yet, since it needs public DNS plus the prod
-cert, `DANGEROUS_bootstrap_cluster.sh` hard-refreshes every Application after its final push so the re-sealed
-secrets apply immediately. On a live cluster, refresh the `argocd` app or wait out the fallback after pushing.
+- The poll re-drives OutOfSync apps and recomputes stale health.
+- It does not re-drive a failed sync. That is `syncPolicy.retry`'s job.
+- So a faster poll does not speed up cold-boot convergence.
+- It costs controller CPU, and that cost grows with the object count.
 
-Set up the GitHub webhook once, after the cluster is reachable on its prod cert:
+Why not `0s`, which turns the poll off:
+
+- A lost webhook would then never recover.
+- `0s` also needs `ARGOCD_DEFAULT_CACHE_EXPIRATION` tuned.
+
+### Webhook secret
+
+`02b_argocd_webhook.sh` generates the webhook secret. You do not configure it.
+
+- It creates a random shared secret.
+- It writes the plaintext to `secrets/argocd-github-webhook-secret.txt`, in the gitignored off-repo store. You
+  paste it into GitHub from there.
+- It seals it into the `webhook.github.secret` key of `argocd-secret`.
+- A re-run reuses the stored value, so the secret in GitHub keeps working. Delete the file to rotate.
+
+### How `argocd-secret` gets built
+
+Argo CD reads `webhook.github.secret` only from the Secret named `argocd-secret`.
+
+- `configs.secret.createSecret: false` keeps the chart from owning that Secret. Otherwise Argo CD `selfHeal`
+  would fight the key merged into it.
+- `argocd-server` reads `argocd-secret` at startup and exits if it is absent. It writes `server.secretkey` and
+  TLS only into a Secret that already exists. It does not reliably create one on a cold cluster.
+- With `createSecret: false`, nothing else creates it before boot. So `02a_argocd.sh` seeds an empty
+  `argocd-secret` before the Helm install. `argocd-server` then writes its own `server.secretkey` into it.
+- The seed carries the label `app.kubernetes.io/part-of=argocd`. Argo CD watches only Secrets with that label.
+
+The webhook key arrives separately, from the wave-3 `argocd-webhook-secret` app.
+
+- It seals in patch mode (`sealedsecrets.bitnami.com/patch: "true"`). Patch mode merges `webhook.github.secret`
+  in and keeps `server.secretkey`.
+- Patch mode only works if the live Secret already has that annotation. The controller checks the live object,
+  not the SealedSecret template.
+- So `02a_argocd.sh` sets the annotation on the seeded Secret up front, in both bootstrap and rebuild.
+
+The `SealedSecret` lives in its own wave-3 app, `argo_apps/platform/charts/03_argocd_webhook_secret/`. It cannot
+live in the wave-1 argocd chart:
+
+- The imperative `helm upgrade --install` and the wave-1 self-heal would render it on a cold cluster.
+- The sealed-secrets controller only installs its CRD at wave 2.
+- So Helm aborts with `no matches for kind "SealedSecret"`, and the whole bootstrap stalls.
+
+Wave 3 is the first slot after sealed-secrets. By then `argocd-secret` exists and carries the patch annotation,
+so the merge works.
+
+### Bootstrap refresh
+
+During bootstrap the poll is 300s and there is no GitHub webhook yet. The webhook needs public DNS and the
+production cert. So `DANGEROUS_bootstrap_cluster.sh` hard-refreshes every Application after its final push. The
+re-sealed secrets then apply at once. On a live cluster, refresh the `argocd` app after a push, or wait for the
+poll.
+
+### Set up the GitHub webhook
+
+Do this once, after the cluster is reachable on its production cert.
 
 ```text
-# 1) Seal the secret + set the poll cadence (writes secrets/argocd-github-webhook-secret.txt):
-make configure-argocd-webhook          # == lib/shell/02b_argocd_webhook.sh
+# 1) Seal the secret and set the poll cadence. Writes secrets/argocd-github-webhook-secret.txt.
+#    make configure-argocd-webhook runs lib/shell/02b_argocd_webhook.sh.
+make configure-argocd-webhook
 git add -A && git commit -m "argocd: github webhook sync" && git push
 
-# 2) GitHub repo -> Settings -> Webhooks -> Add webhook:
+# 2) GitHub repo > Settings > Webhooks > Add webhook:
 #      Payload URL      : https://argocd.<domain>/api/webhook
 #      Content type     : application/json
 #      Secret           : the contents of secrets/argocd-github-webhook-secret.txt
-#      SSL verification : ENABLED   (needs the letsencrypt-PROD cert on argocd.<domain>)
+#      SSL verification : Enabled. Needs the letsencrypt-prod cert on argocd.<domain>.
 #      Events           : Just the push event
 # 3) Push a trivial commit and watch it refresh in seconds:
 kubectl -n argocd get applications -w
 ```
 
-The `/api/webhook` path reaches ArgoCD WITHOUT passing Google SSO. That bypass, and why it is safe, is in
-[04_ingress.md](04_ingress.md#bypassing-sso-for-a-path-the-argocd-webhook) and the Exposure note below.
+The `/api/webhook` path reaches Argo CD without passing Google SSO. See
+[04_ingress.md](04_ingress.md#bypassing-sso-for-a-path-the-argocd-webhook) and the Exposure section below for why
+that is safe.
 
-## Exposure: the ArgoCD UI behind Google SSO
+## Exposure: the Argo CD UI behind Google SSO
 
-The bootstrap reaches the UI over port-forward. For day-to-day access the UI is exposed through its own Gateway,
-folded onto the one Envoy via `mergeGateways`, fronted by the same Google SSO built in
-[04_ingress.md](04_ingress.md#google-sso).
+Bootstrap reaches the UI over port-forward. Day to day, the UI has its own Gateway. `mergeGateways` folds it onto
+the one Envoy. The same Google SSO from [04_ingress.md](04_ingress.md#google-sso) fronts it.
 
-The Google gate decides who can reach the UI. ArgoCD's OWN login is turned off: the anonymous user is admin, the
-local admin account is disabled, and there is no Dex or OIDC, so whoever clears Google lands straight in as admin.
-One login, not two.
+Google SSO decides who reaches the UI. Argo CD's own login is off:
 
-The SSO gate is therefore the only auth boundary in front of the UI, which is why it must be the sole path. The
-port-forward break-glass below also lands in as admin with no login. The ONE deliberate exception is `POST
-/api/webhook`, served by a separate ungated route. It carries no session and is authenticated instead by the
-GitHub HMAC signature ArgoCD checks against `webhook.github.secret`, so it cannot reach the UI or API.
+- The anonymous user is admin.
+- The local admin account is disabled.
+- There is no Dex and no OIDC.
 
-Delivered purely by ArgoCD as one host of the platform-ingress app (wave 6): its own `:443` `Gateway` named from
-the hostname, a cross-namespace `HTTPRoute` to `argocd-server`, a `ReferenceGrant`, and a SAN entry on the
-platform ingress's shared cert. All rendered by the shared `ingress` chart. ArgoCD itself is untouched: it keeps
-`server.insecure: true` and serves plain HTTP on `argocd-server:80`, and the Gateway terminates TLS.
+So whoever passes Google SSO lands in as admin. There is one login, not two.
 
-Gating is central: the argocd subdomain is listed in `04_google_sso` `hosts`, so the one `SecurityPolicy`
-targetRefs its route and gates it. It shares the `google-sso.<domain>` callback and
-`cookieDomain` with the other platform UIs, so no new Google redirect URI and no new policy. To expose a new
-platform UI: add its edge to the platform ingress `hosts:` list AND list its host in `04_google_sso`.
+That makes the SSO gate the only auth boundary in front of the UI, so it must be the only path in.
 
-Decisions worth keeping:
+- The port-forward break-glass path also lands in as admin with no login. **Break-glass** means the emergency
+  path that bypasses normal delivery.
+- The one deliberate exception is `POST /api/webhook`, on a separate route with no gate. It carries no session.
+  Argo CD authenticates it with the GitHub HMAC signature, checked against `webhook.github.secret`. So it cannot
+  reach the UI or the API.
 
-- `logoutPath` moved off `/logout`. Envoy Gateway's OIDC filter defaults its logout to `/logout`, which ArgoCD
-  itself uses, so the SSO policy sets `logoutPath: /oauth2/sign_out` and the gate does not swallow ArgoCD's own.
-  One field on the shared policy, harmless for other apps under it.
-- Break-glass is port-forward. The Google gate blocks the `argocd` CLI, which speaks gRPC and cannot run the
-  browser OIDC flow. Keep using `kubectl -n argocd port-forward svc/argocd-server 8080:80`, which also bypasses
-  the Gateway and the SSO gate entirely, so a broken route or policy never locks you out.
-- `/api/webhook` bypasses SSO by design. A second `HTTPRoute` matches only the Exact path `/api/webhook` on the
-  same host and Gateway and, because the `SecurityPolicy` targets routes by exact NAME, is never gated. Safe
-  because ArgoCD verifies the GitHub HMAC on that path, and the Exact match means nothing else escapes SSO, which
-  is critical since anonymous is admin.
-- On the prod cert. The whole platform ingress issues `letsencrypt-prod`, not staging, because GitHub's webhook
-  SSL verification against the argocd host needs a publicly-trusted cert. Mind the prod ACME rate limits when
-  re-issuing.
+The platform-ingress app (wave 6) delivers the exposure as one of its hosts. The shared `ingress` chart renders:
 
-Self-management caveat: ArgoCD manages the app that exposes ArgoCD, so a bad push is reverted by selfHeal and
-port-forward is the escape hatch if you ever wedge it.
+- a `:443` `Gateway`, named after the hostname
+- a cross-namespace `HTTPRoute` to `argocd-server`
+- a `ReferenceGrant`
+- a SAN entry on the platform ingress's shared cert
+
+Argo CD itself does not change. It keeps `server.insecure: true` and serves plain HTTP on `argocd-server:80`. The
+Gateway terminates TLS.
+
+The gate is central. `04_google_sso` lists the argocd subdomain in `hosts`, so its one `SecurityPolicy` targets
+the route. It shares the `google-sso.<domain>` callback and `cookieDomain` with the other platform UIs. So there
+is no new Google redirect URI and no new policy.
+
+To expose a new platform UI, do both:
+
+- add its edge to the platform ingress `hosts:` list
+- list its host in `04_google_sso`
+
+Decisions:
+
+- **`logoutPath` is not `/logout`.** Envoy Gateway's OIDC filter defaults its logout path to `/logout`. Argo CD
+  uses that path itself. So the SSO policy sets `logoutPath: /oauth2/sign_out`, and the gate leaves Argo CD's
+  logout alone. It is one field on the shared policy and does no harm to the other apps.
+- **Break-glass is port-forward.** The Google gate blocks the `argocd` CLI. The CLI speaks gRPC and cannot run the
+  browser OIDC flow. Use `kubectl -n argocd port-forward svc/argocd-server 8080:80`. It bypasses the Gateway and
+  the SSO gate, so a broken route or policy never locks you out.
+- **`/api/webhook` bypasses SSO by design.**
+  - A second `HTTPRoute` matches only the Exact path `/api/webhook`, on the same host and Gateway.
+  - The `SecurityPolicy` targets routes by exact name, so it never gates this route.
+  - Argo CD verifies the GitHub HMAC on that path.
+  - The Exact match lets nothing else past SSO. That matters, because the anonymous user is admin.
+- **The platform ingress uses the production cert.** It issues from `letsencrypt-prod`, not staging. GitHub's
+  webhook SSL verification against the argocd host needs a publicly trusted cert. Mind the production ACME rate
+  limits when you re-issue.
+
+Argo CD manages the app that exposes Argo CD. `selfHeal` reverts a bad push. If you ever lock yourself out,
+port-forward is the way back in.
 
 ## What `02a_argocd.sh` does
 
-Native `helm` and `kubectl`, erroring out if either is missing, like `01_cilium.sh` and unlike the dockerized
-other bootstrap scripts. Talks to the cluster via the pinned kubeconfig derived from `KUBE_CONTEXT`. Idempotent.
+The script uses native `helm` and `kubectl` and fails if either is missing. It reaches the cluster through the
+pinned kubeconfig that `KUBE_CONTEXT` selects. It is idempotent.
 
-1. Prereqs: `kubectl` and `helm` present, kubeconfig reachable, the chart and root app exist, and Cilium is up,
-   since the GitOps layer needs a working pod network.
-2. Vendors the argo-cd subchart with `helm dependency build`, falling back to `helm dependency update`, which
-   generates `Chart.lock` on a first run. Commit it.
-3. `helm upgrade --install argocd argo_apps/platform/charts/01_argocd -n argocd --create-namespace --reset-values
-   --wait`, with release `argocd` in namespace `argocd` so the self-managed Application adopts THIS release.
-4. Waits for the controller, repo-server and server to roll out.
-5. Hands off: resolves the repo to poll (`$REPO_URL`, else the git `origin` remote as a prompt default) and pins
-   it into `root.yaml`; optionally seeds an `ARGOCD_GITHUB_PAT_SECRET` repository credential from `.env`; then,
-   after a "did you push?" check, applies the root app. The root creates `cilium` at wave 0, which auto-adopts,
-   then `argocd` at wave 1, which self-adopts. Both Synced, no clicks.
-6. Waits for `root` and `argocd` to be Synced and Healthy, then prints the port-forward command.
+1. **Prerequisites.** Checks for `kubectl`, `helm` and `yq`, a reachable API server, the chart and the root app.
+   Checks that Cilium is up, because GitOps needs a working pod network.
+2. **Vendor.** Pulls the argo-cd subchart with `helm dependency build`. On a first run it falls back to
+   `helm dependency update`, which generates `Chart.lock`. Commit the lock.
+3. **Seed `argocd-secret`.** Creates it empty if absent, and adds the patch annotation. See
+   [How `argocd-secret` gets built](#how-argocd-secret-gets-built).
+4. **Install.** Runs `helm upgrade --install argocd argo_apps/platform/charts/01_argocd -n argocd
+   --create-namespace --reset-values --wait`. Release `argocd` in namespace `argocd` lets the Argo CD
+   Application adopt this release.
+5. **Wait.** Waits for the controller, repo-server and server to roll out.
+6. **Check the root app.** Asserts that `root.yaml` already carries `REPO_URL`. `04_values.sh` writes it, and the
+   bootstrap commits and pushes it before this step.
+7. **Check the push.** Fails on uncommitted changes under `argo_apps/` or `lib/helm/`, or on unpushed commits.
+8. **Seed the git credential.** Only if `ARGOCD_GITHUB_PAT_SECRET` is set. See [Git auth](#git-auth).
+9. **Hand off.** Applies the root app. The root creates `cilium` at wave 0, which adopts the running release. It
+   then creates `argocd` at wave 1, which adopts itself.
+10. **Confirm the hand-off.** Waits for the root to create the `platform` app, and prints the `cilium` sync
+    status. It does not wait for health. Apps backed by sealed secrets stay Degraded until the master key is
+    restored in a later step.
 
 ```bash
-# 1) generate the argo-cd Chart.lock (first time only), commit, and PUSH:
+# 1) generate the argo-cd Chart.lock (first time only), commit, and push:
 helm dependency update argo_apps/platform/charts/01_argocd
 git add -A && git commit -m "step 02a: ArgoCD" && git push
 
 # 2) bootstrap:
 lib/shell/02a_argocd.sh
 
-# 3) reach the UI (no login: anonymous is admin, local admin disabled):
+# 3) reach the UI. No login: anonymous is admin, the local admin is disabled.
 kubectl -n argocd port-forward svc/argocd-server 8080:80
-#    then open http://localhost:8080. All apps auto-adopt, nothing to click.
+#    then open http://localhost:8080. All apps adopt their releases. Nothing to click.
 ```
 
 ## Caveats
 
-- Run order: 04 before 05. ArgoCD, CoreDNS and every workload need Cilium's pod network, and the script refuses to
-  run if `ds/cilium` is absent.
-- Push before you hand off. ArgoCD clones the repo, so anything not committed and pushed is invisible to the root
-  app, which then shows `ComparisonError: path does not exist`. Step 5 hard-fails on a dirty `argo_apps/` or
-  `lib/helm/`, or on unpushed commits; commit, push, re-run (idempotent).
-  - `argo_apps/root.yaml` is exempt from that gate. `kubectl` applies it from the working tree and the root's
-    path is `argo_apps/roots`, so nothing ever reads `root.yaml` from the remote. Without the exemption the
-    script's own `REPO_URL` rewrite would fail a check no amount of committing could satisfy mid-run.
-  - Any earlier step that writes into `argo_apps/` must be followed by a commit+push before step 5. Both
-    orchestrators do this: bootstrap after 04+07, rebuild after 04. A missing sync step aborts the run at the
-    gate with the cluster half-built.
-- Scripts that write chart values use `ys_set`/`ys_set_list` from `common.sh`, never `yq -i`. `yq` rewrites the
-  whole document and drops the blank line before a comment block, so a write that changes NOTHING still leaves
-  the file modified. That is enough to trip the gate above: one rebuild died at step 5 over a single deleted
-  blank line in `00_cilium/values.yaml`. `ys_set` substitutes one line, keeps its trailing comment, and is a
-  byte-level no-op when the value already matches. `yq` stays fine for reads, and every caller asserts the
-  write with a `yq -r` read-back. Writing a kubeseal-generated file with `yq` is also fine, since it is
-  regenerated wholesale each run.
-- Self-management is real. Once the `argocd` app is Synced, changes to `01_argocd/values.yaml` are applied by
-  ArgoCD to itself on push. A bad value can disrupt ArgoCD briefly; it self-heals, and `02a_argocd.sh` remains
-  break-glass, since re-running forces the release back to the chart.
-- The leftover Helm release secret (`sh.helm.release.v1.argocd.*` in `argocd`) from the by-hand install is
-  harmless. Once the app is adopted you may delete it.
+- **Run `01_cilium.sh` first.** Argo CD, CoreDNS and every workload need Cilium's pod network. The script refuses
+  to run if `ds/cilium` is absent.
+- **Push before you hand off.** Argo CD clones the repo. It cannot see anything you have not committed and pushed.
+  The root app then shows `ComparisonError: path does not exist`. The script fails on a dirty `argo_apps/` or
+  `lib/helm/`, or on unpushed commits. Commit, push and re-run. The re-run is safe.
+  - Any earlier step that writes into `argo_apps/` needs a commit and push before the hand-off.
+  - Both orchestrators commit and push right before they run `02a_argocd.sh`.
+  - Without that commit, the run aborts at the push check with the cluster half built.
+- **Never write a chart value with `yq -i`.** Use `ys_set` or `ys_set_list` from `common.sh`.
+  - `yq` rewrites the whole document and drops the blank line before a comment block.
+  - So a write that changes no value still leaves the file modified. That alone fails the push check.
+  - `ys_set` replaces one line and keeps its trailing comment. When the value already matches, the file does not
+    change at all.
+  - `yq` is fine for reads. Every caller checks the write with a `yq -r` read-back.
+  - `yq` is also fine for a file that kubeseal generates, because each run regenerates it whole.
+- **Argo CD manages itself.** Once the `argocd` app is Synced, Argo CD applies changes to `01_argocd/values.yaml`
+  to itself on push.
+  - A bad value can disrupt Argo CD for a short time. It heals itself.
+  - `02a_argocd.sh` stays as break-glass. A re-run forces the release back to the chart.
+- **The leftover Helm release secret is harmless.** The by-hand install leaves `sh.helm.release.v1.argocd.*` in
+  `argocd`. Once Argo CD adopts the app, you may delete it.
 
 ## Troubleshooting
 
-- `argocd` app stuck on `ComparisonError` or "app path does not exist": the files are not on the remote. Commit
-  and push `argo_apps/**` including any `Chart.lock`, then re-sync.
-- `argocd` app `OutOfSync` with a `helm dependency build` error: `Chart.lock` is not committed, or is stale. Run
-  `helm dependency update argo_apps/platform/charts/01_argocd`, commit the lock, re-sync.
-- `cilium` app `OutOfSync`: it auto-syncs with `selfHeal`, so a transient OutOfSync is normally dragged straight
-  back to the git state. A break-glass `01_cilium.sh` fix not yet in git gets reverted, so commit it fast. A
-  persistent OutOfSync means Argo cannot sync at all, from a `Chart.lock`, CRD or path issue; fix those and it
-  reconciles.
-- `server` or `repo-server` pods pending: the `DoNotSchedule` topology spread needs 2 schedulable nodes free.
-  Check `kubectl -n argocd get pods -o wide` and node pressure.
-- No login prompt, which is expected: the anonymous user is admin and the local admin account is disabled. To
-  restore password login, set `admin.enabled: "true"` and push, or break-glass with `kubectl -n argocd edit cm
-  argocd-cm`.
+- **The `argocd` app shows `ComparisonError` or "app path does not exist".** The files are not on the remote.
+  Commit and push `argo_apps/**`, including any `Chart.lock`, then re-sync.
+- **The `argocd` app is `OutOfSync` with a `helm dependency build` error.** `Chart.lock` is missing from git, or
+  stale. Run `helm dependency update argo_apps/platform/charts/01_argocd`, commit the lock and re-sync.
+- **The `cilium` app is `OutOfSync`.**
+  - It auto-syncs with `selfHeal`, so a brief OutOfSync normally returns to the git state by itself.
+  - `selfHeal` reverts a break-glass `01_cilium.sh` fix that is not in git yet. Commit it quickly.
+  - A lasting OutOfSync means Argo CD cannot sync at all. Look for a `Chart.lock`, CRD or path problem. Fix it and
+    the app reconciles.
+- **`server` or `repo-server` pods stay Pending.** The `DoNotSchedule` topology spread needs 2 schedulable nodes
+  with free room. Check `kubectl -n argocd get pods -o wide` and node pressure.
+- **There is no login prompt.** That is expected. The anonymous user is admin and the local admin account is
+  disabled. To restore password login, set `admin.enabled: "true"` and push. Or, as break-glass, run
+  `kubectl -n argocd edit cm argocd-cm`.
 
 ## Reading the script output
 
-`[PASS]` or `[FAIL]` per check, then `summary: N passed, M failed`, with a non-zero exit on any fail. A clean run
-ends with `root`, `argocd` and `cilium` all Synced and Healthy, everything auto-adopted.
+- Each check prints `[PASS]` or `[FAIL]`.
+- The run ends with `summary: N passed, M failed`.
+- It exits non-zero on any failure.
+- A clean run confirms that the root created the `platform` app. It prints the `cilium` sync status, which should
+  be Synced.

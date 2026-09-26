@@ -1,117 +1,137 @@
-# Off-cluster backups, CNPG Postgres + Redis + Longhorn + VM/VL to S3
+# Off-cluster backups to S3
 
-Until now durability was entirely in-cluster: Postgres replication across the instances, Longhorn's 2 volume
-replicas under them, plus orphan-not-delete ([05_storage.md](05_storage.md)). That survives a machine loss
-unaided, but not a bad `DROP`, data corruption, losing every replica of a volume, or a full rebuild.
+This step backs up CNPG Postgres, Redis, Longhorn volumes, VictoriaMetrics and VictoriaLogs to one S3 bucket.
+CNPG is CloudNativePG, the Postgres operator.
 
-This step adds the off-cluster tier: continuous WAL archiving plus daily base backups from every CloudNativePG
-cluster to S3, via the Barman Cloud CNPG-I plugin, giving point-in-time recovery and a roughly 180-day window.
+Without it, all durability is in the cluster:
 
-The bucket is created by Terraform, the repo's only Terraform, and is deliberately general-purpose. Four consumers,
-one prefix each, all sharing the same bucket and IAM writer. The lifecycle is PER-PREFIX, not bucket-wide.
+- Postgres replicates across its instances.
+- Longhorn keeps 2 replicas of every volume under them.
+- A database whose manifests leave git keeps running, orphaned rather than deleted. See
+  [05_storage.md](05_storage.md).
+
+That survives the loss of one machine. It does not survive a bad `DROP`, data corruption, the loss of every
+replica of a volume, or a full rebuild. The S3 tier covers those cases.
+
+For Postgres, every CNPG cluster sends its WAL continuously and a base backup daily to S3. WAL is the write-ahead
+log, the stream of every change Postgres makes. The Barman Cloud plugin does the upload. It is a CNPG-I plugin,
+the CNPG interface for add-ons. The result is point-in-time recovery (PITR) over a window of about 180 days.
+
+Terraform creates the bucket. It is the only Terraform in the repo. The bucket has one prefix per consumer, and all
+consumers share the bucket and one IAM writer. Each prefix has its own lifecycle rule.
 
 | Piece | Where | What |
 |---|---|---|
-| the bucket + IAM | `terraform/` | one S3 bucket, a per-prefix lifecycle, encryption at rest, public-access block, and a scoped IAM writer. Local state, gitignored, since it holds the IAM secret |
-| the plugin | `argo_apps/platform/{apps,charts}/03_barman_cloud_plugin` (wave 3) | the `ObjectStore` CRD plus the Barman Cloud plugin Deployment, Service, RBAC and its cert-manager mTLS certs, in `cnpg-system`. A vendored release manifest, since there is no upstream Helm chart |
-| per-cluster backups | `lib/helm/pg-cluster` | every CNPG cluster inherits WAL archiving, a daily `ScheduledBackup` and its own `ObjectStore`, all rendered by the first-party chart. Static wiring hardcoded in the templates; per-deployment facts in `files/backup.yaml` |
-| wiring scripts | `lib/shell/10a_s3_backup_bucket.sh`, `10b_cnpg_backup.sh` | 13 runs Terraform; 14 writes bucket, region and RPO plus the cluster-wide sealed writer creds into `files/backup.yaml` |
-| recovery | `restore.enabled` in the chart, or `recover_cnpg_from_s3.sh` | two paths, latest or PITR. The chart knob rebuilds the cluster IN PLACE under its own name; the script bootstraps an unmanaged side cluster to verify or read from |
+| the bucket and IAM | `terraform/` | one S3 bucket, a lifecycle rule per prefix, encryption at rest, a public-access block, and a scoped IAM writer. The state is local and gitignored, because it holds the IAM secret |
+| the plugin | `argo_apps/platform/{apps,charts}/03_barman_cloud_plugin` (wave 3) | the `ObjectStore` CRD, the Barman Cloud plugin Deployment, Service and RBAC, and its cert-manager mTLS certificates, in `cnpg-system`. Upstream ships no Helm chart, so the chart vendors the release manifest |
+| backups per cluster | `lib/helm/pg-cluster` | every CNPG cluster gets WAL archiving, a daily `ScheduledBackup` and its own `ObjectStore`. The first-party chart renders all three. Static wiring is in the templates. Per-deployment values are in `files/backup.yaml` |
+| wiring scripts | `lib/shell/10a_s3_backup_bucket.sh`, `10b_cnpg_backup.sh` | `10a` runs Terraform. `10b` writes the bucket, region, RPO and the sealed writer credentials into `files/backup.yaml` |
+| recovery | `restore.enabled` in the chart, or `recover_cnpg_from_s3.sh` | two paths, each to the latest point or to a PITR timestamp. The chart knob rebuilds the cluster in place under its own name. The script starts an unmanaged side cluster to check or read from |
 
-## The mental model: WAL plus base, not a snapshot
+## WAL plus base backups
 
-A physical Postgres backup is two things that must BOTH work:
+A physical Postgres backup has two parts, and both must work:
 
-- Continuous WAL archiving: every 16 MB WAL segment shipped to S3 as it closes. This is what gives point-in-time
-  recovery and a near-zero RPO, and it is the part that is easy to under-think.
-- Base backups: periodic full copies of the data dir. Here, daily, taken from a standby.
+- **Continuous WAL archiving.** Postgres writes WAL in 16 MB segments. Each segment goes to S3 when it closes.
+  This gives PITR and an RPO near zero. RPO is the recovery point objective, the most recent data a failure can
+  lose. This part is easy to get wrong.
+- **Base backups.** A periodic full copy of the data directory. Here, one per day, taken from a standby.
 
-Base backup plus the WAL since it equals a restore to any point in between.
+A base backup plus the WAL after it restores the database to any point after that backup.
 
-A stalled archiver is a LIVENESS risk, not just a recovery gap: if WAL cannot ship, `pg_wal` fills the volume and
-the primary goes read-only or crashes. That is why the WAL-archive alert is `critical`.
+A stalled archiver also puts the running database at risk. When WAL cannot ship, `pg_wal` fills the volume. The
+primary then goes read-only or crashes. So the WAL-archive alert is `critical`.
 
 ## Decisions
 
-- The Barman Cloud PLUGIN, not the in-tree integration. CNPG deprecated the in-tree `barmanObjectStore` in favour
-  of the CNPG-I plugin, so `pg-cluster` templates the plugin path directly: the `ObjectStore` CR, the Cluster's
-  `.spec.plugins[]` WAL-archiver entry, and the `ScheduledBackup`.
-- arm64. Both the CNPG operand images and the plugin sidecar image ship multi-arch manifests including
-  `linux/arm64`, so they run on the Pi 5s. The usual Pi gate.
-- RPO 15 min. `archiveTimeout` in `files/backup.yaml`, from `.env`'s `CNPG_BACKUP_RPO`, forces a WAL segment switch
-  and therefore an archive at most every 15 min, so a primary failure loses at most that much. It only BINDS in the
-  low-but-nonzero write regime: a busy DB fills segments and archives faster, and a DB with no writes at all
-  produces no WAL and archives nothing, correctly. Lowering the RPO means more, smaller WAL objects.
-- Daily base backup, from a standby. `ScheduledBackup` at 02:00. No `target` is set because CNPG's default is
-  already `prefer-standby`, running on the most up-to-date replica and falling back to the primary. Exactly what we
-  want, so the base-backup IO stays off the primary.
-- Storage class: land in Standard, transition to Glacier Instant Retrieval, then expire. Objects are written as S3
-  Standard, since Barman sets no storage class. We deliberately do NOT use Standard-IA: a lifecycle cannot
-  transition to IA before 30d anyway, and IA's 128 KB minimum billable size plus per-GB retrieval fees punish the
-  churny, often tiny WAL objects. Straight to Glacier IR instead. The ages are `.env`-configurable via
-  `S3_BACKUP_TRANSITION_DAYS` and `S3_BACKUP_RETENTION_DAYS`. Note the interplay with Glacier's 90-day minimum
-  storage duration: at the defaults, objects spend 150d in Glacier IR, well past the minimum, so no early-delete
-  penalty.
-- Retention: Barman's window aligned to the S3 lifecycle. The `ObjectStore` CRD requires a non-empty duration and
-  the chart always emits the field, so leaving it unset is not possible; an empty value renders as `null` and the
-  API rejects it. So `retentionPolicy` is set EQUAL to the S3 expiry. Barman prunes its own catalog coherently at
-  that age, whole backup sets plus their WAL, and the S3 lifecycle expiry at the same age is the backstop. Keeping
-  the two equal avoids the failure mode where one deletes objects the other still references.
-- Encryption: bucket-side with AWS-managed keys, and Barman also requests AES256 on upload, so the two agree. No
-  KMS keys to manage.
-- Credentials: Terraform makes a scoped IAM user, and `.env` holds only the deployer creds. Terraform provisions a
-  dedicated bucket-scoped IAM writer and exposes its access key as an output; `10b_cnpg_backup.sh` reads that output
-  and seals it into the cluster. The powerful deployer creds that run Terraform never enter the cluster. On
-  bare-metal Talos there is no instance role, so it is static keys, sealed and never in `.env` or git.
-- One bucket, namespace plus cluster prefix. `destinationPath: s3://<bucket>/cnpg/<namespace>/`, and Barman appends
-  the cluster's `serverName`, which `pg-cluster` sets to `<clusterName>-pg<major>`, so a database lands in
-  `cnpg/<namespace>/<clusterName>-pg<major>/{wals,base}/`. The namespace in the path makes it collision-proof on
-  per-namespace name uniqueness alone, which `validate.yaml` enforces, so there is no global-uniqueness requirement.
-- The major is in the prefix because a major upgrade has to leave the old catalog alone. `pg_upgrade` resets the
-  timeline to 1 and mints a new system ID, so sharing one prefix would have the new cluster overwrite WAL segments
-  the old base backups need, and PITR does not cross a major boundary anyway. Bumping `postgresVersion` therefore
-  rotates the catalog on its own; the previous one stays readable via `restore.serverName` and is expired by the
-  `cnpg/` lifecycle rule like anything else. See [05_storage.md](05_storage.md) for the upgrade runbook.
-- The plugin is network-policed. Its Deployment in `cnpg-system` carries a pod-scoped `CiliumNetworkPolicy`:
-  ingress on `:9090` for the CNPG-I gRPC from the operator, plus the kubelet TCP probe; egress to DNS, the API
-  server, and S3 on `world:443` for backup-catalog and recovery-window reads. The instance SIDECAR does its own S3
-  upload, allowed by the `pg-cluster` netpol, and talks to its instance-manager over localhost, so it does NOT dial
-  this central Service and there is deliberately no instance-to-`:9090` rule. See
-  [01_networking.md](01_networking.md).
+- **The Barman Cloud plugin, not the in-tree integration.** CNPG deprecated the in-tree `barmanObjectStore` in
+  favour of the CNPG-I plugin. So `pg-cluster` templates the plugin path directly: the `ObjectStore` CR, the
+  WAL-archiver entry in the Cluster's `.spec.plugins[]`, and the `ScheduledBackup`.
+- **arm64.** The CNPG operand images and the plugin sidecar image both ship multi-arch manifests with
+  `linux/arm64`. So they run on the Pi 5 nodes.
+- **RPO of 15 minutes.** `archiveTimeout` in `files/backup.yaml` comes from `CNPG_BACKUP_RPO` in `.env`.
+  - It forces a WAL segment switch, and so an upload, at least every 15 minutes. A failed primary loses at most
+    that much data.
+  - It only matters when writes are low but not zero. A busy database fills segments and uploads them sooner. A
+    database with no writes makes no WAL and uploads nothing, which is correct.
+  - A lower RPO means more WAL objects, each smaller.
+- **A daily base backup, from a standby.** The `ScheduledBackup` runs at 02:00. It sets no `target`, because the
+  CNPG default is `prefer-standby`: the most up-to-date replica, or the primary if no replica is ready. This keeps
+  the backup IO off the primary.
+- **Storage class: Standard, then Glacier Instant Retrieval, then expiry.**
+  - Barman sets no storage class, so objects land in S3 Standard.
+  - The lifecycle moves them straight to Glacier Instant Retrieval (Glacier IR), not to Standard-IA. A lifecycle
+    cannot move objects to Standard-IA before 30 days. Standard-IA also bills at least 128 KB per object and
+    charges per GB read. Both penalise the many small WAL objects.
+  - `S3_BACKUP_TRANSITION_DAYS` and `S3_BACKUP_RETENTION_DAYS` in `.env` set the ages.
+  - Glacier bills at least 90 days of storage per object. At the defaults, an object stays 150 days in Glacier IR,
+    so no early-delete fee applies.
+- **Barman retention equals the S3 expiry.** The `ObjectStore` CRD needs a non-empty duration. The chart always
+  writes the field, and an empty value renders as `null`, which the API rejects. So `retentionPolicy` equals the
+  S3 expiry. At that age, Barman deletes whole backup sets with their WAL from its own catalog. The S3 expiry at
+  the same age is the backstop. With both ages equal, neither one deletes an object the other still needs.
+- **Encryption on the bucket, with AWS-managed keys.** Barman also asks for AES256 on upload, so the two agree.
+  There are no KMS keys to manage.
+- **A scoped IAM writer from Terraform. `.env` holds only the deployer credentials.**
+  - Terraform creates an IAM writer scoped to the bucket and outputs its access key.
+  - `10b_cnpg_backup.sh` reads that output and seals it into the cluster.
+  - The deployer credentials that run Terraform have more power. They never enter the cluster.
+  - Bare-metal Talos has no instance role, so the writer uses static keys. They are sealed, and never in `.env`
+    or git.
+- **One bucket, with a prefix per namespace and cluster.**
+  - `destinationPath` is `s3://<bucket>/cnpg/<namespace>/`. Barman appends the cluster's `serverName`, which
+    `pg-cluster` sets to `<clusterName>-pg<major>`.
+  - So a database lands in `cnpg/<namespace>/<clusterName>-pg<major>/{wals,base}/`.
+  - Cluster names only need to be unique per namespace, which `validate.yaml` enforces. The namespace in the path
+    prevents collisions across namespaces.
+- **The Postgres major is in the prefix, so a major upgrade leaves the old catalog alone.**
+  - `pg_upgrade` resets the timeline to 1 and creates a new system ID. With a shared prefix, the new cluster
+    would overwrite WAL segments the old base backups need. PITR also cannot cross a major version.
+  - So a change to `postgresVersion` starts a new catalog by itself.
+  - `restore.serverName` can still read the old catalog. The `cnpg/` lifecycle rule expires it like any other
+    object.
+  - The upgrade runbook is in [05_storage.md](05_storage.md).
+- **The plugin has a network policy.** Its Deployment in `cnpg-system` has a pod-scoped `CiliumNetworkPolicy`:
+  - Ingress on `:9090` for CNPG-I gRPC from the operator, plus the kubelet TCP probe.
+  - Egress to DNS, the API server, and S3 on `world:443`. The plugin reads the backup catalog and the recovery
+    window from S3.
+  - The sidecar in each Postgres instance uploads to S3 itself, under the `pg-cluster` network policy. It talks
+    to its instance manager over localhost and never calls this Service. So there is no rule from the instances
+    to `:9090`, on purpose. See [01_networking.md](01_networking.md).
 
 ## Terraform
 
-State is local and gitignored, because it holds the generated IAM secret key and the repo is public.
-`.terraform.lock.hcl` IS committed, being a provider pin rather than a secret. No `.tfvars`: the wrapper script
-passes everything via `TF_VAR_*` plus the `AWS_*` provider env, so no secret file lands on disk.
+The state is local and gitignored. It holds the generated IAM secret key, and the repo is public.
+`.terraform.lock.hcl` is committed, because it is a provider pin, not a secret. There is no `.tfvars` file. The
+wrapper script passes every value as `TF_VAR_*` and the `AWS_*` provider variables, so no secret file lands on
+disk.
 
 ```sh
-make s3-backup-bucket     # 13 apply  : create/update the bucket + lifecycle + IAM writer (idempotent)
-make s3-backup-wipe       # 13 wipe   : delete ALL backups, KEEP the bucket + IAM (what a rebuild does)
-make s3-backup-destroy    # 13 destroy: empty the bucket THEN terraform-destroy it + the IAM writer
+make s3-backup-bucket     # 10a apply:   create or update the bucket, lifecycle and IAM writer (idempotent)
+make s3-backup-wipe       # 10a wipe:    delete all backups, keep the bucket and IAM (a rebuild runs this)
+make s3-backup-destroy    # 10a destroy: empty the bucket, then terraform destroy it and the IAM writer
 ```
 
-The bucket is `force_destroy = false`, so a bare `terraform destroy` refuses a non-empty bucket. That is why
-`destroy` empties it first, as an explicit typed-confirmed act, and nothing deletes backups by accident.
+The bucket sets `force_destroy = false`, so a bare `terraform destroy` refuses a bucket that holds objects. So
+`destroy` empties the bucket first, after you type a confirmation. Nothing deletes backups by accident.
 
-Per-prefix lifecycle, not bucket-wide. `main.tf` has one rule per consumer prefix because they need different
-retention:
+`main.tf` has one lifecycle rule per consumer prefix, because each needs a different retention:
 
-- `cnpg/`, `redis/` and `vm/` tier to Glacier IR then expire. Their objects are self-contained (WAL and base sets,
-  whole RDB dumps, whole daily exports), so age-expiry is safe and S3 owns retention.
-- `longhorn/` gets NO transition and NO expiration, only an aborted-multipart cleanup. Longhorn backups are
-  incremental, deduplicated block chains, so a newer backup references older blocks and an age-based expiry would
-  delete still-referenced blocks and corrupt restores. Longhorn's own RecurringJob `retain` is the sole deleter.
-  This is why enabling Longhorn backups needed a Terraform change, where redis and CNPG did not.
+- **`cnpg/`, `redis/` and `vm/`** move to Glacier IR, then expire. Each object stands alone: WAL and base sets,
+  whole RDB dumps, whole daily exports. So expiry by age is safe, and S3 owns retention.
+- **`longhorn/`** has no transition and no expiry, only a cleanup of aborted multipart uploads. Longhorn backups
+  are incremental chains of deduplicated blocks. A newer backup uses blocks from older ones. Expiry by age would
+  delete blocks still in use and corrupt restores. The `retain` count on Longhorn's RecurringJobs is the only
+  thing that deletes. So Longhorn backups needed a Terraform change, and Redis and CNPG did not.
 
 ### The deployer IAM credentials
 
-`.env`'s `AWS_DEPLOY_ACCESS_KEY_ID` and `AWS_DEPLOY_SECRET_ACCESS_KEY_SECRET` are a DEPLOYER identity used only by
-Terraform and the wipe/destroy CLI. Never sealed into the cluster. It needs to manage exactly one bucket and one
-IAM user.
+`AWS_DEPLOY_ACCESS_KEY_ID` and `AWS_DEPLOY_SECRET_ACCESS_KEY_SECRET` in `.env` are a deployer identity. Only
+Terraform and the wipe and destroy commands use it. It is never sealed into the cluster. It manages exactly one
+bucket and one IAM user.
 
 Create an IAM user, attach the policy below, and put its access key in `.env`. Replace the bucket name with your
-`S3_BACKUP_BUCKET` and the account id with your own; the writer user is named `<BUCKET>-writer` to match
+`S3_BACKUP_BUCKET` and the account ID with your own. The writer user is named `<BUCKET>-writer`, to match
 `terraform/main.tf`.
 
 ```json
@@ -161,262 +181,296 @@ Create an IAM user, attach the policy below, and put its access key in `.env`. R
 }
 ```
 
-`s3:*` is scoped to the single bucket rather than account-wide. The broad verb keeps Terraform's many bucket
-sub-resource reads on refresh from tripping over one missing `s3:GetBucket*` or `s3:PutBucket*`; tighten to explicit
-actions if you prefer. The IAM statement is scoped to the one writer user Terraform creates.
+- **`s3:*` covers only this one bucket.** On refresh, Terraform reads many bucket sub-resources. The broad action
+  keeps one missing `s3:GetBucket*` or `s3:PutBucket*` from breaking that. Replace it with explicit actions if
+  you prefer.
+- **The IAM statement covers only the one writer user** that Terraform creates.
+- **The two group actions are required**, although the user is in no group. To delete an IAM user, the AWS
+  provider first removes it from its groups, so it always lists them. Without `iam:ListGroupsForUser`, `destroy`
+  deletes 7 of the 8 resources and then fails on the user with `AccessDenied ... iam:ListGroupsForUser`. The user
+  stays in Terraform state, and the next `apply` adopts it. But the teardown reports a failure.
 
-The two group actions look wrong for a user that is in no group, and they are not optional: deleting an IAM user
-makes the AWS provider clear group memberships first, so it lists them whether there are any or not. Without
-`iam:ListGroupsForUser` a `destroy` gets 7 of the 8 resources and then fails on the user with
-`AccessDenied ... iam:ListGroupsForUser`, leaving it orphaned. Harmless, since the user stays in Terraform state
-and the next `apply` adopts it, but the teardown reports failure.
-
-The WRITER identity Terraform then provisions, and which 14 seals into the cluster, is far narrower: just
-`s3:ListBucket` plus `GetObject`, `PutObject` and `DeleteObject` on the bucket. See `terraform/main.tf`.
+The writer identity that Terraform creates, and that `10b` seals into the cluster, has much less power. It has
+only `s3:ListBucket`, `GetObject`, `PutObject` and `DeleteObject` on the bucket. See `terraform/main.tf`.
 
 ## The plugin (`03_barman_cloud_plugin`, wave 3)
 
-The plugin ships no Helm chart, only manifests and Kustomize, so unlike every other app the wrapper vendors the
-pinned release manifest VERBATIM into `templates/`. It carries no Go-template braces, so Helm passes it through.
-There is no dependency to pin, no `Chart.lock` and no vendored `.tgz`. The version lives in the chart's
-`appVersion` plus the image tag; re-vendor via that chart's `README.md`.
+The plugin ships only manifests and Kustomize, with no Helm chart. So this wrapper vendors the pinned release
+manifest word for word into `templates/`. The manifest has no Go-template braces, so Helm passes it through
+unchanged. There is no dependency to pin, no `Chart.lock` and no `.tgz`. The version is the chart's `appVersion`
+plus the image tag. To update it, follow that chart's `README.md`.
 
-Wave 3 because it needs cert-manager (wave 2, for its mTLS Issuer and Certificates) and the CNPG operator (wave 2,
-to discover the plugin Service), and it must live in `cnpg-system`.
+The plugin is on wave 3 and must live in `cnpg-system`. It needs two wave-2 apps:
+
+- cert-manager, for its mTLS Issuer and Certificates.
+- The CNPG operator, which discovers the plugin through its Service.
 
 ## Turning backups on
 
 ```sh
-# .env: set the deployer creds + bucket. Empty AWS_DEPLOY_ACCESS_KEY_ID means backups stay OFF (13/14 no-op).
+# .env: set the deployer credentials and the bucket. An empty AWS_DEPLOY_ACCESS_KEY_ID keeps backups off.
 #   AWS_REGION, S3_BACKUP_BUCKET, AWS_DEPLOY_ACCESS_KEY_ID, AWS_DEPLOY_SECRET_ACCESS_KEY_SECRET
-make s3-backup-bucket        # 13: Terraform, bucket + lifecycle + IAM writer
-make configure-cnpg-backup   # 14: bucket/region/RPO into pg-cluster files/backup.yaml + seal writer creds ONCE
-git add -A && git commit && git push   # ArgoCD applies the plugin + each ObjectStore/ScheduledBackup + sealed creds
+make s3-backup-bucket        # 10a: Terraform. Bucket, lifecycle and IAM writer
+make configure-cnpg-backup   # 10b: bucket, region and RPO into pg-cluster files/backup.yaml. Seals the writer once
+git add -A && git commit && git push   # Argo CD applies the plugin, each ObjectStore and ScheduledBackup, the creds
 ```
 
-`14` edits only the SHARED `lib/helm/pg-cluster/files/backup.yaml`: the scalars (`bucket`, `region`,
-`retentionPolicy`, `archiveTimeout`) plus the writer creds, sealed ONCE cluster-wide. The static wiring (plugin,
-provider, bucket path, WAL and data compression, the daily cron) is hardcoded in the templates, not the overlay.
+`10b` edits only the shared `lib/helm/pg-cluster/files/backup.yaml`. It writes the values `bucket`, `region`,
+`retentionPolicy` and `archiveTimeout`. It also seals the writer credentials once, with cluster-wide scope. The
+static wiring is in the templates, not in this file: the plugin, the provider, the bucket path, WAL and data
+compression, and the daily schedule.
 
-`backupsEnabled` defaults true in `values.yaml`, so a POPULATED overlay is the opt-in: the moment `14` fills in
-`bucket`, EVERY CNPG cluster in every workload gets backups, and each instance stamps its OWN `<name>-backup-s3`
-SealedSecret and creds Secret from that one blob. Adding a Postgres workload needs nothing extra here.
+`backupsEnabled` is true by default in `values.yaml`. So a filled-in `files/backup.yaml` is the opt-in:
 
-Cluster-wide seal scope, rather than the repo's usual `strict`, is the deliberate trade that lets one ciphertext
-unseal into any name in any namespace. That is exactly what lets every instance reuse the same blob under its own
-per-instance secret name, so N DBs in one namespace never collide and there is no shared secret to elect an owner
-for. Accepted because it is the same S3 writer for all CNPG workloads.
+- As soon as `10b` writes `bucket`, every CNPG cluster in every workload gets backups.
+- Each instance creates its own `<name>-backup-s3` SealedSecret and credentials Secret from the one sealed value.
+- A new Postgres workload needs nothing extra here.
 
-`10a` and `10b` are wired best-effort into `DANGEROUS_bootstrap_cluster.sh`, guarded on the deployer key, so a
-full bootstrap runs `terraform apply` and seals automatically. A REBUILD runs `10a wipe`, discarding the old
-backups while keeping the bucket and IAM so the fresh clusters start a clean history. It does NOT re-seal, since
-the restored key already decrypts the committed secret, and does NOT `terraform destroy`. Only
-`make s3-backup-destroy` tears the bucket down.
+The repo usually seals with `strict` scope. Here it uses cluster-wide scope, so one ciphertext unseals under any
+name in any namespace. Each instance reuses the same ciphertext under its own secret name. So several databases
+in one namespace never collide, and no instance has to own a shared secret. This is acceptable because every
+CNPG workload uses the same S3 writer.
+
+`DANGEROUS_bootstrap_cluster.sh` runs `10a` and `10b` when the deployer key is set. A failure there does not stop
+the bootstrap. So a full bootstrap runs `terraform apply` and seals the credentials without a manual step.
+
+A rebuild runs `10a wipe`. It deletes the old backups and keeps the bucket and IAM, so the new clusters start a
+clean history. A rebuild does not re-seal, because the restored key already decrypts the committed secret. It
+does not run `terraform destroy`. Only `make s3-backup-destroy` removes the bucket.
 
 ## Monitoring
 
-Backup health is alerted by Grafana-provisioned rules, the only path that fires, since `vmalert` and Alertmanager
-are off. No chart `PrometheusRule` defines these, to avoid inert duplicates: `lib/helm/pg-cluster` emits none at
-all, so the upstream CNPG rules never enter the cluster.
+Grafana-provisioned rules alert on backup health. They are the only alerts that fire, because `vmalert` and
+Alertmanager are off. No chart `PrometheusRule` covers backups, to avoid inert copies. `lib/helm/pg-cluster`
+emits no rules, so the upstream CNPG rules never enter the cluster.
 
-CNPG, in the Grafana `backups` group:
+The rules are in the Grafana `backups` group:
 
-- `cnpg-wal-archive-failing` (critical): `cnpg_collector_pg_wal_archive_status{value="ready"} > 0` for 15 min, so
-  WAL segments are piling up unarchived. Act on this one first: a stalled archiver fills `pg_wal`, and a full
-  `pg_wal` turns the primary read-only.
-- `cnpg-backup-too-old` (warning): last successful base backup more than 36h old. Guarded with `> 0` because the
-  `cnpg_collector_last_available_backup_timestamp` metric is deprecated and may stay 0 under the plugin. If so,
-  this alert simply will not fire and we lean on the WAL alert plus `kubectl cnpg status`.
+| Rule | Severity | Fires when |
+|---|---|---|
+| `cnpg-wal-archive-failing` | critical | `cnpg_collector_pg_wal_archive_status{value="ready"} > 0` for 15 minutes. WAL segments wait for upload |
+| `cnpg-backup-too-old` | warning | the last good base backup is more than 36h old |
+| `cnpg-no-recoverable-backup` | critical | a database has no recovery point in its catalog |
+| `redis-backup-stale` | warning | more than 36h since the last good Redis backup Job |
+| `redis-no-recoverable-backup` | critical | a Redis instance has no usable dump in S3 |
+| `longhorn-backup-failed` | warning | a volume's backup is in the Error state |
+| `longhorn-backup-stale` | warning | more than 48h since a volume's last backup |
+| `vm-backup-stale` | warning | more than 36h since the last good VM/VL backup Job |
 
-Redis, keyed on the CronJob NAME via kube-state-metrics, since arbitrary pod and job labels are not exported but
-the name always is:
+- **Act on `cnpg-wal-archive-failing` first.** A stalled archiver fills `pg_wal`, and a full `pg_wal` turns the
+  primary read-only.
+- **`cnpg-backup-too-old` reads `cnpg_backup_last_success_seconds`** from `05_orphan_exporter`. CNPG's own
+  `cnpg_collector_last_available_backup_timestamp` stays at 0 under the plugin, so an alert on it could never
+  fire.
+- **The two recoverability rules** read `cnpg_backup_recoverable` and `redis_backup_recoverable`. They are the
+  only rules that catch an empty catalog behind healthy backup jobs.
+- **The Redis and VM/VL rules use the CronJob name** from kube-state-metrics. It does not export arbitrary pod or
+  job labels, but it always exports the name. Raise the Redis threshold if you set a slower schedule.
+- **A silently stopped Longhorn RecurringJob** leaves no Error state. `longhorn-backup-stale` is the only signal.
+- **The stale rules add `> 0`** to the timestamp, so they stay quiet before the first backup.
+- **A failed backup Job** fires `job-failed` in the `workload-anomalies` group. That rule covers every Job in the
+  cluster, so no backup has its own failed-job rule. The Redis Job's stdout names the failed instance.
 
-- `redis-backup-failed` (warning): the central backup Job failed, meaning one or more instances failed to dump or
-  upload. The job's stdout says which.
-- `redis-backup-stale` (warning): more than 36h since the last success, guarded `> 0` so it stays quiet before the
-  first one. Raise it if you set a slower schedule.
-
-Longhorn, off Longhorn's own metrics since its ServiceMonitor is on:
-
-- `longhorn-backup-failed` (warning): a volume's backup is in Error state.
-- `longhorn-backup-stale` (warning): more than 48h since the last backup, guarded `> 0`. A silently stopped
-  RecurringJob produces no Error state, so this is the only signal.
-
-VM/VL: `vm-backup-failed` and `vm-backup-stale`, same shape as Redis.
-
-Plus the per-unit recoverability rules, which are the only ones that catch an empty catalog sitting behind healthy
-machinery: `cnpg_backup_recoverable` and `redis_backup_recoverable`, both critical.
-
-Verify the exact metric and label names against the live cluster at apply time. A wrong name yields NoData, which
-reads as OK: silent, never a false alert, but also never a true one.
+Check each metric and label name against the live cluster when you change a rule. A wrong name gives NoData, and
+NoData reads as OK. It never gives a false alert, but it never gives a true one either.
 
 ## Redis RDB backups
 
-Durable Redis instances back up to S3 as periodic RDB dumps, reusing this bucket, writer and lifecycle under the
-`redis/` prefix.
+Durable Redis instances back up to S3 as periodic RDB dumps. RDB is the Redis snapshot file format. They use the
+same bucket, writer and lifecycle, under the `redis/` prefix.
 
-One central platform app does it, `07_redis_backup` (wave 7, ns `redis-backup`): a single CronJob discovers every
-durable instance cluster-wide by label, dumps each with `redis-cli --rdb`, and uploads. So there is one sealed
-secret in one namespace and no per-namespace list. The trade is a single global schedule and job-level alerting,
-with the failing instance named in the job's stdout, which lands in VictoriaLogs.
+One central platform app does this: `07_redis_backup`, on wave 7, in namespace `redis-backup`.
 
-Full mechanism, the `make configure-redis-backup` runbook, and `make restore-redis` are in
-[09_redis.md](09_redis.md), under "Off-cluster backups: RDB to S3". Unlike CNPG, whose retention Barman manages,
-Redis relies entirely on the bucket's S3 lifecycle for expiry.
+- A single CronJob finds every durable instance in the cluster by label.
+- It dumps each one with `redis-cli --rdb` and uploads the dump.
+- So there is one sealed secret in one namespace, and no list per namespace.
+- The cost: one schedule for all instances, and alerts per Job, not per instance. The Job's stdout names the
+  failed instance, and that output lands in VictoriaLogs.
+
+[09_redis.md](09_redis.md), under "Off-cluster backups: RDB to S3", has the full mechanism, the
+`make configure-redis-backup` runbook and `make restore-redis`. Barman manages CNPG retention. Redis relies only
+on the S3 lifecycle for expiry.
 
 ## Longhorn volume backups
 
 Selected Longhorn volumes back up under the `longhorn/` prefix. This is for workloads that keep state on a Longhorn
-PVC with no backup mechanism of their own: sqlite files, config dirs, generic app data.
+PVC and have no backup of their own: sqlite files, config directories, generic app data.
 
-Opt-in per volume via the StorageClass. Of the three classes `02_longhorn` ships, only
-`longhorn-r2-retained-with-backups` (reclaim Retain) is backed up off cluster; `longhorn-r2-ephemeral` and
-`longhorn-r2-ephemeral-local` (both reclaim Delete) are not. A workload opts in simply by naming that class. It
-has no consumer yet.
+A workload opts in by its StorageClass. `02_longhorn` ships three classes:
 
-Everything else is deliberately NOT Longhorn-backed-up, because each has a better logical path:
+| Class | Reclaim policy | Backed up to S3 |
+|---|---|---|
+| `longhorn-r2-retained-with-backups` | Retain | yes |
+| `longhorn-r2-ephemeral` | Delete | no |
+| `longhorn-r2-ephemeral-local` | Delete | no |
 
-| On a non-backed-up class | Covered instead by |
+No workload uses the backed-up class yet.
+
+The other stateful apps are on a class without Longhorn backups, on purpose. Each has a better logical path:
+
+| Store | Covered by |
 |---|---|
-| CNPG Postgres | its own WAL + base to `cnpg/`, which is point-in-time and app-consistent |
+| CNPG Postgres | its own WAL and base backups to `cnpg/`. These give PITR and are consistent for the app |
 | Redis (durable) | RDB dumps to `redis/` |
 | VictoriaMetrics, VictoriaLogs | native exports to `vm/` |
-| RabbitMQ | nothing, on purpose: the data is in-flight messages, and HA is the running quorum |
-| ntfy | nothing yet; it is the obvious first candidate for the backed-up class |
+| RabbitMQ | nothing, on purpose. The data is messages in flight, and the running quorum gives HA |
+| ntfy | nothing yet. It is the first candidate for the backed-up class |
 
-A logical dump is app-consistent and far cheaper than block-level backup of a large, churny store.
+A logical dump is consistent for the app. For a large store that changes often, it also costs much less than a
+block-level backup.
 
-Native Longhorn backup, not a central CronJob, unlike Redis. Redis is a network service, so its backup is one
-central job that dumps each instance over the network. Longhorn PVCs are RWO block devices attached to a single
-node with no network pull interface, so the only way to read one for backup IS Longhorn's own backup API.
+Longhorn uses its native backup, not a central CronJob like Redis:
 
-So Longhorn uses its built-in backup target plus `RecurringJob`s plus a StorageClass `recurringJobSelector`, all
-configured inside the existing `02_longhorn` app at wave 2. There is deliberately no separate backup app. Native
-backup is also incremental and deduplicated, which is cheap on a home uplink, crash-consistent, and
-content-agnostic with no per-app dump logic.
+- Redis is a network service. One central Job can dump each instance over the network.
+- A Longhorn PVC is an RWO block device, attached to a single node, with no network read interface. The only way
+  to read one for backup is Longhorn's own backup API.
 
-The classes always exist. The two BACKUP `RecurringJob`s render only `{{- if backupTarget }}`, so no backup runs
-until `10d_longhorn_backup.sh` sets the target: the same empty-means-off contract as CNPG and Redis. The
-`filesystem-trim` job is unconditional, since it needs no S3 and every volume wants it.
+So Longhorn uses its built-in backup target, `RecurringJob`s, and a `recurringJobSelector` on the StorageClass.
+All of this lives in the existing `02_longhorn` app on wave 2. There is no separate backup app. Native backup is
+incremental and deduplicated, which suits a home uplink. It is crash-consistent, and it works for any content
+without per-app dump logic.
 
-Pieces, all under `argo_apps/platform/charts/02_longhorn/`:
+The classes always exist. The two backup `RecurringJob`s render only `{{- if backupTarget }}`. So no backup runs
+until `10d_longhorn_backup.sh` sets the target. An empty value means off, as for CNPG and Redis. The
+`filesystem-trim` job always renders, because it needs no S3 and every volume needs it.
 
-- `values.yaml` `defaultBackupStore`: `backupTarget` (`s3://<bucket>@<region>/longhorn/`) plus
-  `backupTargetCredentialSecret`, filled by the script.
-- `templates/recurringjobs.yaml`: `backup-daily` (03:00 UTC, retain 7) and `backup-weekly` (Sun 04:00 UTC,
-  retain 8, about 2 months), both in the `backup` group. No snapshot job, because local snapshots cost scarce Pi
-  NVMe. Plus `filesystem-trim-weekly`, which is not a backup at all: it hands blocks a filesystem has freed back
-  to the SSD, which is what keeps a thin volume thin. It reaches every volume through Longhorn's `default` group,
-  because a volume with no recurring job of its own lands there automatically, and because a StorageClass's
-  `parameters` are immutable so adding a selector to a live class means deleting the class first.
-- `templates/storageclasses.yaml`: the three classes. The `-with-backups` one carries a `recurringJobSelector` for
-  the `backup` group, so every volume it provisions gets both backup tiers automatically. Having a selector at all
-  is also what keeps those volumes OUT of `default`, so add `trim` there too if it ever gains a consumer.
-- `templates/backup-s3-sealedsecret.yaml`: the sealed `longhorn-backup-s3` with keys `AWS_ACCESS_KEY_ID` and
-  `AWS_SECRET_ACCESS_KEY`, the names Longhorn's S3 target expects, in `longhorn-system`.
+The pieces, all under `argo_apps/platform/charts/02_longhorn/`:
 
-Retention is Longhorn's, not S3's. The `longhorn/` prefix is lifecycle-exempt, so the RecurringJob `retain` counts
-are the only thing that deletes anything: Longhorn prunes old backups and the blocks they no longer reference.
+- **`values.yaml` `defaultBackupStore`:** `backupTarget` (`s3://<bucket>@<region>/longhorn/`) and
+  `backupTargetCredentialSecret`. The script fills both.
+- **`templates/recurringjobs.yaml`:**
+  - `backup-daily`: 03:00 UTC, keeps 7. In the `backup` group.
+  - `backup-weekly`: Sunday 04:00 UTC, keeps 8, about 2 months. In the `backup` group.
+  - No snapshot job, because local snapshots use scarce Pi NVMe space.
+  - `filesystem-trim-weekly` is not a backup. It returns blocks the filesystem has freed to the SSD, which keeps
+    a thin volume thin. It reaches every volume through Longhorn's `default` group. A volume with no recurring
+    job of its own joins `default` automatically. A StorageClass's `parameters` cannot change, so a selector on a
+    live class means deleting the class first.
+- **`templates/storageclasses.yaml`:** the three classes. The `-with-backups` class has a `recurringJobSelector`
+  for the `backup` group, so every volume it creates gets both backup jobs. That selector also keeps those
+  volumes out of `default`. Add `trim` to it when the class gets its first volume.
+- **`templates/backup-s3-sealedsecret.yaml`:** written by `10d`. It holds the sealed `longhorn-backup-s3` in
+  `longhorn-system`, with the keys `AWS_ACCESS_KEY_ID` and `AWS_SECRET_ACCESS_KEY`. Longhorn's S3 target expects
+  those names.
 
-That makes three retention models in this doc:
+Longhorn owns this retention, not S3. The `longhorn/` prefix has no lifecycle rule. Only the `retain` counts on
+the RecurringJobs delete anything. Longhorn prunes old backups and the blocks they no longer use.
+
+So this doc has three retention models:
 
 | Consumer | Object shape | Who expires |
 |---|---|---|
-| CNPG | WAL and base sets | Barman, with an aligned S3 expiry as backstop |
-| Redis, VM/VL | self-contained dumps and daily exports | S3 lifecycle |
-| Longhorn | incremental dedup chains | Longhorn's `retain`. S3 must NOT expire |
+| CNPG | WAL and base sets | Barman, with an equal S3 expiry as backstop |
+| Redis, VM/VL | dumps and daily exports that each stand alone | the S3 lifecycle |
+| Longhorn | incremental, deduplicated chains | Longhorn's `retain`. S3 must not expire them |
 
-Consistency is crash-consistent, like pulling the power cord. Fine for sqlite, whose journal survives power loss. A
-future app needing app-consistency should dump itself to a backed-up volume, the way CNPG and Redis do.
+A Longhorn backup is crash-consistent, like a power cut. That is fine for sqlite, whose journal survives power
+loss. An app that needs a consistent backup should dump itself to a backed-up volume, as CNPG and Redis do.
 
 ### Turning Longhorn backups on
 
 ```sh
-make s3-backup-bucket           # 13: Terraform (idempotent), also splits the lifecycle per-prefix
-make configure-longhorn-backup  # 16: backup target into 02_longhorn values + seal creds into longhorn-system
-git add -A && git commit && git push   # ArgoCD applies backupTarget + creds + the classes + RecurringJobs
-# verify:
+make s3-backup-bucket           # 10a: Terraform (idempotent). Sets the lifecycle rule per prefix
+make configure-longhorn-backup  # 10d: backup target into 02_longhorn values, creds sealed into longhorn-system
+git add -A && git commit && git push   # Argo CD applies backupTarget, the creds, the classes and RecurringJobs
+# check:
 kubectl -n longhorn-system get backuptargets.longhorn.io default -o jsonpath='{.status.available}{"\n"}'  # true
-kubectl -n longhorn-system get recurringjobs.longhorn.io      # backup-daily + backup-weekly (+ filesystem-trim-weekly)
+kubectl -n longhorn-system get recurringjobs.longhorn.io      # backup-daily, backup-weekly, filesystem-trim-weekly
 kubectl get storageclass | grep longhorn-                     # ephemeral, ephemeral-local, retained-with-backups
 ```
 
 ### Restore
 
-`make restore-longhorn` restores a volume from S3. This cluster runs with the CSI snapshotter sidecar DISABLED
-(`csi.snapshotterReplicaCount: 0`), so the Kubernetes `VolumeSnapshot` restore path is unavailable.
+`make restore-longhorn` restores a volume from S3. The CSI snapshotter sidecar is off in this cluster
+(`csi.snapshotterReplicaCount: 0`). So the Kubernetes `VolumeSnapshot` restore path does not work.
 
-The script uses Longhorn's native path instead: it discovers `BackupVolume`s, picks a `Backup` (latest or named,
-reading the exact `fromBackup` URL off its `.status.url`), then creates a Longhorn `Volume` CR with
-`spec.fromBackup` plus a static PV and PVC in the target namespace. Non-destructive: it never touches the source
-backups or a live volume, and refuses to overwrite. Then point your workload at the restored PVC.
+The script uses Longhorn's native path instead:
+
+1. It lists the `BackupVolume`s.
+2. It picks a `Backup`, the latest or a named one. It reads the exact `fromBackup` URL from the backup's
+   `.status.url`.
+3. It creates a Longhorn `Volume` CR with `spec.fromBackup`, plus a static PV and PVC in the target namespace.
+
+The script never touches the source backups or a live volume, and it refuses to overwrite. Afterwards, point
+your workload at the restored PVC.
 
 ```sh
-make restore-longhorn   # interactive: lists BackupVolumes, prompts for volume + target namespace
-# or non-interactive:
+make restore-longhorn   # interactive: lists BackupVolumes, asks for the volume and the target namespace
+# or without prompts:
 bash lib/shell/recover_longhorn_from_s3.sh --volume pvc-xxxx --backup latest --target-ns myns --name myns-data-restore --apply
 ```
 
-Full-cluster recovery ordering:
+Recovery of the whole cluster:
 
-1. `make restore-secrets-key` (06), so the committed `longhorn-backup-s3` decrypts.
-2. Let the platform sync. Longhorn's `default` BackupTarget goes `available` and auto-discovers the
-   `BackupVolume`s from S3 within the `pollInterval`.
-3. `make restore-longhorn` per volume you want back.
+1. Run `make restore-secrets-key` (step 03), so the committed `longhorn-backup-s3` decrypts.
+2. Let the platform sync. Longhorn's `default` BackupTarget becomes `available`. Within the `pollInterval`, it
+   finds the `BackupVolume`s in S3.
+3. Run `make restore-longhorn` for each volume you want back.
 
-Redis restores from its RDB dumps and the monitoring volumes from their VM/VL exports; both otherwise rebuild
-empty. As with everything here, the whole path hinges on the off-repo sealed-secrets key: without it the S3 creds
-cannot decrypt and the backups are unreachable.
+Redis restores from its RDB dumps. The monitoring volumes restore from their VM/VL exports. Everything else on
+Longhorn comes back empty. Every path here needs the sealed-secrets key, which lives outside the repo. Without
+it, the S3 credentials cannot decrypt, and the backups are out of reach.
 
 ## VictoriaMetrics and VictoriaLogs backups
 
-Both stores back up under the `vm/` prefix. They sit on `longhorn-r2-ephemeral`, and `deletionProtection` on their
-CRs covers an accidental prune but NOT a total loss of both replicas, the cluster, or the site. This closes that
-gap with an app-consistent logical export, done by one central platform app, `08_vm_backup` (wave 8, ns
-`monitoring`): a single daily CronJob streams both stores to S3 with no PVC access needed.
+VictoriaMetrics and VictoriaLogs (VM/VL) back up under the `vm/` prefix. Both stores use `longhorn-r2-ephemeral`.
+`deletionProtection` on their CRs covers an accidental prune. It does not cover the loss of both replicas, the
+cluster or the site. A logical export closes that gap, and it is consistent for the app.
 
-Why export and import rather than `vmbackup`: the obvious tool is open-source but needs FILESYSTEM access to the
-store's data dir, an RWO Longhorn PVC already attached to the running pod, which a separate job cannot co-mount.
-The operator's `VMSingle`/`VLSingle` spec has no supported general sidecar field, and the operator's automated
-`vmBackup` sidecar uses `vmbackupmanager`, which is Enterprise-only. So we take the FOSS route VictoriaMetrics
-itself documents for migration and backup, the HTTP export/import API, which needs no volume access and mirrors the
-Redis central-CronJob shape.
+One central platform app does this: `08_vm_backup`, on wave 8, in namespace `monitoring`. A single daily CronJob
+streams both stores to S3 and needs no PVC access.
 
-Each 01:00 run backs up only the PREVIOUS full UTC day, a bounded daily slice:
+It uses export and import, not `vmbackup`:
 
-- metrics: `GET /api/v1/export/native?match[]={__name__!=""}&start&end`, one request, gzipped to
-  `s3://<bucket>/vm/metrics/<YYYYMMDD>.native.gz`
-- logs: `GET /select/logsql/query?query=_time:[start,end)`, **24 requests, one per UTC hour**, gzipped to
-  `s3://<bucket>/vm/logs/<YYYYMMDD>T<HH>.jsonl.gz`
+- `vmbackup` is open source, but it needs file access to the store's data directory. That is an RWO Longhorn PVC,
+  already attached to the running pod. A separate Job cannot mount it too.
+- The operator's `VMSingle` and `VLSingle` specs have no supported field for a general sidecar.
+- The operator's automated `vmBackup` sidecar uses `vmbackupmanager`, which is Enterprise-only.
+- So the Job uses the HTTP export and import API. VictoriaMetrics documents this free path for migration and
+  backup. It needs no volume access, and it has the same central-CronJob shape as the Redis backup.
 
-Why the logs leg is hourly and the metrics leg is not: a day of logs is ~1.4GB raw against ~60MB for an hour,
-and gzip on an arm64 node is slower than vlsingle streams it. The response then stays open past vlsingle's
-`-search.maxQueryDuration`, which is the hard per-query ceiling, and it hangs up mid-stream with a 200 already
-sent, so the S3 object is a truncated day. The `timeout=` URL arg does NOT raise that ceiling despite looking
-like it should; only the flag does, and `05_victoria_logs` sets it to `5m` for headroom. An hour is ~1-2s.
-Keys stay flat rather than nested under a per-day folder, so they still sort chronologically in one
-`aws s3 ls`, which is what the restore script relies on.
+Each run at 01:00 UTC backs up only the previous full UTC day:
 
-Pieces, all under `argo_apps/platform/charts/08_vm_backup/` plus two netpol edits on the stores:
+- **Metrics:** `GET /api/v1/export/native?match[]={__name__!=""}&start&end`, in one request. Gzipped to
+  `s3://<bucket>/vm/metrics/<YYYYMMDD>.native.gz`.
+- **Logs:** `GET /select/logsql/query?query=_time:[start,end)`, in 24 requests, one per UTC hour. Gzipped to
+  `s3://<bucket>/vm/logs/<YYYYMMDD>T<HH>.jsonl.gz`.
 
-- `values.yaml`: `bucket` and `region` filled by `10e_vm_backup.sh` (empty means the feature is off and nothing
-  renders), `prefix: vm/`, the `schedule` at 01:00 UTC to offset from the 02:00 and 03:00 crowd, and the two store
-  Service URLs.
-- `templates/cronjob.yaml`: one container (`alpine/k8s`, for curl, aws-cli and gzip) that streams each dump with
-  `curl | gzip | aws s3 cp -` and no local disk. A failed export OR upload deletes the partial object and fails the
-  Job so the alert fires.
-- `templates/networkpolicy.yaml`: egress-only lockdown to DNS, S3 and the two stores. The stores' own ingress
-  allowlists each add `app.kubernetes.io/name: vm-backup` so this pod is admitted.
-- `templates/vm-backup-s3-sealedsecret.yaml`: the sealed `vm-backup-s3` in `monitoring`.
+The logs export runs per hour because of size:
 
-Retention is S3's, the same model as Redis: each daily slice is self-contained, so age-expiry just drops the oldest
+- A day of logs is about 1.4 GB raw. An hour is about 60 MB.
+- On an arm64 node, gzip is slower than vlsingle streams the data. A full day keeps the response open past
+  vlsingle's `-search.maxQueryDuration`, the hard limit per query.
+- At that limit, vlsingle closes the stream after it has already sent a 200. The S3 object then holds a
+  truncated day.
+- The `timeout=` URL argument does not raise that limit, although its name suggests it. Only the flag does.
+  `05_victoria_logs` sets it to `5m` for headroom. One hour takes about 1 to 2 seconds.
+- The keys are flat, not nested in a folder per day. So they still sort by time in one `aws s3 ls`, and the
+  restore script depends on that.
+
+The pieces, all under `argo_apps/platform/charts/08_vm_backup/`, plus a network-policy change on each store:
+
+- **`values.yaml`:**
+  - `bucket` and `region`, filled by `10e_vm_backup.sh`. Empty means the feature is off and nothing renders.
+  - `prefix: vm/`.
+  - `schedule` at 01:00 UTC, away from the jobs at 02:00 and 03:00.
+  - The Service URLs of the two stores.
+- **`templates/cronjob.yaml`:** one container, `alpine/k8s`, for curl, aws-cli and gzip. It streams each dump with
+  `curl | gzip | aws s3 cp -` and uses no local disk. If an export or an upload fails, the Job deletes the partial
+  object and fails, so the alert fires.
+- **`templates/networkpolicy.yaml`:** allows egress only, to DNS, S3 and the two stores. The ingress allowlist of
+  each store adds `app.kubernetes.io/name: vm-backup`, so this pod gets in.
+- **`templates/vm-backup-s3-sealedsecret.yaml`:** written by `10e`. It holds the sealed `vm-backup-s3` in
+  `monitoring`.
+
+S3 owns this retention, the same model as Redis. Each daily slice stands alone, so expiry by age drops the oldest
 days.
 
-Why daily slices rather than one full dump: a full-store export's peak memory grows with the dataset and eventually
-OOMs the store, which it did. A fixed one-day window keeps peak memory flat forever. Trade-off: a full recovery
-replays EVERY slice, not one file.
+The Job exports one day at a time, not the whole store. A full export's peak memory grows with the data, and in
+the end it runs the store out of memory. A one-day window keeps peak memory flat. The cost: a full recovery
+replays every daily slice, not one file.
 
-A gap day from a failed run leaves a hole. Fill it by re-running the job with `DAY` set, any time while the day
+A failed run leaves a gap for that day. To fill it, run the Job again with `DAY` set. This works while the day
 is still inside the store's retention:
 
 ```sh
@@ -426,147 +480,166 @@ kubectl -n monitoring create job --from=cronjob/vm-backup backfill-20260829 --dr
 kubectl -n monitoring logs job/backfill-20260829 -f
 ```
 
-One caveat left: the VictoriaLogs JSONL round-trip is best-effort on stream-field fidelity, because stream labels
-are re-derived on import.
+One limit remains. The VictoriaLogs JSONL round trip may not keep stream fields exactly, because the import
+derives stream labels again.
 
 ### Turning VM/VL backups on
 
 ```sh
-make s3-backup-bucket       # 13: Terraform (idempotent), adds the vm/ lifecycle rule
-make configure-vm-backup    # 17: bucket/region into 08_vm_backup values + seal creds into monitoring
-git add -A && git commit && git push   # ArgoCD applies the app (wave 8) + the sealed creds
-# verify:
+make s3-backup-bucket       # 10a: Terraform (idempotent). Adds the vm/ lifecycle rule
+make configure-vm-backup    # 10e: bucket and region into 08_vm_backup values, creds sealed into monitoring
+git add -A && git commit && git push   # Argo CD applies the app (wave 8) and the sealed creds
+# check:
 kubectl -n monitoring create job --from=cronjob/vm-backup vm-backup-manual
 kubectl -n monitoring logs job/vm-backup-manual -f
-aws s3 ls s3://$S3_BACKUP_BUCKET/vm/ --recursive     # 1x vm/metrics/<day>.native.gz + 24x vm/logs/<day>T<hh>.jsonl.gz
+aws s3 ls s3://$S3_BACKUP_BUCKET/vm/ --recursive     # 1x vm/metrics/<day>.native.gz, 24x vm/logs/<day>T<hh>.jsonl.gz
 ```
 
 ### Restore
 
-`make restore-vm` streams a chosen export back into the LIVE store's `/import` endpoint via a temporary pod in
-`monitoring`, reusing the sealed creds and the `vm-backup` ingress allowlist, with a break-glass egress netpol
-letting it reach S3 and the store. Non-destructive, because `/import` MERGES, so for a clean recovery point it at a
-fresh or empty store.
+`make restore-vm` streams a chosen export into the `/import` endpoint of the live store. It does this through a
+temporary pod in `monitoring`:
+
+- The pod reuses the sealed credentials and the `vm-backup` ingress allowlist.
+- A break-glass egress network policy lets it reach S3 and the store.
+- `/import` merges and deletes nothing. For a clean recovery, point it at a new or empty store.
 
 ```sh
-make restore-vm   # interactive: prompts for kind (metrics|logs) + target (all|latest|<s3-key>)
-# or non-interactive. `all` replays every daily slice (full recovery), `latest` just the newest day:
+make restore-vm   # interactive: asks for the kind (metrics|logs) and the target (all|latest|<s3-key>)
+# or without prompts. `all` replays every daily slice (full recovery), `latest` only the newest day:
 bash lib/shell/recover_vm_from_s3.sh --kind metrics --target all --apply
 ```
 
-Full-cluster recovery ordering: `make restore-secrets-key` (06), let the platform sync so the stores come up empty,
-then `make restore-vm` for each kind to backfill. Same key dependency as every other backup here.
+Recovery of the whole cluster:
+
+1. Run `make restore-secrets-key` (step 03).
+2. Let the platform sync. The stores come up empty.
+3. Run `make restore-vm` for each kind to fill them.
+
+The same key dependency applies as for every other backup here.
 
 ## Recovery paths
 
-Durability is two layers, and only the second has a recovery step:
+Durability has two layers. Only the second has a recovery step:
 
-- In-cluster, nothing to run: synchronous streaming replication across the instances, Longhorn's 2 volume
-  replicas under each of them, plus orphan-not-delete. Manifests leaving
-  git do NOT delete the `Cluster`, thanks to `Prune=false,Delete=false` on the whole DB unit, so it keeps running
-  unmanaged and restoring the files re-adopts it. `05_orphan_exporter` plus the `orphan` alert group make that
-  state loud.
-- Off-cluster in S3: Barman Cloud, continuous WAL plus a daily base, for real data loss: a dropped table, a bad
-  migration, or losing every replica of a volume at once. Losing a MACHINE no longer needs it, since the volume
-  reattaches on a survivor ([13_node_loss.md](13_node_loss.md)).
+- **In the cluster, nothing to run.**
+  - Synchronous streaming replication across the Postgres instances.
+  - Longhorn's 2 volume replicas under each instance.
+  - Orphan instead of delete. `Prune=false,Delete=false` is set on the whole database unit. When its manifests
+    leave git, Argo CD does not delete the `Cluster`. It keeps running unmanaged, and restoring the files in git
+    re-adopts it. `05_orphan_exporter` and the `orphan` alert group make that state visible.
+- **Off the cluster, in S3.** Barman Cloud, with continuous WAL and a daily base backup. This is for real data
+  loss: a dropped table, a bad migration, or the loss of every replica of a volume at once. The loss of a machine
+  does not need it, because the volume reattaches on a surviving node ([13_node_loss.md](13_node_loss.md)).
 
-Pick by what is actually wrong:
+Pick the path by what is wrong:
 
 | Symptom | What to do |
 |---|---|
-| DB still running, app permanently OutOfSync | Restore the workload's files in git and push. Argo re-adopts it, no data moves |
-| `Cluster` is GONE and you want it back as itself | `make restore-cnpg`, mode in-place |
-| DB is fine; verify a backup, read old rows, test a PITR target | `make restore-cnpg`, mode side |
-| Whole cluster rebuilt | `make restore-secrets-key` first, so the sealed S3 creds decrypt, then mode in-place per DB |
-| A machine died or was replaced | Nothing here, and nothing to delete. The volume reattaches on a survivor and Postgres replays WAL; an HA primary is replaced by a promoted standby: [13_node_loss.md](13_node_loss.md) |
-| Every replica of one volume is gone (`faulted`) | `make restore-cnpg` for a database; `make restore-longhorn` for a volume on the backed-up class |
+| The database runs, but the app stays OutOfSync | Restore the workload's files in git and push. Argo CD re-adopts it. No data moves |
+| The `Cluster` is gone and you want it back under its own name | `make restore-cnpg`, mode `in-place` |
+| The database is fine. You want to check a backup, read old rows, or test a PITR target | `make restore-cnpg`, mode `side` |
+| You rebuilt the whole cluster | `make restore-secrets-key` first, so the sealed S3 credentials decrypt. Then mode `in-place` per database |
+| A machine died or was replaced | Nothing here, and nothing to delete. The volume reattaches on a surviving node and Postgres replays WAL. A promoted standby replaces an HA primary. See [13_node_loss.md](13_node_loss.md) |
+| Every replica of one volume is gone (`faulted`) | `make restore-cnpg` for a database. `make restore-longhorn` for a volume on the backed-up class |
 
 ### `make restore-cnpg`
 
-`lib/shell/recover_cnpg_from_s3.sh` is the runbook, executable. It asks for a mode, namespace and database name,
-then in both modes lists every catalog it can see, checks the S3 creds Secret, and proves a COMPLETED base backup
-exists, both from the ObjectStore status and independently by listing S3 with the deployer creds.
+`lib/shell/recover_cnpg_from_s3.sh` is the runbook as a script. It asks for a mode, a namespace and a database
+name. In both modes it then:
 
-That last check is the one that matters: WAL alone has no recovery point, and it is what catches a
-`destinationPath` change having orphaned the old catalog at a different prefix.
+1. Lists every catalog it can see.
+2. Checks the Secret with the S3 credentials.
+3. Proves that a completed base backup exists. It checks the ObjectStore status, and it also lists S3 with the
+   deployer credentials.
 
-Mode `side` applies one throwaway single-instance `Cluster` named `<db>-restore` reading the same catalog, latest or
-a PITR timestamp. It does not archive WAL and is not a GitOps object. Data at `<name>-rw.<ns>`; delete it when done.
-Refuses to overwrite an existing cluster.
+The last check matters most. WAL alone gives no recovery point. The S3 listing also catches a changed
+`destinationPath` that left the old catalog behind at a different prefix.
 
-Mode `in-place` drives the chart's `restore` and `deletionProtection` knobs, so it spans your commits and is
-RESUMABLE: run it, push what it edited, run it again. It prints its phase every time.
+**Mode `side`** applies one throwaway single-instance `Cluster` named `<db>-restore`. It reads the same catalog,
+at the latest point or at a PITR timestamp. It does not archive WAL and is not a GitOps object. Connect to it at
+`<name>-rw.<ns>`, and delete it when you are done. It refuses to overwrite an existing cluster.
 
-1. Enable. Finds the workload chart and alias owning the DB, sets `<alias>.restore.enabled: true` plus `targetTime`
-   for PITR, drops `deletionProtection` to false, and prints the commit. A HEALTHY live `Cluster` gets a
-   confirmation prompt first, since continuing rewinds it to the catalog; a broken or absent one just proceeds.
-2. Delete and wait. Refuses until the live `Cluster` carries `cnpg.io/skipEmptyWalArchiveCheck`, which is what
-   proves ArgoCD has synced the restore render, then deletes it so ArgoCD recreates it already carrying
-   `bootstrap.recovery`. Watches the base-backup pull, WAL replay, promotion and the replica join. The recovery job
-   is one-shot and the operator never retries it, so a failed attempt is offered for deletion. That is the normal
-   way to resume after fixing anything.
-3. Verify and finish. Prints `cnpg status`, every restored table with its live row count, the new timeline, and
-   whether the restored DB is backed up again. Offers to roll every workload referencing the regenerated
-   `<db>-app` Secret. Then removes `restore`, sets `deletionProtection: true`, and prints the final commit.
+**Mode `in-place`** drives the chart's `restore` and `deletionProtection` knobs. So it spans your commits, and it
+is resumable: run it, push what it changed, and run it again. It prints its current phase each time.
 
-Between phases you run the `git add/commit/push` it prints. No script here runs git.
+1. **Enable.** It finds the workload chart and the alias that own the database. It sets
+   `<alias>.restore.enabled: true`, and `targetTime` for PITR. It sets `deletionProtection` to false and prints
+   the commit to make. If the live `Cluster` is healthy, it asks first, because the restore rewinds it to the
+   catalog. If the `Cluster` is broken or absent, it just continues.
+2. **Delete and wait.** It waits until the live `Cluster` has `cnpg.io/skipEmptyWalArchiveCheck`. That annotation
+   proves Argo CD has synced the restore. It then deletes the `Cluster`, and Argo CD recreates it with
+   `bootstrap.recovery`. The script watches the base-backup download, the WAL replay, the promotion and the
+   replica join. The operator runs the recovery Job once and never retries it. So the script offers to delete a
+   failed attempt. That is the normal way to resume after you fix the cause.
+3. **Check and finish.** It prints `cnpg status`, every restored table with its live row count, the new timeline,
+   and whether the restored database is backed up again. It offers to restart every workload that uses the new
+   `<db>-app` Secret. It then removes `restore`, sets `deletionProtection: true`, and prints the final commit.
 
-Phase 2 has to tell the `Cluster` it must delete from the one the restore already rebuilt, or a re-run would wipe a
-good recovery. It uses the `-full-recovery` bootstrap job while that exists, and afterwards the `Cluster` being
-newer than the commit that enabled the restore, since CNPG deletes the job once the recovery lands. Those can be
-under a minute apart, so `--yes` cannot delete a `Cluster` that is SERVING: that one always asks, whichever way it
-read the clocks. A broken `Cluster` is unambiguous and stays automatable.
+Between phases, you run the `git add`, `commit` and `push` it prints. No script here runs git.
 
-Three facts the script relies on, worth knowing when it goes sideways:
+Phase 2 must not delete a `Cluster` that the restore has already rebuilt. A re-run would wipe a good recovery. It
+tells the two apart like this:
 
-- A restore always lands on a NEW timeline and re-archives into the same prefix, so the plugin's pre-flight
-  `barman-cloud-check-wal-archive` would abort with `Expected empty archive`. The chart stamps
-  `cnpg.io/skipEmptyWalArchiveCheck: enabled` when recovering from its own catalog, and deliberately not when
-  `restore.serverName` names a different source, where the check is protective.
-- Deleting a `Cluster` takes its `<db>-app` Secret with it, so the password is REGENERATED. The chart's recovery
-  block sets `database: app` and `owner: app` so CNPG realigns the role, but consumers still need a restart.
-- Turning `restore` back off is inert, since `spec.bootstrap` is never re-read. Leaving it on would make a future
-  re-create silently restore instead of running `initdb`.
+- While the `-full-recovery` bootstrap Job exists, the `Cluster` is the rebuilt one.
+- After CNPG deletes that Job, a `Cluster` newer than the commit that enabled the restore is the rebuilt one.
+
+Those two events can be under a minute apart. So `--yes` cannot delete a `Cluster` that serves traffic. The
+script always asks for that one, whatever the timestamps say. A broken `Cluster` is not ambiguous, so `--yes`
+still works for it.
+
+When the script fails, these three facts help:
+
+- **A restore always starts a new timeline** and writes WAL into the same prefix. The plugin's pre-flight
+  `barman-cloud-check-wal-archive` would then stop with `Expected empty archive`. So the chart sets
+  `cnpg.io/skipEmptyWalArchiveCheck: enabled` when it recovers from its own catalog. It does not set it when
+  `restore.serverName` names a different source, because there the check protects you.
+- **Deleting a `Cluster` also deletes its `<db>-app` Secret**, so CNPG generates a new password. The chart's
+  recovery block sets `database: app` and `owner: app`, so CNPG updates the role. The apps that use it still need
+  a restart.
+- **Turning `restore` off again changes nothing** in the running cluster, because CNPG reads `spec.bootstrap`
+  only once. If you left it on, a future re-create would restore from the catalog instead of running `initdb`.
 
 ### Deleting a database on purpose
 
-Two commits, never `kubectl delete`:
+Use two commits, never `kubectl delete`:
 
-1. Set `deletionProtection: false` for that instance and push, which drops the sync-options.
-2. Remove its values block and `Chart.yaml` alias and push. The prune now cascades, PVCs included.
+1. Set `deletionProtection: false` for that instance and push. This removes the sync options that protect it.
+2. Remove its values block and its `Chart.yaml` alias, and push. The prune now deletes everything, PVCs included.
 
-Never leave a DB sitting on `false`.
+Never leave a database on `deletionProtection: false`.
 
-### Rebuild vs reset, and why rebuild wipes the backups
+### Rebuild vs reset, and why a rebuild wipes the backups
 
-A REBUILD is a deliberate full fresh start. It empties the S3 bucket via `10a wipe`, keeping the bucket and
-IAM. It does NOT touch the nodes: wiping the Longhorn volumes means resetting the machines, which is your node tooling's
-`make reset-cluster`, run before this. A rebuild on un-reset nodes redelivers the platform onto the existing
-volumes.
+A rebuild is a deliberate fresh start of the platform. It empties the S3 bucket with `10a wipe`, and keeps the
+bucket and IAM. It does not touch the nodes. To wipe the Longhorn volumes, reset the machines with your node
+tooling's `make reset-cluster` before the rebuild. A rebuild on nodes that were not reset delivers the platform
+onto the existing volumes.
 
-Wiping the backups is required for correctness, not a side effect. The rebuilt, same-named clusters would
-otherwise inherit the old backup path, and Barman refuses to mix a new Postgres systemID into an existing server's
-data, so the `cnpg-wal-archive-failing` alert would fire forever. Emptying the bucket lets the fresh clusters start
-a clean history.
+The rebuild must wipe the backups. The rebuilt clusters have the same names, so they would reuse the old backup
+path. Barman refuses to mix a new Postgres system ID into a server's existing data. `cnpg-wal-archive-failing`
+would then fire forever. An empty bucket lets the new clusters start a clean history.
 
-So a rebuild DISCARDS your backups. If you want the old data, restore it BEFORE rebuilding, or do not rebuild. To
-recover specific data without a rebuild, use `make restore-cnpg` against the live bucket.
+So a rebuild deletes your backups. If you want the old data, restore it before you rebuild, or do not rebuild.
+To recover specific data without a rebuild, run `make restore-cnpg` against the live bucket.
 
-### Recreating ONE cluster hits the same wall
+### Recreating one cluster
 
-Deleting and recreating a single `Cluster` under the same name, e.g. to change its storage class, which is
-immutable, gives it a new `initdb` systemID against a catalog that still holds the old one. Barman refuses:
+This has the same problem as a rebuild. Say you delete and recreate one `Cluster` under the same name, for
+example to change its storage class, which cannot change in place. The new `initdb` creates a new system ID. The
+catalog still holds the old one, and Barman refuses:
 
 ```
 WAL archive check failed for server <name>: Expected empty archive
 ```
 
-`ContinuousArchiving` goes `False` and stays there. The database serves fine and nothing else looks wrong, so
-check that condition after any recreate. `restore.enabled` is NOT the fix, and neither is stamping
-`cnpg.io/skipEmptyWalArchiveCheck` permanently: that only silences the guard against mixing two systemIDs in one
-catalog.
+`ContinuousArchiving` becomes `False` and stays there. The database serves normally and nothing else looks wrong,
+so check that condition after every recreate.
 
-Empty just that server's prefix, not the whole bucket:
+`restore.enabled` does not fix this. A permanent `cnpg.io/skipEmptyWalArchiveCheck` does not fix it either. It
+only turns off the guard against two system IDs in one catalog.
+
+Empty that one server's prefix, not the whole bucket:
 
 ```bash
 aws s3 rm --recursive "s3://<bucket>/cnpg/<namespace>/<cluster>-pg<major>/"
@@ -574,76 +647,86 @@ kubectl -n <ns> delete backups.postgresql.cnpg.io --all   # they point at object
 kubectl -n <ns> exec <primary> -c postgres -- psql -U postgres -tAc 'select pg_switch_wal()'
 ```
 
-Archiving recovers within a minute. Then take a base backup at once, with a `Backup` CR using `method: plugin`,
-rather than waiting for the 02:00 schedule: until one completes there is no restore point at all.
+Archiving recovers within a minute. Then take a base backup at once with a `Backup` CR that sets
+`method: plugin`. Do not wait for the 02:00 schedule: until a base backup completes, there is no restore point.
 
-A base backup is not restorable the moment it reports `completed`. Recovery needs the WAL segment holding the
-backup-end record, and that only reaches S3 after `archive_timeout` (15 min) or a segment fill, so a restore
-attempted before then dies on `WAL ends before end of online backup` and retries until the segment lands. To
-restore immediately, force the switch:
+A base backup is not restorable at the moment it reports `completed`. Recovery needs the WAL segment that holds
+the backup-end record. That segment reaches S3 only after `archive_timeout` (15 minutes) or when it fills. A
+restore before then fails with `WAL ends before end of online backup`, and retries until the segment lands. To
+restore at once, force the switch:
 
 ```bash
 kubectl -n <ns> exec <primary> -c postgres -- psql -U postgres -tAc 'select pg_switch_wal()'
 ```
 
-Tearing the bucket down is a separate, explicit act: `make s3-backup-destroy` empties it AND `terraform
-destroy`s it plus the IAM writer. Nothing calls that for you, and wiping the nodes knows
-nothing about S3: it wipes node state only.
+To remove the bucket, run `make s3-backup-destroy` on its own. It empties the bucket, then runs `terraform
+destroy` on the bucket and the IAM writer. Nothing runs it for you. Wiping the nodes does not touch S3. It wipes
+only node state.
 
-## Verify end to end
+## Check end to end
 
-1. Bucket: `aws s3api get-bucket-lifecycle-configuration --bucket <bucket>` shows the per-prefix rules, encryption
-   is on, public access is blocked, and the IAM writer is scoped to the bucket. `make s3-backup-bucket` again is a
-   no-op.
-2. Plugin synced: platform Healthy, `kubectl get crd objectstores.barmancloud.cnpg.io`, and the `barman-cloud`
-   Deployment Ready in `cnpg-system`.
-3. WAL archiving live, the check that matters most: the Cluster's `ContinuousArchiving` condition is `True` and
-   objects appear under `s3://<bucket>/cnpg/<ns>/<cluster>-pg<major>/wals/`. The daily base backup runs on a standby pod.
-   Read the recovery point off the OBJECTSTORE, not the Cluster: under the plugin
-   `Cluster.status.firstRecoverabilityPoint` stays permanently empty even with a completed base backup in S3.
-   Everything downstream follows from that. `05_orphan_exporter` reads the ObjectStore and publishes
-   `cnpg_backup_recoverable`, `cnpg_backup_last_success_seconds` and `cnpg_backup_first_recoverability_seconds`;
-   `cnpg-backup-too-old` alerts on the second of those, because CNPG's own
-   `cnpg_collector_last_available_backup_timestamp` is flat 0 here and an alert on it can never fire; and the
-   `cnpg` dashboard's Backups panels are rewritten onto the same two (see
-   [06_monitoring.md](06_monitoring.md)). There are also no `backups.postgresql.cnpg.io` objects to list under
-   the plugin, so a runbook step that says `kubectl get backup` will always come back empty.
+1. **Bucket.** `aws s3api get-bucket-lifecycle-configuration --bucket <bucket>` shows one rule per prefix.
+   Encryption is on, public access is blocked, and the IAM writer is scoped to the bucket. A second
+   `make s3-backup-bucket` changes nothing.
+2. **Plugin synced.** The platform is Healthy, `kubectl get crd objectstores.barmancloud.cnpg.io` finds the CRD,
+   and the `barman-cloud` Deployment in `cnpg-system` is Ready.
+3. **WAL archiving live.** This check matters most.
+   - The Cluster's `ContinuousArchiving` condition is `True`.
+   - Objects appear under `s3://<bucket>/cnpg/<ns>/<cluster>-pg<major>/wals/`.
+   - The daily base backup runs on a standby pod.
+   - Read the recovery point from the ObjectStore, not the Cluster. Under the plugin,
+     `Cluster.status.firstRecoverabilityPoint` stays empty, even with a completed base backup in S3.
+   - `05_orphan_exporter` reads the ObjectStore. It publishes `cnpg_backup_recoverable`,
+     `cnpg_backup_last_success_seconds` and `cnpg_backup_first_recoverability_seconds`.
+   - `cnpg-backup-too-old` alerts on `cnpg_backup_last_success_seconds`. CNPG's own
+     `cnpg_collector_last_available_backup_timestamp` stays at 0 here, so an alert on it could never fire.
+   - The Backups panels on the `cnpg` dashboard use the same two metrics. See
+     [06_monitoring.md](06_monitoring.md).
+   - Under the plugin, there are no `backups.postgresql.cnpg.io` objects to list. A runbook step that lists
+     them always comes back empty.
 
    ```bash
    kubectl -n <ns> get objectstores.barmancloud.cnpg.io -o \
      jsonpath='{range .items[*]}{.metadata.name}{"\t"}{.status.serverRecoveryWindow}{"\n"}{end}'
    ```
-4. RPO: `SELECT pg_switch_wal();` on the primary produces a new object under `wals/` within seconds, and `SHOW
-   archive_timeout;` reads `15min`.
-5. Restore drill: `make restore-cnpg`, mode `side`, target `latest`. It reaches Healthy from S3 and serves data;
-   delete it after. Repeat with a PITR `targetTime`. A full in-place drill, deleting the DB and bringing it back, is
-   the same script in mode `in-place`. Also check `cnpg_backup_recoverable` reads 1 per DB: it is the only signal
-   that catches an empty catalog sitting behind healthy WAL archiving.
-6. Alerts: confirm the metric name and label against `/metrics`, then break archiving (for example revoke the IAM
-   key briefly) so `cnpg-wal-archive-failing` fires, and restore so it clears.
+4. **RPO.** `SELECT pg_switch_wal();` on the primary creates a new object under `wals/` within seconds.
+   `SHOW archive_timeout;` returns `15min`.
+5. **Restore drill.**
+   - Run `make restore-cnpg`, mode `side`, target `latest`. The side cluster becomes Healthy from S3 and serves
+     data. Delete it afterwards.
+   - Repeat with a PITR `targetTime`.
+   - For a full drill, delete the database and bring it back with the same script in mode `in-place`.
+   - Check that `cnpg_backup_recoverable` reads 1 per database. It is the only signal that catches an empty
+     catalog behind healthy WAL archiving.
+6. **Alerts.** Check the metric name and label against `/metrics`. Then break archiving so
+   `cnpg-wal-archive-failing` fires, for example by revoking the IAM key for a short time. Undo the change and
+   check that the alert clears.
 
-Spell out `backups.postgresql.cnpg.io` in full whenever you list them. Longhorn ships a `Backup` kind too, and it
-wins the short name, so a bare `kubectl get backup` reports `not found` for a CNPG backup that is right there.
+Always write `backups.postgresql.cnpg.io` in full when you list them. Longhorn also has a `Backup` kind, and it
+takes the short name. So a bare `kubectl get backup` reports `not found` for a CNPG backup that exists.
 
 ## Why we render the ObjectStore ourselves
 
-The upstream `cnpg/cluster` chart annotates the `ObjectStore` as a Helm `pre-install,pre-upgrade,pre-rollback`
-hook. Under ArgoCD that makes it an EPHEMERAL PreSync hook rather than a tracked resource.
+The upstream `cnpg/cluster` chart marks the `ObjectStore` as a Helm `pre-install,pre-upgrade,pre-rollback` hook.
+Argo CD turns that into a PreSync hook, which it does not track as a resource. Argo CD creates the hook once and
+can delete it later without creating it again. Then:
 
-ArgoCD created it once, it was removed, and it never came back: WAL archiving stopped, the CNPG cluster stuck
-`Ready=False` with `ContinuousArchivingFailing: ObjectStore ... not found`, and the whole workload's sync wedged
-behind the unready cluster. Verified on a rebuild: 3 stale S3 objects, then nothing for about an hour. A hard
-break, not a blip.
+- WAL archiving stops.
+- The CNPG cluster stays `Ready=False` with `ContinuousArchivingFailing: ObjectStore ... not found`.
+- The sync of the whole workload blocks behind the unready cluster.
 
-That is why `pg-cluster` renders the CNPG CRs directly instead of wrapping the upstream chart. Our
-`templates/objectstore.yaml` annotates the `ObjectStore` with `argocd.argoproj.io/sync-wave: "-1"`, a normal
-persistent resource applied just before the Cluster, with no Helm hook anywhere.
+On one rebuild, S3 got 3 objects and then nothing for about an hour. The failure does not heal by itself.
 
-Previously this required a hand-PATCHED vendored `charts/cluster-*.tgz`, which Renovate's
-`helmUpdateSubChartArchives` would silently re-vendor pristine and clobber on any upstream bump. Rendering the CR
-ourselves removes the vendored tarball entirely, so there is nothing to patch and nothing for Renovate to clobber.
+So `pg-cluster` renders the CNPG CRs itself, and does not wrap the upstream chart. Its
+`templates/objectstore.yaml` gives the `ObjectStore` the annotation `argocd.argoproj.io/sync-wave: "-1"`. The
+`ObjectStore` is a normal, tracked resource, applied just before the Cluster. No Helm hook is involved.
 
-Upstreamed as <https://github.com/cloudnative-pg/charts/issues/964>, proposing a `backups.objectStore.helmHook`
-opt-out plus an ObjectStore-only annotations knob. If that lands, `pg-cluster` could go back to wrapping the
-official chart with `helmHook: false` plus the sync-wave annotation, but only if the
-transitive-dep-behind-`file://` vendoring problem is also acceptable then. Otherwise keep rendering directly.
+Wrapping the upstream chart would also mean a hand-patched `charts/cluster-*.tgz` in git. Renovate's
+`helmUpdateSubChartArchives` re-vendors that archive unpatched on every upstream bump. Rendering the CR directly
+leaves no archive to patch.
+
+The upstream issue is <https://github.com/cloudnative-pg/charts/issues/964>. It proposes a
+`backups.objectStore.helmHook` opt-out and an annotations knob for the ObjectStore only. If it lands,
+`pg-cluster` could wrap the official chart again, with `helmHook: false` and the sync-wave annotation. That also
+needs an acceptable answer to how a dependency behind `file://` gets vendored. Until then, keep rendering
+directly.

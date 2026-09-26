@@ -1,115 +1,125 @@
 # Sealed Secrets: committing secrets to git, safely
 
-[Sealed Secrets](https://github.com/bitnami-labs/sealed-secrets) runs a controller holding an RSA key pair.
-`kubeseal` encrypts a value against the public key into a `SealedSecret` custom resource, which is safe to
-commit. Only this controller, holding the private key, can decrypt it back into a normal `Secret` in-cluster.
-Asymmetric, so anyone can seal and only the cluster can unseal.
+[Sealed Secrets](https://github.com/bitnami-labs/sealed-secrets) runs a controller that holds an RSA key pair.
 
-- Not an imperative bootstrap like Cilium or ArgoCD. It is a plain wave-2 ArgoCD app.
-- One out-of-band step: backing up the controller's private key. Lose it and every committed `SealedSecret` is
-  permanently undecryptable.
-- [02_gitops.md](02_gitops.md) flagged the split: the repo clone credential stays imperative
-  (chicken-and-egg), everything else waits for this.
+- `kubeseal` encrypts a value with the public key into a `SealedSecret` custom resource. That is safe to commit.
+- Only the controller holds the private key. It decrypts the `SealedSecret` into a normal `Secret` in the cluster.
+- Anyone can seal. Only the cluster can unseal.
+
+How it differs from Cilium and Argo CD:
+
+- It is not an imperative bootstrap step. It is a plain wave-2 Argo CD app.
+- It has one out-of-band step: back up the controller's private key. Lose the key, and no committed
+  `SealedSecret` can ever be decrypted again.
+- The repo clone credential stays imperative, because Argo CD needs it before this controller exists. Every other
+  secret uses Sealed Secrets. See [02_gitops.md](02_gitops.md).
 
 ## The wrapper chart
 
-`argo_apps/platform/charts/02_sealed_secrets/`, same pattern as `00_cilium` and `01_argocd`:
+`argo_apps/platform/charts/02_sealed_secrets/` follows the same pattern as `00_cilium` and `01_argocd`:
 
 | Path          | Holds                                                                                    |
 |---------------|------------------------------------------------------------------------------------------|
-| `Chart.yaml`  | a dependency on the `bitnami.github.io/sealed-secrets` chart repo, pinned                |
-| `values.yaml` | all config under the `sealed-secrets:` key: `fullnameOverride`, logging, resources        |
-| `Chart.lock`  | the resolved dependency; must be committed, ArgoCD's repo-server runs `helm dependency build` |
+| `Chart.yaml`  | a pinned dependency on the `bitnami.github.io/sealed-secrets` chart repo                 |
+| `values.yaml` | all config under the `sealed-secrets:` key: `fullnameOverride`, logging, resources       |
+| `Chart.lock`  | the resolved dependency. Commit it, because Argo CD's repo-server runs `helm dependency build` |
 
 Refresh the lock with `helm dependency update argo_apps/platform/charts/02_sealed_secrets` and commit it. The
-vendored `charts/*.tgz` is gitignored and reproduced from the lock, same as the other charts.
+vendored `charts/*.tgz` is gitignored and rebuilt from the lock, as for the other charts.
 
 ## Where it sits: wave 2
 
-A host-network node agent and this controller are independent leaves, neither
-depending on the other, so they share wave `2`: the "after the CNI and ArgoCD are in place" slot. Both carry the
-`02_` prefix, and `ls argo_apps/platform/apps/templates/` still reads in deploy order.
+The controller needs only the CNI and Argo CD. So it sits at wave `2`, the first slot after both, with the other
+apps that need nothing more. The file carries the `02_` prefix, so `ls argo_apps/platform/apps/templates/` still
+lists apps in deploy order.
 
-Standard automated-leaf settings (`prune` + `selfHeal`) plus `ServerSideApply=true`. Two specifics:
+It uses the standard leaf settings, `prune` and `selfHeal`, plus `ServerSideApply=true`. Two details:
 
-- The controller's runtime-generated key Secret is not in git, so `prune` never cascade-deletes it.
-- It runs in its own `sealed-secrets` namespace (`CreateNamespace=true`), mirroring how ArgoCD gets its own.
+- The controller generates its key Secret at runtime. The key is not in git, so `prune` never deletes it.
+- It runs in its own `sealed-secrets` namespace (`CreateNamespace=true`), as Argo CD does.
 
 ## Key custody: the one thing you must not lose
 
-The controller generates its RSA key on first start, stores the private key in a Secret labelled
-`sealedsecrets.bitnami.com/sealed-secrets-key` in the `sealed-secrets` namespace, and rotates it roughly monthly
-while keeping the old keys so previously-sealed secrets still decrypt.
+On first start, the controller generates its RSA key.
 
-That key set is the only thing that can decrypt the `SealedSecret`s in this repo. A cluster rebuild without it
-orphans every sealed value.
+- It stores the private key in a Secret in the `sealed-secrets` namespace, labelled
+  `sealedsecrets.bitnami.com/sealed-secrets-key`.
+- It rotates the key about once a month.
+- It keeps the old keys, so secrets sealed earlier still decrypt.
 
-`lib/shell/03_backup_sealed_secrets_key.sh` dumps all labelled key Secrets to
-`secrets/sealed-secrets-master.key`. That dir is gitignored (`/secrets` in the root `.gitignore`; `secrets/` is a
-symlink to an off-repo store), so the private key is never committed. Same custody as the `kubeconfig` and
-`talosconfig` already there. Native `kubectl`, PASS/FAIL summary, idempotent, re-run after each rotation.
+That key set is the only thing that can decrypt the `SealedSecret`s in this repo. Rebuild the cluster without it,
+and every sealed value is lost.
 
-Keep a copy off-cluster too. A backup that only exists on this cluster is useless the day you lose the cluster.
+`lib/shell/03_backup_sealed_secrets_key.sh` writes all labelled key Secrets to `secrets/sealed-secrets-master.key`.
+
+- `secrets/` is a symlink to an off-repo store. The root `.gitignore` lists `/secrets`. So the private key is
+  never committed.
+- The Argo CD webhook secret uses the same store.
+- The script uses native `kubectl`, prints a PASS/FAIL summary and is idempotent.
+- Re-run it after each key rotation.
+
+Keep a copy off the cluster too. A backup that exists only on the cluster is useless the day you lose the
+cluster.
 
 ```bash
-# back up the master key (after the app is Synced/Healthy, and after each ~monthly rotation):
+# back up the master key. Run after the app is Synced and Healthy, and after each monthly rotation:
 lib/shell/03_backup_sealed_secrets_key.sh
 
-# RESTORE on a rebuilt cluster (before sealing/unsealing anything new):
+# restore on a rebuilt cluster, before you seal or unseal anything new:
 kubectl apply -f secrets/sealed-secrets-master.key
-kubectl delete pod -n sealed-secrets -l app.kubernetes.io/name=sealed-secrets   # restart to load it
+kubectl delete pod -n sealed-secrets -l app.kubernetes.io/name=sealed-secrets   # restart so it loads the key
 ```
 
 ### First-time bootstrap vs rebuild
 
-The key is exactly what separates the two one-shot orchestrators. Neither touches the nodes: wiping Talos is
-a full node wipe by whatever tooling built the cluster, run before either of these if you want one.
+The key is what separates the two one-shot orchestrators. Neither touches the nodes. A full node wipe is a job for
+the tooling that built the cluster. Run it before either orchestrator if you want one.
 
-- `DANGEROUS_rebuild_cluster.sh` redelivers the platform onto a cluster that already has one, then RESTORES the
-  backed-up master key so the committed `SealedSecret`s decrypt unchanged. It does not re-seal. Needs a current
-  backup, so run `03_backup_sealed_secrets_key.sh` beforehand.
-- `DANGEROUS_bootstrap_cluster.sh` is a FIRST-TIME platform install onto a cluster that has none. There is no
-  prior key, so the fresh controller mints a brand-new one and the committed `google-oauth` `SealedSecret` is
-  orphaned. It therefore re-seals against the new key (keeping the committed allowlists), commits, pushes, then
-  backs the new key up so future rebuilds can restore it.
+| Orchestrator | Use on | What it does with the key |
+|---|---|---|
+| `DANGEROUS_rebuild_cluster.sh` | a cluster that already has the platform | redelivers the platform, then restores the backed-up master key. The committed `SealedSecret`s decrypt unchanged. It does not re-seal. Needs a current backup, so run `03_backup_sealed_secrets_key.sh` first |
+| `DANGEROUS_bootstrap_cluster.sh` | a cluster with no platform, first-time install | there is no earlier key. The fresh controller creates a new one, and the committed `google-oauth` `SealedSecret` no longer decrypts. So it re-seals against the new key, keeps the committed allowlists, commits and pushes. It then backs up the new key so later rebuilds can restore it |
 
-Which one you want depends on whether the cluster already has a platform on it, not on whether the nodes were
-just wiped. After an OS-repo `make reset-cluster && make bootstrap-cluster` the cluster is bare, so that is a
-bootstrap.
+Pick by whether the cluster already has a platform on it, not by whether the nodes were just wiped.
+
+Example: your node tooling wipes and re-creates every node, for instance with `make reset-cluster`. The cluster
+is then bare, so the next step is `make bootstrap-cluster` here.
 
 ## Sealing a secret
 
-Install the CLI with `brew install kubeseal`. The `fullnameOverride: sealed-secrets` in `values.yaml` keeps the
-name and namespace stable, which is what the flags below match on.
+Install the CLI with `brew install kubeseal`. `fullnameOverride: sealed-secrets` in `values.yaml` keeps the
+controller name and namespace stable. The flags below match on them.
 
 ```bash
-# seal a whole Secret manifest into a commit-safe SealedSecret:
+# seal a whole Secret manifest into a SealedSecret that is safe to commit:
 kubectl create secret generic my-secret -n my-app \
     --dry-run=client --from-literal=token=s3cr3t -o yaml \
   | kubeseal --controller-namespace sealed-secrets --controller-name sealed-secrets --format yaml \
-  > my-sealedsecret.yaml      # commit THIS; the controller unseals it into Secret/my-secret in ns my-app
+  > my-sealedsecret.yaml      # commit this. The controller unseals it into Secret/my-secret in ns my-app
 
-# or just one raw value:
+# or seal one raw value:
 echo -n s3cr3t | kubeseal --controller-namespace sealed-secrets --controller-name sealed-secrets \
     --raw --scope strict --name my-secret --namespace my-app
 ```
 
-A `SealedSecret` is `strict`-scoped by default: it unseals only into the exact name and namespace it was sealed
-for. Use `--scope namespace-wide` or `cluster-wide` only when you deliberately need that.
+A `SealedSecret` has `strict` scope by default. It unseals only into the exact name and namespace it was sealed
+for. Use `--scope namespace-wide` or `cluster-wide` only when you need that on purpose.
 
 ## Picking up a changed secret: Reloader
 
-Kubernetes never restarts a pod when a Secret or ConfigMap changes. Env vars are read once at startup, and a
-mounted file is refreshed on disk but almost nothing re-reads it. So the pod keeps the old value until someone
-rolls it by hand.
+Kubernetes never restarts a pod when a Secret or ConfigMap changes.
 
-`02_reloader` closes that. It runs with `--auto-reload-all`, so **every** Deployment, StatefulSet and DaemonSet
-is watched by default, and it restarts one when a Secret or ConfigMap that pod actually references changes.
-"References" means `envFrom`, `env[].valueFrom`, or a volume. A Secret the component looks up through the API
-instead is invisible to Reloader.
+- A pod reads env vars once, at startup.
+- A mounted file changes on disk, but almost no process reads it again.
+- So the pod keeps the old value until someone restarts it by hand.
 
-That last point covers most of this repo's sealed secrets, so re-sealing them restarts nothing, and does not
-need to:
+`02_reloader` fixes that. It runs with `--auto-reload-all`, so it watches every Deployment, StatefulSet and
+DaemonSet by default. It restarts one when a Secret or ConfigMap that the pod references changes.
+
+- "References" means `envFrom`, `env[].valueFrom`, or a volume.
+- Reloader cannot see a Secret that a component reads through the API.
+
+That covers most of this repo's sealed secrets. Re-sealing them restarts nothing, and nothing needs a restart:
 
 | Secret | Read by | Why no restart |
 |---|---|---|
@@ -117,42 +127,45 @@ need to:
 | `google-oauth` | Envoy Gateway, via `SecurityPolicy` | fetched by the controller |
 | `longhorn-backup-s3` | Longhorn, via a setting | fetched per backup |
 | `argocd-secret` | Argo CD | no Argo CD pod mounts it |
-| the wildcard TLS certs | Envoy | delivered over xDS, never a file |
+| the wildcard TLS certs | Envoy | delivered over xDS, never as a file |
 
-Where it does earn its keep: the workload pods reading operator-generated credentials (`*-db-app`,
-`*-user-credentials`). If CNPG or the RabbitMQ topology operator regenerates a password, the app picks it up on
-its own instead of holding a stale one forever.
+Reloader matters for the workload pods that read credentials an operator generates: `*-db-app` and
+`*-user-credentials`. If CNPG or the RabbitMQ topology operator regenerates a password, the app picks it up. It
+does not keep a stale one forever.
 
-Reloader also hashes the **decrypted** data, so re-running a `make configure-*` target produces fresh ciphertext
-but no restart unless the underlying credential actually changed.
+Reloader hashes the decrypted data. So re-running a `make configure-*` target produces new ciphertext but
+restarts nothing, unless the credential itself changed.
 
 ### What is opted out, and why
 
-`reloader.stakater.com/auto: "false"` on the pod template. Two reasons ever: the component already reloads
-without a restart, or restarting it costs more than the stale config does.
+The opt-out is `reloader.stakater.com/auto: "false"` on the pod template. There are only two reasons to opt out:
+
+- The component already reloads without a restart.
+- A restart costs more than the stale config does.
 
 | Workload | Reason |
 |---|---|
-| `cilium`, `cilium-operator` | already roll themselves on a config edit (`rollOutCiliumPods`, `rollOutPods`); the hubble cert CronJob would otherwise restart the CNI on every node every few months |
-| `cilium-envoy` | per-node L7 proxy, a restart drops proxied connections |
+| `cilium`, `cilium-operator` | they already restart themselves on a config change (`rollOutCiliumPods`, `rollOutPods`). Without the opt-out, the Hubble cert CronJob would restart the CNI on every node every few months |
+| `cilium-envoy` | the L7 proxy on each node. A restart drops proxied connections |
 | `envoy-eg-*` | `mergeGateways` puts all cluster ingress in one pod |
-| `longhorn-manager` | volume data path; nothing it mounts changes today, so pre-emptive |
-| `cnpg-operator` | its one mounted Secret is a webhook cert it rotates itself, and a restart at the wrong moment adds ~33s to a switchover |
-| `vmagent` | the operator rewrites its scrape config on every target change anywhere, and vmagent reloads that without restarting |
-| `vmsingle`, `vlsingle` | the metrics and log stores, single RWO volume each |
-| `rabbitmq-server` | rolling 3 brokers is a quorum leader election each; the operator already rolls them itself |
+| `longhorn-manager` | the volume data path. Nothing it mounts changes today, so the opt-out is a precaution |
+| `cnpg-operator` | its one mounted Secret is a webhook cert it rotates itself. A restart at the wrong moment adds about 33s to a switchover |
+| `vmagent` | the operator rewrites its scrape config on every target change in the cluster. vmagent reloads that without a restart |
+| `vmsingle`, `vlsingle` | the metrics and log stores, each on a single RWO volume |
+| `rabbitmq-server` | each broker restart forces a quorum leader election, across 3 brokers. The operator already restarts them itself |
 
-Jobs and CronJobs are excluded globally. Reloader would start a *run* rather than restart anything, and each run
-is a fresh pod that reads the current credential anyway.
+Jobs and CronJobs are excluded globally. Reloader would start a new run, not restart anything. Each run is a new
+pod that reads the current credential anyway.
 
-CNPG's Postgres pods are bare Pods, not a StatefulSet, so Reloader cannot act on them at all. Nothing to opt out.
+CNPG's Postgres pods are bare Pods, not a StatefulSet. Reloader cannot act on them, so there is nothing to opt
+out.
 
 ## Caveats
 
-- No bootstrap script generates the lock here, unlike `01_argocd`. Run `helm dependency update
-  argo_apps/platform/charts/02_sealed_secrets` and commit `Chart.lock` yourself before the app syncs, or it shows
-  `OutOfSync` with a `helm dependency build` error.
-- The backup is only as fresh as your last run. Keys rotate, so re-run the backup after each rotation, or
-  schedule it, and a restore then has the current active key rather than only historical ones.
-- A `SealedSecret` is bound to this cluster's key. Sealing against one cluster and applying to another will not
-  unseal: restore the backed-up key first, or re-seal against the new one.
+- **No bootstrap script generates this chart's lock.** `01_argocd` has one, this chart does not. Run
+  `helm dependency update argo_apps/platform/charts/02_sealed_secrets` and commit `Chart.lock` before the app
+  syncs. Otherwise it shows `OutOfSync` with a `helm dependency build` error.
+- **The backup is only as fresh as your last run.** Keys rotate. Re-run the backup after each rotation, or
+  schedule it. A restore then has the current active key, not only old ones.
+- **A `SealedSecret` is bound to this cluster's key.** A secret sealed against one cluster does not unseal on
+  another. Restore the backed-up key first, or re-seal against the new key.

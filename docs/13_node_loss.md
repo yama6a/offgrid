@@ -1,248 +1,293 @@
 # Losing a node: what the platform does about it
 
-The machine half of this belongs to whatever tooling built your cluster: dropping a reflashed node's stale
-etcd member, re-applying its config, getting the kubelet back. Nothing here does any of that.
+The tooling that built your cluster owns the machine side of a node loss. That tooling drops a reflashed node's
+stale etcd member, re-applies its config, and brings the kubelet back. This repo does none of that.
 
-This is the other half. What the workloads do when a machine disappears, how long they actually take, and the
-one thing that needs hands afterwards.
+This doc covers the workload side:
 
-## Losing a machine is uneventful; replacing one needs hands
+- what the workloads do when a machine disappears
+- how long they take to recover
+- the one step that needs a human afterwards
 
-Every volume here is Longhorn's, not any one machine's ([05_storage.md](05_storage.md)). So a machine dying is
-a rescheduling problem, not a data problem: the pod reattaches its volume on a survivor and starts. Nothing to
-delete, nothing to restore.
+## Loss heals itself, replacement needs one step
 
-What still needs hands is a machine coming BACK under the same name after being reflashed. Longhorn's node CR
-holds the old disk UUID and the fresh filesystem carries a new one, so it refuses the disk rather than risk
-using the wrong one. `make reconcile-storage NODE=<host>` does it, once your node tooling has the machine back.
+Every volume here belongs to Longhorn, not to one machine ([05_storage.md](05_storage.md)). So a dead machine is a
+scheduling problem, not a data problem. The pod reattaches its volume on a surviving node and starts. There is
+nothing to delete and nothing to restore.
+
+A human is needed when a reflashed machine comes back under the same name. Longhorn's node CR holds the old disk
+UUID, and the fresh filesystem carries a new one. Longhorn refuses the disk, so it never uses the wrong one. Run
+`make reconcile-storage NODE=<host>` once your node tooling has the machine back.
 
 ## The dead-node watcher
 
-Kubernetes is deliberately slow to hand one machine's disks to another. A node stops answering, and for about
-six minutes nothing takes its volumes, in case it is alive and still writing to them. Reasonable default,
-wrong for us: our machines are in one room and a dead one is dead.
+Kubernetes waits about six minutes before it gives one machine's volumes to another. The wait covers the case
+where the node is alive and still writes to them. That default is wrong for this cluster. The machines sit in
+one room, and a machine that stops answering is dead.
 
-`node.kubernetes.io/out-of-service:NoExecute` short-circuits it. The taint asserts the machine is genuinely
-gone, and on that assertion Kubernetes force-deletes its pods AND releases their volumes at once. Nothing
-applies it automatically in Kubernetes itself, on purpose, because only an operator can make that call.
-`dead-node-watcher` (`argo_apps/platform/charts/02_dead_node_watcher`, wave 2) makes it, using time-NotReady
-as the evidence.
+The taint `node.kubernetes.io/out-of-service:NoExecute` skips the wait. It states that the machine is gone. On
+that statement, Kubernetes force-deletes the node's pods and releases their volumes at once. Kubernetes never
+applies this taint itself, because only an operator can make that call.
 
-Timeline for a machine that dies: ~40s for Kubernetes to mark it NotReady, then the watcher's 60s grace, so a
-displaced pod is running on a survivor in about two minutes instead of six-plus.
+`dead-node-watcher` makes the call, using time spent NotReady as the evidence. It lives in
+`argo_apps/platform/charts/02_dead_node_watcher`, wave 2.
 
-**It deliberately does nothing for a reboot.** A node reboot on this hardware is back inside ~90s, shorter than
-Kubernetes' own NotReady delay plus the 60s grace, so the node returns before the watcher would act and the
-volume never needed to move. Measured on a `talosctl reboot --mode force`: the watcher logged nothing at all.
-So it earns its keep only when a machine is down for good, or for many minutes.
+Timeline for a machine that dies:
 
-Three guards, each of which matters:
+| Step | Time |
+|---|---|
+| Kubernetes marks the node NotReady | ~40s |
+| the watcher's grace period | 60s |
+| displaced pod runs on a surviving node | about 2 min in total, against 6+ min without the watcher |
 
-- **It never touches a Ready node.** That is what protects an ordinary drain: `kubectl drain` and any rolling
-  upgrade cordon a machine that is still up, and a Ready node cannot reach the taint branch at all. A cordon on
-  its own is NOT a reason to skip, because a node being wiped is cordoned and never coming back, and skipping
-  that one measured 5.5 minutes of stuck volumes.
-- **It refuses when more than one node is NotReady.** That is a cluster event, not a machine failure: there is
-  nowhere to reschedule to, and force-detaching everything at once is not what you want a loop deciding.
-- **It removes the taint when the node is Ready again.** Kubernetes requires that and nothing else does it; a
-  node that keeps the taint takes no pods back. Node tooling worth the name clears it next to its own
-  `uncordon`, so it does not depend on this loop being alive to un-taint a machine it just brought back.
+Reboots are out of scope. A node reboot on this hardware takes ~90s. That is shorter than the NotReady delay
+plus the 60s grace. So the node returns before the watcher acts, and the volume never has to move. On a
+`talosctl reboot --mode force` the watcher logged nothing. It acts only when a machine is down for good or for
+many minutes.
 
-Cost of dropping the cordon guard: a rolling upgrade now taints each machine during its reboot, which
-force-deletes the three Longhorn DaemonSet pods there (`longhorn-manager`, `longhorn-csi-plugin`,
-`engine-image`; cilium, node-exporter, the log collector and any host-network node agent tolerate every taint). They are
-recreated when the machine returns, and the drain already moved everything else, so there is nothing else on it
-to evict.
+The watcher has three guards:
 
-It is safe because Longhorn refuses to attach one volume in two places, which is the corruption the six-minute
-wait exists to prevent.
+- **It never touches a Ready node.** This protects an ordinary drain. `kubectl drain` and a rolling upgrade
+  cordon a machine that is still up. A Ready node never reaches the taint code. A cordon alone is not a reason
+  to skip. A node that is being wiped is cordoned and never comes back. Skipping it left volumes stuck for 5.5
+  minutes in a test.
+- **It does nothing when more than one node is NotReady.** That is a cluster event, not a machine failure.
+  There is no node to reschedule to, and a loop must not force-detach everything at once.
+- **It removes the taint when the node is Ready again.** Kubernetes requires this, and nothing else does it. A
+  node that keeps the taint takes no pods back. Good node tooling also clears the taint next to its own
+  `uncordon`. Then an un-taint does not depend on this loop being alive.
+
+Cordoned nodes get the taint too. So a rolling upgrade taints each machine during its reboot. That force-deletes
+the three Longhorn DaemonSet pods there:
+
+- `longhorn-manager`
+- `longhorn-csi-plugin`
+- `engine-image`
+
+Cilium, node-exporter, the log collector and any host-network node agent tolerate every taint. The Longhorn pods
+come back when the machine returns. The drain already moved everything else, so nothing else is left to evict.
+
+This is safe because Longhorn refuses to attach one volume in two places. That double attach is the corruption
+the six-minute wait exists to prevent.
 
 ## RWX volumes fail over on their own path
 
-An RWX volume ([05_storage.md](05_storage.md)) does not wait on any of the above. Its consumers mount NFS from a
-share-manager pod, so losing that pod's node breaks every consumer at once wherever they run, and recovery means
-Longhorn moving the share-manager rather than rescheduling the consumers. `rwxVolumeFastFailover` leases it and
-acts on the lease expiring instead of waiting out pod eviction.
+An RWX volume ([05_storage.md](05_storage.md)) does not use the steps above. Its consumers mount NFS from a
+share-manager pod. If the share-manager's node dies, every consumer breaks at once, on any node. Recovery means
+Longhorn moves the share-manager. The consumers do not reschedule.
 
-Unmeasured here: no RWX volume has a consumer yet. Time it when one does.
+`rwxVolumeFastFailover` holds a lease on the share-manager. Longhorn acts when the lease expires, and does not
+wait for pod eviction.
+
+This path is not measured yet, because no RWX volume has a consumer. Time it when one does.
 
 ```bash
 kubectl -n dead-node-watcher logs deploy/dead-node-watcher   # one line per decision
 kubectl get nodes -o custom-columns=NAME:.metadata.name,TAINTS:.spec.taints
 ```
 
-The watcher pod itself sets `tolerationSeconds: 0` on the not-ready and unreachable taints, so it is evicted
-the instant its own machine goes NotReady and its ReplicaSet starts a replacement elsewhere. Without that it
-would sit on the dead machine for the same 5 minutes it exists to avoid.
+The watcher pod sets `tolerationSeconds: 0` on the not-ready and unreachable taints. So Kubernetes evicts it the
+moment its own machine goes NotReady, and its ReplicaSet starts a replacement elsewhere. Without this, the
+watcher would sit on the dead machine for the same 5 minutes it exists to avoid.
 
 ## What survives
 
 | Storage | Used by | On machine loss | On machine replacement |
 |---|---|---|---|
-| `longhorn-r2-ephemeral` | Postgres, Redis, monitoring stores, ntfy | volume reattaches on a survivor | data survives, replicas rebuild. The node's disk RECORD does not: `make reconcile-storage` |
-| `longhorn-r2-ephemeral-local` | RabbitMQ | same, plus a fresh local replica is built there | same |
+| `longhorn-r2-ephemeral` | Postgres, Redis, monitoring stores, ntfy | volume reattaches on a surviving node | data survives and replicas rebuild. The node's disk record does not. Run `make reconcile-storage` |
+| `longhorn-r2-ephemeral-local` | RabbitMQ | same, plus Longhorn builds a fresh local replica there | same |
 | none | stateless Deployments | reschedule on their own | nothing |
 
-Hard anti-affinity means a workload that already has one copy per machine has nowhere to put a displaced one:
+Hard anti-affinity allows at most one copy per machine. A workload that already has one copy on every machine
+has nowhere to put a displaced copy:
 
 | Workload | Machine dies | Machine returns |
 |---|---|---|
-| `sample-user-manager-analytics`, Redis, monitoring stores, ntfy | moves to a survivor in ~2 min | nothing to do |
-| `sample-user-manager-db`, 3 instances | a standby is promoted, then serves on 2 of 3 | the third instance schedules back by itself |
+| `sample-user-manager-analytics`, Redis, monitoring stores, ntfy | moves to a surviving node in ~2 min | nothing to do |
+| `sample-user-manager-db`, 3 instances | a standby is promoted, then serves on 2 of 3 | the third instance schedules back on its own |
 | RabbitMQ, 3 brokers | serves on 2 of 3, no messages lost | the broker returns with its own data |
 
-Measured outage, in each case killing the machine that held BOTH the db primary and the single instance, and
-probing with an insert every 200ms:
+Measured write outage. Each test killed the machine that held both the HA database primary and the single
+instance. A probe inserted a row every 200ms.
 
 | Failure | HA writes | Single instance | Watcher |
 |---|---|---|---|
-| ethernet unplugged (a real unplanned death) | **184s** | **191s** | fired at t+116s |
-| `talosctl reset` (before the guard was narrowed) | 328s | 402s | suppressed by the cordon |
-| `talosctl reboot --mode force` (back in ~90s) | 97s | 244s | correctly never fired |
+| ethernet unplugged, a real unplanned death | 184s | 191s | fired at t+116s |
+| `talosctl reset`, watcher skipping cordoned nodes | 328s | 402s | skipped, node was cordoned |
+| `talosctl reboot --mode force`, back in ~90s | 97s | 244s | correctly never fired |
 
-So the taint is worth 144s on the HA cluster and 211s on the single instance. The cable-pull breakdown: 53s for
-Kubernetes to mark the node `Unknown`, 62s of the watcher's grace, then ~70s for CNPG to promote and for the
-single instance to reattach and finish crash recovery.
+The taint saves 144s on the HA cluster and 211s on the single instance.
 
-Neither number is "seconds". Synchronous replication buys you no LOST transactions, not a fast failover: the
-promoted standby is guaranteed to hold every acknowledged commit, and the application still sees ~3 minutes of
-failed writes. Anything needing better than that needs a client that retries, not a storage change.
+Breakdown of the unplugged-cable case:
 
-### A planned drain: 64s of write outage down to 20s
-
-A rolling upgrade cordons and drains each machine before rebooting it, and CNPG is designed to switch the
-primary away first: it puts a second PDB on the primary alone with `disruptionsAllowed: 0`, so the eviction is
-REFUSED until the handover is done. Three separate things were defeating that. Measured on a graceful drain of
-the machine holding the primary, probed by an insert every 100ms:
-
-| | Write outage |
+| Step | Time |
 |---|---|
-| originally | 64s |
-| after `smartShutdownTimeout: 15` | 41s |
-| after the operator went to 2 replicas | **19.6s** |
+| Kubernetes marks the node `Unknown` | 53s |
+| the watcher's grace period | 62s |
+| CNPG promotes, and the single instance reattaches and finishes crash recovery | ~70s |
 
-1. **`smartShutdownTimeout`, default 180s.** Shutdown stage 1 refuses new connections but WAITS for existing
-   ones, and an app holding an idle pooled connection never closes it. So the drain blew through the 120s
-   graceful window, the straggler was force-deleted, and CNPG got a hard failover instead of the switchover it
-   was trying to perform. At 15s the old primary is down in ~3s and the drain finishes in ~33s, well inside the
-   window, so the force-delete never fires and the drain itself needed no change.
-2. **A single-replica operator.** The `-rw` Service selects `cnpg.io/instanceRole=primary`, and only the
-   operator moves that label, so while it is down there is no writable endpoint even though a promoted Postgres
-   is up. The drain that needs a switchover was also evicting the only thing that can finish one: a 33s gap
-   between "new primary accepting connections" and "labels swapped".
-3. Nothing else. The remaining ~20s is CNPG's own cadence, roughly 7s to decide, 6s for Postgres to promote and
-   replay, 6s to relabel. Not reachable from the Cluster spec.
+Both outages last minutes, not seconds. Synchronous replication means no lost transactions. It does not mean a
+fast failover. The promoted standby holds every acknowledged commit, but the application still sees ~3 minutes of
+failed writes. A tighter target needs a client that retries. A storage change will not help.
+
+### A planned drain: about 20s of write outage
+
+A rolling upgrade cordons and drains each machine before it reboots it. CNPG switches the primary away first. It
+puts a second PDB on the primary alone, with `disruptionsAllowed: 0`. So the eviction fails until the handover is
+done.
+
+Measured on a graceful drain of the machine that held the primary, with an insert every 100ms:
+
+| Settings | Write outage |
+|---|---|
+| CNPG defaults, 1 operator replica | 64s |
+| `smartShutdownTimeout: 15` | 41s |
+| `smartShutdownTimeout: 15`, 2 operator replicas | 19.6s |
+
+1. **`smartShutdownTimeout` defaults to 180s.** In shutdown stage 1, Postgres refuses new connections but waits
+   for existing ones. An app that holds an idle pooled connection never closes it.
+   - With the default, the drain passes the 120s graceful window. Kubernetes force-deletes the pod, and CNPG does
+     a hard failover instead of a switchover.
+   - At 15s, the old primary is down in ~3s and the drain finishes in ~33s. That is inside the window, so the
+     force-delete never fires. The drain itself needs no change.
+2. **The operator runs 2 replicas.** The `-rw` Service selects `cnpg.io/instanceRole=primary`, and only the
+   operator moves that label.
+   - While the operator is down, no endpoint accepts writes, even when a promoted Postgres is up.
+   - With one replica, the drain evicts the only pod that can finish the switchover. That left a 33s gap between
+     "new primary accepts connections" and "labels swapped".
+3. **Nothing else is tunable.** The remaining ~20s is CNPG's own cadence: about 7s to decide, 6s for Postgres to
+   promote and replay, and 6s to relabel. The Cluster spec cannot change it.
 
 So ~20s is the practical floor here, not the 2-5s that "negligible downtime" suggests. It is a real
-interruption: with no pod labelled primary the `-rw` Service has NO endpoints, so a client retry does not
-paper over it, it just retries into a closed door for 20s.
+interruption. While no pod carries the primary label, the `-rw` Service has no endpoints. A client retry does
+not hide it. The client retries against a closed port for 20s.
 
-Still one replica, so still able to stall a switchover: the barman-cloud plugin. It holds a lease like the
-operator does, but it ships as a vendored upstream manifest with `replicas` hardcoded.
+The barman-cloud plugin still runs one replica, so it can still stall a switchover. It holds a lease like the
+operator does. It ships as a vendored upstream manifest with `replicas` hardcoded.
 
-**Do not let your drain's graceful timeout fall below the ~33s a switchover needs.** Force-deleting the
-primary early turns a ~20s switchover into a ~60s failover.
+Keep your drain's graceful timeout at or above the ~33s a switchover needs. A primary that is force-deleted early
+turns a ~20s switchover into a ~60s failover.
 
-### Force-detaching a machine that is still alive is safe, and here is why
+### Force-detaching a live machine is safe
 
-The cable-pull case is the one the six-minute wait exists for: the machine keeps running, Postgres keeps its
-volume mounted, and its `longhorn-manager` cannot be told to stand down because it cannot reach the API.
-Tainting it force-attaches the same volume on a survivor, so two engines briefly hold a copy each.
+The unplugged cable is the case the six-minute wait exists for:
 
-Measured: Longhorn stamped `failedAt` on the isolated machine's replica 5 seconds after the taint landed, and
-kept serving from the survivor's replica. On rejoin the fenced replica was rebuilt from the authoritative one,
-and CNPG discarded the diverged ex-primary entirely, recovering it from a base backup on the old timeline and
-then streaming from the new one. A 50-row checksum taken before the pull was byte-identical afterwards.
+- The machine keeps running.
+- Postgres keeps its volume mounted.
+- Its `longhorn-manager` cannot reach the API, so nothing can tell it to stop.
 
-Two costs to know about, both self-healing. The returning machine's Longhorn DaemonSets were force-deleted by
-the taint, so the first pod scheduled back there fails to mount for ~35s with `CSINode <node> does not contain
-driver driver.longhorn.io` until the CSI plugin re-registers. And an instance that cannot reschedule under hard
-anti-affinity waits out the whole outage Pending, which is correct but looks alarming.
+The taint force-attaches the same volume on a surviving node. For a short time, two engines each hold a copy.
 
-So the 3-copy workloads stay available but lose their spare until the machine is repaired, and a second loss in
-that window stops writes. A 4th machine removes this.
+What the test showed:
+
+- Longhorn set `failedAt` on the isolated machine's replica 5 seconds after the taint landed. It kept serving
+  from the surviving replica.
+- On rejoin, Longhorn rebuilt the fenced replica from the authoritative one.
+- CNPG discarded the diverged former primary. It rebuilt it from a base backup on the old timeline, then
+  streamed from the new one.
+- A 50-row checksum taken before the pull was byte-identical afterwards.
+
+Two costs, both self-healing:
+
+- The taint force-deleted the returning machine's Longhorn DaemonSet pods. So the first pod scheduled back there
+  fails to mount for ~35s, until the CSI plugin registers again. The error is
+  `CSINode <node> does not contain driver driver.longhorn.io`.
+- An instance that cannot reschedule under hard anti-affinity stays Pending for the whole outage. This is
+  correct, but it looks alarming.
+
+The workloads with 3 copies stay available but lose their spare until the machine is repaired. A second loss in
+that window stops writes. A 4th machine removes this risk.
 
 ## Reconciling a replaced node
 
-Run this AFTER your node tooling reports the rejoined machine Ready.
+Run this after your node tooling reports the rejoined machine Ready.
 
 ```bash
-make reconcile-storage NODE=talos-cp3   # idempotent; re-run to get past a step that needed more time
+make reconcile-storage NODE=talos-cp3   # idempotent. Re-run it to get past a step that needed more time
 # then re-spread the stateless Deployments with your node tooling, once everything is healthy
 ```
 
-`reconcile_storage_after_rejoin.sh` checks every volume still has a healthy replica elsewhere, drops the stale
-replica records on the returned node, then resets its disk record. What it is fixing:
+`reconcile_storage_after_rejoin.sh` does three things in order:
 
-Longhorn stores the disk's UUID in BOTH the node CR and a `longhorn-disk.cfg` on the disk itself. The reflash
-made a fresh filesystem, so the manager wrote a new cfg with a new UUID while the CR still held the old one:
+1. It checks that every volume still has a healthy replica on another node.
+2. It drops the stale replica records on the returned node.
+3. It resets the node's disk record.
+
+Why the disk record needs a reset: Longhorn stores the disk's UUID in two places. One is the node CR, the other
+is `longhorn-disk.cfg` on the disk itself. The reflash made a fresh filesystem. So the manager wrote a new cfg
+with a new UUID, and the CR still holds the old one:
 
 ```
 Ready=False  DiskFilesystemChanged  record diskUUID doesn't match the one on the disk
 ```
 
-The node itself reports `Ready`, so this hides unless you look at the disk.
+The node itself reports `Ready`, so you only see this when you look at the disk.
 
-By hand, if the script stops half way. Delete the stale replicas first, having checked each of their volumes
-still has a `running` replica on another node:
+### By hand, if the script stops half way
 
-```bash
-kubectl -n longhorn-system get replicas.longhorn.io \
-  -o custom-columns=VOL:.spec.volumeName,NODE:.spec.nodeID,STATE:.status.currentState | sort   # one running elsewhere per volume
-kubectl -n longhorn-system get replicas.longhorn.io \
-  -o jsonpath='{range .items[?(@.spec.nodeID=="talos-cp3")]}{.metadata.name}{"\n"}{end}' \
-  | xargs -r kubectl -n longhorn-system delete replicas.longhorn.io
-```
+1. Check that each volume has a `running` replica on another node. Then delete the stale replicas:
 
-Then disable, remove and re-add the disk, with the same spec as a healthy node's:
+   ```bash
+   kubectl -n longhorn-system get replicas.longhorn.io \
+     -o custom-columns=VOL:.spec.volumeName,NODE:.spec.nodeID,STATE:.status.currentState | sort   # one running elsewhere per volume
+   kubectl -n longhorn-system get replicas.longhorn.io \
+     -o jsonpath='{range .items[?(@.spec.nodeID=="talos-cp3")]}{.metadata.name}{"\n"}{end}' \
+     | xargs -r kubectl -n longhorn-system delete replicas.longhorn.io
+   ```
 
-```bash
-D=$(kubectl -n longhorn-system get nodes.longhorn.io talos-cp3 \
-    -o go-template='{{range $k,$v := .spec.disks}}{{$k}}{{end}}')
-SPEC=$(kubectl -n longhorn-system get nodes.longhorn.io talos-cp1 -o jsonpath='{.spec.disks}')
+2. Disable the disk, remove it, and add it again with the same spec as a healthy node:
 
-kubectl -n longhorn-system patch nodes.longhorn.io talos-cp3 --type merge \
-  -p "{\"spec\":{\"disks\":{\"$D\":{\"allowScheduling\":false}}}}"
-kubectl -n longhorn-system patch nodes.longhorn.io talos-cp3 --type json \
-  -p "[{\"op\":\"remove\",\"path\":\"/spec/disks/$D\"}]"
-kubectl -n longhorn-system patch nodes.longhorn.io talos-cp3 --type merge \
-  -p "{\"spec\":{\"disks\":$SPEC}}"        # retry this one, see below
-```
+   ```bash
+   D=$(kubectl -n longhorn-system get nodes.longhorn.io talos-cp3 \
+       -o go-template='{{range $k,$v := .spec.disks}}{{$k}}{{end}}')
+   SPEC=$(kubectl -n longhorn-system get nodes.longhorn.io talos-cp1 -o jsonpath='{.spec.disks}')
 
-Confirm a NEW diskUUID, `Ready=True` and `Schedulable=True`:
+   kubectl -n longhorn-system patch nodes.longhorn.io talos-cp3 --type merge \
+     -p "{\"spec\":{\"disks\":{\"$D\":{\"allowScheduling\":false}}}}"
+   kubectl -n longhorn-system patch nodes.longhorn.io talos-cp3 --type json \
+     -p "[{\"op\":\"remove\",\"path\":\"/spec/disks/$D\"}]"
+   kubectl -n longhorn-system patch nodes.longhorn.io talos-cp3 --type merge \
+     -p "{\"spec\":{\"disks\":$SPEC}}"        # retry this one, see below
+   ```
 
-```bash
-kubectl -n longhorn-system get nodes.longhorn.io talos-cp3 -o jsonpath=\
-'{range .status.diskStatus.*}{.diskUUID}{" "}{range .conditions[*]}{.type}={.status} {end}{" avail="}{.storageAvailable}{"\n"}{end}'
-```
+3. Confirm a new diskUUID, `Ready=True` and `Schedulable=True`:
 
-Three gotchas that cost time. The validating webhook refuses to remove a disk that is still schedulable, so
-`allowScheduling: false` has to land first. A merge patch of `{"disks":{}}` is a NO-OP, because JSON merge
-patch deletes keys only when they are set to `null`; use a json patch `remove` op instead. And the re-add is
-rejected once with `spec and status of disks on node talos-cp3 are being syncing and please retry later`,
-because the manager has not finished reacting to the removal; wait ~10s and repeat it.
+   ```bash
+   kubectl -n longhorn-system get nodes.longhorn.io talos-cp3 -o jsonpath=\
+   '{range .status.diskStatus.*}{.diskUUID}{" "}{range .conditions[*]}{.type}={.status} {end}{" avail="}{.storageAvailable}{"\n"}{end}'
+   ```
 
-Rebuilds do not start the moment the node returns. `replica-replenishment-wait-interval` is 1800, so Longhorn
-holds a failed replica for 30 minutes before replacing it, in case the node comes back with its data. Deleting
-the stale replicas above is what ends that wait.
+Gotchas in step 2:
 
-Verify everything converged:
+- **Order matters.** The validating webhook refuses to remove a disk that is still schedulable. So
+  `allowScheduling: false` must land first.
+- **A merge patch cannot remove the disk.** `{"disks":{}}` does nothing, because JSON merge patch deletes a key
+  only when it is set to `null`. Use a json patch `remove` op instead.
+- **The re-add fails once.** The error is
+  `spec and status of disks on node talos-cp3 are being syncing and please retry later`. The manager has not
+  finished with the removal yet. Wait ~10s and repeat the command.
+
+Rebuilds do not start the moment the node returns. `replica-replenishment-wait-interval` is 1800. So Longhorn
+keeps a failed replica for 30 minutes before it replaces it, in case the node comes back with its data. Deleting
+the stale replicas in step 1 ends that wait.
+
+Verify that everything converged:
 
 ```bash
 kubectl get pods -A | grep -Ev 'Running|Completed'                   # empty
 kubectl get clusters.postgresql.cnpg.io -A                           # "Cluster in healthy state"
 kubectl -n rabbitmq get rabbitmqcluster rabbitmq                     # AllReplicasReady True
 kubectl -n longhorn-system get volumes.longhorn.io                   # no degraded, no faulted
-kubectl -n longhorn-system get nodes.longhorn.io -o wide             # every node AND its disk Ready
-kubectl -n argocd get applications                                   # all Synced + Healthy
+kubectl -n longhorn-system get nodes.longhorn.io -o wide             # every node and its disk Ready
+kubectl -n argocd get applications                                   # all Synced and Healthy
 ```
 
 ## Per subsystem
 
 ### Longhorn
 
-Replicas rebuild from the surviving nodes on their own. The disk RECORD does not: see above, which is
-mandatory after a reflash and is the one Longhorn thing that needs hands.
+Replicas rebuild from the surviving nodes on their own. The disk record does not. After a reflash you must
+reset it, as described above. It is the one Longhorn step that needs a human.
 
 Once the disk is back, watch the replicas and do not touch them:
 
@@ -251,101 +296,117 @@ kubectl -n longhorn-system get volumes.longhorn.io -o custom-columns=\
 NAME:.metadata.name,ROBUSTNESS:.status.robustness,STATE:.status.state
 ```
 
-`degraded` during a rebuild is expected. `faulted` is not, and means every replica is gone: restore from S3
-with `make restore-longhorn`, for the one class that has backups.
+| Robustness | Meaning | Action |
+|---|---|---|
+| `degraded` | a rebuild is running | expected, wait |
+| `faulted` | every replica is gone | restore from S3 with `make restore-longhorn`, for the one class that has backups |
 
-Do not start work on a second node until robustness is `healthy` everywhere. With 2 replicas on 3 nodes,
-a rebuild in flight means some volume is one failure from `faulted`.
+Do not start work on a second node until robustness is `healthy` everywhere. With 2 replicas on 3 nodes, a
+running rebuild means some volume is one failure away from `faulted`.
 
-Expect the replaced node to stay EMPTY afterwards. `replica-auto-balance` is `disabled`, so Longhorn never
-moves a healthy replica, and every volume that was rebuilt during the outage picked the two survivors. That is
-not a fault, but it does mean losing either survivor now degrades every volume at once and rebuilds all of
-them onto the one empty node. If that concentration bothers you, `replica-auto-balance: best-effort` in
-`02_longhorn`'s values spreads them back over time.
+Expect the replaced node to stay empty afterwards:
+
+- `replica-auto-balance` is `disabled`, so Longhorn never moves a healthy replica.
+- Every volume rebuilt during the outage placed its replicas on the two surviving nodes.
+- This is not a fault. But if either of those two nodes now fails, every volume degrades at once. All of them
+  then rebuild onto the one empty node.
+- To spread replicas back over time, set `replica-auto-balance: best-effort` in `02_longhorn`'s values.
 
 ### CNPG
 
-Both cases handle themselves, for different reasons.
+Both modes recover on their own, for different reasons.
 
-`highAvailability: true`: the primary dies with the machine, a synchronous standby is promoted, and because the
-commit waited for that standby to flush, it cannot be missing a transaction the application was told had
-committed. Writes continue on 2 of 3. The third instance stays Pending until the machine returns, because
-`podAntiAffinityType: required` will not double up.
-
-`highAvailability: false`: the single instance reschedules onto a survivor and reattaches the same volume.
-Postgres replays WAL on startup, exactly as it does after any `kill -9`, and comes up consistent. Nothing to
-restore.
+- **`highAvailability: true`.** The primary dies with the machine, and a synchronous standby is promoted. Each
+  commit waited for that standby to flush. So the standby cannot miss a transaction the application saw as
+  committed. Writes continue on 2 of 3. The third instance stays Pending until the machine returns, because
+  `podAntiAffinityType: required` does not put two instances on one node.
+- **`highAvailability: false`.** The single instance reschedules onto a surviving node and reattaches the same
+  volume. Postgres replays WAL on startup, as it does after any `kill -9`, and comes up consistent. There is
+  nothing to restore.
 
 ```bash
 kubectl -n <ns> get cluster <cluster> -w      # back to "Cluster in healthy state"
 ```
 
-CNPG will not leave a primary on a cordoned node: cordon one to steer a pod somewhere and it switches over
-first, so the instance you meant to move may not be the one that moves. Check
-`kubectl get pods -l cnpg.io/podRole=instance -A -L cnpg.io/instanceRole` before and after.
+CNPG does not leave a primary on a cordoned node. If you cordon a node to move a pod, CNPG switches over first.
+So the instance you meant to move may not be the one that moves. Check before and after:
 
-The S3 catalog is still there, and still the answer for real data loss: a dropped table, a bad migration, or
-losing every replica of a volume at once. `make restore-cnpg`, detail in [10_backups.md](10_backups.md). It is
-no longer part of node recovery.
+```bash
+kubectl get pods -l cnpg.io/podRole=instance -A -L cnpg.io/instanceRole
+```
+
+The S3 catalog is still the answer for real data loss:
+
+- a dropped table
+- a bad migration
+- every replica of a volume lost at once
+
+Run `make restore-cnpg`. Details are in [10_backups.md](10_backups.md). Node recovery does not use it.
 
 ### RabbitMQ
 
-Quorum queues tolerate one broker down out of three, so no messages are at risk. The broker's volume is
-Longhorn's, so the replacement pod reattaches the same data and rejoins with its Raft log intact. No
-`forget_cluster_node`, no `join_cluster`, nothing to wipe.
+Quorum queues tolerate one broker down out of three, so no messages are at risk. The broker's volume belongs to
+Longhorn. So the replacement pod reattaches the same data and rejoins with its Raft log intact. You run no
+`forget_cluster_node` and no `join_cluster`, and you wipe nothing.
 
-The startup probe (`reached-target-cluster-size`) returns 503 while the broker catches up and will restart the
-container once. That is normal; one restart is not a failure. Confirm from a HEALTHY peer:
+The startup probe (`reached-target-cluster-size`) returns 503 while the broker catches up. It restarts the
+container once. That is normal, and one restart is not a failure. Confirm from a healthy peer:
 
 ```bash
 kubectl -n rabbitmq exec rabbitmq-server-1 -c rabbitmq -- rabbitmqctl cluster_status
 ```
 
-All three under `Running Nodes` means it is back, even if the pod is not Ready yet.
+When all three brokers show under `Running Nodes`, the broker is back, even if the pod is not Ready yet.
 
-**Never wipe a broker's PVC as a repair step.** Raft tracks members by name along with what log each one should
-have, so a member that returns under its old name with an empty log is a contradiction the survivors refuse
-rather than guess about. If you ever do need to replace a broker's storage, the wipe must be preceded by
-`stop_app` plus `forget_cluster_node` from a peer and followed by an explicit `join_cluster`, and it is worst for
-`rabbitmq-server-0`, which `rabbit_peer_discovery_k8s` auto-clusters onto itself and which therefore comes back
-with divergent history rather than an empty log. Keeping the volume is what makes all of that moot.
+Never wipe a broker's PVC as a repair step. Raft tracks members by name, together with the log each one
+should have. A member that returns under its old name with an empty log is a contradiction. The surviving
+brokers refuse it and do not guess.
+
+If you must replace a broker's storage:
+
+1. Run `stop_app` on the broker.
+2. Run `forget_cluster_node` from a peer.
+3. Wipe the volume.
+4. Run an explicit `join_cluster`.
+
+`rabbitmq-server-0` is the worst case. `rabbit_peer_discovery_k8s` auto-clusters it onto itself. So after a
+wipe it comes back with divergent history, not an empty log. Keeping the volume avoids all of this.
 
 ### Redis
 
-Nothing to do. Both persistence modes sit on Longhorn, so the volume follows the pod to a surviving node.
-A brief availability gap while it reschedules, which is the accepted trade-off in [09_redis.md](09_redis.md).
+Nothing to do. Both persistence modes run on Longhorn, so the volume follows the pod to a surviving node.
+Redis is unavailable for a short time while it reschedules. [09_redis.md](09_redis.md) accepts this trade-off.
 
 ## Retiring a node for good
 
-The etcd and Kubernetes side belongs to your node tooling. What it costs here, on a 3-node cluster:
+Your node tooling owns the etcd and Kubernetes side. On a 3-node cluster, retiring a node costs this here:
 
-- Longhorn goes back to `healthy`: 2 replicas with hard anti-affinity fit exactly on 2 nodes, one each. What
-  is gone is the spare. The next node failure leaves volumes `degraded` with nowhere to rebuild onto, which
-  is the situation the 2-replica choice exists to avoid ([05_storage.md](05_storage.md)).
-- `sample-user-manager-db` and RabbitMQ drop to 2 of 3 permanently, so they have no spare either. Both still
-  serve; neither tolerates another loss.
+- **Longhorn returns to `healthy` but has no spare.** 2 replicas with hard anti-affinity fit exactly on 2
+  nodes, one each. The next node failure leaves volumes `degraded`, with no node to rebuild onto. The 2-replica
+  choice exists to avoid that state ([05_storage.md](05_storage.md)).
+- **`sample-user-manager-db` and RabbitMQ stay at 2 of 3.** They have no spare either. Both still serve, and
+  neither tolerates another loss.
 
 Two nodes is not a supported steady state here. Treat it as a countdown, not a configuration.
 
 ## What self-heals, and what does not
 
-Detection is covered: `Node NotReady`, `CNPG instance not ready`, `RabbitMQ node down`, `Container stuck
-(crashloop)`, `StatefulSet has no ready replicas` and `Longhorn volume degraded` all fire on this scenario.
-See [06_monitoring.md](06_monitoring.md).
+Alerts cover detection. These all fire on a node loss: `Node NotReady`, `CNPG instance not ready`,
+`RabbitMQ node down`, `Container stuck (crashloop)`, `StatefulSet has no ready replicas` and
+`Longhorn volume degraded`. See [06_monitoring.md](06_monitoring.md).
 
-| Layer | Self-heals a machine LOSS | Self-heals a machine REPLACEMENT |
+| Layer | Self-heals a machine loss | Self-heals a machine replacement |
 |---|---|---|
 | Longhorn replicas | yes, the manager rebuilds | yes |
-| Longhorn disk record | n/a | no: the CR's diskUUID outlives the filesystem, and Longhorn will not guess which is right |
+| Longhorn disk record | n/a | no. The CR's diskUUID outlives the filesystem, and Longhorn does not guess which is right |
 | CNPG, HA | yes, a synchronous standby is promoted | yes |
 | CNPG, single instance | yes, the volume moves with the pod | yes |
-| RabbitMQ | yes, on 2 of 3; the broker returns with its data | yes |
-| Redis, monitoring stores, ntfy | yes, rides Longhorn | yes |
+| RabbitMQ | yes, on 2 of 3. The broker returns with its data | yes |
+| Redis, monitoring stores, ntfy | yes, through Longhorn | yes |
 | Stateless Deployments | yes | yes |
 
-What would improve it further, in order:
+The one possible improvement is a 4th machine. Every "serves on 2 of 3, no spare" row above then becomes a full
+recovery, because a displaced copy has a node to go to under hard anti-affinity.
 
-1. **A 4th machine.** Every "serves on 2 of 3, no spare" row above becomes a full recovery, because a displaced
-   copy would have somewhere to go under hard anti-affinity.
-2. **Nothing else.** The one remaining manual record is an artifact of reflashing a machine under the same
-   name, it is handled by one idempotent script, and it is not on the availability path.
+The one remaining manual step is the disk record. It only exists because a reflashed machine returns under the
+same name. One idempotent script handles it, and it is not on the availability path.

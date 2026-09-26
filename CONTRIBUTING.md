@@ -1,39 +1,41 @@
 # Contributing
 
-Conventions that span the whole repo. Anything specific to one step lives in that step's `docs/NN_*.md`, which
-is where a decision or trade-off belongs, not in a code comment and not here.
+Conventions for the whole repo. A rule for one step lives in the `docs/NN_*.md` of that step. Decisions and
+trade-offs belong there too, not in a code comment and not here.
 
 ## Repository layout
 
-Organized by kind. The runbook order lives in the file NAMES, where the `NN` prefix keeps things in step order
-at a glance.
+The repo is organized by kind. File names carry the runbook order: the `NN` prefix sorts files into step order.
 
 | Path | Holds |
 |---|---|
 | `lib/shell/` | every bootstrap script (`NN_name.sh`, plus the `DANGEROUS_*` orchestrators) and the shared `common.sh` |
-| `docs/` | the narrative and decision record per step (`NN_name.md`) |
-| `lib/helm/` | shared charts consumed as a dependency by other charts |
-| `lib/bench/` | static payloads for `lib/shell/storage_bench.sh`: the fio job files and the pgbench percentile awk |
-| `argo_apps/` | everything Argo CD delivers, the two-tree GitOps root |
-| `Makefile` | a thin dispatcher over `lib/shell/` plus the orchestrators. `make help` lists every target |
-| `terraform/` | the S3 backup bucket + its scoped IAM writer, consumed by steps 13-17 |
-| `.env` | gitignored. Per-deployment config + secrets, in two blocks: CONFIG then SECRETS. Template: `.env.example` |
-| `secrets/` | this repo's own creds: the sealed-secrets master key + the ArgoCD webhook secret. A symlink to an off-repo store, never committed |
-| `.cache/` | scratch: benchmark runs. Gitignored |
+| `docs/` | the narrative and decision record for each step (`NN_name.md`) |
+| `lib/helm/` | shared charts that other charts use as a dependency |
+| `lib/bench/` | static inputs for `lib/shell/storage_bench.sh`: the fio job files and the pgbench percentile awk script |
+| `argo_apps/` | everything Argo CD delivers, in two GitOps trees |
+| `Makefile` | a thin dispatcher over `lib/shell/` and the orchestrators. `make help` lists every target |
+| `terraform/` | the S3 backup bucket and its scoped IAM writer, used by steps 10a to 10e |
+| `.env` | gitignored. Config and secrets for one deployment, in two blocks: CONFIG, then SECRETS. The template is `.env.example` |
+| `secrets/` | the credentials of this repo: the sealed-secrets master key and the Argo CD webhook secret. A symlink to an off-repo store, never committed |
+| `.cache/` | scratch space for benchmark runs. Gitignored |
 
-Run the steps in order: `01_cilium`, `02a_argocd`, and onward. Either by hand (`bash lib/shell/NN_name.sh`) or
-via the Makefile.
+Run the steps in order: `01_cilium`, `02a_argocd`, and on. Run each by hand (`bash lib/shell/NN_name.sh`) or
+through the Makefile.
 
-This repo starts from a cluster that already exists. Building, configuring and recovering the machines is
-somebody else's job, whatever tooling you use for it. Nothing is shared on disk with that tooling: the only
-thing that crosses is an active kubectl context, and what this repo needs the cluster to look like is in the
-README under "What this expects of your cluster".
+This repo starts from a cluster that already exists. Other tooling builds, configures and recovers the machines.
+This repo shares nothing on disk with that tooling. Only an active kubectl context crosses over. The README
+section "What this expects of your cluster" lists what the cluster must provide.
 
-Which cluster this repo may touch is pinned by `KUBE_CONTEXT` in `.env`, never inferred from the selected
-context. `use_kubeconfig` in `common.sh` is the single choke point: it derives a one-context, cert-inlined
-kubeconfig into gitignored `.cache/kubeconfig` and exports `KUBECONFIG` at it, so every `kubectl`, `helm` and
-`kubeseal` below inherits the pin and no other cluster is reachable. Call it before touching the cluster, and
-`assert_api` after. Set `KUBECONFIG_SOURCE` to read the contexts from somewhere other than `~/.kube/config`.
+`KUBE_CONTEXT` in `.env` pins the cluster that this repo may touch. The scripts never infer it from the selected
+context.
+
+- `use_kubeconfig` in `common.sh` is the one place that applies the pin.
+- It writes a kubeconfig with only that context, with certs inlined, to gitignored `.cache/kubeconfig`.
+- It exports `KUBECONFIG` to point at that file. Every later `kubectl`, `helm` and `kubeseal` uses it, so no
+  other cluster is reachable.
+- Call `use_kubeconfig` before you touch the cluster, and `assert_api` after it.
+- Set `KUBECONFIG_SOURCE` to read the contexts from a file other than `~/.kube/config`.
 
 ## Where a value lives
 
@@ -41,93 +43,106 @@ Every value lives in exactly one place.
 
 | Kind of value | Lives in |
 |---|---|
-| Upstream chart versions and digest pins | each chart's own `Chart.yaml` |
+| Upstream chart versions and digest pins | the `Chart.yaml` of each chart |
 | Per-deployment scalars (domains, ingress IP, backups) and all secrets | `.env`, gitignored |
 | Fixed identifiers that are not per-deployment config (namespaces, operator names) | constants in `lib/shell/common.sh` |
-| Internals used by one script (its own check expectations, asset filenames, tool refs it alone runs) | that script |
+| Internals of one script (its own check expectations, asset file names, tool refs only it runs) | that script |
 
-**No per-deployment value is ever hand-edited into a chart.** `lib/shell/04_values.sh` (`make configure-values`)
-reads `.env` and stamps every one of them into the chart values Argo CD renders: the repo URL in all five places
-that carry it, `BASE_DOMAIN` into every public hostname, the SSO allowlist, the ingress IP, the ACME email and
-the Cloudflare zones. That is what lets a fork change one gitignored file and rebase on upstream without
-conflicts. If you add a per-deployment value, add it to `.env.example` and teach `04_values.sh` to write it; do
-not commit it into a chart.
+**Never hand-edit a per-deployment value into a chart.** `lib/shell/04_values.sh` (`make configure-values`) reads
+`.env` and writes each value into the chart values that Argo CD renders:
 
-It **writes** values only, and must stay that way: Argo CD reconciles the pushed remote, so these values have to
-be committed and pushed before the bootstrap reaches `02a_argocd.sh`. Anything that applies to the cluster
-(sealing a secret) goes in a later step instead.
+- the repo URL, into all five places that carry it
+- `BASE_DOMAIN`, into every public hostname
+- the SSO allowlist, the ingress IP, the ACME email and the Cloudflare zones
 
-It does **read** the cluster, for one thing: the control-plane node IPs that become the vm-k8s-stack scrape
-endpoints, since many distributions bind controller-manager, scheduler and etcd to localhost and they are
-scraped per node. Reading them from the API rather than a config file means adding a control-plane node
-updates them on the next run.
+So a fork changes one gitignored file, and a rebase on upstream causes no conflicts. To add a per-deployment
+value, add it to `.env.example` and make `04_values.sh` write it. Do not commit it into a chart.
 
-`.env` is plain `KEY=value` only: no logic, arrays or command substitution. Anything derived is derived in
-`common.sh` (`OPS_DOMAIN` and `APP_DOMAIN` from `BASE_DOMAIN`, for example). Secrets are read from `.env`, never
-prompted; `common.sh` defaults each to empty so an older `.env` does not trip `set -u`, and an empty secret
-skips the feature it enables.
+`04_values.sh` only writes values, and it must stay that way. Argo CD reconciles the pushed remote. So these
+values must be committed and pushed before the bootstrap reaches `02a_argocd.sh`. Anything that applies to the
+cluster, such as sealing a secret, goes in a later step.
+
+`04_values.sh` reads one thing from the cluster: the control-plane node IPs. These become the scrape endpoints of
+vm-k8s-stack. Many distributions bind controller-manager, scheduler and etcd to localhost, so the stack scrapes
+them on each node. The script reads the IPs from the API, not from a config file. So a new control-plane node
+gets into the endpoint list on the next run.
+
+`.env` holds plain `KEY=value` lines only. No logic, no arrays, no command substitution.
+
+- `common.sh` derives everything else. For example, it derives `OPS_DOMAIN` and `APP_DOMAIN` from `BASE_DOMAIN`.
+- Scripts read secrets from `.env` and never prompt for them.
+- `common.sh` defaults each secret to empty, so an older `.env` does not fail `set -u`.
+- An empty secret skips the feature that it enables.
 
 ## Bootstrap scripts
 
-- UX contract from `common.sh`: `say`/`die`/`warn`/`ok`/`bad`, `PASS`/`FAIL` counters, a trailing `summary`,
-  non-zero exit on any failure.
-- Idempotent and re-run-safe. Re-running after a partial failure is the normal recovery path.
-- A `# ---- knobs ----` block near the top for script-local tunables, as plain assignments. No
-  `${VAR:-default}` env overrides: to change a value, edit it.
-- `set -uo pipefail`, deliberately not `-e` in the PASS/FAIL scripts so checks accumulate and report a full
-  summary. One-shot scripts that should abort early use `-euo`.
-- Apply-to-cluster scripts use native `helm`/`kubectl` and hard-fail if either is missing. Anything that needs
-  a pinned tool version (KRR) runs it in Docker.
-- A `DANGEROUS_` prefix on anything that wipes or resets state, so it cannot be run by reflex.
+- **Output:** use the helpers from `common.sh`. That is `say`, `die`, `warn`, `ok` and `bad`, the `PASS` and
+  `FAIL` counters, and a final `summary`. Exit non-zero on any failure.
+- **Idempotent:** a script must be safe to run again. Running it again after a partial failure is the normal
+  recovery.
+- **Knobs:** put script-local tunables in a `# ---- knobs ----` block near the top, as plain assignments. No
+  `${VAR:-default}` overrides from the environment. To change a value, edit it.
+- **Shell options:** PASS/FAIL scripts use `set -uo pipefail`, without `-e`, so that all checks run and the
+  summary is complete. One-shot scripts that must stop at the first error use `-euo`.
+- **Tools:** scripts that apply to the cluster use the native `helm` and `kubectl`, and fail hard if either is
+  missing. A tool that needs a pinned version, such as KRR, runs in Docker.
+- **`DANGEROUS_` prefix:** on anything that wipes or resets state, so nobody runs it by reflex.
 
 ### `common.sh`
 
-Sourced by every script. It self-locates the repo root, loads `.env`, derives the `ops.`/`app.` tiers from
-`BASE_DOMAIN`, and provides the output helpers, `require`, `use_kubeconfig`, `seal_secret`, and the values
+Every script sources `common.sh`. It finds the repo root, loads `.env`, and derives the `ops.` and `app.` tiers
+from `BASE_DOMAIN`. It provides the output helpers, `require`, `use_kubeconfig`, `seal_secret`, and the values
 writers.
 
-**Never write a tracked YAML file with `yq -i`.** It rewrites the whole document and drops the blank line before
-a comment block, so even a no-op write leaves the file dirty, which aborts the rebuild at `02a_argocd`'s
-uncommitted-changes gate. Use the line-surgical writers instead, and assert the result with a `yq -r` read-back:
+**Never write a tracked YAML file with `yq -i`.** `yq -i` rewrites the whole document and drops the blank line
+before a comment block. So even a write that changes no value leaves the file dirty. The uncommitted-changes gate
+in `02a_argocd` then stops the rebuild. Use the line-level writers below, and check the result with a `yq -r`
+read.
 
 | Writer | Sets |
 |---|---|
 | `ys_set <file> <value> <key...>` | one scalar at a nested mapping path |
 | `ys_set_list <file> "<space-separated>" <key...>` | a whole block sequence of scalars |
-| `ys_set_each <file> <value> <key...> <leaf>` | one key on EVERY item of a block sequence |
+| `ys_set_each <file> <value> <key...> <leaf>` | one key on every item of a block sequence |
 
-`yq` is still the right tool for reads.
+Use `yq` for reads.
 
 ## Helm wrapper charts
 
-Every app Argo CD manages is a thin wrapper chart under its tree's `charts/` dir. `Chart.yaml` pins the upstream
-version and nothing else does; `values.yaml` holds all configuration. A first-party chart's own `version:` is
-inert and stays `0.1.0` forever: nothing publishes these, Argo CD renders from the git path, and every consumer
-pins its `file://` dep at `"*"`. Never bump it.
+Every app that Argo CD manages is a thin wrapper chart under the `charts/` dir of its tree.
 
-The imperative bootstrap script and Argo CD consume the same chart, release name and namespace, so Argo adopts
-the running release in-sync with no pod churn.
+- `Chart.yaml` pins the upstream version. Nothing else does.
+- `values.yaml` holds all configuration.
+- The `version:` of a first-party chart has no effect and stays `0.1.0`. Nothing publishes these charts. Argo CD
+  renders from the git path, and every consumer pins its `file://` dependency at `"*"`. Never bump it.
 
-**`Chart.lock`: commit it only for a REMOTE dependency.** A chart with an `https`/`oci` dep commits its lock,
-because Argo CD's repo-server runs `helm dependency build` and a missing or stale lock breaks sync
-(`make fix-chart-locks` regenerates one). A chart whose deps are all `file://` is lockless and gitignores it:
-the git commit already fixes those deps, so a lock pins nothing and only breaks sync when it goes stale. Either
-way, gitignore `charts/*.tgz` and never commit one.
+The bootstrap script and Argo CD use the same chart, release name and namespace. So Argo CD adopts the running
+release in sync, and no pod restarts.
+
+**Commit `Chart.lock` only for a remote dependency.**
+
+- A chart with an `https` or `oci` dependency commits its lock. The Argo CD repo-server runs
+  `helm dependency build`, and a missing or stale lock breaks the sync. `make fix-chart-locks` regenerates a lock.
+- A chart whose dependencies are all `file://` has no lock and gitignores it. The git commit already fixes those
+  dependencies. A lock pins nothing and breaks the sync when it goes stale.
+- In both cases, gitignore `charts/*.tgz` and never commit one.
 
 ### Shared charts (`lib/helm/`)
 
-Consumed as `file://` dependencies rather than by Argo CD directly, because charts in both trees use them. All
-`type: application`, all render from values, none pins an upstream, so none ships a lock or a tgz.
+Charts in both trees use these as `file://` dependencies, so Argo CD does not deliver them directly. All are
+`type: application` and render from values. None pins an upstream, so none ships a lock or a tgz.
 
 | Chart | Renders |
 |---|---|
-| `ingress` | the ingress edge: per host a Gateway, HTTPRoute and ReferenceGrant, plus one multi-SAN Certificate per ingress |
-| `pg-cluster` | the CNPG `Cluster`, `PodMonitor`, a default-deny CNP pair, and when backups are on the Barman `ObjectStore` + `ScheduledBackup` |
+| `ingress` | the ingress edge: a Gateway, HTTPRoute and ReferenceGrant for each host, and one multi-SAN Certificate for each ingress |
+| `pg-cluster` | the CNPG `Cluster`, a `PodMonitor`, and a pair of default-deny CNPs. With backups on, also the Barman `ObjectStore` and the `ScheduledBackup` |
 | `redis-instance` | one standalone `Redis` CR, its ServiceMonitor, and a default-deny CNP |
-| `rabbitmq-topology` | a `User` with operator-generated credentials, its exchanges/queues/bindings, a `.dlx`/`.dlq` pair per consumer queue, and one aggregated `Permission` |
+| `rabbitmq-topology` | a `User` with credentials that the operator generates, its exchanges, queues and bindings, a `.dlx`/`.dlq` pair for each consumer queue, and one combined `Permission` |
 
-Cluster wiring is hardcoded in each as a platform invariant, not a per-consumer value: `ingress`'s gateway
-namespace, gateway class and fallback issuer; `rabbitmq-topology`'s broker and vhost.
+Each chart hardcodes the cluster wiring as a platform invariant, not as a value for each consumer:
+
+- `ingress`: the gateway namespace, the gateway class and the fallback issuer
+- `rabbitmq-topology`: the broker and the vhost
 
 ## Argo CD apps
 
@@ -139,43 +154,51 @@ argo_apps/
   workloads/{apps,charts}/  # the actual apps
 ```
 
-Each `apps/` dir is itself a Helm chart: the Applications live in `templates/`, and `repoURL` comes from that
-chart's `values.yaml` so it exists once per tree instead of once per app. `ls argo_apps/platform/apps/templates/`
-reads in deploy order.
+Each `apps/` dir is itself a Helm chart. Its `templates/` holds the Applications. `repoURL` comes from the
+`values.yaml` of that chart, so it exists once per tree and not once per app. `ls argo_apps/platform/apps/templates/`
+lists the apps in deploy order.
 
-- **Waves order creation, not health.** There is no `argoproj.io/Application` health gate, on purpose, so the
-  platform-to-workloads boundary is advisory ordering. An app that races ahead of a dependency fails its sync
-  and converges via unbounded retry.
-- **Keep three things in agreement** for a platform app: the `apps/templates/NN_name.yaml` prefix, the
-  `charts/NN_name/` prefix, and the `argocd.argoproj.io/sync-wave: "N"` annotation. Pick the lowest wave that
-  sits after everything the app depends on. Do not renumber casually.
-- **Workloads carry no wave.** They have nothing to order among themselves. If a workload genuinely depends on
-  another, it belongs in platform.
-- **Every app stays `automated` with unbounded retry** (`retry.limit: -1`, `refresh: true`). With no health
-  gate, that is the only thing that converges an app on its own.
-- **Every Application carries the `resources-finalizer`,** so removing or renaming one cascade-deletes its
-  resources instead of orphaning them. `prune` is within-app and does not cascade on deletion.
-- **Every pod-running app carries an explicit `CiliumNetworkPolicy`,** default-deny both ways, rolled out
-  audit-first, unless it is on the deliberately-unpoliced list in `docs/01_networking.md`. Two gotchas: a
-  cross-namespace peer needs `matchExpressions: [{key: k8s:io.kubernetes.pod.namespace, operator: Exists}]`,
-  because an omitted namespace label is same-namespace-only; and disable any upstream-bundled vanilla
-  `NetworkPolicy`, since those default to allow-all-egress and Cilium unions them with ours.
-- **Alerting is Grafana-only.** `vmalert` and `alertmanager` are off, so any `PrometheusRule` or `VMRule` is
-  inert. Never enable a chart's bundled alerts; add a Grafana alert file under
-  `argo_apps/platform/charts/05_grafana/files/alerts/` instead. Invariant: `kubectl get vmrule -A` stays empty.
-- **Roll-forward only.** Recovery is a git revert re-synced by Argo, never `argocd app rollback`, so every
+- **Waves order creation, not health.** There is deliberately no health gate on `argoproj.io/Application`. So the
+  boundary between platform and workloads only orders creation. An app that starts before a dependency exists
+  fails its sync. Unbounded retry then converges it.
+- **Keep three things in agreement for a platform app:** the `apps/templates/NN_name.yaml` prefix, the
+  `charts/NN_name/` prefix, and the `argocd.argoproj.io/sync-wave: "N"` annotation. Pick the lowest wave after
+  everything the app depends on. Do not renumber without a reason.
+- **Workloads carry no wave.** Workloads need no order among themselves. If a workload really depends on another,
+  it belongs in platform.
+- **Every app stays `automated` with unbounded retry** (`retry.limit: -1`, `refresh: true`). There is no health
+  gate, so retry is the only thing that converges an app by itself.
+- **Every Application carries the `resources-finalizer`.** So removing or renaming an Application deletes its
+  resources with it, and none are orphaned. `prune` only works inside one app and does not cascade on deletion.
+- **Every app that runs pods carries an explicit `CiliumNetworkPolicy`.** It denies all traffic both ways by
+  default and rolls out in audit mode first. The exceptions are on the unpoliced list in `docs/01_networking.md`.
+  Two gotchas:
+  - A peer in another namespace needs
+    `matchExpressions: [{key: k8s:io.kubernetes.pod.namespace, operator: Exists}]`. Without a namespace label, the
+    selector matches the same namespace only.
+  - Disable any vanilla `NetworkPolicy` that an upstream chart bundles. Those allow all egress by default, and
+    Cilium combines them with ours.
+- **Alerting is Grafana only.** `vmalert` and `alertmanager` are off, so any `PrometheusRule` or `VMRule` has no
+  effect. Never enable the bundled alerts of a chart. Add a Grafana alert file under
+  `argo_apps/platform/charts/05_grafana/files/alerts/` instead. `kubectl get vmrule -A` must always stay empty.
+- **Roll forward only.** Recovery is a git revert that Argo CD syncs, never `argocd app rollback`. So every
   Application and first-party chart sets `revisionHistoryLimit: 0`.
 - **Push before you expect a sync.** Argo CD reconciles the pushed remote, not your working tree.
 
-Cilium is the one app that can cut the cluster off its own network, and it still auto-syncs with full `selfHeal`
-and `prune`. An out-of-band break-glass fix IS reverted unless you commit it, and a bad Cilium change pushed to
-git applies unattended. Mind your pushes.
+Cilium is the one app that can cut the cluster off its own network. It still syncs automatically with full
+`selfHeal` and `prune`. So Argo CD reverts any out-of-band emergency fix that you do not commit. A bad Cilium
+change pushed to git also applies with nobody watching. Push with care.
 
 ## Docs
 
-`docs/NN_*.md` is where the why lives. Fragments, bullets and tables over paragraphs. State the current reason,
-not the history: this repo rolls forward, so "what it used to be" is dead weight that also goes stale.
+`docs/NN_*.md` holds the reasons.
 
-Comments are the exception, not the habit: write one when the reason is not derivable from the code, keep it
-short, and attach it to the exact line. `values.yaml`, `.env.example` and `variables.tf` are the API, so every
-tunable knob gets one aligned trailing comment.
+- Fragments, bullets and tables over paragraphs.
+- State the current reason, not the history. This repo rolls forward, and a note about the past only goes stale.
+
+Code comments are the exception, not the habit.
+
+- Write one only when the code cannot show the reason.
+- Keep it short, and put it on the exact line it explains.
+- `values.yaml`, `.env.example` and `variables.tf` are the API. Every tunable knob in them gets one aligned
+  trailing comment.

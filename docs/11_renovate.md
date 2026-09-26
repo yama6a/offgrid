@@ -1,76 +1,80 @@
 # Renovate (automatic dependency updates)
 
-Renovate opens PRs to bump every pinned dependency in the repo.
+Renovate opens PRs that bump every pinned dependency in the repo.
 
-- Config: [`/renovate.json5`](../renovate.json5)
-- Runner: [`.github/workflows/renovate.yaml`](../.github/workflows/renovate.yaml)
-- Gate: [`.github/workflows/ci.yaml`](../.github/workflows/ci.yaml) validates every PR (shellcheck, `helm
-  dependency build`/lint/template, kubeconform, renovate-config-validator, yamllint, actionlint) and the
-  automerge waits on it. See "How the automerge works".
+- Config: [`/renovate.json5`](../renovate.json5). It extends the shared preset `github>yama6a/gha:default.json5`,
+  which holds the grouping, automerge and digest-pinning rules.
+- Runner: [`.github/workflows/renovate.yaml`](../.github/workflows/renovate.yaml).
+- Gate: [`.github/workflows/ci.yaml`](../.github/workflows/ci.yaml) checks every PR. It runs shellcheck, `helm
+  dependency build`, `helm lint`, `helm template`, kubeconform, renovate-config-validator, yamllint and actionlint.
+  No PR merges until these checks pass. See [How the automerge works](#how-the-automerge-works).
 
 ## Why Renovate, not Dependabot
 
-Dependabot has no Helm manager and cannot touch image tags inside `values.yaml`. It would cover Terraform and
-GitHub Actions only. Renovate covers everything this repo pins:
+Dependabot has no Helm manager and cannot update image tags inside `values.yaml`. It covers only Terraform and
+GitHub Actions. Renovate covers every pin in this repo:
 
 | Manager | Covers |
 |---|---|
-| `helmv3` | every wrapper chart's `Chart.yaml` + `Chart.lock`. `file://` deps have no datasource, so they are skipped |
-| `terraform` | the aws provider in `terraform/versions.tf` + `.terraform.lock.hcl` |
-| `github-actions` | the workflow's own action pins, kept digest-pinned |
-| `helm-values` | standard-shape `image:` / `repository`+`tag` in a `values.yaml` |
-| regex, annotated | anything carrying `# renovate: datasource=...`: chart-template images, shell-script image literals, the per-workload `postgresVersion`/`redisVersion` scalars, the pg-cluster image map |
+| `helmv3` | every wrapper chart's `Chart.yaml` and `Chart.lock`. A `file://` dep has no datasource, so Renovate skips it |
+| `terraform` | the aws provider in `terraform/versions.tf` and `.terraform.lock.hcl` |
+| `github-actions` | the workflow's own action pins, kept pinned to a digest |
+| `helm-values` | a standard `image:` block, or a `repository` and `tag` pair, in a `values.yaml` |
+| regex, annotated | every line with a `# renovate: datasource=...` comment: images in chart templates, image literals in shell scripts, the per-workload `postgresVersion` and `redisVersion` values, the pg-cluster image map |
 
-`helmUpdateSubChartArchives` is on but currently does nothing: no chart commits a vendored `charts/*.tgz` any
-more. Kept as a guard in case one comes back.
+`helmUpdateSubChartArchives` is on. It re-packs a committed `charts/*.tgz`. No chart commits one today, so the
+option has no effect. It stays on as a guard for a chart that commits one later.
 
-The pin is the single source of truth. Versions are never restated in prose or comments, so a bump cannot strand
-a stale number. A version literal survives in a doc only when that exact version is the point: a minimum, a
-ceiling, or a must-match constraint.
+The pin is the single source of truth. Prose and comments never restate a version, so a bump cannot leave a stale
+number behind. A doc keeps a version number only when that exact version is the point: a minimum, a maximum, or a
+version that must match another.
 
 ## Running it
 
-Self-hosted GitHub Action, cron every 3 hours plus `workflow_dispatch`.
+A self-hosted GitHub Action runs Renovate once a day at 05:13 UTC. You can also start it by hand with
+`workflow_dispatch`, which takes a log level and a dry-run switch.
 
 One-time setup:
 
-1. Create a PAT. Fine-grained: this repo, Contents + Pull requests + Workflows + Issues read-write. Or classic:
-   `repo` + `workflow`.
+1. Create a PAT (personal access token). Fine-grained: this repo, with read-write on Contents, Pull requests,
+   Workflows and Issues. Classic: the `repo` and `workflow` scopes.
 2. Add it as the repo secret `RENOVATE_TOKEN`.
-3. Trigger the workflow by hand. It populates the dependency-dashboard issue and opens the first PRs.
+3. Start the workflow by hand. Renovate creates the dependency-dashboard issue and opens the first PRs.
 
-The built-in `GITHUB_TOKEN` cannot open PRs that re-trigger workflows and lacks the scope, so the dedicated PAT
-is required. Issues read-write is what lets Renovate create and maintain the dashboard issue.
+Renovate needs its own PAT. A PR opened with the built-in `GITHUB_TOKEN` does not start other workflows, so CI
+would never run on it. `GITHUB_TOKEN` also lacks the scopes. Read-write on Issues lets Renovate create and update
+the dashboard issue.
 
-## PR grouping, and when Renovate self-merges
+## PR grouping, and when a PR merges without review
 
-- One combined, auto-merged PR for every non-major update: `minor`, `patch`, `digest`, `pin` and lockfile bumps
-  all land in a single "all non-major dependencies" PR that Renovate merges itself.
-- Each major update is its own PR, left for review. A breaking bump is never bundled or automerged. The one
-  exception: the VictoriaMetrics charts keep their majors together, because the CRDs must match the operator.
+- **Non-major updates:** one combined PR with auto-merge on. It holds every `minor`, `patch`, `digest`, `pin` and
+  lockfile update, under the title "all non-major dependencies".
+- **Major updates:** one PR each, with the `dep-major` label. Renovate never auto-merges one. The VictoriaMetrics
+  charts are the exception to one-PR-each: their majors share one PR, because the CRDs must match the operator.
+- **Replacements:** one PR each, with the `dep-swap` label. A replacement swaps a package for a different one.
+
+After each run, the workflow sends every open `dep-major` and `dep-swap` PR through a backward-compatibility
+check. The check uses Copilot and gives a verdict per PR head. A `SAFE` verdict turns on auto-merge for that PR.
+Any other verdict leaves the PR for a human to review.
 
 ### How the automerge works
 
-`platformAutomerge: false`, so Renovate merges through the API itself rather than using GitHub's native
-auto-merge. It merges only when the PR is mergeable, which now means after the required CI checks pass: Renovate
-waits on status checks by default, and `main`'s branch protection enforces them on the API merge too.
+The preset sets `platformAutomerge: true`. Renovate turns on GitHub's own auto-merge when it opens the PR. GitHub
+then merges the PR as soon as the required CI checks pass. One daily run is enough, because GitHub does the merge.
 
-Consequence: the combined PR merges on a LATER run once CI is green, roughly 2h+ after it was opened, one merge
-per run. That two-pass timing is why the cron runs every 3 hours. A weekly cron would leave a green,
-auto-mergeable PR sitting for a week. A manual `workflow_dispatch` also completes a pending merge on demand.
+Branch protection on `main` requires the CI checks and no reviews. A required review would block every merge,
+because Renovate cannot approve its own PR. `enforce_admins` stays off, so an admin can still merge an urgent fix.
+`strict` stays off, so auto-merge does not wait for a rebase onto `main` first.
 
-Branch protection on `main` requires the CI checks, not reviews. A required review would deadlock Renovate,
-since it cannot approve its own PR. `enforce_admins` stays off so a break-glass fix can still land.
-
-Run this once, after the CI checks have run at least once (open a PR first so GitHub registers the check
-contexts):
+Set the protection once. GitHub knows a check name only after that check has run once, so open a PR first:
 
 ```bash
 gh api -X PUT repos/yama6a/offgrid/branches/main/protection \
   -H "Accept: application/vnd.github+json" --input - <<'JSON'
 {
-  "required_status_checks": { "strict": true, "checks": [
-    {"context": "shell"}, {"context": "helm"}, {"context": "yaml"}, {"context": "renovate-config"}
+  "required_status_checks": { "strict": false, "checks": [
+    {"context": "shell"}, {"context": "helm"}, {"context": "yaml"}, {"context": "renovate-config"},
+    {"context": "chart-tests"}
   ]},
   "enforce_admins": false,
   "required_pull_request_reviews": null,
@@ -79,39 +83,47 @@ gh api -X PUT repos/yama6a/offgrid/branches/main/protection \
 JSON
 ```
 
-### The risk, and how to dial it back
+### The risk, and how to reduce it
 
-CI blocks a bump that fails to render or produces invalid manifests. It does NOT catch a bump that renders
-cleanly but misbehaves at runtime, like a Cilium regression or a changed default. A merge reaches the live
-cluster: ArgoCD syncs it and most apps run `selfHeal`, so the combined PR applies everything in it unattended.
+CI blocks a bump that fails to render or gives invalid manifests. CI does not catch a bump that renders but
+breaks at runtime, for example a Cilium regression or a changed default. A merged bump reaches the live cluster
+with no human step: Argo CD syncs it, and most apps run `selfHeal`.
 
-One thing in that PR needs care: Cilium is the app that can cut the cluster, and Argo with it, off its own
-network. See [01_networking.md](01_networking.md) and [02_gitops.md](02_gitops.md).
+Cilium needs the most care. It is the one app that can cut the cluster, and Argo CD with it, off its own network.
+See [01_networking.md](01_networking.md) and [02_gitops.md](02_gitops.md).
 
-Accepted hands-off trade-off. To de-risk without splitting the PR: add `minimumReleaseAge` (e.g. `"3 days"`) so
-bumps bake before they are eligible, or drop `automerge` from the specific deps you want to gate.
+This repo accepts that risk to stay hands-off. To reduce it without splitting the combined PR:
 
-## Gotchas baked into the config
+- Add `minimumReleaseAge`, for example `"3 days"`. A new release then waits that long before Renovate offers it.
+- Turn `automerge` off for the dependencies you want to review by hand.
 
-- No `**/charts/**` disable rule. The wrapper charts themselves live under paths containing `/charts/`, so the
-  usual Helm guard would disable the whole repo.
-- The three image managers must not overlap on the same key. `helm-values` only recognises `image:` or
-  `repository`+`tag` structures, and a built-in manager's `managerFilePatterns` is additive, so it cannot be
-  narrowed. Therefore the template/shell regex manager keeps `values.yaml` out entirely, and a separate
-  datastore-version manager (scoped to `argo_apps/workloads/charts/*/values.yaml`) matches only the annotated
-  `postgresVersion`/`redisVersion` line.
-- Postgres version is split across two pins, MAJOR in the workload and patch/digest in the chart map. A
-  workload's `postgresVersion` is a bare major (`"18"`), held MAJOR-only by a packageRule, so only an `18 to 19`
-  upgrade surfaces for review. The actual image (flavour, OS, patch, digest) lives once in
-  `lib/helm/pg-cluster/files/postgres-images.yaml`, one pinned `tag@digest` per supported major, tracked
-  DIGEST-only because patches move the rolling `<major>-minimal-trixie` tag and the tag string never changes. A
-  new major is added to the map by hand. Until it is, a workload bumped to that major fails to render (the chart's
-  `pg-cluster.image` helper fails on an unlisted key), which blocks the major PR.
-- Merging a `postgresVersion` major PR performs the upgrade: the operator runs an offline `pg_upgrade` and the
-  database is down for it, so read the runbook in [05_storage.md](05_storage.md) before merging one. Nothing else
-  is needed, though: the backup catalog rotates with the major on its own. Majors are never automerged, which is
-  what makes that reading possible.
-- The barman-cloud vendored manifest is in `ignorePaths`. Bumping it re-vendors an upstream release verbatim per
-  that chart's README, not a line edit.
-- VictoriaMetrics charts are grouped. The CRD chart's app version must match its operator, which is a human
-  check on the grouped PR. See [06_monitoring.md](06_monitoring.md).
+## Gotchas in the config
+
+- **No `**/charts/**` disable rule.** The wrapper charts live under paths that contain `/charts/`. The usual Helm
+  guard would turn Renovate off for the whole repo.
+- **The three image managers must not match the same line.** `helm-values` reads only an `image:` block or a
+  `repository` and `tag` pair. A built-in manager's `managerFilePatterns` only adds files, so you cannot narrow
+  it. So the regex manager for templates and shell scripts excludes `values.yaml`. A second regex manager covers
+  only `argo_apps/workloads/charts/*/values.yaml`, and matches only the annotated `postgresVersion` and
+  `redisVersion` lines.
+- **Two pins set the Postgres version.** The workload holds the major. The pg-cluster chart holds the patch and
+  the digest.
+  - A workload's `postgresVersion` is a bare major, for example `"18"`. A packageRule allows only major updates
+    on it, so Renovate offers only an upgrade such as 18 to 19, as a PR for review.
+  - The image itself lives once in `lib/helm/pg-cluster/files/postgres-images.yaml`. It holds one pinned
+    `tag@digest` per supported major. Renovate updates only the digest. A patch release moves the rolling
+    `<major>-minimal-trixie` tag, so the tag string itself never changes.
+  - A human adds a new major to that map. Until then, a workload on that major fails to render: the chart's
+    `pg-cluster.image` helper fails on a major that is not in the map. So CI blocks the major PR.
+- **A merged `postgresVersion` major PR runs the upgrade.** The operator runs an offline `pg_upgrade`, and the
+  database is down while it runs. Read the runbook in [05_storage.md](05_storage.md) before you merge one. No
+  other step is needed: the backup catalog moves to a new prefix for the new major by itself. Renovate never
+  auto-merges a major, so you always get the chance to read the runbook.
+- **The vendored barman-cloud manifest is in `ignorePaths`.** A bump re-vendors a full upstream release, per
+  that chart's README. It is never a one-line edit.
+- **The VictoriaMetrics charts share one major PR.** The CRD chart's app version must match the operator's. A
+  human checks that on the combined PR. See [06_monitoring.md](06_monitoring.md).
+- **Every `Chart.lock` gets a fixed `generated:` time.** `helm dependency update` writes the current time into
+  that field. A `postUpgradeTasks` command sets it to `1970-01-01T00:00:00Z`, so two independent updates to the
+  same versions give the same file. The command must also be in the `allowed-commands` input in
+  `.github/workflows/renovate.yaml`, or Renovate does not run it.
