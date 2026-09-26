@@ -1,8 +1,6 @@
-# Whether an alert can still reach the phone. Grafana counts every webhook POST to ntfy, so a rejected or
-# refused publish is visible here even while ntfy itself is up and scraping fine.
-# ntfy being DOWN needs no rule of its own: it is a scrape target, so `target-down` in cluster-health covers it.
-# Read both with the obvious caveat: a broken notification path cannot notify you that it is broken. These fire
-# in the Grafana UI and resolve once delivery works, which is the most an in-cluster check can do.
+# Grafana counts every webhook POST to ntfy, so this catches a rejected publish even while ntfy is up.
+# A down ntfy is a scrape target, so `target-down` in cluster-health covers it.
+# A broken notification path cannot notify you. So this alert fires in the Grafana UI and resolves once delivery works.
 apiVersion: 1
 groups:
   - orgId: 1
@@ -18,10 +16,10 @@ groups:
         annotations:
           summary: 'Grafana cannot deliver alerts via {{ $labels.integration }}'
           description: |
-            - the webhook to ntfy is erroring, so alerts fire but nobody is told
-            - kubectl -n monitoring logs deploy/grafana | grep -i notif
-            - check the ntfy topic + token still match: make configure-ntfy-auth, then reseal
-            - verify from a pod: curl -H "Authorization: Bearer <token>" http://ntfy.monitoring.svc.cluster.local:8080/<topic>
+            - the webhook to ntfy returns errors, so alerts fire but nobody gets them
+            - read the Grafana log: kubectl -n monitoring logs deploy/grafana | grep -i notif
+            - check that the ntfy topic and token still match. Run make configure-ntfy-auth, then reseal
+            - test from a pod: curl -H "Authorization: Bearer <token>" http://ntfy.monitoring.svc.cluster.local:8080/<topic>
         noDataState: OK
         execErrState: KeepLast
         data:
@@ -31,7 +29,7 @@ groups:
             model:
               refId: A
               instant: true
-              # The series only materialises on the FIRST failure, which is why noDataState is OK.
+              # The series appears only on the first failure, so noDataState is OK.
               expr: 'sum by (integration) (increase(grafana_alerting_notification_requests_failed_total[10m]))'
           - refId: B
             relativeTimeRange: {from: 900, to: 0}

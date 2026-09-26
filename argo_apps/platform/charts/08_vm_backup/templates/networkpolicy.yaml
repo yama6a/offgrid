@@ -1,7 +1,7 @@
 {{- /*
-Egress lockdown for the central backup pod, under the same bucket gate as the CronJob. Egress-only, the pod
-exposes nothing. VMSingle and VLSingle each separately allow this pod inbound in their own policy.
-No apiserver rule: the job reads the stores over HTTP by Service DNS and never touches the k8s API.
+Egress lockdown for the backup pod. Like the CronJob, it renders only when a bucket is set. The pod accepts no
+traffic. VMSingle and VLSingle each let this pod in through their own policy.
+No apiserver rule, because the job reads the stores over HTTP by Service DNS and never calls the k8s API.
 */ -}}
 {{- if .Values.bucket }}
 apiVersion: cilium.io/v2

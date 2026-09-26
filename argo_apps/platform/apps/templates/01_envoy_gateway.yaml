@@ -1,4 +1,5 @@
-# Envoy Gateway: the controller, the Gateway API + EG CRDs, the `eg` GatewayClass, and the LB-IP-pinning EnvoyProxy.
+# Envoy Gateway: the controller, the Gateway API and Envoy Gateway CRDs, the `eg` GatewayClass, and the EnvoyProxy
+# that pins the LoadBalancer IP.
 apiVersion: argoproj.io/v1alpha1
 kind: Application
 metadata:
@@ -31,4 +32,4 @@ spec:
         maxDuration: 1m
     syncOptions:
       - CreateNamespace=true
-      - ServerSideApply=true # adopts the Gateway API CRDs without field-ownership conflicts
+      - ServerSideApply=true # adopts the Gateway API CRDs with no field ownership conflicts

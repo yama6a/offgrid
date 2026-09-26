@@ -1,15 +1,15 @@
-# Local Terraform state holds the generated IAM SECRET key, so never commit it. Repo is public.
+# Local Terraform state holds the generated IAM secret key. The repo is public, so never commit it.
 *.tfstate
 *.tfstate.*
 *.tfstate.backup
 
-# Provider plugins + local working dir (reproducible from the committed .terraform.lock.hcl).
+# Provider plugins and the local working dir. The committed .terraform.lock.hcl reproduces them.
 .terraform/
 .terraform.tfstate.lock.info
 
-# Any *.tfvars would carry real values. We pass TF_VAR_* from .env instead, so none should exist. Ignore
-# them defensively so a stray one can't leak.
+# A *.tfvars file would hold real values. The values come from .env as TF_VAR_*, so none should exist. The
+# ignore stops a stray one from leaking.
 *.tfvars
 *.tfvars.json
 
-# NOT ignored (committed on purpose): *.tf and .terraform.lock.hcl (the provider version pin, not sensitive).
+# *.tf and .terraform.lock.hcl stay committed. The lock file is the provider version pin and holds no secret.

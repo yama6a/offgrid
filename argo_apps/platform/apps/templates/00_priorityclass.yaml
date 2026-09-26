@@ -1,4 +1,4 @@
-# platform-critical + data-critical PriorityClasses. Removing this app fails admission for every pod that names one.
+# The platform-critical and data-critical PriorityClasses. Without this app, every pod that names one fails admission.
 apiVersion: argoproj.io/v1alpha1
 kind: Application
 metadata:

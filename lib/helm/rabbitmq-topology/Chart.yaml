@@ -1,5 +1,5 @@
 apiVersion: v2
 name: rabbitmq-topology
-description: Shared chart that renders a workload's messaging topology against the one shared broker, exactly one User plus the Exchanges/Queues/Bindings it owns and one aggregated Permission.
+description: Shared chart that renders a workload's messaging topology on the one shared broker. It renders one User, the Exchanges, Queues and Bindings that user owns, and one aggregated Permission.
 type: application
-version: 0.1.0 # local chart, never bump version
+version: 0.1.0 # nothing publishes this chart, so never bump it

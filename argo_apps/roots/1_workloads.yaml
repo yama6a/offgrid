@@ -1,4 +1,4 @@
-# The workloads root. Renders argo_apps/workloads/apps/ and manages every workload Application it finds there.
+# The workloads root. It renders argo_apps/workloads/apps/ and manages every workload Application there.
 apiVersion: argoproj.io/v1alpha1
 kind: Application
 metadata:

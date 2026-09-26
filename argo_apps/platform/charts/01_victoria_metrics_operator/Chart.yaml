@@ -1,8 +1,8 @@
 apiVersion: v2
 name: victoria-metrics-operator
-description: The VictoriaMetrics operator. Reconciles the VM*/VL* CRs and converts third-party ServiceMonitor/PodMonitor/PrometheusRule objects to VM equivalents.
+description: The VictoriaMetrics operator. It reconciles the VM* and VL* CRs and converts ServiceMonitor, PodMonitor and PrometheusRule objects to their VM kinds.
 type: application
-version: 0.1.0 # local chart, never bump version
+version: 0.1.0 # nothing publishes this chart, so never bump it
 
 dependencies:
   - name: victoria-metrics-operator

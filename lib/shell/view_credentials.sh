@@ -1,21 +1,20 @@
 #!/usr/bin/env bash
-# One read-only "where do I go and how do I get in" sheet for the cluster's UIs. Reads Secrets and .env,
-# WRITES NOTHING. Only RabbitMQ and ntfy have a real human login; everything else behind the edge is
-# Google-SSO-only, so this prints their URL and nothing more.
+# Prints the URL and login of each cluster UI. Reads Secrets and .env, and writes nothing.
+# Only RabbitMQ and ntfy have their own login. Every other UI uses Google SSO only, so it gets just a URL.
 set -uo pipefail
 
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 source "${SCRIPT_DIR}/common.sh"
 
 # ---- knobs ----
-INGRESS_VALUES="${PLATFORM_CHARTS}/06_platform_ingress/values.yaml" # URL source of truth
+INGRESS_VALUES="${PLATFORM_CHARTS}/06_platform_ingress/values.yaml" # holds every URL
 RABBITMQ_NS="rabbitmq"
-RABBITMQ_SECRET="rabbitmq-default-user" # operator-generated admin creds
+RABBITMQ_SECRET="rabbitmq-default-user" # admin creds that the operator generates
 RABBITMQ_SUBDOMAIN="rabbitmq"
-NTFY_SUBDOMAIN="ntfy"                                          # a host under the platform ingress, not an ingress of its own
-NTFY_USER="phone"                                              # Android subscriber (read-only)
-NTFY_TOPIC="cluster-alerts"                                    # matches 06_ntfy_auth.sh / 05_ntfy
-WEBHOOK_FILE="${CLUSTER_DIR}/argocd-github-webhook-secret.txt" # plaintext webhook secret (02b mints it)
+NTFY_SUBDOMAIN="ntfy"                                          # a host under the platform ingress, not its own ingress
+NTFY_USER="phone"                                              # the read-only Android subscriber
+NTFY_TOPIC="cluster-alerts"                                    # must match 06_ntfy_auth.sh and 05_ntfy
+WEBHOOK_FILE="${CLUSTER_DIR}/argocd-github-webhook-secret.txt" # plaintext webhook secret, written by 02b
 ARGOCD_SUBDOMAIN="argocd"
 
 # ---- state ----
@@ -26,14 +25,14 @@ PLATFORM_DOMAIN=""
 
 ingress_domain() { yq -r ".ingress.ingresses[] | select(.name==\"$1\").domain" "$INGRESS_VALUES"; }
 
-# A SOFT API probe, so the offline sources still print when the cluster is down.
+# The API probe does not fail the run, so the offline sources still print when the cluster is down.
 check_prerequisites() {
   say "prerequisites"
   require kubectl yq
   [ -f "$INGRESS_VALUES" ] || die "missing ${INGRESS_VALUES}"
-  use_kubeconfig # dies only if the kubeconfig FILE is absent
+  use_kubeconfig # dies only when the kubeconfig file is missing
   kubectl get nodes > /dev/null 2>&1 || API_UP=0
-  [ "$API_UP" -eq 1 ] && ok "cluster reachable" || warn "cluster unreachable, RabbitMQ creds will be <unavailable>"
+  [ "$API_UP" -eq 1 ] && ok "cluster reachable" || warn "cluster unreachable. RabbitMQ creds show as <unavailable>."
   PLATFORM_DOMAIN="$(ingress_domain platform)"
 }
 
@@ -49,14 +48,14 @@ show_rabbitmq() {
       echo "  Password: ${pass}"
       ok "read ${RABBITMQ_SECRET}"
     else
-      bad "could not read Secret ${RABBITMQ_SECRET} in ns/${RABBITMQ_NS} (is 03_rabbitmq synced?)"
+      bad "could not read Secret ${RABBITMQ_SECRET} in ns/${RABBITMQ_NS}. Check that 03_rabbitmq is synced."
     fi
   else
     echo "  Username: <unavailable: cluster unreachable>"
     echo "  Password: <unavailable: cluster unreachable>"
     bad "cluster unreachable, could not read ${RABBITMQ_SECRET}"
   fi
-  echo "  Note:     Google SSO first (edge), THEN this RabbitMQ login."
+  echo "  Note:     Log in with Google SSO at the edge first, then with this RabbitMQ login."
 }
 
 show_ntfy() {
@@ -68,32 +67,32 @@ show_ntfy() {
     echo "  Password: ${NTFY_PHONE_PASSWORD_SECRET}"
     ok "ntfy phone password present (.env)"
   else
-    echo "  Password: <ntfy alerting disabled: NTFY_PHONE_PASSWORD_SECRET empty in .env>"
-    warn "set NTFY_PHONE_PASSWORD_SECRET in .env and re-run 06_ntfy_auth.sh to enable"
+    echo "  Password: <ntfy alerting off: NTFY_PHONE_PASSWORD_SECRET is empty in .env>"
+    warn "to turn it on, set NTFY_PHONE_PASSWORD_SECRET in .env and run 06_ntfy_auth.sh again"
   fi
-  echo "  Note:     edge is OPEN (no SSO, the app cannot do OAuth); ntfy's own user/token auth is the only gate."
+  echo "  Note:     The edge has no SSO here, because the app cannot do OAuth. ntfy user and token auth is the only gate."
 }
 
 show_github_webhook() {
   say "GitHub webhook (ArgoCD push-sync)"
   echo "  Config:   ${REPO_URL}/settings/hooks/new"
-  echo "  Payload:  https://${ARGOCD_SUBDOMAIN}.${PLATFORM_DOMAIN}/api/webhook" # HMAC-verified, bypasses SSO
+  echo "  Payload:  https://${ARGOCD_SUBDOMAIN}.${PLATFORM_DOMAIN}/api/webhook" # HMAC-verified, skips SSO
   if [ -s "$WEBHOOK_FILE" ]; then
     echo "  Secret:   $(cat "$WEBHOOK_FILE")"
     ok "read webhook secret (${WEBHOOK_FILE})"
   else
     echo "  Secret:   <not generated: run 02b_argocd_webhook.sh>"
-    warn "run 02b_argocd_webhook.sh to mint the webhook secret"
+    warn "run 02b_argocd_webhook.sh to generate the webhook secret"
   fi
-  echo "  Note:     Content type application/json; SSL verification on; event = just the push event."
+  echo "  Note:     Content type application/json. SSL verification on. Events: just the push event."
 }
 
 show_sso_only_hosts() {
   local sub
-  say "SSO-only (log in with your Google account, no separate login)"
+  say "SSO only (log in with your Google account, no separate login)"
   while read -r sub; do
-    [ "$sub" = "$RABBITMQ_SUBDOMAIN" ] && continue # rabbitmq has its own login, shown above
-    [ "$sub" = "$NTFY_SUBDOMAIN" ] && continue     # ntfy's edge is open, shown above
+    [ "$sub" = "$RABBITMQ_SUBDOMAIN" ] && continue
+    [ "$sub" = "$NTFY_SUBDOMAIN" ] && continue
     printf '  %-9s https://%s.%s\n' "${sub}:" "$sub" "$PLATFORM_DOMAIN"
   done < <(yq -r '.ingress.ingresses[] | select(.name=="platform").hosts[].subdomain' "$INGRESS_VALUES")
 }

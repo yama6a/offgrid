@@ -1,7 +1,6 @@
 #!/usr/bin/env bash
-# Restores an opt-in Longhorn volume from its S3 backups, into a NEW volume plus a static PV and PVC.
-# Non-destructive: never touches the source backups or a live volume, and refuses to overwrite an existing
-# Volume or PVC of the chosen name.
+# Restores a Longhorn volume from its S3 backups into a new volume with a static PV and PVC.
+# It never changes the backups or a live volume, and refuses to overwrite a Volume or PVC of the chosen name.
 set -euo pipefail
 
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
@@ -11,19 +10,19 @@ usage() {
   cat << EOF
 recover_longhorn_from_s3.sh [--volume <longhorn-vol>] [--backup latest|<name>] [--target-ns <ns>]
                            [--name <restore-name>] [--apply]     (or: make restore-longhorn)
-  every flag is optional; it prompts or lists for anything missing
+  every flag is optional. The script prompts for anything missing.
   --apply   skip the confirmation prompt
 
-The CSI snapshotter sidecar is DISABLED on this cluster, so the VolumeSnapshot restore path is unavailable.
-Instead a Longhorn Volume CR with spec.fromBackup pulls the backup into a new volume, then a static PV and
-PVC bind to it in the target namespace. Point your workload at the restored PVC.
+The CSI snapshotter sidecar is off on this cluster, so a VolumeSnapshot restore is not possible.
+A Longhorn Volume CR with spec.fromBackup pulls the backup into a new volume instead.
+A static PV and PVC then bind to it in the target namespace. Point your workload at the restored PVC.
 EOF
 }
 
 # ---- knobs ----
-LH_VALUES="${PLATFORM_CHARTS}/02_longhorn/values.yaml" # single source for the backup target
+LH_VALUES="${PLATFORM_CHARTS}/02_longhorn/values.yaml" # holds the backup target
 LH_NS="longhorn-system"
-RESTORE_SC="longhorn-r2-retained-with-backups" # the backup class, so the restored volume keeps being backed up
+RESTORE_SC="longhorn-r2-retained-with-backups" # the backup class, so backups of the restored volume continue
 
 # ---- state ----
 VOL="" # set by parse_args / prompt_for_missing
@@ -65,19 +64,19 @@ parse_args() {
         usage
         exit 0
         ;;
-      *) die "unknown arg: $1 (see --help)" ;;
+      *) die "unknown argument: $1. See --help." ;;
     esac
   done
 }
 
 assert_backup_target_available() {
   local avail
-  say "Longhorn restore from S3: native Volume(fromBackup) -> static PV/PVC (non-destructive)"
+  say "Longhorn restore from S3 into a new Volume with a static PV and PVC. Changes no existing data."
   kubectl get crd backuptargets.longhorn.io > /dev/null 2>&1 \
-    || die "Longhorn BackupTarget CRD missing: is the longhorn app (platform wave 2) synced?"
+    || die "Longhorn BackupTarget CRD missing. Check that the longhorn app (platform wave 2) is synced."
   avail="$(kubectl -n "$LH_NS" get backuptargets.longhorn.io default -o jsonpath='{.status.available}' 2> /dev/null || true)"
   [ "$avail" = "true" ] \
-    || die "Longhorn backup target 'default' is not available (status.available=${avail:-<none>}). Enable backups first (make configure-longhorn-backup), push, and let it sync."
+    || die "Longhorn backup target 'default' is not available (status.available=${avail:-<none>}). Run make configure-longhorn-backup, push, and let it sync."
   ok "backup target 'default' is available"
 }
 
@@ -90,7 +89,7 @@ list_backup_volumes() {
 }
 
 prompt_for_missing() {
-  [ -n "$VOL" ] || read -rp "Longhorn volume to restore (the VOLUME column above, e.g. pvc-xxxx): " VOL
+  [ -n "$VOL" ] || read -rp "Longhorn volume to restore (the VOLUME column above, for example pvc-xxxx): " VOL
   [ -n "$VOL" ] || die "a volume is required"
   [ -n "$TARGET_NS" ] || read -rp "Target namespace for the restored PVC: " TARGET_NS
   [ -n "$TARGET_NS" ] || die "a target namespace is required"
@@ -98,8 +97,8 @@ prompt_for_missing() {
   return 0
 }
 
-# Filtered with yq over JSON, data-driven on .status.volumeName: robust against the backup-volume label and CR
-# name changing across Longhorn versions, and against kubectl jsonpath escape quirks.
+# Filters on .status.volumeName with yq. The backup-volume label and CR name change across Longhorn versions,
+# and kubectl jsonpath escaping is unreliable here.
 list_backups() {
   BK_JSON="$(kubectl -n "$LH_NS" get backups.longhorn.io -o json 2> /dev/null || echo '{}')"
   say "backups for volume ${VOL} (name / created / state):"
@@ -109,20 +108,20 @@ list_backups() {
   echo
 }
 
-# The fromBackup URL comes straight off the chosen Backup CR: no manual URL assembly, so it is prefix-safe.
-# The size falls back from the BackupVolume to the Backup.
+# Reads the fromBackup URL from the Backup CR, so a bucket prefix cannot break it.
+# The size comes from the BackupVolume, or from the Backup when that has none.
 resolve_backup() {
   if [ "$BACKUP" = "latest" ]; then
     BACKUP="$(echo "$BK_JSON" | VOL="$VOL" yq -p json -o tsv \
       '.items[] | select(.status.volumeName == strenv(VOL)) | [.status.snapshotCreatedAt, .metadata.name]' \
       2> /dev/null | sort | tail -1 | cut -f2)"
     [ -n "$BACKUP" ] \
-      || die "no backups found for volume ${VOL}: check the volume name against the list above, or pass --backup <name>"
+      || die "no backups found for volume ${VOL}. Check the volume name against the list above, or pass --backup <name>."
   fi
   kubectl -n "$LH_NS" get backups.longhorn.io "$BACKUP" > /dev/null 2>&1 \
     || die "backup ${BACKUP} not found in ns ${LH_NS}"
   FROM_BACKUP="$(kubectl -n "$LH_NS" get backups.longhorn.io "$BACKUP" -o jsonpath='{.status.url}' 2> /dev/null || true)"
-  [ -n "$FROM_BACKUP" ] || die "backup ${BACKUP} has no .status.url yet (still syncing?), retry shortly"
+  [ -n "$FROM_BACKUP" ] || die "backup ${BACKUP} has no .status.url yet. It may still sync. Try again shortly."
   SIZE="$(kubectl -n "$LH_NS" get backupvolumes.longhorn.io -o json 2> /dev/null \
     | VOL="$VOL" yq -p json '.items[] | select(.status.volumeName == strenv(VOL)) | .status.size' 2> /dev/null | head -1)"
   [ -n "$SIZE" ] && [ "$SIZE" != "null" ] \
@@ -132,14 +131,13 @@ resolve_backup() {
 
 assert_target_free() {
   kubectl -n "$LH_NS" get volumes.longhorn.io "$RESTORE_NAME" > /dev/null 2>&1 \
-    && die "Longhorn Volume ${LH_NS}/${RESTORE_NAME} already exists: pass a different --name or delete it first"
+    && die "Longhorn Volume ${LH_NS}/${RESTORE_NAME} already exists. Pass a different --name or delete it first."
   kubectl -n "$TARGET_NS" get pvc "$RESTORE_NAME" > /dev/null 2>&1 \
-    && die "PVC ${TARGET_NS}/${RESTORE_NAME} already exists: pass a different --name or delete it first"
+    && die "PVC ${TARGET_NS}/${RESTORE_NAME} already exists. Pass a different --name or delete it first."
   return 0
 }
 
-# The static PV binds the new Longhorn volume (volumeHandle == the Longhorn volume name) to a PVC in the
-# target namespace. reclaimPolicy Retain so cleanup is deliberate.
+# reclaimPolicy Retain, so the volume goes only when someone deletes it on purpose.
 build_manifest() {
   MANIFEST="$(
     cat << YAML
@@ -193,7 +191,7 @@ print_plan() {
   echo "    Backup        : ${BACKUP}"
   echo "    fromBackup    : ${FROM_BACKUP}"
   echo "    Size          : ${SIZE} bytes"
-  echo "    Restore into  : Longhorn volume ${LH_NS}/${RESTORE_NAME} -> PV ${RESTORE_NAME} -> PVC ${TARGET_NS}/${RESTORE_NAME} (class ${RESTORE_SC})"
+  echo "    Restore into  : Longhorn volume ${LH_NS}/${RESTORE_NAME}, PV ${RESTORE_NAME}, PVC ${TARGET_NS}/${RESTORE_NAME} (class ${RESTORE_SC})"
   echo
   echo "$MANIFEST"
   echo
@@ -212,18 +210,18 @@ confirm_restore() {
 apply_restore() {
   say "applying restore manifests"
   echo "$MANIFEST" | kubectl apply -f - > /dev/null
-  ok "applied, Longhorn is restoring volume ${RESTORE_NAME} from S3"
+  ok "applied. Longhorn is restoring volume ${RESTORE_NAME} from S3."
 }
 
 print_next_steps() {
   cat << EOF
 
 Restore started. Watch it complete:
-  kubectl -n ${LH_NS} get volumes.longhorn.io ${RESTORE_NAME} -w        # wait for state Detached/Attached, robustness Healthy
-  kubectl -n ${TARGET_NS} get pvc ${RESTORE_NAME}                        # should Bound
+  kubectl -n ${LH_NS} get volumes.longhorn.io ${RESTORE_NAME} -w        # wait for state Detached or Attached, robustness Healthy
+  kubectl -n ${TARGET_NS} get pvc ${RESTORE_NAME}                        # expect Bound
 
-Then point a workload at PVC ${TARGET_NS}/${RESTORE_NAME}. The restored PV/PVC use reclaimPolicy Retain and the
-${RESTORE_SC} class, so the restored volume itself keeps getting backed up.
+Then point a workload at PVC ${TARGET_NS}/${RESTORE_NAME}.
+The restored PV and PVC use reclaimPolicy Retain and the ${RESTORE_SC} class, so backups of the volume continue.
 EOF
 }
 

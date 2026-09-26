@@ -1,16 +1,16 @@
 redis-operator:
   redisOperator:
-    # Only guards the master-slave anti-affinity feature (RedisReplication), which we don't use. Off means
-    # there is no webhook serving-cert to manage, so no cert-manager dependency.
+    # Only guards the RedisReplication anti-affinity feature, which is not used here. With it off, there is no
+    # webhook cert and no cert-manager dependency.
     webhook: false
-    # Endpoint only. No PodMonitor ships from here (upstream has no toggle); the signal that matters is the
-    # per-instance redis-exporter, scraped by the redis-instance ServiceMonitor.
+    # The endpoint only. Upstream has no PodMonitor toggle. The redis-instance ServiceMonitor scrapes the
+    # redis-exporter of each instance, which carries the useful metrics.
     metrics:
       enabled: true
-    imagePullPolicy: IfNotPresent # the tag is immutable, so Always just re-pulls on a bandwidth-limited cluster
+    imagePullPolicy: IfNotPresent # the tag is immutable, so Always only wastes bandwidth
 
-  # Top-level keys (the chart's pod/container contexts), NOT under redisOperator. readOnlyRootFilesystem is
-  # left off, unverified whether the controller has scratch writes.
+  # Top-level keys for the chart's pod and container contexts, not under redisOperator. readOnlyRootFilesystem
+  # stays off, because it is not known whether the controller writes scratch files.
   podSecurityContext:
     runAsNonRoot: true
   securityContext:
@@ -21,18 +21,18 @@ redis-operator:
     seccompProfile:
       type: RuntimeDefault
 
-  # Fully specified, not just memory: Helm deep-merges this map, so an omitted key silently inherits the
-  # chart's 500m default. Dropping a key needs an explicit null, which renders as no key at all.
+  # Every key is set, because Helm merges this map and a missing key gets the chart's 500m default. An explicit
+  # null removes a key.
   resources:
     requests:
       cpu: 10m
       memory: 60Mi
     limits:
-      cpu: null # no cpu limit anywhere in the cluster: CFS throttling stalls a burst even when the node is idle
+      cpu: null # no CPU limits in this cluster. CFS throttling stalls a burst even on an idle node.
       memory: 92Mi
 
-  # Soft + hostname: bare Pi nodes have no zone label, and soft means raising replicas never wedges a pod
-  # Pending on 3 nodes.
+  # Soft spread by hostname. The Pi nodes have no zone label, and a soft rule never leaves a pod Pending on 3
+  # nodes.
   affinity:
     podAntiAffinity:
       preferredDuringSchedulingIgnoredDuringExecution:
@@ -41,7 +41,5 @@ redis-operator:
             labelSelector:
               matchLabels:
                 name: redis-operator # the chart labels its pod only with `name`
-            matchLabelKeys: [pod-template-hash] # compare within one revision, so a rollout's old pod never repels the new one
+            matchLabelKeys: [pod-template-hash] # match one revision only, so a rollout's old pod never repels the new one
             topologyKey: kubernetes.io/hostname
-
-# No StorageClasses here. Every redis-instance PVC uses longhorn-r2-ephemeral, owned by 02_longhorn.

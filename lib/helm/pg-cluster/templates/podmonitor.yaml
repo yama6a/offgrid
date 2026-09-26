@@ -17,16 +17,16 @@ spec:
       cnpg.io/podRole: instance
   podMetricsEndpoints:
     - port: metrics
-      # Lets the exporter's own `cluster` label (the CNPG cluster name) beat vmagent's global cluster=<k8s
-      # cluster> external label, which otherwise renames it to exported_cluster and leaves the CNPG dashboard,
-      # which resolves its instances from `cluster`, showing "No data". A metricRelabelings rule can NOT do this:
-      # vmagent merges its external labels AFTER those run, so there is nothing to rename yet. `cluster` is the
-      # only label these pods export that collides with a target label.
+      # The exporter's own `cluster` label holds the CNPG cluster name. vmagent adds a global
+      # cluster=<k8s cluster> external label and, without honorLabels, renames the exporter's label to
+      # exported_cluster. The CNPG dashboard finds its instances by `cluster`, so it would show "No data".
+      # A metricRelabelings rule cannot fix this, because vmagent adds its external labels after those rules
+      # run. `cluster` is the only label these pods export that collides with a target label.
       honorLabels: true
       metricRelabelings:
-        # Keep the cnpg_pg_settings_setting series something reads: max_connections drives the
-        # connection-saturation alert, the rest fill the CNPG dashboard's Configuration row, one tile each.
-        # RE2 has no negative lookahead, so stamp the kept series then drop every other pg_settings series.
+        # Keep only the cnpg_pg_settings_setting series that something reads. max_connections drives the
+        # connection saturation alert. The others fill one tile each in the CNPG dashboard's Configuration row.
+        # RE2 has no negative lookahead, so the first rule marks the kept series and the second drops the rest.
         - sourceLabels: [__name__, name]
           regex: "cnpg_pg_settings_setting;(max_connections|shared_buffers|effective_cache_size|work_mem|maintenance_work_mem|random_page_cost|seq_page_cost|block_size)"
           targetLabel: __tmp_keep_pgsetting

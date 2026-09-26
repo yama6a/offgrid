@@ -1,5 +1,5 @@
-# Bandwidth ceiling per arm. Explains WHY a latency result looks the way it does; never decides it.
-# On the Longhorn arms this shows the link's throughput cap directly (1GbE here, with TSO/GSO/GRO disabled).
+# Measures the bandwidth ceiling of each arm. It explains a latency result, but never decides it.
+# On the Longhorn arms it shows the throughput cap of the link: 1GbE here, with TSO, GSO and GRO off.
 
 [global]
 filename=/data/fio-seq

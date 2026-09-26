@@ -1,4 +1,5 @@
-# sample-user-signup: the sample-app /signup binary. Publishes create-user-command, consumes users.created + the audit fanout.
+# sample-user-signup runs the sample-app /signup binary. It publishes create-user-command and consumes
+# users.created and the audit fanout.
 apiVersion: argoproj.io/v1alpha1
 kind: Application
 metadata:
@@ -7,7 +8,7 @@ metadata:
   finalizers:
     - resources-finalizer.argocd.argoproj.io
   annotations:
-    argocd.argoproj.io/compare-options: ServerSideDiff=true # else server-defaulted topology CR fields read as perpetual OutOfSync
+    argocd.argoproj.io/compare-options: ServerSideDiff=true # without it, topology CR fields the server defaults stay OutOfSync
 spec:
   project: default
   revisionHistoryLimit: 0

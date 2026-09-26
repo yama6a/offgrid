@@ -1,5 +1,6 @@
-{{/* ingress.httproute: routes one host to its Service, or 301s it to another host. SSO (if any) is
-     applied centrally by the google-sso chart, which targetRefs this route by name. ctx: {ingress, host}. */}}
+{{/* ingress.httproute: routes one host to its Service, or redirects it to another host with a 301. The
+     google-sso chart applies SSO where it is on, and targets this route by name.
+     Argument: the per-host dict from ingress.renderIngress. */}}
 {{- define "ingress.httproute" -}}
 {{- $name := include "ingress.hostName" . -}}
 apiVersion: gateway.networking.k8s.io/v1
@@ -9,15 +10,15 @@ metadata:
   namespace: {{ include "ingress.gatewayNamespace" . }}
 spec:
   parentRefs:
-    - name: {{ $name }}                       # this host's own Gateway
+    - name: {{ $name }}
       namespace: {{ include "ingress.gatewayNamespace" . }}
       sectionName: {{ $name }}
   hostnames:
     - {{ include "ingress.host" . | quote }}
   rules:
 {{- if .host.redirectTo }}
-    # Redirect-only, so no backendRefs: Envoy answers at the edge and no pod is involved. The path and
-    # query carry over untouched, since requestRedirect rewrites nothing it is not told to.
+    # A redirect has no backendRefs. Envoy answers at the edge and no pod is involved. The path and query
+    # carry over, because requestRedirect changes only the fields it names.
     - filters:
         - type: RequestRedirect
           requestRedirect:
@@ -29,8 +30,8 @@ spec:
           namespace: {{ include "ingress.backendNs" . }}
           port: {{ .host.targetPort }}
 {{- with .host.requestHeaders }}
-      # Set on the way to the backend only; response headers are untouched. Envoy does not send
-      # x-forwarded-port, so a framework that builds absolute URLs from it needs it stated here.
+      # Applies to the request to the backend only, never the response. Envoy does not send
+      # x-forwarded-port, so a framework that builds absolute URLs from it needs it set here.
       filters:
         - type: RequestHeaderModifier
           requestHeaderModifier:
@@ -42,7 +43,7 @@ spec:
 {{- end }}
 {{- with .host.requestTimeout }}
       timeouts:
-        request: {{ . | quote }}          # "0s" = off; for backends that hold a response open (Envoy cuts at 15s -> 504)
+        request: {{ . | quote }}          # "0s" is off. For backends that hold a response open past Envoy's 15s cutoff
 {{- end }}
 {{- end }}
 {{- end -}}

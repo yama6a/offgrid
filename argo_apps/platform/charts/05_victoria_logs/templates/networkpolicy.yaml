@@ -1,5 +1,5 @@
-# POD-scoped to the vlsingle store, which holds 60d of raw container logs. Not namespace-wide: vmagent shares
-# the monitoring namespace and must stay unrestricted.
+# Scoped to the vlsingle pod, which holds 60 days of raw logs. Not namespace-wide, because vmagent shares the
+# monitoring namespace and must stay unrestricted.
 apiVersion: cilium.io/v2
 kind: CiliumNetworkPolicy
 metadata:
@@ -11,7 +11,7 @@ spec:
       app.kubernetes.io/name: vlsingle
       app.kubernetes.io/instance: victoria-logs
   ingress:
-    # The collector writes, grafana reads, the Envoy edge serves vlogs, vmagent self-scrapes, vm-backup exports.
+    # The collector writes, Grafana reads, the Envoy edge serves the vlogs UI, vmagent scrapes and vm-backup exports.
     - fromEndpoints:
         - matchLabels:
             k8s:io.kubernetes.pod.namespace: monitoring
@@ -25,7 +25,7 @@ spec:
         - matchLabels:
             k8s:io.kubernetes.pod.namespace: monitoring
             app.kubernetes.io/name: vmagent
-        # The central backup CronJob (08_vm_backup) pulls LogsQL query=* from here. See docs/10_backups.md.
+        # The 08_vm_backup CronJob exports all logs from here with LogsQL query=*. See docs/10_backups.md.
         - matchLabels:
             k8s:io.kubernetes.pod.namespace: monitoring
             app.kubernetes.io/name: vm-backup
@@ -33,7 +33,7 @@ spec:
         - ports:
             - { port: "9428", protocol: TCP }
   egress:
-    # DNS (CoreDNS).
+    # DNS to CoreDNS.
     - toEndpoints:
         - matchLabels:
             k8s:io.kubernetes.pod.namespace: kube-system

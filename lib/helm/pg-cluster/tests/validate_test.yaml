@@ -11,7 +11,7 @@ tests:
       highAvailability: ""
     asserts:
       - failedTemplate:
-          errorMessage: "pg-cluster: highAvailability is required and must be explicitly true (3 instances, synchronous `any 1`, PDB, switchover) or false (single instance, no PDB, in-place restart); there is no default, and 2 or more than 3 instances are not offered"
+          errorMessage: "pg-cluster: highAvailability is required and must be true or false. true gives 3 instances, synchronous `any 1` replication, a PDB and switchover. false gives 1 instance, no PDB and an in-place restart. There is no default, and no other instance count is offered"
 
   - it: rejects a namespace key on an allowedClients entry, which the same-namespace policy cannot honour
     values:
@@ -22,4 +22,4 @@ tests:
           namespace: other-ns
     asserts:
       - failedTemplate:
-          errorMessage: "pg-cluster: allowedClients entries take no `namespace` (it is always the release namespace \"ci-ns\"; a cross-ns client needs the clusterwide-CNP variant), drop the key"
+          errorMessage: "pg-cluster: allowedClients entries take no `namespace` key. A client is always in the release namespace \"ci-ns\". A client in another namespace needs a CiliumClusterwideNetworkPolicy instead. Remove the key"

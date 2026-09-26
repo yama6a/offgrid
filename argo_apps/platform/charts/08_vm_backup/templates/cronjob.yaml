@@ -1,11 +1,11 @@
 {{- /*
-The central VM/VL backup CronJob, rendered only when a bucket is configured. One container streams every dump
-straight through gzip into `aws s3 cp -`, so a 50Gi store needs no matching emptyDir.
-Each run backs up ONLY the previous full UTC day, because a growing full-store dump OOM'd the source stores:
-metrics as one object, logs as 24 hourly ones. A full DR replays every slice in key order, which
-recover_vm_from_s3.sh's `all` target does.
-`set -o pipefail` makes a failed curl OR upload fail the stage; a partial S3 object is deleted, the rest of the
-run continues, and any failure at all fails the Job so the alert fires.
+The VictoriaMetrics and VictoriaLogs backup CronJob. It renders only when a bucket is set. One container streams
+each dump through gzip into `aws s3 cp -`, so a 50Gi store needs no emptyDir of that size.
+Each run backs up only the previous full UTC day, because a dump of the whole store runs the stores out of
+memory. Metrics go in one object, logs in 24 hourly ones. A full restore replays every slice in key order, which
+the `all` target of recover_vm_from_s3.sh does.
+`set -o pipefail` makes a failed curl or upload fail the stage. The job then deletes the partial S3 object and
+goes on. Any failure fails the Job, so the alert fires.
 */ -}}
 {{- if .Values.bucket }}
 apiVersion: batch/v1
@@ -19,14 +19,14 @@ metadata:
 spec:
   schedule: {{ .Values.schedule | quote }}
   concurrencyPolicy: Forbid          # never overlap runs
-  startingDeadlineSeconds: 300        # skip (don't stampede) a run the scheduler missed by >5m
+  startingDeadlineSeconds: 300        # skip a run the scheduler missed by over 5m, so late runs do not pile up
   successfulJobsHistoryLimit: 3
   failedJobsHistoryLimit: 3
   jobTemplate:
     spec:
       backoffLimit: 1
-      activeDeadlineSeconds: 3600     # a full metrics+logs export+upload that runs >1h is wedged, fail it
-      ttlSecondsAfterFinished: 86400  # GC finished jobs after a day
+      activeDeadlineSeconds: 3600     # a full export and upload that runs over 1h is stuck, so fail it
+      ttlSecondsAfterFinished: 86400  # delete finished Jobs after a day
       template:
         metadata:
           labels:
@@ -48,12 +48,12 @@ spec:
               args:
                 - |
                   set -u
-                  # Default window is yesterday. DAY=YYYYMMDD on a one-off Job backfills THAT day instead,
-                  # which is how a gap from a failed run gets filled; see docs/10_backups.md.
+                  # The default window is yesterday. DAY=YYYYMMDD on a one-off Job backs up that day instead,
+                  # to fill the gap from a failed run. See docs/10_backups.md.
                   day="${DAY:-}"
                   if [ -n "$day" ]; then
                     start="$(date -u -D %Y%m%d -d "$day" +%s)"
-                    # busybox date does not fail on a malformed -d, it guesses, so round-trip it instead.
+                    # busybox date guesses on a malformed -d instead of failing, so convert back and compare.
                     [ "$(date -u -d "@${start}" +%Y%m%d)" = "$day" ] || { echo "DAY must be YYYYMMDD, got '${day}'"; exit 2; }
                   else
                     now="$(date -u +%s)"
@@ -61,14 +61,14 @@ spec:
                     day="$(date -u -d "@${start}" +%Y%m%d)"
                   fi
                   end=$(( start + 86400 ))
-                  echo "window ${day}: ${start} -> ${end}"
+                  echo "window ${day}: ${start} to ${end}"
                   failed=""
 
-                  # stream <url> <curl-data-arg> <s3-key>: export, gzip, upload; delete a partial on failure.
+                  # stream <url> <curl-data-arg> <s3-key>: export, gzip and upload. Deletes a partial object on failure.
                   stream() {
                     url="$1"; data="$2"; key="$3"
                     dst="s3://${BUCKET}/${key}"
-                    echo "backing up ${url} -> ${dst}"
+                    echo "backing up ${url} to ${dst}"
                     if ( set -o pipefail; curl -sf --max-time 3000 "$url" $data | gzip | aws s3 cp - "$dst" ); then
                       echo "  ok"
                     else
@@ -77,15 +77,15 @@ spec:
                     fi
                   }
 
-                  # export/native honours start/end, and the whole day fits one request. One file per UTC day,
-                  # so a re-run just overwrites that day's slice.
+                  # export/native honours start and end, and a whole day fits in one request. One file per UTC
+                  # day, so a rerun overwrites that day's slice.
                   stream "${VMSINGLE}/api/v1/export/native" "--data-urlencode match[]={__name__!=\"\"} --data-urlencode start=${start} --data-urlencode end=${end}" "${PREFIX}metrics/${day}.native.gz"
 
-                  # Logs go HOURLY, 24 objects a day, because a whole day is ~1.4GB and gzip on an arm64 node
-                  # is slower than vlsingle streams: the response stays open past -search.maxQueryDuration and
-                  # vlsingle hangs up mid-stream with a 200 already sent. The `timeout=` URL arg does NOT raise
-                  # that ceiling, whatever it looks like. An hour is ~60MB and ~1-2s, nowhere near it.
-                  # Keys stay FLAT and lexically sortable, which is what recover_vm_from_s3.sh lists and orders.
+                  # Logs go in 24 hourly objects. A whole day is about 1.4GB, and gzip on an arm64 node is slower
+                  # than vlsingle streams. The response then stays open past -search.maxQueryDuration, and
+                  # vlsingle hangs up mid-stream after it sent a 200. The `timeout=` URL argument does not raise
+                  # that limit. An hour is about 60MB and takes 1 to 2s.
+                  # Keys stay flat and sort by name, because recover_vm_from_s3.sh lists and orders them that way.
                   h=0
                   while [ "$h" -lt 24 ]; do
                     hs=$(( start + h * 3600 ))
@@ -96,7 +96,7 @@ spec:
                   if [ -n "$failed" ]; then echo "FAILURES:${failed}"; exit 1; fi
                   echo "all backups ok"
               env:
-                - { name: HOME,   value: /tmp }   # aws-cli config/cache under the writable /tmp mount (root fs is read-only)
+                - { name: HOME,   value: /tmp }   # aws-cli config and cache go to /tmp, because the root fs is read-only
                 - { name: TMPDIR, value: /tmp }
                 - { name: BUCKET, value: {{ .Values.bucket | quote }} }
                 - { name: PREFIX, value: {{ .Values.prefix | quote }} }
@@ -117,7 +117,7 @@ spec:
                 requests: { cpu: 50m, memory: 64Mi }
                 limits:   { memory: 256Mi }
               volumeMounts:
-                - { name: tmp, mountPath: /tmp }   # HOME + aws-cli scratch (root fs is read-only)
+                - { name: tmp, mountPath: /tmp }   # HOME and aws-cli scratch space
           volumes:
             - name: tmp
               emptyDir: {}

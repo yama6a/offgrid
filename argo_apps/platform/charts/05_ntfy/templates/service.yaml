@@ -1,5 +1,5 @@
-# ClusterIP on :8080 -> container :8080. Targeted by the Grafana webhook (in-cluster publish) and the ntfy
-# edge (06_platform_ingress, phone subscribe). Same port number end-to-end. See 06_monitoring.md.
+# The Grafana webhook publishes here. The ntfy edge route in 06_platform_ingress sends the phone here.
+# See docs/06_monitoring.md.
 apiVersion: v1
 kind: Service
 metadata:

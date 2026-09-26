@@ -1,5 +1,5 @@
-# CI fixture, not a deployment. The minimal set this chart needs to render anything at all: with the default
-# empty ingresses[] it emits no manifest, so lint and kubeconform would see nothing.
+# CI fixture, not a deployment. With the default empty ingresses list the chart renders nothing, so lint and
+# kubeconform would check nothing. This is the smallest set that renders.
 ingresses:
   - name: ci
     domain: example.com

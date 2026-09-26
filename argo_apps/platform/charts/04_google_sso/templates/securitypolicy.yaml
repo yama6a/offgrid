@@ -1,8 +1,6 @@
 {{/*
-ONE Google-OIDC SecurityPolicy per domain, attached to that domain's callback route AND its gated app routes,
-so a single OAuth flow completes on its callback host under one cookie identity.
-Login gate is oidc; authorization is per-host, each rule allowing a host only for its own allowlist. A host
-with no rule is denied, which includes the callback whoami itself.
+One Google OIDC SecurityPolicy per domain. It attaches to the callback route and every gated app route of that
+domain, so one OAuth flow on the callback host sets one cookie for all of them.
 */}}
 {{- $oidc := .Values.oidc -}}
 {{- range $d := fromYamlArray (include "google-sso.domains" $) }}
@@ -14,7 +12,7 @@ metadata:
   name: sso-{{ $slug }}
   namespace: {{ $.Values.namespace }}
 spec:
-  # Route names are the full host with dots turned to dashes, the ingress chart's naming, so they resolve
+  # The ingress chart names a route after its host, with dots turned into dashes. So these names resolve
   # whichever chart created the route.
   targetRefs:
     - group: gateway.networking.k8s.io
@@ -29,17 +27,16 @@ spec:
   oidc:
     provider:
       issuer: "https://accounts.google.com"
-      # Google only hands out a refresh token when the auth request says access_type=offline, and only while the
-      # consent screen is shown, so prompt=consent keeps it coming back on every login. Without both, no refresh
-      # token is ever stored and the session ends when Google's 1h id token does. Envoy keeps the query string.
+      # Google issues a refresh token only with access_type=offline and prompt=consent. Envoy keeps this query.
+      # Without a refresh token, the session ends when Google's 1h id token expires.
       authorizationEndpoint: "https://accounts.google.com/o/oauth2/v2/auth?access_type=offline&prompt=consent"
     clientID: {{ $oidc.clientID | quote }}
     clientSecret:
       name: {{ $oidc.clientSecretName | quote }}
-    # This domain's one callback host (register it on the Google OAuth client).
+    # Register this callback URL on the Google OAuth client.
     redirectURL: {{ printf "https://%s.%s/oauth2/callback" $oidc.authSubdomain $d.domain | quote }}
     logoutPath: {{ $oidc.logoutPath | quote }}
-    # Domain-scoped, so one login covers every host on this domain. Each host still re-checks its allowlist.
+    # Scoped to the domain, so one login covers every host on it. Each host still checks its own allowlist.
     cookieDomain: {{ $d.domain | quote }}
     cookieNames:
       idToken: {{ $oidc.idTokenCookie | quote }}
@@ -69,18 +66,16 @@ spec:
           cookies:
             - {{ $oidc.idTokenCookie | quote }}
         {{- with $d.claimToHeaders }}
-        # Hands the logged-in identity to the backend as a request header, so an app that can trust a header
-        # needs no login of its own. Envoy sets it after verifying the token, overwriting whatever the client
-        # sent. It applies to EVERY host on this domain, not just the one that reads it; the rest ignore it.
-        # A backend that trusts this MUST be unreachable except through the edge, or anything that can open
-        # its port can send the header itself.
+        # Passes the verified identity to the backend as a request header, so the app needs no login of its own.
+        # Envoy overwrites any value the client sent. Every host on this domain gets the header.
+        # A backend that trusts it must be reachable only through the edge. Otherwise any caller can forge it.
         claimToHeaders:
           {{- toYaml . | nindent 10 }}
         {{- end }}
 
   authorization:
-    # Deny by default: the callback host and any unlisted host are denied. /oauth2/callback is handled by the
-    # oidc filter BEFORE authorization, so login still works.
+    # Deny by default, including the callback host. The oidc filter handles /oauth2/callback before
+    # authorization runs, so login still works.
     defaultAction: Deny
     rules:
       {{- range $h := $d.hosts }}
@@ -88,7 +83,7 @@ spec:
       - name: allow-{{ $fqdn | replace "." "-" }}
         action: Allow
         principal:
-          # BOTH must match: the request host AND an email in that host's allowlist.
+          # Both must match: the request host and an email on that host's allowlist.
           headers:
             - name: ":authority"
               values:

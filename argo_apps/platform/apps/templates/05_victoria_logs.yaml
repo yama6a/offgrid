@@ -1,4 +1,4 @@
-# VictoriaLogs: a VLSingle store plus the collector DaemonSet that tails container logs on every node.
+# VictoriaLogs: a VLSingle store and the collector DaemonSet that reads container logs on every node.
 apiVersion: argoproj.io/v1alpha1
 kind: Application
 metadata:

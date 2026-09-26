@@ -1,4 +1,4 @@
-# Default-deny both ways for ntfy. Port 8080 end to end.
+# Default-deny both ways for ntfy.
 apiVersion: cilium.io/v2
 kind: CiliumNetworkPolicy
 metadata:
@@ -6,7 +6,7 @@ metadata:
   namespace: {{ .Release.Namespace }}
   {{- if .Values.deletionProtection }}
   annotations:
-    # Orphan-not-delete. See values.yaml for the flip-then-remove deletion flow.
+    # Argo CD never prunes or deletes this. See `deletionProtection` in values.yaml for how to remove it.
     argocd.argoproj.io/sync-options: Prune=false,Delete=false
   {{- end }}
 spec:
@@ -14,7 +14,7 @@ spec:
     matchLabels:
       app.kubernetes.io/name: ntfy
   ingress:
-    # The Envoy edge serves the phone (subscribe); the in-cluster Grafana webhook publishes alerts.
+    # The Envoy edge carries the phone's subscription. The Grafana webhook publishes alerts from inside the cluster.
     - fromEndpoints:
         - matchLabels:
             k8s:io.kubernetes.pod.namespace: envoy-gateway-system
@@ -30,7 +30,7 @@ spec:
       toPorts:
         - ports:
             - { port: "8080", protocol: TCP }
-    # vmagent scrapes the metrics listener. Separate port, so the edge above can never reach /metrics.
+    # vmagent scrapes the metrics listener. It has its own port, so the edge can never reach /metrics.
     - fromEndpoints:
         - matchLabels:
             k8s:io.kubernetes.pod.namespace: monitoring
@@ -39,7 +39,7 @@ spec:
         - ports:
             - { port: "9091", protocol: TCP }
   egress:
-    # DNS (CoreDNS).
+    # DNS to CoreDNS.
     - toEndpoints:
         - matchLabels:
             k8s:io.kubernetes.pod.namespace: kube-system

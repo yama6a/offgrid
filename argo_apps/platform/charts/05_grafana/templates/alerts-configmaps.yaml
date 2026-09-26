@@ -1,7 +1,5 @@
 {{- /*
-One ConfigMap per file in files/alerts/, labelled so the alerts sidecar loads it, the same mechanism the
-dashboards sidecar uses. Read verbatim via .Files.Get and NOT templated, so the Grafana `{{ $labels.x }}`
-expressions inside stay literal and need no Helm raw-string escaping.
+.Files.Get reads each file verbatim, so Grafana's `{{ $labels.x }}` expressions need no Helm escaping.
 */ -}}
 {{- range $path, $_ := .Files.Glob "files/alerts/*.yaml" }}
 ---

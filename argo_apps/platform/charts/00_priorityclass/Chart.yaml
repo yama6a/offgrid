@@ -1,7 +1,6 @@
 apiVersion: v2
 name: priorityclass
-description: The two shared PriorityClasses that order eviction under memory pressure, platform-critical and data-critical.
-# The built-in system-cluster-critical / system-node-critical are admission-restricted to kube-system, so
-# components in their own namespaces cannot use them.
+description: The two shared PriorityClasses, platform-critical and data-critical, that order eviction under memory pressure.
+# Admission allows the built-in system-cluster-critical and system-node-critical only in kube-system.
 type: application
-version: 0.1.0 # local chart, never bump version
+version: 0.1.0 # nothing publishes this chart, so never bump it

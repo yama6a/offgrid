@@ -5,6 +5,6 @@ kind: PriorityClass
 metadata:
   name: {{ .name }}
 value: {{ .value | int64 }}
-globalDefault: false # never: it would silently bump EVERY pod that omits priorityClassName
+globalDefault: false # true would raise every pod that sets no priorityClassName
 description: {{ .description | quote }}
 {{- end }}

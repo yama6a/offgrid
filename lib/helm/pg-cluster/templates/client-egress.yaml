@@ -1,5 +1,5 @@
 {{- /*
-Allowlist egress from client pods to the DB pods.
+Lets each allowedClients entry reach the database pods on 5432.
 */ -}}
 {{- $cluster := .Values.name }}
 {{- range $i, $client := .Values.allowedClients }}

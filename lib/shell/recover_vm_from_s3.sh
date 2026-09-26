@@ -1,8 +1,8 @@
 #!/usr/bin/env bash
-# Restores VictoriaMetrics or VictoriaLogs from the S3 exports, by streaming a gzip'd export back into the LIVE
-# store's import endpoint via a temporary pod. Nothing touches a PVC or the operator's CRs.
-# NON-DESTRUCTIVE: /import MERGES into whatever is already there, it never wipes. For a clean DR, point it at
-# a fresh store. VictoriaLogs stream-field fidelity is best-effort on re-ingest.
+# Restores VictoriaMetrics or VictoriaLogs from the S3 exports. A temporary pod streams each gzip export into
+# the import endpoint of the live store. No PVC or operator CR changes.
+# /import merges into the existing data and never deletes. For a clean disaster recovery, target a fresh store.
+# VictoriaLogs can lose some stream fields on re-ingest.
 set -euo pipefail
 
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
@@ -12,21 +12,21 @@ usage() {
   cat << EOF
 recover_vm_from_s3.sh [--kind metrics|logs] [--target all|latest|<s3-key>] [--apply]
                                                              (or: make restore-vm)
-  --kind     which store; prompts if omitted
-  --target   backups are one gzip'd slice per UTC day. all = replay every slice, latest = just the newest,
-             or name one key relative to the bucket. Defaults to latest.
+  --kind     which store. Prompts if omitted.
+  --target   all replays every daily slice, latest replays the newest day, or name one key relative to the
+             bucket. Defaults to latest.
   --apply    skip the confirmation prompt
 
-Use it after a TOTAL loss of the monitoring volumes; deletionProtection already covers an accidental prune.
+Use it after a total loss of the monitoring volumes. deletionProtection already covers an accidental prune.
 EOF
 }
 
 # ---- knobs ----
-VB_VALUES="${PLATFORM_CHARTS}/08_vm_backup/values.yaml" # single source for bucket/prefix/store URLs
-RESTORE_NS="monitoring"                                 # the restore pod runs where the sealed creds + stores live
+VB_VALUES="${PLATFORM_CHARTS}/08_vm_backup/values.yaml" # holds the bucket, prefix and store URLs
+RESTORE_NS="monitoring"                                 # the namespace of the sealed creds and the stores
 SECRET_NAME="vm-backup-s3"                              # the sealed writer creds in RESTORE_NS
 # renovate: datasource=docker
-RUNNER_IMAGE="alpine/k8s:1.37.0" # curl + aws-cli + gzip, same as the backup CronJob
+RUNNER_IMAGE="alpine/k8s:1.37.0" # has curl, aws-cli and gzip. The backup CronJob uses the same image.
 
 # ---- state ----
 KIND="" # set by parse_args / resolve_kind
@@ -70,15 +70,14 @@ parse_args() {
         usage
         exit 0
         ;;
-      *) die "unknown arg: $1 (see --help)" ;;
+      *) die "unknown argument: $1. See --help." ;;
     esac
   done
 }
 
-# The S3 listing runs on the HOST with the .env DEPLOYER creds (read is within its s3:* on the bucket). The
-# in-cluster download uses the sealed WRITER creds already in ns monitoring, so no host writer creds are needed.
+# The host lists S3 with the deployer creds from .env. The pod downloads with the sealed writer creds.
 use_deploy_creds() {
-  [ -n "$AWS_DEPLOY_ACCESS_KEY_ID" ] || die "AWS_DEPLOY_ACCESS_KEY_ID empty in .env, needed to list S3 backups"
+  [ -n "$AWS_DEPLOY_ACCESS_KEY_ID" ] || die "AWS_DEPLOY_ACCESS_KEY_ID is empty in .env. It is needed to list S3 backups."
   export_deploy_aws_creds
 }
 
@@ -87,8 +86,8 @@ read_backup_values() {
   PREFIX="$(yq -r '.prefix' "$VB_VALUES")"
   VMSINGLE="$(yq -r '.vmsingle' "$VB_VALUES")"
   VLSINGLE="$(yq -r '.vlsingle' "$VB_VALUES")"
-  [ -n "$BUCKET" ] && [ "$BUCKET" != "null" ] || die "bucket is unset in ${VB_VALUES}: run 10e_vm_backup.sh first"
-  say "VM/VL restore from S3: stream a gzip'd export back into the live store's /import endpoint"
+  [ -n "$BUCKET" ] && [ "$BUCKET" != "null" ] || die "bucket is unset in ${VB_VALUES}. Run 10e_vm_backup.sh first."
+  say "VictoriaMetrics or VictoriaLogs restore from S3 into the /import endpoint of the live store"
 }
 
 resolve_kind() {
@@ -110,40 +109,39 @@ resolve_kind() {
       STORE_INSTANCE="victoria-logs"
       STORE_PORT="9428"
       ;;
-    *) die "kind must be 'metrics' or 'logs' (got '${KIND}')" ;;
+    *) die "kind must be 'metrics' or 'logs', not '${KIND}'" ;;
   esac
   RESTORE_POD="vm-restore-${KIND}"
   BG_NETPOL="vm-restore-breakglass-${KIND}"
   kubectl -n "$RESTORE_NS" get secret "$SECRET_NAME" > /dev/null 2>&1 \
-    || die "sealed creds ${RESTORE_NS}/${SECRET_NAME} missing: enable backups first (make configure-vm-backup)"
+    || die "sealed creds ${RESTORE_NS}/${SECRET_NAME} missing. Enable backups first with make configure-vm-backup."
 }
 
-# OBJECTS is a newline list of full s3:// urls. Every key starts with its YYYYMMDD, so a plain sort is
-# chronological and the first 8 chars name the day. Metrics are one object per day, logs are 24 (one per
-# hour), so `latest` takes the whole day rather than the last key, and means the same thing for both kinds.
+# Every key starts with YYYYMMDD, so a plain sort is chronological and the first 8 characters name the day.
+# Metrics write one object per day and logs write 24. So `latest` takes the whole newest day, not the last key.
 resolve_objects() {
   local keys day
   DEST="s3://${BUCKET}/${PREFIX}${SUBPREFIX}"
   case "$TARGET" in
     all)
-      say "resolving ALL ${KIND} slices under ${DEST}"
+      say "resolving all ${KIND} slices under ${DEST}"
       keys="$(aws s3 ls "$DEST" | awk '{print $4}' | grep -E "${EXT}\$" | sort)"
-      [ -n "$keys" ] || die "no ${EXT} objects under ${DEST}, nothing to restore"
+      [ -n "$keys" ] || die "no ${EXT} objects under ${DEST}. Nothing to restore."
       OBJECTS="$(printf '%s\n' "$keys" | sed "s#^#${DEST}#")"
       ;;
     latest)
-      say "resolving latest ${KIND} daily slice under ${DEST}"
+      say "resolving the latest ${KIND} day under ${DEST}"
       keys="$(aws s3 ls "$DEST" | awk '{print $4}' | grep -E "${EXT}\$" | sort)"
-      [ -n "$keys" ] || die "no ${EXT} objects under ${DEST}, nothing to restore"
+      [ -n "$keys" ] || die "no ${EXT} objects under ${DEST}. Nothing to restore."
       day="$(printf '%s\n' "$keys" | tail -1 | cut -c1-8)"
       OBJECTS="$(printf '%s\n' "$keys" | grep "^${day}" | sed "s#^#${DEST}#")"
       ;;
     *)
-      OBJECTS="s3://${BUCKET}/${TARGET#/}" # caller passed a full key relative to the bucket
+      OBJECTS="s3://${BUCKET}/${TARGET#/}"
       aws s3 ls "$OBJECTS" > /dev/null 2>&1 || die "object not found: ${OBJECTS}"
       ;;
   esac
-  OBJECTS_ONELINE="${OBJECTS//$'\n'/ }" # space-joined for the pod's `for` loop (keys have no spaces)
+  OBJECTS_ONELINE="${OBJECTS//$'\n'/ }" # safe to word-split in the pod, because keys hold no spaces
   N_OBJ="$(printf '%s\n' "$OBJECTS" | grep -c .)"
   ok "restoring ${N_OBJ} object(s):"
   printf '%s\n' "$OBJECTS" | sed 's/^/    /'
@@ -155,10 +153,10 @@ confirm_restore() {
   say "Restore plan"
   echo "    Kind        : ${KIND}"
   echo "    From        : ${N_OBJ} object(s) under ${DEST}"
-  echo "    Into        : ${IMPORT_URL}  (MERGE, import never wipes)"
+  echo "    Into        : ${IMPORT_URL}  (merges, never deletes)"
   echo "    Runner pod  : ${RESTORE_NS}/${RESTORE_POD}  (image ${RUNNER_IMAGE})"
   echo
-  warn "Import MERGES into the live store. For a clean DR, run this against a FRESH/empty ${KIND} store."
+  warn "The import merges into the live store. For a clean disaster recovery, target an empty ${KIND} store."
   [ "$DO_APPLY" = "true" ] && return 0
   read -rp "Proceed? [y/N]: " answer
   [[ "$answer" =~ ^[Yy]$ ]] || {
@@ -168,7 +166,7 @@ confirm_restore() {
 }
 
 cleanup() {
-  warn "cleaning up restore pod + break-glass netpol"
+  warn "cleaning up the restore pod and the break-glass network policy"
   kubectl -n "$RESTORE_NS" delete pod "$RESTORE_POD" --ignore-not-found --wait=false > /dev/null 2>&1 || true
   kubectl -n "$RESTORE_NS" delete ciliumnetworkpolicy "$BG_NETPOL" --ignore-not-found > /dev/null 2>&1 || true
 }
@@ -208,12 +206,12 @@ spec:
       toPorts:
         - ports: [{ port: "443", protocol: TCP }]
 YAML
-  ok "break-glass netpol applied"
+  ok "break-glass network policy applied"
 }
 
-# app.kubernetes.io/name=vm-backup so the store's existing ingress allowlist already admits this pod.
+# The label app.kubernetes.io/name=vm-backup lets the ingress policy of the store admit this pod.
 create_restore_pod() {
-  say "creating restore pod (downloads the export, streams it into the store)"
+  say "creating the restore pod. It downloads the export and streams it into the store."
   kubectl -n "$RESTORE_NS" delete pod "$RESTORE_POD" --ignore-not-found > /dev/null 2>&1 || true
   kubectl apply -f - > /dev/null << YAML
 apiVersion: v1
@@ -240,14 +238,13 @@ spec:
         - |
           set -o pipefail
           fail=0
-          # host bakes the space-joined slice list (keys are date-named, no spaces => safe word-split); pod-local
-          # \$-vars are escaped so the unquoted heredoc doesn't expand them. Any failed slice fails the pod.
+          # Pod-local \$ variables are escaped, so the unquoted heredoc leaves them alone.
           for o in ${OBJECTS_ONELINE}; do
-            echo "streaming \${o} -> ${IMPORT_URL}"
+            echo "streaming \${o} to ${IMPORT_URL}"
             if aws s3 cp "\$o" - | gunzip | curl -sf --max-time 3000 -X POST "${IMPORT_URL}" -T -; then
               echo "  ok"
             else
-              echo "  FAILED \${o}"; fail=1
+              echo "  failed: \${o}"; fail=1
             fi
           done
           [ "\$fail" -eq 0 ]
@@ -268,17 +265,16 @@ spec:
 YAML
 }
 
-# Succeeded means the import returned 200; Failed surfaces the logs and dies.
 wait_for_import() {
   local phase="" _
-  say "waiting for the restore to complete (this can take a while for a large export)"
+  say "waiting for the restore to complete. A large export takes a while."
   for _ in $(seq 1 900); do
     phase="$(kubectl -n "$RESTORE_NS" get pod "$RESTORE_POD" -o jsonpath='{.status.phase}' 2> /dev/null || true)"
     case "$phase" in
       Succeeded) break ;;
       Failed)
         kubectl -n "$RESTORE_NS" logs "$RESTORE_POD" || true
-        die "restore pod failed, see logs above"
+        die "restore pod failed. See the logs above."
         ;;
     esac
     sleep 2
@@ -309,6 +305,6 @@ apply_breakglass_netpol
 create_restore_pod
 wait_for_import
 
-say "verify in vmui/Grafana: ${KIND} data should now be queryable (imports flush async; allow a few seconds)"
+say "check in vmui or Grafana that the ${KIND} data is queryable. Imports flush in the background, so allow a few seconds."
 summary
 [ "$FAIL" -eq 0 ]

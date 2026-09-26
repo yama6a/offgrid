@@ -1,13 +1,13 @@
 image: "binwiederhier/ntfy:v2.28.0@sha256:6ef4b819f722fccdc036af611c4774cfdc2de821ab74fdd48bbf4c9d6f8973da"
-baseUrl: "https://ntfy.ops.example.com" # MUST match the ntfy host in 06_platform_ingress
+baseUrl: "https://ntfy.ops.example.com" # must match the ntfy host in 06_platform_ingress
 
-# Orphan-not-delete. ntfy is the one store with NO backup, so the restore path is procedural: re-run
-# `make configure-ntfy-auth`, then commit the resealed token.
-deletionProtection: true # to remove: set false in a first commit, delete the app in a follow-up commit
+# Stops Argo CD from pruning or deleting ntfy's resources. ntfy is the one store with no backup. To rebuild it,
+# run `make configure-ntfy-auth` again, then commit the resealed token.
+deletionProtection: true # to remove ntfy, set false in one commit, then delete the app in the next
 
 storage:
-  storageClassName: longhorn-r2-ephemeral # deletionProtection is the prune guard, so Retain would only leak PVs
-  size: 1Gi # auth + cache SQLite DBs only
+  storageClassName: longhorn-r2-ephemeral # deletionProtection guards against prune, so Retain would only leak PVs
+  size: 1Gi # holds only the auth and cache SQLite databases
 
 resources:
   requests: {cpu: 10m, memory: 30Mi}

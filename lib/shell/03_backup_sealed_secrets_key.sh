@@ -1,15 +1,15 @@
 #!/usr/bin/env bash
-# Backs up the Sealed Secrets controller's RSA private key(s) to the gitignored secrets/ dir.
-# LOSE THIS KEY AND EVERY SEALED SECRET IN THIS REPO IS UNRECOVERABLE.
+# Backs up the Sealed Secrets controller's RSA private keys to the gitignored secrets/ dir.
+# Without these keys, no SealedSecret in this repo can be decrypted.
 set -uo pipefail
 
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 source "${SCRIPT_DIR}/common.sh"
 
 # ---- knobs ----
-NS="$SS_CONTROLLER_NS"                                 # controller namespace (Application destination)
+NS="$SS_CONTROLLER_NS"                                 # controller namespace
 KEY_LABEL="$SS_KEY_LABEL"                              # label the controller stamps on its key Secrets
-BACKUP_FILE="${CLUSTER_DIR}/sealed-secrets-master.key" # gitignored dir
+BACKUP_FILE="${CLUSTER_DIR}/sealed-secrets-master.key" # in the gitignored secrets/ dir
 
 # ---- functions ----
 
@@ -22,14 +22,13 @@ check_prerequisites() {
   ok "kubectl present, API reachable"
 }
 
-# The whole labelled set, not just the active key: the controller rotates roughly monthly and KEEPS the old
-# ones, which still decrypt older SealedSecrets. Re-run after each rotation.
+# The controller rotates its key about monthly and keeps the old keys, which still decrypt older SealedSecrets.
 count_key_secrets() {
   local keys count
   say "looking for key Secrets in ns/${NS} (label ${KEY_LABEL})"
   keys="$(kubectl get secret -n "$NS" -l "$KEY_LABEL" -o name 2> /dev/null)"
   if [ -z "$keys" ]; then
-    bad "no Secrets with label ${KEY_LABEL} in ns/${NS}, is the controller running? (kubectl -n ${NS} get pods)"
+    bad "no Secrets with label ${KEY_LABEL} in ns/${NS}. Is the controller running? Check: kubectl -n ${NS} get pods"
     summary
     exit 1
   fi
@@ -37,11 +36,10 @@ count_key_secrets() {
   ok "found ${count} key Secret(s)"
 }
 
-# `-o yaml` of the labelled Secrets is the official restore-able form (re-applied with kubectl apply).
+# The upstream restore procedure applies this -o yaml dump with kubectl apply.
 write_backup() {
-  say "writing backup -> ${BACKUP_FILE}"
-  # Via a temp file: a direct redirect truncates first, so a failed dump would replace a GOOD backup of the one
-  # key that cannot be regenerated with an empty file. mktemp is 0600 and mv preserves it.
+  say "writing the backup to ${BACKUP_FILE}"
+  # A direct redirect truncates first, so a failed dump would empty a good backup. mktemp is 0600 and mv keeps it.
   local tmp
   tmp="$(mktemp "${BACKUP_FILE}.XXXXXX")" || {
     bad "could not write next to ${BACKUP_FILE}"
@@ -49,10 +47,10 @@ write_backup() {
   }
   if kubectl get secret -n "$NS" -l "$KEY_LABEL" -o yaml > "$tmp" 2> /dev/null && [ -s "$tmp" ]; then
     mv "$tmp" "$BACKUP_FILE"
-    ok "key(s) written and chmod 600"
+    ok "keys written with mode 600"
   else
     rm -f "$tmp"
-    bad "kubectl get/dump failed, backup NOT written (any previous backup is untouched)"
+    bad "kubectl get failed. Backup not written. Any previous backup is unchanged."
   fi
 }
 
@@ -65,20 +63,20 @@ verify_backup() {
 
 print_result() {
   if [ "$FAIL" -ne 0 ]; then
-    echo "Backup did NOT complete cleanly, do not rely on ${BACKUP_FILE}. Check the controller is up:"
+    echo "Backup failed. Do not rely on ${BACKUP_FILE}. Check that the controller is up:"
     echo "  kubectl -n ${NS} get pods"
     return 0
   fi
   cat << EOF
 Sealed Secrets master key backed up to:
   ${BACKUP_FILE}
-This file lives in the gitignored secrets/ dir, it is NEVER committed. Store a copy somewhere
-safe off-cluster: a copy that only exists on this cluster is useless the day you lose the cluster.
-Re-run after each key rotation.
+This file is in the gitignored secrets/ dir and is never committed.
+Keep a copy off the cluster. A copy that exists only on this cluster is lost with the cluster.
+Run this script again after each key rotation.
 
-RESTORE (after a rebuild):
+Restore after a rebuild:
   kubectl apply -f ${BACKUP_FILE}
-  kubectl delete pod -n ${NS} -l app.kubernetes.io/name=sealed-secrets   # restart to load the key
+  kubectl delete pod -n ${NS} -l app.kubernetes.io/name=sealed-secrets   # the restart loads the key
 EOF
 }
 

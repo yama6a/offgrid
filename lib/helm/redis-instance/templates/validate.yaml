@@ -1,27 +1,27 @@
-{{- /* Validation only, renders to empty. Enforces the REQUIRED fields. */ -}}
+{{- /* Validation only. Renders nothing and fails on a missing or invalid required field. */ -}}
 {{- if not .Values.name }}
-{{- fail "redis-instance: name is required (the explicit Redis instance name; also the Service DNS clients dial; must be unique across a workload's Redis instances)" }}
+{{- fail "redis-instance: name is required. It is the Redis instance name and the Service name that clients dial. It must be unique across a workload's Redis instances" }}
 {{- end }}
 {{- if not .Values.redisVersion }}
-{{- fail "redis-instance: redisVersion is required (the Redis server image tag, e.g. v8.6.2)" }}
+{{- fail "redis-instance: redisVersion is required. It is the Redis server image tag, for example v8.6.2" }}
 {{- end }}
 {{- if not .Values.resources }}
-{{- fail "redis-instance: resources is required (per-pod requests/limits; set a memory limit so maxMemoryPercentOfLimit has a base)" }}
+{{- fail "redis-instance: resources is required. Give per-pod requests and limits, with a memory limit so maxMemoryPercentOfLimit has a base" }}
 {{- end }}
 {{- if not .Values.allowedClients }}
-{{- fail "redis-instance: allowedClients is required (who may reach Redis on 6379); the policy is always enforced and is the only access control, so an empty list would wall off the instance" }}
+{{- fail "redis-instance: allowedClients is required. It lists the pods that may reach Redis on 6379. The policy is always on and is the only access control, so an empty list would block every client" }}
 {{- end }}
 {{- range .Values.allowedClients }}
 {{- if .namespace }}
-{{- fail (printf "redis-instance: allowedClients entries take no `namespace` (it is always the release namespace %q; a cross-ns client needs the clusterwide-CNP variant), drop the key" $.Release.Namespace) }}
+{{- fail (printf "redis-instance: allowedClients entries take no `namespace` key. A client is always in the release namespace %q. A client in another namespace needs a CiliumClusterwideNetworkPolicy instead. Remove the key" $.Release.Namespace) }}
 {{- end }}
 {{- if not .matchLabels }}
-{{- fail "redis-instance: every allowedClients entry needs a non-empty matchLabels (the client pod labels); an empty selector would open 6379 to the whole namespace" }}
+{{- fail "redis-instance: every allowedClients entry needs a non-empty matchLabels with the client pod labels. An empty selector would open 6379 to the whole namespace" }}
 {{- end }}
 {{- end }}
 {{- if not (kindIs "bool" .Values.deletionProtection) }}
-{{- fail "redis-instance: deletionProtection is required and must be explicitly true (a GitOps prune orphans the running instance instead of deleting it) or false (the instance is deletable); there is no default" }}
+{{- fail "redis-instance: deletionProtection is required and must be true or false. With true, a GitOps prune orphans the running instance instead of deleting it. With false, the instance can be deleted. There is no default" }}
 {{- end }}
 {{- if not (kindIs "bool" .Values.persistence) }}
-{{- fail "redis-instance: persistence is required and must be explicitly true (durable: AOF + S3 backup) or false (ephemeral cache: no explicit appendfsync, no S3 backup); there is no default. It picks neither the storage class nor whether AOF runs at all" }}
+{{- fail "redis-instance: persistence is required and must be true or false. true is durable, with AOF and S3 backup. false is a cache with no explicit appendfsync and no S3 backup. There is no default. It does not choose the storage class, and it does not turn AOF off" }}
 {{- end }}

@@ -1,9 +1,9 @@
 apiVersion: 1
 groups:
-  # Agent-down is warning, not critical: a hard node loss already pages node-not-ready. This is the CNI angle,
-  # an agent gone while the node is up, which costs that node's pods their networking.
-  # Raw drop-count and policy-import-errors are deliberately absent: policy denies are normal drops, and the
-  # import-errors metric is not emitted here.
+  # cilium-agent-down is a warning because node-not-ready already pages on a lost node. It catches an agent
+  # gone on a node that is up, which cuts that node's pods off the network.
+  # No drop-count rule, because policy denies are normal drops.
+  # No policy import error rule, because Cilium does not emit that metric here.
   - orgId: 1
     name: cilium-health
     folder: offgrid
@@ -15,9 +15,9 @@ groups:
         for: 5m
         labels: {severity: warning}
         annotations:
-          summary: 'A Cilium agent is missing: a node has lost its CNI dataplane'
+          summary: 'A Cilium agent is missing, so a node has lost its CNI data plane'
           description: |
-            - a node's cilium-agent is down: its pods lose networking
+            - a node's cilium-agent is down, so its pods lose networking
             - check: kubectl -n kube-system get pods -l k8s-app=cilium -o wide
             - logs: kubectl -n kube-system logs ds/cilium
         noDataState: OK
@@ -29,8 +29,7 @@ groups:
             model:
               refId: A
               instant: true
-              # Agents MINUS nodes, so it tracks the node count instead of hardcoding it. A literal threshold
-              # silently stops firing the moment a node is added: 3 of 4 agents up is still "at least 3".
+              # Agents minus nodes follows the node count. A fixed threshold of 3 misses 3 of 4 agents up.
               expr: 'count(up{job="cilium-agent"} == 1) - count(kube_node_info)'
           - refId: B
             relativeTimeRange: {from: 600, to: 0}
@@ -47,7 +46,7 @@ groups:
               conditions:
                 - type: query
                   evaluator: {type: lt, params: [0]}   # one agent short of the node count
-      # A full BPF map makes new endpoints, policies and connections start failing. Act before it wedges.
+      # A full BPF map makes new endpoints, policies and connections fail. Act before it fills.
       - uid: cilium-bpf-map-pressure
         title: Cilium BPF map pressure high
         condition: C
@@ -56,9 +55,9 @@ groups:
         annotations:
           summary: 'Cilium BPF map {{ $labels.map_name }} above 80% full'
           description: |
-            - BPF map {{ $labels.map_name }} >80% full: new endpoints/policies/conns start failing
+            - BPF map {{ $labels.map_name }} is more than 80% full. New endpoints, policies and connections start to fail
             - check: kubectl -n kube-system exec ds/cilium -- cilium bpf metrics list
-            - needs larger map sizing or fewer endpoints/policies
+            - fix: larger map sizes, or fewer endpoints and policies
         noDataState: OK
         execErrState: KeepLast
         data:
@@ -91,11 +90,11 @@ groups:
         for: 5m
         labels: {severity: warning}
         annotations:
-          summary: 'A Cilium agent reports unreachable peer nodes (cross-node networking degraded)'
+          summary: 'A Cilium agent reports unreachable peer nodes. Cross-node networking is degraded'
           description: |
-            - a cilium-agent can't reach peer nodes: cross-node pod/service traffic breaks
+            - a cilium-agent cannot reach peer nodes, so pod and service traffic between nodes breaks
             - check: kubectl -n kube-system exec ds/cilium -- cilium status --verbose
-            - verify node health + tunnels between nodes
+            - check node health and the tunnels between nodes
         noDataState: OK
         execErrState: KeepLast
         data:

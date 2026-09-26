@@ -1,7 +1,6 @@
-# Default-deny both ways for the Messaging Topology Operator, which reconciles the topology CRs by calling the
-# broker's HTTP management API. Not covered by the broker's own pod-scoped policy.
-# The subchart's own vanilla NetworkPolicy for it is allow-all-egress and is disabled in values: Cilium
-# enforces vanilla NPs and UNIONs them with CNPs, so it would blow this default-deny open.
+# Default-deny both ways for the Messaging Topology Operator. It reconciles the topology CRs through the
+# broker's HTTP management API. The broker's policy selects only broker pods.
+# values.yaml turns off the subchart's NetworkPolicy. It allows all egress, and Cilium merges it with this policy.
 apiVersion: cilium.io/v2
 kind: CiliumNetworkPolicy
 metadata:
@@ -13,19 +12,18 @@ spec:
       app.kubernetes.io/component: messaging-topology-operator
       app.kubernetes.io/part-of: rabbitmq
   ingress:
-    # The apiserver calls the validating admission webhook.
-    # remote-node: an apiserver on another node sources from that node's cilium_host IP, not the apiserver identity.
+    # The apiserver calls the validating admission webhook. An apiserver on another node arrives from that
+    # node's cilium_host IP, so it matches remote-node, not kube-apiserver.
     - fromEntities: [kube-apiserver, host, remote-node]
       toPorts:
         - ports:
             - { port: "9443", protocol: TCP }
-    # Kubelet /healthz and /readyz probes, from the node.
+    # Kubelet /healthz and /readyz probes from the node.
     - fromEntities: [host, remote-node]
       toPorts:
         - ports:
             - { port: "8081", protocol: TCP }
   egress:
-    # DNS.
     - toEndpoints:
         - matchLabels:
             k8s:io.kubernetes.pod.namespace: kube-system
@@ -36,8 +34,8 @@ spec:
             - { port: "53", protocol: TCP }
     # Watches the topology CRs in all namespaces and reports their status.
     - toEntities: [kube-apiserver]
-    # Declares topology over the broker's management API. The shared broker is in THIS namespace, so a plain
-    # same-namespace selector suffices.
+    # Declares topology over the broker's management API. The broker is in this namespace, so a plain selector
+    # matches it.
     - toEndpoints:
         - matchLabels:
             app.kubernetes.io/name: rabbitmq

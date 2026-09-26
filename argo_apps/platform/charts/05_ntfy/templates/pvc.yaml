@@ -1,4 +1,3 @@
-# Persistent store for ntfy's SQLite auth + cache DBs (mounted at /var/lib/ntfy). See values.yaml `storage`.
 apiVersion: v1
 kind: PersistentVolumeClaim
 metadata:
@@ -6,8 +5,8 @@ metadata:
   namespace: {{ .Release.Namespace }}
   {{- if .Values.deletionProtection }}
   annotations:
-    # Orphan-not-delete: a GitOps prune leaves ntfy running on its PVC instead of destroying it, and restoring the
-    # files re-adopts it. See values.yaml for the flip-then-remove deletion flow.
+    # Argo CD never prunes or deletes this PVC. A removed app leaves ntfy running on it, and restoring the files
+    # adopts it again. See `deletionProtection` in values.yaml for how to remove it.
     argocd.argoproj.io/sync-options: Prune=false,Delete=false
   {{- end }}
   labels:

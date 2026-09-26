@@ -1,4 +1,4 @@
-# orphan-exporter: finds deletionProtection CRs orphaned by a GitOps prune. The monitoring half of orphan-not-delete.
+# orphan-exporter finds CRs with deletionProtection that a GitOps prune left behind, so an alert can report them.
 apiVersion: argoproj.io/v1alpha1
 kind: Application
 metadata:

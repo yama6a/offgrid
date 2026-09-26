@@ -1,10 +1,10 @@
 apiVersion: v2
 name: victoria-metrics-operator-crds
-description: VictoriaMetrics operator CRDs only, no controller. Split from the operator chart so the large CRDs sync ServerSideApply.
+description: VictoriaMetrics operator CRDs only, with no controller. A separate chart lets the large CRDs sync with ServerSideApply.
 type: application
-version: 0.1.0 # local chart, never bump version
+version: 0.1.0 # nothing publishes this chart, so never bump it
 
 dependencies:
   - name: victoria-metrics-operator-crds
-    version: "0.14.0" # must match 01_victoria_metrics_operator; renovate groups them, bump together
+    version: "0.14.0" # must match 01_victoria_metrics_operator. Renovate groups the two, so bump both together.
     repository: https://victoriametrics.github.io/helm-charts/

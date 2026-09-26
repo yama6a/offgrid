@@ -1,6 +1,6 @@
-{{- /* Auto-emits this consumer's edge from its `ingresses:` values, so a consumer needs no template of its
-       own. Guarded so a consumer that only wants the named-template helpers (google-sso calls
-       ingress.renderIngress itself) gets no stray empty render. */ -}}
+{{- /* Renders the consumer's edge from its `ingresses` values, so a consumer needs no template of its own.
+       The guard renders nothing for a consumer that uses only the named templates. google-sso is one: it
+       calls ingress.renderIngress itself. */ -}}
 {{- if .Values.ingresses }}
 {{ include "ingress.render" . }}
 {{- end }}

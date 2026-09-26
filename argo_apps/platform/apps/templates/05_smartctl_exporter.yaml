@@ -1,4 +1,4 @@
-# smartctl-exporter: reads each node's disk directly, for wear and error counters node-exporter never exposes.
+# smartctl-exporter reads each node's disk for the wear and error counters that node-exporter does not expose.
 apiVersion: argoproj.io/v1alpha1
 kind: Application
 metadata:

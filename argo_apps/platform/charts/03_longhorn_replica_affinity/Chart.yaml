@@ -1,8 +1,8 @@
 apiVersion: v2
 name: longhorn-replica-affinity
-description: Wrapper for the upstream chart, adding only the CiliumNetworkPolicy it deliberately does not ship.
+description: Wraps the upstream chart and adds only the CiliumNetworkPolicy, which upstream does not ship.
 type: application
-version: 0.1.0 # local chart, never bump version
+version: 0.1.0 # nothing publishes this chart, so never bump it
 
 dependencies:
   - name: longhorn-replica-affinity

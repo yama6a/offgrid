@@ -1,13 +1,13 @@
 #!/usr/bin/env bash
-# Regenerates any committed Chart.lock that is out of sync with its Chart.yaml, the exact failure ArgoCD's
-# repo-server hits on sync. Runs no git: it edits Chart.lock and charts/ in place, commit the diff yourself.
+# Regenerates every committed Chart.lock that is out of sync with its Chart.yaml.
+# A stale lock fails the Argo CD sync. This runs no git. Commit the diff yourself.
 set -uo pipefail
 
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 source "${SCRIPT_DIR}/common.sh"
 
 # ---- knobs ----
-JOBS=12 # parallel `helm dependency build`s; network-bound, so more than cores is fine
+JOBS=12 # parallel `helm dependency build` runs. The work waits on the network, so more than the core count is fine.
 
 # ---- state ----
 CHARTS=() # set by find_charts_with_remote_deps
@@ -16,8 +16,7 @@ FIXED=0   # tallied by report_results
 
 # ---- functions ----
 
-# A file://-only chart is lockless (its deps live in this repo, nothing to pin), so it commits no Chart.lock
-# and there is nothing here to check or fix.
+# A chart with only file:// dependencies commits no Chart.lock, so there is nothing to check.
 find_charts_with_remote_deps() {
   mapfile -t CHARTS < <(
     grep -rl --include=Chart.yaml '^dependencies:' "${REPO_ROOT}/argo_apps" "${REPO_ROOT}/lib/helm" 2> /dev/null \
@@ -31,9 +30,8 @@ find_charts_with_remote_deps() {
   }
 }
 
-# Serial and up front, so the parallel workers below only READ the repo cache (--skip-refresh) and never race
-# on writing its index. URLs already added under their real name are skipped, so a configured machine gets no
-# cryptic duplicates.
+# Runs serially before the workers, so they only read the repo cache and never race to write its index.
+# Skips a URL already added under any name, so a configured machine gets no duplicate repos.
 add_missing_helm_repos() {
   local existing url
   existing="$(helm repo list 2> /dev/null || true)"
@@ -41,7 +39,7 @@ add_missing_helm_repos() {
     [ -n "$url" ] || continue
     printf '%s' "$existing" | grep -qF "$url" && continue
     helm repo add "dep-$(printf '%s' "$url" | shasum | cut -c1-8)" "$url" > /dev/null 2>&1 \
-      || warn "could not add helm repo ${url} (that chart may fail below)"
+      || warn "could not add helm repo ${url}. The chart that uses it can fail below."
   done < <(
     grep -rhE '^[[:space:]]*repository:[[:space:]]*"?https://' --include=Chart.yaml \
       "${REPO_ROOT}/argo_apps" "${REPO_ROOT}/lib/helm" 2> /dev/null \
@@ -53,15 +51,13 @@ make_scratch_dir() {
   TMPD="$(mktemp -d)"
   trap 'rm -rf "$TMPD"' EXIT
   export REPO_ROOT TMPD
-  export -f pin_chart_lock_timestamp # each worker below runs in its own `bash -c`, not this shell
+  export -f pin_chart_lock_timestamp # each worker runs in its own `bash -c`
 }
 
-# One worker per chart, capped at JOBS concurrent. Detection is `helm dependency build`, which fast-fails on
-# the digest mismatch, so in-sync charts are left alone and get no timestamp churn.
-# Each worker writes "status<TAB>message" to its own temp file, so the parent can tally serially afterwards.
-# Distinct chart dirs mean no write contention between workers.
+# `helm dependency build` fails fast on a digest mismatch, so a chart in sync keeps its lock timestamp.
+# Each worker writes "status<TAB>message" to its own file, and report_results reads them in order.
 build_charts_in_parallel() {
-  say "checking ${#CHARTS[@]} chart(s), ${JOBS} at a time (first run may fetch remote charts)"
+  say "checking ${#CHARTS[@]} chart(s), ${JOBS} at a time. The first run can fetch remote charts."
   printf '%s\0' "${CHARTS[@]}" | xargs -0 -P "$JOBS" -n1 bash -c '
   dir="$1"
   rel="${dir#"${REPO_ROOT}/"}"
@@ -72,7 +68,7 @@ build_charts_in_parallel() {
     pin_chart_lock_timestamp "$dir"
     printf "fixed\t%s (Chart.lock regenerated)\n" "$rel" > "$out"
   else
-    printf "bad\t%s (run by hand: helm dependency update %s)\n" "$rel" "$rel" > "$out"
+    printf "bad\t%s (run by hand with: helm dependency update %s)\n" "$rel" "$rel" > "$out"
   fi
 ' _
 }

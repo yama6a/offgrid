@@ -1,8 +1,8 @@
 apiVersion: v2
 name: metrics-server
-description: metrics-server, the metrics.k8s.io APIService behind `kubectl top` and CPU/memory HPAs. VictoriaMetrics does not serve metrics.k8s.io.
+description: metrics-server serves the metrics.k8s.io API that `kubectl top` and CPU and memory HPAs read. VictoriaMetrics does not serve it.
 type: application
-version: 0.1.0 # local chart, never bump version
+version: 0.1.0 # nothing publishes this chart, so never bump it
 
 dependencies:
   - name: metrics-server

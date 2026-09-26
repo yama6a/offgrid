@@ -1,8 +1,7 @@
 apiVersion: 1
 groups:
-  # Reloader restarting a pod is what makes a rotated credential actually reach it. When Reloader fails, nothing
-  # else notices: the Secret is updated, the pod keeps the old value, and every dashboard stays green.
-  # A Reloader that is gone entirely is already caught by the generic `up == 0` rule in cluster-health.
+  # A failed Reloader leaves pods on a stale Secret while every dashboard stays green. Nothing else notices.
+  # The `up == 0` rule in cluster-health covers a Reloader that is gone.
   - orgId: 1
     name: reloader-health
     folder: offgrid
@@ -14,11 +13,11 @@ groups:
         for: 15m
         labels: {severity: warning}
         annotations:
-          summary: 'Reloader reloads are failing: pods are keeping stale config and credentials'
+          summary: 'Reloader cannot restart workloads: pods keep stale config and credentials'
           description: |
-            - a ConfigMap or Secret changed but Reloader could not roll the workload that mounts it
+            - a ConfigMap or Secret changed, but Reloader could not restart the workload that mounts it
             - check: kubectl -n reloader logs deploy/reloader
-            - usual cause is RBAC, or a workload the operator owning it keeps reverting
+            - usual causes: RBAC, or an operator that reverts the restart on a workload it owns
         noDataState: OK
         execErrState: KeepLast
         data:

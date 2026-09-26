@@ -1,11 +1,11 @@
-# Static checks only, no cluster. Each job NAME is a branch-protection required-check context, so renaming one
-# silently drops that gate until branch protection is updated too.
+# Static checks only, with no cluster. Branch protection requires each job by its name. Renaming a job drops
+# that gate until branch protection is updated too.
 name: CI
 
 on:
   pull_request:
     branches: [main]
-  # A cache every PR can read is written only off a PR, and only these paths feed its key.
+  # Only a run outside a PR writes the cache that every PR can read. Only these paths feed the cache key.
   push:
     branches: [main]
     paths: ['**/Chart.yaml', '**/Chart.lock', 'lib/helm/**']
@@ -38,7 +38,7 @@ jobs:
     runs-on: ubuntu-26.04-arm
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
-      # A broken config silently halts ALL dependency updates.
+      # A broken config stops every dependency update without an error.
       - uses: yama6a/gha/.github/actions/validate-renovate-config@v2
         with:
           config-file: renovate.json5
@@ -47,19 +47,19 @@ jobs:
     name: helm
     runs-on: ubuntu-26.04-arm
     env:
-      JOBS: 8 # parallel helm workers. The work is part network, part CPU, so above the core count still pays.
+      JOBS: 8 # parallel helm workers. The work is part network and part CPU, so more workers than cores still helps.
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
       - uses: azure/setup-helm@9bc31f4ebc9c6b171d7bfbaa5d006ae7abdb4310 # v5.0.1
         with:
           version: v4.3.0 # pinned so the gate matches the maintainer's local helm
-      # Install only; the render pass below feeds it a file list and needs the flags, not a run.
+      # Install only. The render step below passes it a file list and needs only the flags.
       - uses: yama6a/gha/.github/actions/kubeconform@v2
         with:
           strict: 'false'
           parallelism: ${{ env.JOBS }}
-      # lib/helm is in the key because file:// deps are packaged into charts/*.tgz from it.
-      # No restore-keys: helm dependency build re-downloads everything anyway, so a partial hit buys nothing.
+      # lib/helm is in the key, because helm packages the file:// deps from it into charts/*.tgz.
+      # No restore-keys. helm dependency build downloads everything again, so a partial hit saves nothing.
       - name: restore chart dependencies
         id: helm-deps
         uses: actions/cache/restore@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v6.1.0
@@ -68,9 +68,9 @@ jobs:
           key: helm-deps-v1-${{ hashFiles('**/Chart.yaml', '**/Chart.lock', 'lib/helm/**') }}
       - name: add upstream helm repos
         if: steps.helm-deps.outputs.cache-hit != 'true'
-        # helm dependency build needs classic (https) repos registered locally, exactly as ArgoCD's repo-server
-        # does. OCI deps need none. Derive them from every Chart.yaml so this never needs a hardcoded list.
-        # Serial and up front, so the parallel workers below only READ the index cache, never race writing it.
+        # helm dependency build needs the classic https repos registered locally, as Argo CD's repo-server does.
+        # OCI deps need none. The list comes from every Chart.yaml, so it is never hardcoded.
+        # This runs serially first, so the parallel workers below only read the index cache and never race.
         run: |
           find argo_apps lib/helm -name Chart.yaml -print0 \
             | xargs -0 grep -hoE 'repository:[[:space:]]*"?https://[^" ]+' \
@@ -82,19 +82,19 @@ jobs:
                 done
               done
       - name: helm dependency build
-        # An exact hit means this same Chart.yaml, Chart.lock and lib/helm set already built green.
+        # An exact cache hit means the same Chart.yaml, Chart.lock and lib/helm files already built green.
         if: steps.helm-deps.outputs.cache-hit != 'true'
-        # Reproduces ArgoCD's repo-server: rebuilds charts/ from the COMMITTED Chart.lock, so a missing or stale
-        # lock fails here rather than on sync.
-        # --skip-refresh: without it helm re-downloads every registered repo index (~30MB across 12 repos) once
-        # per chart, which was most of this job's runtime. The step above already fetched them seconds ago.
+        # Does what Argo CD's repo-server does: rebuilds charts/ from the committed Chart.lock. A missing or
+        # stale lock fails here, not on sync.
+        # --skip-refresh stops helm from downloading every registered repo index again for each chart, about
+        # 30MB across 12 repos. The step above fetched them seconds ago.
         # No lib/helm chart has dependencies of its own, so the file:// sources stay read-only while workers run.
-        # Each worker buffers to its own file, so the per-chart groups below still print in a stable order.
+        # Each worker writes to its own file, so the per-chart groups below print in a stable order.
         run: |
           out="$(mktemp -d)"; export out
           grep -rl --include=Chart.yaml '^dependencies:' argo_apps lib/helm \
             | xargs -n1 dirname | sort -u > "$out/dirs"
-          # the sh -c body is single-quoted on purpose: the worker expands $1 and $out, this shell must not
+          # Single quotes on purpose. The worker expands $1 and $out, and this shell must not.
           # shellcheck disable=SC2016
           xargs -a "$out/dirs" -P "$JOBS" -n1 sh -c '
             d="$1"; f="${out}/$(printf %s "$d" | tr / _)"
@@ -106,7 +106,7 @@ jobs:
             if [ -e "$f.fail" ]; then echo "::error::dependency build failed: $d"; fail=1; fi
           done < "$out/dirs"
           exit $fail
-      # Never from a pull_request: that scope is readable by the one PR and nothing after it.
+      # Never from a pull_request. A cache saved there is readable by that one PR and nothing after it.
       - name: save chart dependencies
         if: github.event_name != 'pull_request' && steps.helm-deps.outputs.cache-hit != 'true'
         uses: actions/cache/save@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v6.1.0
@@ -114,15 +114,15 @@ jobs:
           path: '**/charts/*.tgz'
           key: ${{ steps.helm-deps.outputs.cache-primary-key }}
       - name: helm lint + template + kubeconform
-        # The ArgoCD-delivered wrappers plus the two apps/ charts that render the Application manifests
-        # themselves. The lib/helm/ shared charts are validated transitively as their deps.
-        # Render every chart first, validate after: one kubeconform over all of them downloads each CRD schema
-        # once, where 37 separate invocations each re-fetch the same schemas from the catalog.
+        # The wrapper charts that Argo CD delivers, plus the two apps/ charts that render the Application
+        # manifests. The lib/helm/ shared charts get checked through the wrappers that depend on them.
+        # Render every chart first, then validate. One kubeconform run over all of them downloads each CRD
+        # schema once. 37 separate runs would each fetch the same schemas again.
         run: |
           out="$(mktemp -d)"; render="$(mktemp -d)"; export out render
           find argo_apps \( -path '*/charts/*/Chart.yaml' -o -path '*/apps/Chart.yaml' \) \
             -not -path '*/charts/*/charts/*' -printf '%h\n' | sort > "$out/dirs"
-          # the sh -c body is single-quoted on purpose: the worker expands $1 and $out, this shell must not
+          # Single quotes on purpose. The worker expands $1 and $out, and this shell must not.
           # shellcheck disable=SC2016
           xargs -a "$out/dirs" -P "$JOBS" -n1 sh -c '
             d="$1"; f="${out}/$(printf %s "$d" | tr / _)"; rc=0
@@ -137,14 +137,14 @@ jobs:
             echo "::group::$d"; cat "$f" "$f.fail" 2>/dev/null || true; echo "::endgroup::"
             if [ -e "$f.fail" ]; then echo "::error::helm lint/template failed: $d"; fail=1; fi
           done < "$out/dirs"
-          # KUBECONFORM_ARGS is meant to split into words here
+          # KUBECONFORM_ARGS must split into words here
           # shellcheck disable=SC2086
           find "$render" -name '*.yaml' -print0 \
             | xargs -0 -r kubeconform $KUBECONFORM_ARGS || fail=1
           exit $fail
 
-  # The shared charts, which the helm job above only reaches as a wrapper's dependency. Each one `fail`s the
-  # render on a missing required value, so it needs a fixture to be linted or templated at all.
+  # The shared charts, which the helm job above reaches only as a wrapper's dependency. Each one fails the
+  # render on a missing required value, so it needs a fixture before lint or template can run.
   chart-tests:
     name: chart-tests
     runs-on: ubuntu-26.04-arm

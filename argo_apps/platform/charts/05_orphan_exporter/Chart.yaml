@@ -1,8 +1,7 @@
 apiVersion: v2
 name: orphan-exporter
-description: Flags deletionProtection CRs orphaned by a GitOps prune, and exports per-CNPG-server backup recoverability from the barman ObjectStore status.
-# Name is stale (it does the backup gauges too). Left alone because renaming a chart orphans its
-# release-named resources.
+description: Flags deletionProtection CRs that a GitOps prune orphaned. Also exports backup and storage gauges for CNPG and Redis recoverability, abandoned PVs and orphaned Longhorn backups.
+# The name covers only part of the job. Renaming the chart would orphan its release-named resources.
 type: application
-version: 0.1.0 # local chart, never bump version
+version: 0.1.0 # nothing publishes this chart, so never bump it
 appVersion: "1.0"

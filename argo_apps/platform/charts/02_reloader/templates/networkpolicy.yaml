@@ -1,4 +1,4 @@
-# Namespace-wide default-deny for the controller that can read every Secret in the cluster.
+# Default-deny for the reloader namespace. The controller can read every Secret in the cluster.
 apiVersion: cilium.io/v2
 kind: CiliumNetworkPolicy
 metadata:
@@ -7,7 +7,7 @@ metadata:
 spec:
   endpointSelector: {}          # every pod in the reloader namespace
   ingress:
-    # vmagent scrapes controller metrics.
+    # vmagent scrapes the controller.
     - fromEndpoints:
         - matchLabels:
             k8s:io.kubernetes.pod.namespace: monitoring
@@ -16,7 +16,6 @@ spec:
         - ports:
             - { port: "9090", protocol: TCP }
   egress:
-    # DNS (CoreDNS).
     - toEndpoints:
         - matchLabels:
             k8s:io.kubernetes.pod.namespace: kube-system
@@ -25,5 +24,5 @@ spec:
         - ports:
             - { port: "53", protocol: UDP }
             - { port: "53", protocol: TCP }
-    # Watch ConfigMaps/Secrets and patch the workloads that mount them.
+    # Watches ConfigMaps and Secrets and patches the workloads that mount them.
     - toEntities: [kube-apiserver]

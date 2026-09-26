@@ -1,5 +1,5 @@
-# Cluster-wide READ on Redis CRs only, the least the discovery step needs. No write, no other resources; the
-# dump itself reaches instances over the network, not via the API.
+# Cluster-wide read on Redis CRs only, the least the discovery step needs. The dump reaches instances over the
+# network, not through the API.
 apiVersion: rbac.authorization.k8s.io/v1
 kind: ClusterRole
 metadata:
@@ -22,8 +22,8 @@ subjects:
     name: redis-backup
     namespace: {{ .Release.Namespace }}
 ---
-# Namespaced write for the ONE ConfigMap the job publishes its per-instance outcome into, read by
-# orphan-exporter. A Role, not a ClusterRole: the job has no reason to touch anything outside its namespace.
+# Write access to ConfigMaps in this namespace, for the status ConfigMap that orphan-exporter reads.
+# A Role, not a ClusterRole, because the job touches nothing outside its namespace.
 apiVersion: rbac.authorization.k8s.io/v1
 kind: Role
 metadata:

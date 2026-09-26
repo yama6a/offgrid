@@ -1,8 +1,8 @@
 apiVersion: v2
 name: cilium
-description: Cilium, the CNI plus LB-IPAM/L2 LoadBalancer and WireGuard encryption. Bootstrapped by 01_cilium.sh, then adopted by ArgoCD.
+description: Cilium, the CNI, with LB-IPAM, L2 announcements and WireGuard encryption. 01_cilium.sh installs it, then Argo CD adopts it.
 type: application
-version: 0.1.0 # local chart, never bump version
+version: 0.1.0 # nothing publishes this chart, so never bump it
 
 dependencies:
   - name: cilium

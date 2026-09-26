@@ -6,7 +6,7 @@ metadata:
   name: {{ include "pg-cluster.name" . }}-backups
   namespace: {{ .Release.Namespace }}
   annotations:
-    argocd.argoproj.io/sync-wave: "-1" # apply the ObjectStore BEFORE the Cluster.
+    argocd.argoproj.io/sync-wave: "-1" # apply the ObjectStore before the Cluster
     {{- with (include "pg-cluster.protectAnnotations" .) }}
     {{- . | nindent 4 }}
     {{- end }}
@@ -14,18 +14,18 @@ metadata:
     cnpg.io/cluster: {{ include "pg-cluster.name" . }}
     {{- include "pg-cluster.labels" . | nindent 4 }}
 spec:
-  retentionPolicy: {{ required "pg-cluster: files/backup.yaml retentionPolicy missing but backups on; run 10b_cnpg_backup.sh" $b.retentionPolicy | quote }}
+  retentionPolicy: {{ required "pg-cluster: files/backup.yaml has no retentionPolicy but backups are on. Run 10b_cnpg_backup.sh" $b.retentionPolicy | quote }}
   configuration:
     wal:
-      compression: gzip # shrink WAL before upload (also shrinks near-empty idle segments).
-      encryption: AES256 # request SSE-S3 on upload; matches the bucket's AWS-managed SSE.
+      compression: gzip # also shrinks nearly empty idle segments before upload
+      encryption: AES256 # requests SSE-S3 on upload, to match the bucket's AWS-managed SSE
       maxParallel: 1
     data:
       compression: gzip
       encryption: AES256
       jobs: 2
-    endpointURL: "https://s3.{{ required "pg-cluster: files/backup.yaml region missing but backups on; run 10b_cnpg_backup.sh" $b.region }}.amazonaws.com"
-    destinationPath: "s3://{{ $b.bucket }}/cnpg/{{ .Release.Namespace }}/" # s3://<bucket>/cnpg/<ns>/<name>-pg<major>/{wals,base}
+    endpointURL: "https://s3.{{ required "pg-cluster: files/backup.yaml has no region but backups are on. Run 10b_cnpg_backup.sh" $b.region }}.amazonaws.com"
+    destinationPath: "s3://{{ $b.bucket }}/cnpg/{{ .Release.Namespace }}/" # full path: s3://<bucket>/cnpg/<ns>/<name>-pg<major>/{wals,base}
     s3Credentials:
       accessKeyId:
         name: {{ include "pg-cluster.backupSecretName" . }}
@@ -33,8 +33,8 @@ spec:
       secretAccessKey:
         name: {{ include "pg-cluster.backupSecretName" . }}
         key: ACCESS_SECRET_KEY
-  # The plugin injects this sidecar into every instance pod. Sized from its usage across all clusters, since KRR
-  # cannot see pods owned by a CNPG Cluster.
+  # The plugin injects this sidecar into every instance pod. KRR cannot see pods that a CNPG Cluster owns, so
+  # these sizes come from the sidecar's measured usage across all clusters.
   instanceSidecarConfiguration:
     resources:
       requests: {cpu: 76m, memory: 63Mi}

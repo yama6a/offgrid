@@ -1,5 +1,5 @@
-# Namespace-wide default-deny for argocd. If this is wrong when ENFORCED, argocd loses API and git egress and
-# cannot self-heal the fix. Break-glass: `kubectl delete ciliumnetworkpolicy -n argocd argocd`.
+# Default-deny for the argocd namespace. A wrong rule under enforcement cuts Argo CD off from the API and git,
+# so it cannot sync the fix. To recover: `kubectl delete ciliumnetworkpolicy -n argocd argocd`.
 apiVersion: cilium.io/v2
 kind: CiliumNetworkPolicy
 metadata:
@@ -8,8 +8,7 @@ metadata:
 spec:
   endpointSelector: {}
   ingress:
-    # UI/API from the merged Envoy edge. Cilium enforces on the destination POD port, so 8080, not the
-    # Service's 80.
+    # UI and API from the Envoy edge. Cilium matches the pod port, so 8080, not the Service port 80.
     - fromEndpoints:
         - matchLabels:
             k8s:io.kubernetes.pod.namespace: envoy-gateway-system
@@ -17,7 +16,7 @@ spec:
       toPorts:
         - ports:
             - { port: "8080", protocol: TCP }
-    # vmagent scrapes each component's metrics (server / repo-server / controller / applicationset).
+    # vmagent scrapes the server, repo-server, controller and applicationset.
     - fromEndpoints:
         - matchLabels:
             k8s:io.kubernetes.pod.namespace: monitoring
@@ -29,19 +28,18 @@ spec:
             - { port: "8082", protocol: TCP }
             - { port: "8080", protocol: TCP }
             - { port: "9121", protocol: TCP }   # the argocd-redis exporter sidecar
-    # kubectl port-forward to argocd-server, break-glass. Also lands on the pod port, not the Service's.
+    # kubectl port-forward to argocd-server for recovery. It also arrives on the pod port.
     - fromEntities: [host]
       toPorts:
         - ports:
             - { port: "8080", protocol: TCP }
-    # Component mesh within the argocd namespace (repo-server :8081, redis :6379, ...).
+    # Traffic between Argo CD components, such as repo-server on 8081 and redis on 6379.
     - fromEndpoints:
         - {}
-    # Watch replies from the apiserver land on ephemeral ports. Conntrack covers them while the entry
-    # lives; once it ages out mid-stream the retransmit arrives as a new flow with no rule to match.
+    # Watch replies from the apiserver arrive on ephemeral ports. Conntrack allows them until its entry expires.
+    # After that, a retransmit is a new flow and needs this rule.
     - fromEntities: [kube-apiserver]
   egress:
-    # DNS.
     - toEndpoints:
         - matchLabels:
             k8s:io.kubernetes.pod.namespace: kube-system
@@ -50,13 +48,13 @@ spec:
         - ports:
             - { port: "53", protocol: UDP }
             - { port: "53", protocol: TCP }
-    # application-controller reconciles the cluster with cluster-admin.
+    # application-controller reconciles the cluster as cluster-admin.
     - toEntities: [kube-apiserver]
-    # repo-server / applicationset clone from GitHub.
+    # repo-server and applicationset clone from GitHub.
     - toEntities: [world]
       toPorts:
         - ports:
             - { port: "443", protocol: TCP }
-    # Component mesh within the argocd namespace.
+    # Traffic between Argo CD components.
     - toEndpoints:
         - {}

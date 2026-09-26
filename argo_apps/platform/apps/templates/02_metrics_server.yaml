@@ -1,4 +1,4 @@
-# metrics-server: the metrics.k8s.io APIService behind `kubectl top` and CPU/memory HPAs.
+# metrics-server serves the metrics.k8s.io API that `kubectl top` and CPU and memory HPAs read.
 apiVersion: argoproj.io/v1alpha1
 kind: Application
 metadata:

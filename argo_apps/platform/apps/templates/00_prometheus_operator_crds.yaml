@@ -1,4 +1,4 @@
-# Prometheus Operator CRDs only, no controller (the wave-5 stack sets crds.enabled: false).
+# Prometheus Operator CRDs only, with no controller. The wave 5 stack sets crds.enabled: false.
 apiVersion: argoproj.io/v1alpha1
 kind: Application
 metadata:

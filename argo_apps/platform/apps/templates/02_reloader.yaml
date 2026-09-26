@@ -1,4 +1,4 @@
-# Reloader: restarts a workload when a ConfigMap or Secret it mounts changes.
+# Reloader restarts a workload when a ConfigMap or Secret that it mounts changes.
 apiVersion: argoproj.io/v1alpha1
 kind: Application
 metadata:

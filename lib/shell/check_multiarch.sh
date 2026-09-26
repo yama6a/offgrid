@@ -1,7 +1,6 @@
 #!/usr/bin/env bash
-# Checks every image running in the cluster has a manifest for every architecture in the cluster. The scheduler
-# does not look at an image's architecture: it will place an arm64-only pod on an amd64 node and let it
-# CrashLoopBackOff with `exec format error`.
+# Checks that every running image has a manifest for every node architecture in the cluster.
+# The scheduler ignores image architecture, so an arm64-only pod on an amd64 node fails with `exec format error`.
 set -uo pipefail
 
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
@@ -10,23 +9,23 @@ source "${SCRIPT_DIR}/common.sh"
 usage() {
   cat << EOF
 check_multiarch.sh                      (or: make check-multiarch [ARCH=amd64])
-  ARCH="amd64 arm64"   require these architectures instead of the ones the cluster currently runs
+  ARCH="amd64 arm64"   require these architectures instead of the ones the cluster runs now
 
-Reads the LIVE pods, not values.yaml: most images come from upstream charts and never appear in this repo.
+Reads the live pods, not values.yaml. Most images come from upstream charts and never appear in this repo.
 Run it before a node of a new architecture takes workloads, and after a chart bump.
 
-SKIP_IMAGES at the top of this script exempts images that are single-arch on purpose. A stale entry there is
-how a genuinely broken image gets missed, so prune it when the pod that justified it goes.
+SKIP_IMAGES at the top of this script exempts images that are single-arch on purpose.
+A stale entry hides a broken image. Remove the entry when the pod that needed it goes.
 EOF
 }
 
 # ---- knobs ----
-ERR_FILE="/tmp/.ma_err" # docker manifest inspect's stderr, so a failed read can be told apart from a miss
+ERR_FILE="/tmp/.ma_err" # stderr of docker manifest inspect, to tell a failed read from a missing platform
 
-# Single-architecture ON PURPOSE. An entry only belongs here if the chart also pins the pod off every other
-# architecture, so add the pin FIRST: skipping an unpinned image just hides the CrashLoopBackOff until deploy.
+# Images that are single-arch on purpose. Add an entry only after the chart pins the pod to its architecture.
+# A skipped image without that pin still crashloops, only later, at deploy.
 SKIP_IMAGES=(
-  "intel/intel-gpu-plugin" # amd64-only upstream; nodeAffinity on extensions.talos.dev/i915
+  "intel/intel-gpu-plugin" # upstream is amd64-only. The chart sets nodeAffinity on extensions.talos.dev/i915.
 )
 
 # ---- state ----
@@ -40,13 +39,13 @@ READ_ERR=""
 
 check_prerequisites() {
   require docker kubectl
-  docker info > /dev/null 2>&1 || die "docker not responding (start Rancher/Docker Desktop)"
+  docker info > /dev/null 2>&1 || die "docker does not respond. Start Rancher Desktop or Docker Desktop."
   use_kubeconfig
   assert_api
 }
 
-# The kubelet sets kubernetes.io/arch itself, so the live nodes are the honest source; ARCH is for checking
-# before such a node exists.
+# The kubelet sets kubernetes.io/arch itself, so the live nodes are the reliable source.
+# ARCH checks an architecture before a node of it exists.
 resolve_required_arches() {
   if [ -n "${ARCH:-}" ]; then
     read -ra ARCHES <<< "$ARCH"
@@ -59,31 +58,28 @@ resolve_required_arches() {
   say "requiring: ${ARCHES[*]}  (every architecture in the cluster)"
 }
 
-# A private ref needs auth or `manifest inspect` reports "unauthorized", which cannot be told apart from a
-# genuinely missing platform. Skipped when the token is empty, fine if every image is public.
+# Without auth, `manifest inspect` reports a private image as "unauthorized", which looks like a missing platform.
+# An empty token skips the login, which is fine when every image is public.
 login_to_ghcr() {
   [ -n "${GITHUB_GHCR_PULL_TOKEN_SECRET}" ] || return 0
   printf '%s' "$GITHUB_GHCR_PULL_TOKEN_SECRET" \
     | docker login "$GHCR_SERVER" -u "$GHCR_USER" --password-stdin > /dev/null 2>&1 \
-    && ok "logged in to ${GHCR_SERVER}" || warn "could not log in to ${GHCR_SERVER}; private images may read as missing"
+    && ok "logged in to ${GHCR_SERVER}" || warn "could not log in to ${GHCR_SERVER}. Private images can read as missing."
   return 0
 }
 
-# initContainers too: an arm64-only init container fails just as hard as an arm64-only app, and is easy to miss.
+# Includes initContainers. An arm64-only init container fails the pod the same way, and is easy to miss.
 collect_pod_images() {
   IMAGES="$(kubectl get pods -A -o jsonpath='{range .items[*]}{range .spec.containers[*]}{.image}{"\n"}{end}{range .spec.initContainers[*]}{.image}{"\n"}{end}{end}' \
     2> /dev/null | grep . | sort -u)"
-  [ -n "$IMAGES" ] || die "no pod images found, is this the right cluster?"
+  [ -n "$IMAGES" ] || die "found no pod images. Check that this is the right cluster."
   say "$(printf '%s\n' "$IMAGES" | grep -c .) distinct images"
 }
 
-# --verbose so the shape is the same either way: always a list of entries with a Descriptor.platform, whether
-# the ref is a manifest index or a single image. So a digest pinning ONE platform rather than the index fails
-# here too, which is the case reading values.yaml cannot catch. The os filter drops attestation entries, which
-# carry architecture "unknown".
-# Backed off, because a transient read returns nothing and looks identical to a missing platform. A RATE LIMIT
-# is not transient though (Docker Hub's window is hours), so stop retrying the moment one appears: otherwise
-# every unauthenticated image costs 43s of sleeping to learn what the first attempt already said.
+# --verbose returns a list with Descriptor.platform for an index and a single image alike.
+# So a digest that pins one platform, not the index, fails here too. The os filter drops attestation entries.
+# Retries, because a transient failure returns nothing and looks like a missing platform.
+# Stops at a rate limit: Docker Hub's window is hours, and each retry cycle sleeps 43s for nothing.
 read_image_arches() {
   local img="$1" s raw
   HAVE=""
@@ -98,14 +94,13 @@ read_image_arches() {
   done
 }
 
-# A read we could not make is NOT evidence of a missing platform, and counting it as one sends you chasing a
-# problem that is not there: the pod is running this image, so the cluster can pull it, and a failure here is
-# local (rate limit, no login). Reported separately so it is visible without failing the run.
+# A failed read is a local problem, such as a rate limit or no login. The cluster already pulls this image.
+# So it warns and counts, but does not fail the run.
 check_image() {
   local img="$1" missing="" a skip
   for skip in "${SKIP_IMAGES[@]}"; do
     case "$img" in "${skip}"*)
-      say "${img}: skipped, pinned single-arch on purpose"
+      say "${img}: skipped, single-arch on purpose"
       return 0
       ;;
     esac
@@ -113,7 +108,7 @@ check_image() {
   read_image_arches "$img"
   if [ -z "$HAVE" ]; then
     UNREAD=$((UNREAD + 1))
-    warn "${img}: could not read its manifest, NOT checked (${READ_ERR##*: })"
+    warn "${img}: could not read its manifest, not checked (${READ_ERR##*: })"
     return 0
   fi
   for a in "${ARCHES[@]}"; do
@@ -137,9 +132,9 @@ check_every_image() {
 
 print_result() {
   echo
-  echo "A failing image needs either a multi-arch rebuild, or a nodeAffinity on kubernetes.io/arch in its chart"
-  echo "so the scheduler stops offering it nodes it cannot run on."
-  [ "$UNREAD" -gt 0 ] && warn "${UNREAD} image(s) could not be read and were NOT checked. Usually Docker Hub rate limiting: \`docker login\` and re-run."
+  echo "Fix a failing image with a multi-arch rebuild, or with a nodeAffinity on kubernetes.io/arch in its chart."
+  echo "The nodeAffinity stops the scheduler from placing it on nodes it cannot run on."
+  [ "$UNREAD" -gt 0 ] && warn "${UNREAD} image(s) could not be read and were not checked. The usual cause is the Docker Hub rate limit. Run \`docker login\` and run this again."
   return 0
 }
 

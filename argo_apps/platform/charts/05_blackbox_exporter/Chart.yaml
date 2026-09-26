@@ -1,8 +1,8 @@
 apiVersion: v2
 name: blackbox-exporter
-description: Synthetic HTTPS probes of every ingress host, run from inside the cluster through the public name, plus the VMProbe targets vmagent scrapes them with.
+description: HTTPS probes of every ingress host, sent from inside the cluster to the public name. Includes the VMProbe objects that vmagent runs them with.
 type: application
-version: 0.1.0 # local chart, never bump version
+version: 0.1.0 # nothing publishes this chart, so never bump it
 
 dependencies:
   - name: prometheus-blackbox-exporter

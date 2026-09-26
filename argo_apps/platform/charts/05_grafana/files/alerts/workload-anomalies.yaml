@@ -1,6 +1,6 @@
 apiVersion: 1
 groups:
-  # Symptoms, always warning, no criticality join. The workload-outages group is the critical path.
+  # Symptoms, always warning, with no alert-criticality join. workload-outages.yaml holds the rules that page critical.
   - orgId: 1
     name: workload-anomalies
     folder: offgrid
@@ -14,9 +14,10 @@ groups:
         annotations:
           summary: 'Container {{ $labels.namespace }}/{{ $labels.pod }}/{{ $labels.container }} was OOMKilled'
           description: |
-            - container hit its memory limit and the kernel killed it
+            - the container hit its memory limit and the kernel killed it
             - events: kubectl -n {{ $labels.namespace }} describe pod {{ $labels.pod }}
-            - raise limits (values.yaml) or fix the leak; check container_memory_working_set_bytes vs limit
+            - raise the limit in values.yaml, or fix the leak
+            - compare container_memory_working_set_bytes with the limit
         noDataState: OK
         execErrState: KeepLast
         data:
@@ -48,9 +49,9 @@ groups:
         for: 5m
         labels: {severity: warning}
         annotations:
-          summary: 'Container {{ $labels.namespace }}/{{ $labels.pod }}/{{ $labels.container }} restarted >5 times in the last hour'
+          summary: 'Container {{ $labels.namespace }}/{{ $labels.pod }}/{{ $labels.container }} restarted more than 5 times in the last hour'
           description: |
-            - container keeps dying and restarting: crash, failed probe, or OOM
+            - the container keeps dying and restarting. Causes: a crash, a failed probe or an OOM kill
             - logs: kubectl -n {{ $labels.namespace }} logs {{ $labels.pod }} -c {{ $labels.container }} --previous
             - events: kubectl -n {{ $labels.namespace }} describe pod {{ $labels.pod }}
         noDataState: OK
@@ -84,11 +85,11 @@ groups:
         for: 10m
         labels: {severity: warning}
         annotations:
-          summary: 'Container {{ $labels.namespace }}/{{ $labels.pod }}/{{ $labels.container }} CPU throttled >50% of the time'
+          summary: 'Container {{ $labels.namespace }}/{{ $labels.pod }}/{{ $labels.container }} is CPU throttled over 50% of the time'
           description: |
-            - container wants more CPU than its limit allows: latency/slowdowns likely
-            - check current limit: kubectl -n {{ $labels.namespace }} describe pod {{ $labels.pod }}
-            - raise cpu limit in values.yaml, or accept if the workload is bursty/non-latency-sensitive
+            - the container wants more CPU than its limit allows. Expect higher latency
+            - current limit: kubectl -n {{ $labels.namespace }} describe pod {{ $labels.pod }}
+            - raise the CPU limit in values.yaml, or accept it for a bursty workload that is not latency-sensitive
         noDataState: OK
         execErrState: KeepLast
         data:
@@ -120,11 +121,11 @@ groups:
         for: 10m
         labels: {severity: warning}
         annotations:
-          summary: 'Container {{ $labels.namespace }}/{{ $labels.pod }}/{{ $labels.container }} above 90% of its memory limit (OOM risk)'
+          summary: 'Container {{ $labels.namespace }}/{{ $labels.pod }}/{{ $labels.container }} is above 90% of its memory limit: OOM risk'
           description: |
-            - working set near the memory limit: an OOMKill is imminent
+            - the working set is near the memory limit. An OOM kill is close
             - inspect: kubectl -n {{ $labels.namespace }} describe pod {{ $labels.pod }}
-            - raise the memory limit in values.yaml or find the leak before it gets killed
+            - raise the memory limit in values.yaml, or find the leak before the kernel kills it
         noDataState: OK
         execErrState: KeepLast
         data:
@@ -156,11 +157,12 @@ groups:
         for: 20m
         labels: {severity: warning}
         annotations:
-          summary: 'Pod {{ $labels.namespace }}/{{ $labels.pod }} stuck Pending/Unknown for >20m'
+          summary: 'Pod {{ $labels.namespace }}/{{ $labels.pod }} stuck Pending or Unknown for over 20m'
           description: |
-            - pod can't schedule: no node fits (cpu/mem), unbound PVC, or node NotReady
+            - the pod cannot schedule. Causes: no node has the CPU or memory, an unbound PVC, or a NotReady node
             - events: kubectl -n {{ $labels.namespace }} describe pod {{ $labels.pod }}
-            - check node capacity: kubectl get nodes; and PVCs: kubectl -n {{ $labels.namespace }} get pvc
+            - node capacity: kubectl get nodes
+            - PVCs: kubectl -n {{ $labels.namespace }} get pvc
         noDataState: OK
         execErrState: KeepLast
         data:
@@ -186,19 +188,18 @@ groups:
               conditions:
                 - type: query
                   evaluator: {type: gt, params: [0]}
-      # Job-owned pods are excluded outright: a finished Job pod is never ready, so it would alert until its
-      # ttlSecondsAfterFinished expires. Broken Jobs go to job-failed. A full outage is caught by
-      # workload-outages instead.
+      # Skips Job pods, because a finished Job pod is never ready and would alert until ttlSecondsAfterFinished.
+      # job-failed covers broken Jobs. workload-outages.yaml covers a full outage.
       - uid: pod-not-ready
         title: Pod not ready
         condition: C
         for: 15m
         labels: {severity: warning}
         annotations:
-          summary: 'Pod {{ $labels.namespace }}/{{ $labels.pod }} not ready for >15m'
+          summary: 'Pod {{ $labels.namespace }}/{{ $labels.pod }} not ready for over 15m'
           description: |
-            - pod running but failing its readiness probe: taken out of Service endpoints
-            - events + probe config: kubectl -n {{ $labels.namespace }} describe pod {{ $labels.pod }}
+            - the pod runs but fails its readiness probe, so it is out of the Service endpoints
+            - events and probe config: kubectl -n {{ $labels.namespace }} describe pod {{ $labels.pod }}
             - logs: kubectl -n {{ $labels.namespace }} logs {{ $labels.pod }}
         noDataState: OK
         execErrState: KeepLast
@@ -225,8 +226,8 @@ groups:
               conditions:
                 - type: query
                   evaluator: {type: gt, params: [0]}
-      # Only failures from the last hour, because a failed Job sticks around for its ttlSecondsAfterFinished
-      # and would otherwise re-alert for as long as that is for one broken run.
+      # Only failures from the last hour. A failed Job stays until ttlSecondsAfterFinished, and one broken run
+      # must not alert for that long.
       - uid: job-failed
         title: Job failed
         condition: C
@@ -235,7 +236,7 @@ groups:
         annotations:
           summary: 'Job {{ $labels.namespace }}/{{ $labels.job_name }} failed'
           description: |
-            - job ran and exited non-zero, past its backoffLimit
+            - the Job exited non-zero past its backoffLimit
             - logs: kubectl -n {{ $labels.namespace }} logs job/{{ $labels.job_name }}
             - events: kubectl -n {{ $labels.namespace }} describe job {{ $labels.job_name }}
         noDataState: OK
@@ -263,18 +264,18 @@ groups:
               conditions:
                 - type: query
                   evaluator: {type: gt, params: [0]}
-      # Threshold is missed runs, not wall-clock, so one rule covers a */7 crawler and a weekly trim without a
-      # per-CronJob list: next minus last schedule IS the schedule period. `last_successful_time > 0` keeps it
-      # quiet before the first ever run, when the series is absent and reads NoData.
+      # Counts missed runs, not wall-clock time: next minus last schedule is the period. So one rule fits a
+      # */7 crawler and a weekly trim. `last_successful_time > 0` stays quiet before the first run.
       - uid: cronjob-stale
         title: CronJob has no recent success
         condition: C
         for: 30m
         labels: {severity: warning}
         annotations:
-          summary: 'CronJob {{ $labels.namespace }}/{{ $labels.cronjob }} has missed >3 runs since its last success'
+          summary: 'CronJob {{ $labels.namespace }}/{{ $labels.cronjob }} has missed more than 3 runs since its last success'
           description: |
-            - every run since has failed, or the CronJob stopped scheduling (suspended, or startingDeadlineSeconds keeps skipping)
+            - every run since has failed, or the CronJob stopped scheduling
+            - a CronJob stops scheduling when it is suspended or startingDeadlineSeconds keeps skipping runs
             - state: kubectl -n {{ $labels.namespace }} get cronjob {{ $labels.cronjob }}
             - last runs: kubectl -n {{ $labels.namespace }} get jobs --sort-by=.metadata.creationTimestamp
         noDataState: OK
@@ -310,7 +311,7 @@ groups:
         annotations:
           summary: 'ReplicaSet {{ $labels.namespace }}/{{ $labels.replicaset }} has fewer ready replicas than desired'
           description: |
-            - some replicas never became ready: likely crashing or failing probes
+            - some replicas never became ready. They likely crash or fail probes
             - inspect: kubectl -n {{ $labels.namespace }} describe rs {{ $labels.replicaset }}
             - check the pods it owns: kubectl -n {{ $labels.namespace }} get pods
         noDataState: OK
@@ -346,7 +347,7 @@ groups:
         annotations:
           summary: 'Deployment {{ $labels.namespace }}/{{ $labels.deployment }} has fewer available replicas than desired'
           description: |
-            - running but degraded: some replicas unavailable (partial capacity)
+            - running but degraded. Some replicas are unavailable, so capacity is partial
             - status: kubectl -n {{ $labels.namespace }} rollout status deploy/{{ $labels.deployment }}
             - inspect pods: kubectl -n {{ $labels.namespace }} describe deploy {{ $labels.deployment }}
         noDataState: OK
@@ -380,9 +381,9 @@ groups:
         for: 15m
         labels: {severity: warning}
         annotations:
-          summary: 'Deployment {{ $labels.namespace }}/{{ $labels.deployment }} observed generation lags spec (rollout stuck)'
+          summary: 'Deployment {{ $labels.namespace }}/{{ $labels.deployment }} observed generation lags the spec: rollout stuck'
           description: |
-            - controller hasn't observed the latest spec: rollout wedged or controller lagging
+            - the controller has not seen the latest spec. The rollout is stuck or the controller lags
             - status: kubectl -n {{ $labels.namespace }} rollout status deploy/{{ $labels.deployment }}
             - inspect conditions: kubectl -n {{ $labels.namespace }} describe deploy {{ $labels.deployment }}
         noDataState: OK
@@ -410,16 +411,16 @@ groups:
               conditions:
                 - type: query
                   evaluator: {type: gt, params: [0]}
-      # DORMANT until an HPA exists, and none does today.
+      # The HPA rules stay quiet until an HPA exists.
       - uid: hpa-at-max
         title: HPA at max replicas
         condition: C
         for: 15m
         labels: {severity: warning}
         annotations:
-          summary: 'HPA {{ $labels.namespace }}/{{ $labels.horizontalpodautoscaler }} at max replicas: can''t scale further'
+          summary: 'HPA {{ $labels.namespace }}/{{ $labels.horizontalpodautoscaler }} is at max replicas: it cannot scale further'
           description: |
-            - autoscaler pinned at maxReplicas: no headroom left for more load
+            - the autoscaler is at maxReplicas, with no room for more load
             - inspect: kubectl -n {{ $labels.namespace }} describe hpa {{ $labels.horizontalpodautoscaler }}
             - raise maxReplicas in values.yaml if the sustained load is legitimate
         noDataState: OK
@@ -453,9 +454,9 @@ groups:
         for: 15m
         labels: {severity: warning}
         annotations:
-          summary: 'HPA {{ $labels.namespace }}/{{ $labels.horizontalpodautoscaler }} can''t scale (AbleToScale/ScalingActive false)'
+          summary: 'HPA {{ $labels.namespace }}/{{ $labels.horizontalpodautoscaler }} cannot scale: AbleToScale or ScalingActive is false'
           description: |
-            - HPA blocked: usually missing metrics (no metrics-server / ServiceMonitor) or bad scaleTargetRef
+            - the HPA is blocked. Usual causes: missing metrics from metrics-server or a ServiceMonitor, or a bad scaleTargetRef
             - conditions: kubectl -n {{ $labels.namespace }} describe hpa {{ $labels.horizontalpodautoscaler }}
             - verify the metrics source is reporting for the target
         noDataState: OK
@@ -489,11 +490,11 @@ groups:
         for: 15m
         labels: {severity: warning}
         annotations:
-          summary: 'HPA {{ $labels.namespace }}/{{ $labels.horizontalpodautoscaler }} running below its min replicas'
+          summary: 'HPA {{ $labels.namespace }}/{{ $labels.horizontalpodautoscaler }} runs below its min replicas'
           description: |
-            - current replicas under minReplicas: controller can't hold the floor
+            - current replicas are under minReplicas. The controller cannot hold the floor
             - conditions: kubectl -n {{ $labels.namespace }} describe hpa {{ $labels.horizontalpodautoscaler }}
-            - check the target's pods aren't stuck Pending/unschedulable
+            - check that the target pods are not stuck Pending or unschedulable
         noDataState: OK
         execErrState: KeepLast
         data:

@@ -1,6 +1,7 @@
 {{- /*
-The vendored plugin manifest sets no resources on the barman-cloud Deployment, and it stays verbatim. Unset,
-the scheduler scores it as 100m/200Mi. Sized by `make krr`. Everything else in cnpg-system sets its own.
+The vendored manifest sets no resources on the barman-cloud Deployment, and it stays unchanged. With no
+request, the scheduler counts it as 100m and 200Mi. `make krr` sized these. The other cnpg-system pods set
+their own.
 */ -}}
 apiVersion: v1
 kind: LimitRange
@@ -10,6 +11,6 @@ metadata:
 spec:
   limits:
     - type: Container
-      defaultRequest: # requests only: no `default` key, so no limits get injected
+      defaultRequest: # requests only. With no `default` key, no limits are added.
         cpu: 25m
         memory: 32Mi

@@ -1,8 +1,8 @@
-{{/* google-sso.domains: base domain + extraDomains, one entry per SecurityPolicy. Read back with
-     `fromYamlArray (include "google-sso.domains" .)`, since a define can only return a string. */}}
+{{/* google-sso.domains: the base domain plus extraDomains, one entry per SecurityPolicy. A define returns
+     only a string, so read it back with `fromYamlArray (include "google-sso.domains" .)`. */}}
 {{- define "google-sso.domains" -}}
 {{- $out := list (dict
-      "domain" (required "domain is required (04_values.sh writes it from .env BASE_DOMAIN)" .Values.domain)
+      "domain" (required "domain is required. 04_values.sh writes it from BASE_DOMAIN in .env" .Values.domain)
       "issuer" .Values.issuer
       "hosts" (.Values.hosts | default (list))
       "claimToHeaders" (.Values.claimToHeaders | default (list))) -}}

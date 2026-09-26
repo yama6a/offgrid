@@ -1,8 +1,8 @@
 apiVersion: v2
 name: google-sso
-description: Central Google-SSO. Per domain, one SecurityPolicy with per-host email allowlists plus the shared google-sso.<domain> callback host, so a host is gated by adding it to domains[].hosts here.
+description: Central Google SSO. One SecurityPolicy per domain, with an email allowlist per host and one shared google-sso.<domain> callback host. To gate a host, add it to hosts in values.yaml.
 type: application
-version: 0.1.0 # local chart, never bump version
+version: 0.1.0 # nothing publishes this chart, so never bump it
 
 dependencies:
   - name: ingress

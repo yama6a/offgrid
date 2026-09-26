@@ -1,21 +1,21 @@
 #!/usr/bin/env bash
-# Moves the roles that must not be killed abruptly off NODE, then exits 0. Nothing else about the node changes:
-# no cordon, no drain, no reboot.
+# Moves every CNPG primary off NODE, then exits 0. It does not cordon, drain or reboot the node.
 #
-# Its reason to exist is node tooling that drains a node before rebooting it. That tooling force-deletes pods
-# whose graceful eviction times out, and a Postgres PRIMARY killed that way can be left unable to pg_rewind
-# against the instance that replaced it, so it never rejoins and needs its data directory rebuilt by hand.
-# A replica killed the same way just re-syncs.
-#   e.g. an evacuate hook variable:  PRE_DRAIN_EVACUATE_HOOK="/abs/path/to/lib/shell/evacuate_node.sh"
-# The caller runs this ONCE per node, never in a retry loop: it elects a new primary, so repeated calls would
-# keep moving it. Re-running by hand is still safe; with no primary on NODE it does nothing.
+# A drain force-deletes a pod when its graceful eviction times out.
+# A Postgres primary killed that way can fail to pg_rewind against the instance that replaced it.
+# It then never rejoins, and its data directory needs a rebuild by hand. A replica killed that way re-syncs.
+#
+# Example hook: PRE_DRAIN_EVACUATE_HOOK="/abs/path/to/lib/shell/evacuate_node.sh"
+# The caller runs this once per node, never in a retry loop, because each call elects a new primary.
+# A re-run by hand is safe. With no primary on NODE, it does nothing.
+# Usage: NODE=<hostname> evacuate_node.sh, or make evacuate-node NODE=<hostname>
 set -uo pipefail
 
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 source "${SCRIPT_DIR}/common.sh"
 
 # ---- knobs ----
-SWITCHOVER_TIMEOUT=300 # secs to wait for one cluster to finish promoting the instance we picked
+SWITCHOVER_TIMEOUT=300 # seconds to wait for one cluster to promote the picked instance
 
 # ---- functions ----
 
@@ -23,12 +23,11 @@ check_prerequisites() {
   require kubectl
   use_kubeconfig
   assert_api
-  [ -n "${NODE:-}" ] || die "NODE is unset: pass the node to evacuate, e.g. NODE=talos-cp1 $0"
+  [ -n "${NODE:-}" ] || die "NODE is unset. Pass the node to evacuate, for example NODE=talos-cp1 $0"
   kubectl get node "$NODE" > /dev/null 2>&1 || die "no such node: ${NODE}"
 }
 
-# ns/name of every CNPG cluster whose CURRENT primary pod sits on NODE. Reads the pod rather than the Cluster's
-# status.currentPrimary alone, because that names an instance, not where it is running.
+# Reads the primary pod, not status.currentPrimary. That field names an instance, not the node it runs on.
 _clusters_primary_here() {
   kubectl get pods -A -l cnpg.io/instanceRole=primary \
     -o jsonpath="{range .items[?(@.spec.nodeName=='${NODE}')]}{.metadata.namespace}/{.metadata.labels.cnpg\.io/cluster}|{.metadata.name}{\"\n\"}{end}" 2> /dev/null
@@ -36,8 +35,7 @@ _clusters_primary_here() {
 
 _instances() { kubectl -n "${1%%/*}" get cluster "${1##*/}" -o jsonpath='{.spec.instances}' 2> /dev/null; }
 
-# A ready instance of $1 that is NOT on NODE and is not the primary. Empty when there is nowhere to go, which is
-# a single-instance cluster or one whose replicas are all on this node.
+# Prints nothing when no ready replica runs on another node.
 _switchover_target() {
   local ns="${1%%/*}" cluster="${1##*/}"
   kubectl -n "$ns" get pods -l "cnpg.io/cluster=${cluster},cnpg.io/instanceRole=replica" \
@@ -45,9 +43,8 @@ _switchover_target() {
     | awk '$2=="True"{print $1; exit}'
 }
 
-# CNPG switches over by being told which instance should be primary: it checkpoints and demotes the old one
-# cleanly, so the old primary rejoins on the new timeline instead of diverging. `kubectl cnpg promote` is the
-# same write, and is not assumed to be installed.
+# Setting targetPrimary makes CNPG checkpoint and demote the old primary, so it rejoins on the new timeline.
+# `kubectl cnpg promote` does the same write, but the plugin may not be installed.
 _promote() {
   local ns="${1%%/*}" cluster="${1##*/}" target="$2"
   kubectl -n "$ns" patch cluster "$cluster" --subresource status --type merge \
@@ -62,8 +59,7 @@ _wait_switchover() {
     printf '.'
     sleep 5
   done
-  # currentPrimary flips before the old one has finished rejoining, and draining into that is the thing we came
-  # here to avoid.
+  # currentPrimary changes before the old primary finishes rejoining. A drain at that point is the risk to avoid.
   until [ "$(kubectl -n "$ns" get cluster "$cluster" -o jsonpath='{.status.phase}' 2> /dev/null)" = "Cluster in healthy state" ]; do
     [ "$(date +%s)" -ge "$deadline" ] && return 1
     printf '.'
@@ -79,17 +75,16 @@ evacuate_cnpg() {
     id="${line%%|*}"
     pod="${line##*|}"
     found=1
-    # Nothing to switch to and nothing to lose: with one instance no replica is ever promoted, so there is no
-    # new timeline for the old primary to fail to rewind against. It just stops and starts again on its data.
+    # A single instance never gets a new timeline, so it has nothing to rewind against. It restarts on its data.
     if [ "$(_instances "$id")" = "1" ]; then
-      warn "${id}: single instance on ${NODE}, skipped (it goes down with the node either way)"
+      warn "${id}: single instance on ${NODE}, skipped. It goes down with the node either way."
       continue
     fi
     target="$(_switchover_target "$id")"
     if [ -z "$target" ]; then
-      die "${id}: primary ${pod} is on ${NODE} and no ready replica is elsewhere, so the drain would force-kill a primary that CAN diverge. Wait for a replica, or move one off ${NODE}, then re-run."
+      die "${id}: primary ${pod} is on ${NODE} and no ready replica runs on another node. The drain would force-kill a primary that can diverge. Wait for a replica, or move one off ${NODE}, then run this again."
     fi
-    printf '  %s: %s -> %s' "$id" "$pod" "$target"
+    printf '  %s: %s to %s' "$id" "$pod" "$target"
     _promote "$id" "$target" || {
       printf '\n'
       die "${id}: could not set targetPrimary to ${target}"

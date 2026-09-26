@@ -1,11 +1,8 @@
 #!/usr/bin/env bash
-# Lists PVs nothing will bind again and deletes the ones you pick, WITH the storage behind them.
-#
-# Deleting the PV alone is the trap this exists for. On a Retain class the PV going away leaves the Longhorn
-# volume holding every byte, still attached to the recurring backup jobs it can no longer satisfy, so the only
-# thing that tells you is longhorn-backup-stale firing days later on a volume whose PVC no longer exists.
-# So: PV and Longhorn volume together. The S3 backup is deliberately left alone and never even asked about,
-# because it is the last copy of the data. backupvolume-orphaned alerts on it 30 days later instead.
+# Lists PVs that nothing will bind again, and deletes the ones you pick together with their Longhorn volume.
+# On a Retain class, deleting only the PV leaves the Longhorn volume and its data in place.
+# Its recurring backups then fail, and longhorn-backup-stale fires days later for a PVC that no longer exists.
+# The S3 backup is the last copy, so this never deletes it. backupvolume-orphaned alerts on it after 30 days.
 set -uo pipefail
 
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
@@ -15,15 +12,15 @@ usage() {
   cat << EOF
 cleanup_abandoned_pvs.sh          (or: make cleanup-abandoned-pvs)
 
-Lists every abandoned PV, then asks which to delete. Abandoned is one of:
+Lists every abandoned PV, then asks which to delete. A PV is abandoned when it is:
   Released    its PVC is gone and the class reclaims Retain, so the PV and its data stayed
-  Available   no claimRef at all, i.e. nothing ever claimed it
+  Available   it has no claimRef, so nothing ever claimed it
 
-An Available PV that HAS a claimRef is a static PV waiting for its own PVC, which lib/helm/nfs-volume
-creates on purpose. Those are never listed.
+An Available PV with a claimRef is a static PV that waits for its own PVC.
+lib/helm/nfs-volume creates these on purpose. This script never lists them.
 
-Deletes the PV and the Longhorn volume behind it. Never touches the S3 backup: that is the last copy, and
-backupvolume-orphaned alerts on it 30 days on if you meant to be rid of it.
+Deletes the PV and the Longhorn volume behind it. Never deletes the S3 backup, because it is the last copy.
+backupvolume-orphaned alerts on that backup after 30 days.
 
 Pick with numbers ("1", "1 3", "1,3", or "all"). Empty input aborts and changes nothing.
 EOF
@@ -45,9 +42,8 @@ require kubectl
 use_kubeconfig
 assert_api
 
-# name, phase, size, reclaim, claim. Fields are |-separated, NOT tab: tab is IFS whitespace, so bash collapses
-# a run of them and one empty field (an unset storageClassName) shifts every later column left by one.
-# A PV with no claimRef renders the claim as a bare "/", which is what marks it never-claimed below.
+# Fields are separated by |, not tab. Bash collapses a run of tabs, so an empty field shifts later columns left.
+# A PV with no claimRef renders its claim as a bare "/", which marks it as never claimed.
 mapfile -t ROWS < <(
   kubectl get pv -o jsonpath='{range .items[*]}{.metadata.name}{"|"}{.status.phase}{"|"}{.spec.capacity.storage}{"|"}{.spec.persistentVolumeReclaimPolicy}{"|"}{.spec.claimRef.namespace}{"/"}{.spec.claimRef.name}{"\n"}{end}' \
     | awk -F'[|]' '$2=="Released" || ($2=="Available" && $5=="/")'
@@ -58,8 +54,7 @@ mapfile -t ROWS < <(
   exit 0
 }
 
-# Longhorn volume names match the PV name for anything its CSI driver provisioned. A PV from another driver
-# has none, and only the PV is deleted for it.
+# The Longhorn CSI driver names each volume after its PV. A PV from another driver has no volume to delete.
 has_volume() { kubectl -n longhorn-system get volumes.longhorn.io "$1" > /dev/null 2>&1; }
 backupvolumes_for() {
   kubectl -n longhorn-system get backupvolumes.longhorn.io \
@@ -73,7 +68,7 @@ for i in "${!ROWS[@]}"; do
   extra=""
   has_volume "$name" && extra="longhorn volume"
   bv="$(backupvolumes_for "$name" | tr '\n' ' ')"
-  [ -n "${bv// /}" ] && extra="${extra:+$extra + }S3 backup"
+  [ -n "${bv// /}" ] && extra="${extra:+$extra and }S3 backup"
   printf '  %2d) %-42s %-9s %-6s %-8s %-30s %s\n' "$((i + 1))" "$name" "$phase" "$size" "$reclaim" \
     "$([ "$claim" = "/" ] && echo '(never claimed)' || echo "$claim")" "${extra:-PV only}"
 done
@@ -97,7 +92,7 @@ fi
 
 say "About to delete ${#SELECTED[@]} PV(s) and the Longhorn volume behind each. The data goes with them. S3 backups are kept."
 for row in "${SELECTED[@]}"; do printf '  - %s\n' "${row%%|*}"; done
-confirm_word DELETE "this destroys the volume data;" || die "aborted, nothing deleted"
+confirm_word DELETE "this destroys the volume data, so" || die "aborted, nothing deleted"
 
 FAILED=""
 for row in "${SELECTED[@]}"; do
@@ -114,8 +109,6 @@ for row in "${SELECTED[@]}"; do
       FAILED="${FAILED} ${name}(volume)"
     }
   fi
-  # The S3 backup is never touched here, not even offered: it is the only remaining copy once the volume
-  # above is gone. backupvolume-orphaned fires 30 days from now if it is still around.
   bv="$(backupvolumes_for "$name" | tr '\n' ' ')"
   [ -n "${bv// /}" ] && echo "  S3 backup kept: ${bv% }"
 done

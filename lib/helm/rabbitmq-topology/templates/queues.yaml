@@ -1,7 +1,7 @@
-{{- /* Every queue this workload CONSUMES, with its binding and, unless deadLetter=false, its dead-letter
-       companions. A consumeCommands queue is named after the command; a subscribeEvents queue is
-       `<user>.<exchange>`, private per subscriber.
-       Queue arguments are IMMUTABLE: toggling deadLetter on an existing queue needs it recreated. */ -}}
+{{- /* Every queue this workload consumes, with its binding and its dead-letter pair unless deadLetter is
+       false. A consumeCommands queue has the command's name. A subscribeEvents queue is `<user>.<exchange>`,
+       private to the subscriber. Queue arguments cannot change, so toggling deadLetter on an existing queue
+       means deleting it once. */ -}}
 {{- $ns := .Release.Namespace -}}
 {{- $user := include "rabbitmq-topology.user" . -}}
 {{- $deadLetter := true -}}{{- if hasKey .Values "deadLetter" }}{{- $deadLetter = .Values.deadLetter -}}{{- end -}}
@@ -22,7 +22,7 @@ metadata:
   namespace: {{ $ns }}
 spec:
   name: {{ $q.name }}
-  type: quorum           # survives a broker restart, and replicates by majority vote rather than to one mirror
+  type: quorum           # replicates by majority vote, not to one mirror
   durable: true
   autoDelete: false
   vhost: apps
@@ -39,8 +39,8 @@ metadata:
   name: {{ $q.name }}
   namespace: {{ $ns }}
 spec:
-  source: {{ $q.source }}            # the exchange
-  destination: {{ $q.name }}         # the queue
+  source: {{ $q.source }}
+  destination: {{ $q.name }}
   destinationType: queue
   routingKey: {{ $q.routingKey | quote }}
   vhost: apps
@@ -67,7 +67,7 @@ metadata:
   namespace: {{ $ns }}
 spec:
   name: {{ printf "%s.dlq" $q.name }}
-  type: quorum           # holding queue, no consumer; alert on its depth (rabbitmq-dlq-not-empty), drain by hand
+  type: quorum           # no consumer. The rabbitmq-dlq-not-empty alert watches its depth. Drain it by hand
   durable: true
   autoDelete: false
   vhost: apps

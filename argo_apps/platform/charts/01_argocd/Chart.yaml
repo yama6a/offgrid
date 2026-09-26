@@ -1,8 +1,8 @@
 apiVersion: v2
 name: argocd
-description: ArgoCD, the GitOps engine. Bootstrapped once by 02a_argocd.sh, then self-managed from this chart.
+description: Argo CD, the GitOps engine. 02a_argocd.sh installs it once, then it manages itself from this chart.
 type: application
-version: 0.1.0 # local chart, never bump version
+version: 0.1.0 # nothing publishes this chart, so never bump it
 
 dependencies:
   - name: argo-cd

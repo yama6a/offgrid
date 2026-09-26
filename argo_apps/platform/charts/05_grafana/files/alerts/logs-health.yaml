@@ -1,4 +1,6 @@
 apiVersion: 1
+# A separate file, so a VictoriaLogs query model error cannot break the metrics rules.
+# Check the query model against the live victoriametrics-logs-datasource plugin, whose field names can change.
 groups:
   - orgId: 1
     name: logs-health
@@ -13,9 +15,9 @@ groups:
         annotations:
           summary: 'More than 100 error logs in the last 5m across the cluster'
           description: |
-            - >100 error logs in 5m cluster-wide: something is failing loudly
-            - open VictoriaLogs (vlogs) filtered on level:error to find the source
-            - drill into the noisiest namespace/pod
+            - more than 100 error logs in 5m across the cluster. Something is failing and logging it
+            - open VictoriaLogs (vlogs), filter on level:error and find the source
+            - open the namespace and pod with the most error lines
         noDataState: OK
         execErrState: KeepLast
         data:
@@ -25,11 +27,9 @@ groups:
             model:
               refId: A
               queryType: stats
-              # Matches structured (level:error) AND logfmt text (level=error) so text-format loggers count,
-              # but NOT bare `error`, which substring-matched info logs merely mentioning the word.
-              # The NOT-list mutes benign lines misclassed as error: cert-manager informer, argocd cache race,
-              # and argocd repo-server's first `helm template` attempt, which it always lets fail to detect
-              # unvendored deps before running `helm dependency build` and retrying.
+              # Matches structured `level:error` and logfmt `level=error`. A bare `error` also matches info lines.
+              # The NOT list drops harmless error lines from cert-manager, the Argo CD cache, and the Argo CD
+              # repo-server, whose first `helm template` fails by design until `helm dependency build` runs.
               expr: '(level:error OR level:ERROR OR "level=error" OR "level=ERROR") AND NOT ("OnUpdate missing ObjectOld" OR "DiffFromCache" OR "cache: key is missing" OR "but missing in charts/ directory") | stats count() as logs'
           - refId: B
             relativeTimeRange: {from: 300, to: 0}

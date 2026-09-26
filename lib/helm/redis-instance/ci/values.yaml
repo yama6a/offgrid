@@ -1,5 +1,5 @@
-# CI fixture, not a deployment. Every REQUIRED value, since templates/validate.yaml fails the render without
-# them and the chart would never get linted at all.
+# CI fixture, not a deployment. It sets every required value, because templates/validate.yaml fails the render
+# without them.
 name: ci-redis
 redisVersion: "v8.10.1"
 persistence: true

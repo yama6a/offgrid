@@ -1,2 +1,2 @@
-# no external chart dependencies, no lockfile needed
+# every dependency is file://, so a lock pins nothing
 Chart.lock

@@ -1,4 +1,4 @@
-# The platform root. Renders argo_apps/platform/apps/ and manages every platform Application it finds there.
+# The platform root. It renders argo_apps/platform/apps/ and manages every platform Application there.
 apiVersion: argoproj.io/v1alpha1
 kind: Application
 metadata:

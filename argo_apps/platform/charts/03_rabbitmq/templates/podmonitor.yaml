@@ -1,8 +1,7 @@
 {{- /*
-Scrape the broker's Prometheus endpoint on every broker pod, on two paths: /metrics for aggregated node and
-cluster health, /metrics/detailed for the per-queue families the queue, DLQ and no-consumer alerts need. The
-default /metrics aggregates with no `queue` label, so per-queue alerting requires the detailed one.
-Per-pod, not via the LB Service: a queue's detailed metrics are only reported by the node hosting its leader.
+Scrapes every broker pod on two paths. /metrics has node and cluster health with no `queue` label.
+/metrics/detailed has the per-queue metrics that the queue, DLQ and no-consumer alerts need.
+It scrapes each pod, not the Service, because only the node with a queue's leader reports that queue.
 */ -}}
 {{- if .Values.metrics.podMonitor.enabled }}
 apiVersion: monitoring.coreos.com/v1
@@ -17,7 +16,7 @@ spec:
   selector:
     matchLabels:
       app.kubernetes.io/name: {{ .Values.name }}
-      app.kubernetes.io/component: rabbitmq   # the 3 broker pods only (excludes the operator pods)
+      app.kubernetes.io/component: rabbitmq   # only the 3 broker pods, not the operators
   podMetricsEndpoints:
     - port: prometheus
       path: /metrics
@@ -27,6 +26,6 @@ spec:
       interval: 30s
       params:
         family:
-          - queue_coarse_metrics    # rabbitmq_detailed_queue_messages{,_ready,_unacked} (per-queue depth)
-          - queue_consumer_count    # rabbitmq_detailed_queue_consumers (per-queue consumer count)
+          - queue_coarse_metrics    # rabbitmq_detailed_queue_messages{,_ready,_unacked}, the depth per queue
+          - queue_consumer_count    # rabbitmq_detailed_queue_consumers, the consumers per queue
 {{- end }}

@@ -1,5 +1,3 @@
-# Single-replica ntfy. Recreate, not RollingUpdate: the RWO PVC must be released before the new pod mounts it.
-# Runs restricted (non-root, all caps dropped) and never calls the k8s API.
 apiVersion: apps/v1
 kind: Deployment
 metadata:
@@ -7,16 +5,16 @@ metadata:
   namespace: {{ .Release.Namespace }}
   {{- if .Values.deletionProtection }}
   annotations:
-    # Orphan-not-delete. See values.yaml for the flip-then-remove deletion flow.
+    # Argo CD never prunes or deletes this. See `deletionProtection` in values.yaml for how to remove it.
     argocd.argoproj.io/sync-options: Prune=false,Delete=false
   {{- end }}
   labels:
     app.kubernetes.io/name: ntfy
 spec:
   replicas: 1
-  revisionHistoryLimit: 0  # recovery is a git revert, never a rollback, so kept history is dead weight
+  revisionHistoryLimit: 0  # recovery is a git revert, never a rollback, so old ReplicaSets have no use
   strategy:
-    type: Recreate            # RWO PVC: the old pod must release the volume before the new one mounts it
+    type: Recreate            # RWO PVC. The old pod must release the volume before the new one mounts it.
   selector:
     matchLabels:
       app.kubernetes.io/name: ntfy
@@ -34,12 +32,12 @@ spec:
         runAsNonRoot: true
         runAsUser: 2121
         runAsGroup: 2121
-        fsGroup: 2121                          # own the Longhorn volume so /var/lib/ntfy is writable
+        fsGroup: 2121                          # makes /var/lib/ntfy on the Longhorn volume writable
         seccompProfile: { type: RuntimeDefault }
       containers:
         - name: ntfy
           image: {{ .Values.image | quote }}
-          args: ["serve"]                      # image entrypoint is `ntfy`; reads /etc/ntfy/server.yml by default
+          args: ["serve"]                      # the entrypoint is `ntfy`, which reads /etc/ntfy/server.yml by default
           securityContext:
             allowPrivilegeEscalation: false
             capabilities: { drop: ["ALL"] }

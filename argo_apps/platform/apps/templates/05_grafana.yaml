@@ -1,4 +1,4 @@
-# Grafana, the dashboards UI. Its own auth is off (anonymous admin); the central Google-SSO on its edge is the only gate.
+# Grafana, the dashboards UI. Its own auth is off and grants anonymous admin. Google SSO on its edge is the only gate.
 apiVersion: argoproj.io/v1alpha1
 kind: Application
 metadata:

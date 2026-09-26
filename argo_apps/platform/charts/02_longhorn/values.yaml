@@ -1,38 +1,37 @@
 longhorn:
-  # Pod annotations on the longhorn-manager DaemonSet. Opt out of Reloader (02_reloader runs with
-  # auto-reload-all): the managers sit in the volume data path, and a surprise roll during a replica rebuild is
-  # the worst possible timing. Nothing it mounts changes today, so this is pre-emptive.
+  # Pod annotations on the longhorn-manager DaemonSet. Opts out of Reloader, which 02_reloader runs with
+  # auto-reload-all. The managers are in the volume data path, and a roll during a replica rebuild is risky.
   annotations: {reloader.stakater.com/auto: "false"}
 
   defaultSettings:
-    # Where replica data lives on each node. Written by 04_values.sh from LONGHORN_DATA_PATH in .env, so do
-    # not hand-edit. It must exist on every node and, with a containerized kubelet, be bind-mounted rshared
-    # so the per-replica sub-mounts propagate back to the host. Longhorn's own default is /var/lib/longhorn.
+    # Where replica data lives on each node. 04_values.sh writes it from LONGHORN_DATA_PATH in .env, so do not
+    # edit it by hand. It must exist on every node. With a containerized kubelet it must be bind-mounted rshared,
+    # so the replica mounts reach the host. Longhorn's own default is /var/lib/longhorn.
     defaultDataPath: /var/mnt/storage
-    # Survives the one node loss we design for AND leaves at least one spare node to rebuild onto. Raising this
-    # to the node count would leave no spare, so a volume would stay degraded until the dead node came back.
+    # Survives the loss of one node and leaves a spare node to rebuild on. At the node count there is no spare,
+    # so a volume stays degraded until the dead node returns.
     defaultReplicaCount: 2
-    storageMinimalAvailablePercentage: 15 # keep headroom on a small single disk per node
-    # Force-delete StatefulSet pods bound to a downed node so they reschedule instead of hanging forever.
-    # NICs on this cluster are flaky, so node loss is recurring, not theoretical.
+    storageMinimalAvailablePercentage: 15 # headroom on the one small disk per node
+    # Force-deletes StatefulSet pods on a down node, so they reschedule. The NICs on this cluster are flaky,
+    # so node loss happens often.
     nodeDownPodDeletionPolicy: delete-statefulset-pod
-    # This is a dedicated volume, not a shared root filesystem, so don't hold back the default 30% "for the OS".
+    # A dedicated volume, not a shared root filesystem, so the default 30% reserve for the OS is not needed.
     storageReservedPercentageForDefaultDisk: 5
-    # Serialize rebuilds: when a flaky node returns, parallel rebuilds saturate its single NVMe and NIC during
-    # the exact recovery window. Trades rebuild speed for stability.
+    # One rebuild at a time. Parallel rebuilds saturate a returning node's single NVMe and NIC. Rebuilds are
+    # slower but the node stays stable.
     concurrentReplicaRebuildPerNodeLimit: 1
-    # Flaky NICs often flap a node back within minutes, so wait and reuse its replica data instead of a full
-    # cross-network rebuild.
+    # Seconds to wait before a full rebuild over the network. A node with a flaky NIC often returns within
+    # minutes, and Longhorn then reuses its replica data.
     replicaReplenishmentWaitInterval: 1800
-    orphanResourceAutoDeletion: "replica-data" # stale replica data from node flaps would silently eat the NVMe
-    # Trim the 12% default per-instance-manager CPU reservation to free scheduling headroom on a small node.
+    orphanResourceAutoDeletion: "replica-data" # stale replica data from node flaps would fill the NVMe
+    # CPU reserved per instance manager, down from the 12% default, to free scheduling room on a small node.
     guaranteedInstanceManagerCPU: '{"v1":"8","v2":"8"}'
-    # Leases an RWX volume's share-manager pod, so its loss costs seconds instead of a pod-eviction timeout.
-    # An RWX volume created before this was on adopts it only after its workload is scaled to zero and back.
+    # Leases an RWX volume's share-manager pod, so its loss costs seconds, not a pod eviction timeout. An RWX
+    # volume that existed before this setting uses it only after its workload scales to zero and back.
     rwxVolumeFastFailover: true
-    # Requests only, from `make krr`. Unset, the scheduler scores each sidecar as 100m/200Mi, far above their real
-    # use. No limits: an OOM kill here fails volume attach and detach. A change restarts the CSI components.
-    # csi-snapshotter is left out, it runs 0 replicas (see csi below).
+    # Requests only, from `make krr`. With no request, the scheduler counts each sidecar as 100m and 200Mi.
+    # No limits, because an OOM kill here fails volume attach and detach. A change restarts the CSI components.
+    # csi-snapshotter is not listed, because it runs 0 replicas, see csi below.
     systemManagedCSIComponentsResourceLimits: >-
       {"csi-attacher":{"requests":{"cpu":"10m","memory":"39Mi"}},
       "csi-provisioner":{"requests":{"cpu":"10m","memory":"47Mi"}},
@@ -40,41 +39,40 @@ longhorn:
       "longhorn-csi-plugin":{"requests":{"cpu":"33m","memory":"32Mi"}},
       "node-driver-registrar":{"requests":{"cpu":"10m","memory":"16Mi"}},
       "longhorn-liveness-probe":{"requests":{"cpu":"10m","memory":"20Mi"}}}
-  # 10d_longhorn_backup.sh fills these from .env/terraform; empty = backups off. Longhorn owns retention via the
-  # RecurringJob retain counts, the S3 longhorn/ prefix has no lifecycle rule.
+  # 10d_longhorn_backup.sh fills these from .env and Terraform. Empty turns backups off. The RecurringJob retain
+  # counts are the only retention. The S3 longhorn/ prefix has no lifecycle rule.
   defaultBackupStore:
     backupTarget: ""
-    backupTargetCredentialSecret: "longhorn-backup-s3" # sealed into longhorn-system by templates/backup-s3-sealedsecret.yaml
-    pollInterval: 300 # seconds; also how fast a rebuilt cluster notices the backups already in the bucket
+    backupTargetCredentialSecret: "longhorn-backup-s3" # 10d_longhorn_backup.sh seals it into templates/backup-s3-sealedsecret.yaml
+    pollInterval: 300 # seconds. A rebuilt cluster finds the backups in the bucket within this time.
   persistence:
-    # No default class. Every workload names one of the two in templates/storageclasses.yaml deliberately, so a
-    # PVC that omits a class stays Pending rather than silently landing on Longhorn.
+    # No default class. Each workload names a class from templates/storageclasses.yaml. A PVC with no class
+    # stays Pending and does not land on Longhorn by accident.
     defaultClass: false
   preUpgradeChecker:
-    jobEnabled: false # a Helm pre-upgrade hook Job, which can stall an ArgoCD sync waiting on completion
+    jobEnabled: false # a Helm pre-upgrade hook Job, which can stall an Argo CD sync until it completes
   networkPolicies:
-    # Chart 1.12.1 turned this on by default and the six internal policy templates gate on it ALONE, ignoring
-    # networkPolicies.enabled. So a patch bump silently walls off longhorn-manager:9500 from vmagent (metrics
-    # and every longhorn-health alert go dark) and leaves the external CSI sidecars off the allow-list, which
-    # fails volume attach/detach. Both are priority/0 upstream, both backported to 1.12.2: longhorn#13740 and
-    # longhorn#13802. Drop this line once we are on 1.12.2 and can adopt the policies properly.
+    # Chart 1.12.1 defaults this to true, and six policy templates check only this key. The policies block
+    # vmagent from longhorn-manager:9500, which silences metrics and every longhorn-health alert. They also
+    # leave out the CSI sidecars, which fails volume attach and detach. Upstream fixes both in 1.12.2:
+    # longhorn#13740 and longhorn#13802. Remove this line on 1.12.2.
     restrictInternalTraffic: false
   metrics:
     serviceMonitor:
       enabled: true
   csi:
-    # We use no CSI VolumeSnapshots and the sidecar spams "failed to watch VolumeSnapshotClass". No on/off
-    # toggle exists, so drop the replica count. MUST be the STRING "0": int 0 is falsy in the chart's
-    # `{{- if .snapshotterReplicaCount }}` guard, which drops the var and falls back to 3.
-    # The deployer sets replicas only at CREATE, so after a change here delete the live deploy once.
+    # No CSI VolumeSnapshots are used, and the sidecar logs "failed to watch VolumeSnapshotClass" nonstop. No
+    # toggle exists, so set 0 replicas. It must be the string "0". The chart's
+    # `{{- if .snapshotterReplicaCount }}` treats int 0 as false and falls back to 3.
+    # The deployer sets replicas only at creation, so after a change delete the live Deployment once.
     snapshotterReplicaCount: "0"
-  # Ships with no resources set, so the scheduler treats a real per-node consumer as free.
+  # The chart sets no resources, so the scheduler would count this per-node pod as free.
   longhornManager:
     resources:
-      requests: {cpu: 90m, memory: 248Mi}   # p90 of the steady working set; below this the scheduler under-counts it
-      limits: {memory: 472Mi}   # it bursts well past the request, so a limit close to it just OOMKills
+      requests: {cpu: 90m, memory: 248Mi}   # p90 of the steady working set
+      limits: {memory: 472Mi}   # it bursts far above the request, so a limit near it causes OOM kills
   longhornUI:
-    replicas: 1 # a read-mostly dashboard; the chart's default 2 is wasted footprint here
+    replicas: 1 # a dashboard that mostly reads. The chart default of 2 wastes memory here.
     # The chart's default rule, plus matchLabelKeys.
     affinity:
       podAntiAffinity:
@@ -84,5 +82,5 @@ longhorn:
               labelSelector:
                 matchExpressions:
                   - {key: app, operator: In, values: [longhorn-ui]}
-              matchLabelKeys: [pod-template-hash] # compare within one revision, so a rollout's old pod never repels the new one
+              matchLabelKeys: [pod-template-hash] # match one revision only, so a rollout's old pod never repels the new one
               topologyKey: kubernetes.io/hostname

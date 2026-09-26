@@ -2,7 +2,7 @@
 {{- .Values.user | default .Release.Name -}}
 {{- end -}}
 
-{{/* The shared-broker reference every CR carries. A platform invariant, identical for every consumer. */}}
+{{/* The shared broker that every CR references. It is the same for every consumer. */}}
 {{- define "rabbitmq-topology.clusterRef" -}}
 rabbitmqClusterReference:
   name: rabbitmq

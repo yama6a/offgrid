@@ -1,13 +1,12 @@
-# The shared backup bucket plus a scoped IAM writer. Four consumers, one prefix each: cnpg/, redis/,
-# longhorn/, vm/.
-# Lifecycle is PER-PREFIX because the consumers need different retention, and one of them cannot be expired at
-# all. See the longhorn/ rule below.
+# The shared backup bucket and a scoped IAM writer. Four consumers, one prefix each: cnpg/, redis/, longhorn/
+# and vm/. Each prefix has its own lifecycle rule, because the consumers need different retention. S3 must never
+# expire longhorn/ objects, see its rule below.
 
 resource "aws_s3_bucket" "backups" {
   bucket = var.bucket
 
-  # The safety backstop: `make s3-backup-destroy`, or any rebuild that tried to wipe TF, FAILS rather than
-  # silently deleting backups a restore might need. Flip to true only to genuinely discard every backup.
+  # terraform destroy fails on a bucket that still holds objects, so no rebuild deletes backups by accident.
+  # `make s3-backup-destroy` empties the bucket first on purpose. Set true only to discard every backup.
   force_destroy = false
 }
 
@@ -19,8 +18,8 @@ resource "aws_s3_bucket_public_access_block" "backups" {
   restrict_public_buckets = true
 }
 
-# SSE-S3, not SSE-KMS: nothing to manage, and Barman already requests AES256 on upload (pg-cluster values), so
-# the two agree.
+# SSE-S3, not SSE-KMS, because it needs no key management. Barman requests AES256 on upload in the pg-cluster
+# ObjectStore, so the two agree.
 resource "aws_s3_bucket_server_side_encryption_configuration" "backups" {
   bucket = aws_s3_bucket.backups.id
   rule {
@@ -30,7 +29,7 @@ resource "aws_s3_bucket_server_side_encryption_configuration" "backups" {
   }
 }
 
-# Off: these objects are already immutable, so noncurrent versions would only stack cost and complicate the
+# Off. The backup objects never change, so noncurrent versions would only add cost and complicate the
 # age-based expiry below.
 resource "aws_s3_bucket_versioning" "backups" {
   bucket = aws_s3_bucket.backups.id
@@ -42,8 +41,8 @@ resource "aws_s3_bucket_versioning" "backups" {
 resource "aws_s3_bucket_lifecycle_configuration" "backups" {
   bucket = aws_s3_bucket.backups.id
 
-  # Straight to Glacier IR, skipping Standard-IA: IA cannot be transitioned to before 30d anyway, and its
-  # 128 KB min-billable-size plus retrieval fees punish the churny small WAL objects.
+  # Straight to Glacier IR, not Standard-IA. S3 cannot move objects to IA before 30 days. IA also bills each
+  # object as at least 128 KB and charges retrieval fees, which is expensive for many small WAL objects.
   rule {
     id     = "cnpg-tier-and-expire"
     status = "Enabled"
@@ -95,10 +94,10 @@ resource "aws_s3_bucket_lifecycle_configuration" "backups" {
     }
   }
 
-  # NO transition and NO expiration, deliberately. Longhorn backups are INCREMENTAL dedup block chains: a
-  # newer backup references older blocks, so an age-based expiry would delete still-referenced blocks and
-  # corrupt restores. Longhorn's own RecurringJob `retain` is the sole deleter. We only clean up parts
-  # orphaned by an aborted upload.
+  # No transition and no expiration. Longhorn backups are incremental, deduplicated block chains. A newer
+  # backup references older blocks, so an age-based expiry would delete blocks still in use and corrupt
+  # restores. Only Longhorn's RecurringJob `retain` deletes backups. This rule only removes the parts of an
+  # aborted upload.
   rule {
     id     = "longhorn-abort-incomplete"
     status = "Enabled"
@@ -112,11 +111,11 @@ resource "aws_s3_bucket_lifecycle_configuration" "backups" {
   depends_on = [aws_s3_bucket_versioning.backups]
 }
 
-# The in-cluster backup clients get this identity, never the powerful .env DEPLOYER creds that run this
-# Terraform. Its access key is a TF output the 14-17 scripts seal into the cluster.
+# The in-cluster backup clients get this identity, never the .env deployer creds that run this Terraform.
+# Its access key is a Terraform output that the 10b to 10e scripts seal into the cluster.
 resource "aws_iam_user" "backup_writer" {
   name = "${var.bucket}-writer"
-  # IAM tag values allow only [\p{L}\p{Z}\p{N}_.:/=+\-@], so no parens and no commas.
+  # IAM tag values allow only [\p{L}\p{Z}\p{N}_.:/=+\-@], so no parentheses and no commas.
   tags = { purpose = "offgrid backups - barman-cloud/longhorn/redis/vm" }
 }
 
@@ -124,8 +123,8 @@ resource "aws_iam_access_key" "backup_writer" {
   user = aws_iam_user.backup_writer.name
 }
 
-# Least privilege. Barman needs all four verbs: it lists, uploads, reads on restore, and prunes on its own
-# catalog ops even with S3-owned retention.
+# Least privilege. Barman needs all four verbs. It lists, uploads, reads on restore, and deletes during its
+# own catalog operations even though S3 owns retention.
 resource "aws_iam_user_policy" "backup_writer" {
   name = "backups-rw"
   user = aws_iam_user.backup_writer.name

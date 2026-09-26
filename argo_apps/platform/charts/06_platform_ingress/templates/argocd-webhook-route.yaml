@@ -1,11 +1,10 @@
 {{/*
-The one hand-written route in this chart: an SSO bypass for the ArgoCD GitHub webhook.
-The central SecurityPolicy attaches to routes BY EXACT NAME, and this route's name is not in
-04_google_sso domains[].hosts, so the policy never attaches and /api/webhook reaches ArgoCD ungated. Safe
-because ArgoCD verifies the GitHub HMAC signature on that endpoint itself.
-The path match is type: Exact so ONLY the webhook bypasses SSO, never the rest of the admin API. Getting that
-wrong would hand the whole admin API to anyone, because anonymous users are admins in this ArgoCD.
-Hand-written because the ingress chart cannot emit a path-matched route.
+An SSO bypass for the Argo CD GitHub webhook. The ingress chart cannot render a path-matched route, so this one
+is hand-written.
+The SecurityPolicy attaches to routes by exact name. This route's name is not in `hosts` of 04_google_sso, so
+/api/webhook reaches Argo CD without SSO. That is safe, because Argo CD checks the GitHub HMAC signature itself.
+The path match is Exact, so only the webhook skips SSO. Anonymous users are admins in this Argo CD, so a wider
+match would expose the whole admin API to anyone.
 */}}
 {{- range $ing := .Values.ingress.ingresses }}
 {{- range $h := $ing.hosts }}
@@ -16,11 +15,11 @@ Hand-written because the ingress chart cannot emit a path-matched route.
 apiVersion: gateway.networking.k8s.io/v1
 kind: HTTPRoute
 metadata:
-  name: {{ $name }}-webhook                 # distinct from the SSO-gated `{{ $name }}` -> the SecurityPolicy never targets it
+  name: {{ $name }}-webhook                 # differs from the SSO-gated `{{ $name }}`, so the SecurityPolicy never targets it
   namespace: {{ include "ingress.gatewayNamespace" $ctx }}
 spec:
   parentRefs:
-    - name: {{ $name }}                      # attach to the argocd host's own Gateway + listener (same as the gated route)
+    - name: {{ $name }}                      # the argocd host's own Gateway and listener, like the gated route
       namespace: {{ include "ingress.gatewayNamespace" $ctx }}
       sectionName: {{ $name }}
   hostnames:
@@ -28,7 +27,7 @@ spec:
   rules:
     - matches:
         - path:
-            type: Exact                      # ONLY /api/webhook is ungated; the admin API stays behind SSO
+            type: Exact                      # only /api/webhook skips SSO. The admin API stays behind it.
             value: /api/webhook
       backendRefs:
         - name: {{ $h.targetService }}

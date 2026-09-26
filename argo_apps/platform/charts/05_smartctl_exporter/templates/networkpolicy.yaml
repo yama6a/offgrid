@@ -23,8 +23,7 @@ spec:
         - ports:
             - { port: "9633", protocol: TCP }
   egress:
-    # DNS (CoreDNS). Everything else the exporter needs is a local ioctl to the disk, so there is no other
-    # egress rule: it never talks to the apiserver or off-cluster.
+    # DNS to CoreDNS. The exporter reads disks through local ioctls, so it needs no other egress.
     - toEndpoints:
         - matchLabels:
             k8s:io.kubernetes.pod.namespace: kube-system

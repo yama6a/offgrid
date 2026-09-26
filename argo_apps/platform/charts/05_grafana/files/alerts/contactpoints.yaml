@@ -6,27 +6,23 @@ contactPoints:
       - uid: ntfy-webhook
         type: webhook
         settings:
-          url: http://ntfy.monitoring.svc.cluster.local:8080/   # in-cluster JSON publish (topic is in the body)
+          url: http://ntfy.monitoring.svc.cluster.local:8080/   # in-cluster JSON publish. The topic is in the body
           httpMethod: POST
           authorization_scheme: Bearer
-          authorization_credentials: ${GF_NTFY_TOKEN}           # sealed write token, env-interpolated; never committed
+          authorization_credentials: ${GF_NTFY_TOKEN}           # sealed write token, read from the environment
           maxAlerts: 0                                          # no cap on alerts bundled per notification
           payload:
-            # Two shapes, picked by how many alerts the policy grouped together.
+            # One alert: the title is its `summary` and the message its `description`.
+            # It reads per-alert `.Annotations`. `.CommonAnnotations` is empty whenever grouped alerts differ.
             #
-            # One alert: title is its `summary`, message its `description`. Reads per-alert `.Annotations`,
-            # NOT `.CommonAnnotations`, which is empty whenever grouped alerts differ.
+            # Several alerts with a `groupSummary`: the title is that string with the count in its %d.
+            # The message is `groupDescription`, then every alert's `groupItem` on one line.
+            # So a rule that fires per instance sends one push, not one per instance.
+            # A rule without these annotations falls through to the one-alert shape.
             #
-            # Many alerts that carry a `groupSummary`: title is that string with the count substituted into
-            # its %d, message is `groupDescription` followed by every alert's `groupItem` on one line. This is
-            # what keeps a rule that evaluates per instance from turning into one push per instance. A rule without
-            # those annotations falls through to the single-alert shape, so nothing else has to change.
-            #
-            # Built as a dict plus `data.ToJSON` so it escapes the multi-line description and any quotes for us.
-            # Hand-writing that JSON string would break on the newlines.
-            # The `$$` on the Go-template vars is not a typo. Grafana expands environment variables in
-            # contact-point settings at provision time, which is how ${GF_NTFY_TOKEN} resolves, so a bare
-            # `$sev` would be swallowed as an env var and arrive empty. `$$` escapes it to a literal `$`.
+            # `data.ToJSON` escapes the newlines and quotes in the description. Hand-written JSON breaks on them.
+            # `$$` is not a typo. Grafana expands environment variables here at provision time.
+            # A bare `$sev` would arrive empty, so `$$` escapes it to a literal `$`.
             template: |
               {{- $$sev := index .CommonLabels "severity" -}}
               {{- $$prio := 3 -}}

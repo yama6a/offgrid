@@ -1,4 +1,5 @@
-# The Barman Cloud CNPG-I plugin: ObjectStore CRD + plugin Deployment, in cnpg-system (must be the operator's namespace).
+# The Barman Cloud CNPG-I plugin: the ObjectStore CRD and the plugin Deployment. It must run in cnpg-system, the
+# operator's namespace.
 apiVersion: argoproj.io/v1alpha1
 kind: Application
 metadata:

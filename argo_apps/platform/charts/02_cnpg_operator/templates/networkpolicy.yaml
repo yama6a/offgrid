@@ -1,5 +1,4 @@
-# Default-deny both ways for the CNPG operator. POD-scoped, not namespace-wide: cnpg-system also holds the
-# barman-cloud plugin, which carries its own policy.
+# Default-deny both ways for the CNPG operator pods only. The barman-cloud plugin in cnpg-system has its own policy.
 apiVersion: cilium.io/v2
 kind: CiliumNetworkPolicy
 metadata:
@@ -18,18 +17,17 @@ spec:
       toPorts:
         - ports:
             - { port: "8080", protocol: TCP }
-    # The apiserver calls the admission webhooks; the Service maps :443 to the pod's :9443.
+    # The apiserver calls the admission webhooks. The Service maps 443 to pod port 9443.
     - fromEntities: [kube-apiserver]
       toPorts:
         - ports:
             - { port: "9443", protocol: TCP }
-    # Kubelet probes, which also use the webhook-server port.
+    # Kubelet probes, which use the webhook server port too.
     - fromEntities: [host, remote-node]
       toPorts:
         - ports:
             - { port: "9443", protocol: TCP }
   egress:
-    # DNS.
     - toEndpoints:
         - matchLabels:
             k8s:io.kubernetes.pod.namespace: kube-system
@@ -38,10 +36,10 @@ spec:
         - ports:
             - { port: "53", protocol: UDP }
             - { port: "53", protocol: TCP }
-    # Reconciles the Cluster/Backup/ScheduledBackup CRs.
+    # Reconciles the Cluster, Backup and ScheduledBackup CRs.
     - toEntities: [kube-apiserver]
-    # The instance-manager API on every Postgres instance. Instances live in WORKLOAD namespaces, and Cilium
-    # defaults an omitted namespace label to the policy's own, hence the explicit ns-Exists matchExpression.
+    # The instance manager API on every Postgres pod. These pods are in workload namespaces. Without a namespace
+    # label, Cilium matches only the policy's own namespace, so the Exists expression is needed.
     - toEndpoints:
         - matchLabels:
             cnpg.io/podRole: instance
@@ -50,7 +48,7 @@ spec:
       toPorts:
         - ports:
             - { port: "8000", protocol: TCP }
-    # The barman-cloud CNPG-I plugin over gRPC, same namespace.
+    # The barman-cloud CNPG-I plugin over gRPC, in the same namespace.
     - toEndpoints:
         - matchLabels:
             app: barman-cloud

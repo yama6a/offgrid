@@ -1,5 +1,5 @@
 apiVersion: v2
 name: dead-node-watcher
-description: Taints a node out-of-service once it has been NotReady long enough, so its volumes detach in seconds instead of minutes.
+description: Taints a node out-of-service after it is NotReady for long enough, so its volumes detach in seconds, not minutes.
 type: application
-version: 0.1.0 # local chart, never bump version
+version: 0.1.0 # nothing publishes this chart, so never bump it

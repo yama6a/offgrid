@@ -1,17 +1,18 @@
-name: ""             # REQUIRED: (string) Must be unique per namespace.
-postgresVersion: ""  # REQUIRED: (string) The Postgres MAJOR, e.g. "18".
-highAvailability:    # REQUIRED: (bool); true = 3 synchronous instances, false = 1 instance.
-size: ""             # REQUIRED: (string) Per-instance disk CEILING, e.g. "10Gi"; thin, so it does not reserve.
-resources: {}        # REQUIRED: Per-instance requests/limits.
-allowedClients: []   # REQUIRED: SAME-NS ONLY, e.g. [{matchLabels: {app: my-app}}]
-deletionProtection:  # REQUIRED: (bool) To delete: set to false in a first commit, delete the DB in a follow-up commit.
+name: ""             # required, string. Unique per namespace
+postgresVersion: ""  # required, string. The Postgres major, for example "18"
+highAvailability:    # required, bool. true runs 3 synchronous instances, false runs 1 instance
+size: ""             # required, string. Per-instance disk ceiling, for example "10Gi". Volumes are thin, so it reserves nothing
+resources: {}        # required. Per-instance requests and limits
+allowedClients: []   # required. Client pods in the same namespace only, for example [{matchLabels: {app: my-app}}]
+deletionProtection:  # required, bool. To delete the database, set false in one commit, then remove it in a second commit
 
-postgresql: { parameters: { max_connections: "50", shared_buffers: "128MB", effective_cache_size: "256MB", pg_stat_statements.max: "10000", pg_stat_statements.track: all } }
-alertCritical: false # OPTIONAL: (bool); true = alert-severity = critical; false = alert-severity = warning
-backupsEnabled: true # OPTIONAL: (bool); Off-cluster S3 backups (daily base + 15min RPO WAL archiving).
+postgresql: { parameters: { max_connections: "50", shared_buffers: "128MB", effective_cache_size: "256MB", pg_stat_statements.max: "10000", pg_stat_statements.track: all } } # optional. Postgres server parameters
+alertCritical: false # optional, bool. true sends this database's alerts as critical, false as warning
+backupsEnabled: true # optional, bool. Off-cluster S3 backups: a daily base backup plus WAL archiving at CNPG_BACKUP_RPO
 
-#  Restore from S3 backup catalog (base + WAL replay) instead of initdb. See `make restore-cnpg` and docs/10_backups.md.
+# Restore from the S3 backup catalog, a base backup plus WAL replay, instead of initdb.
+# See `make restore-cnpg` and docs/10_backups.md.
 restore:
-  enabled: false  # SET TO FALSE AFTER RESTORE WAS COMPLETED!!
-  serverName: ""  # catalog to read; empty = our own, `<name>-pg<postgresVersion>`. Name it to read a PREVIOUS major's.
-  targetTime: ""  # PITR target, RFC3339 (e.g. "2026-07-13 14:30:00+00"); empty = replay everything
+  enabled: false  # set back to false once the restore completes
+  serverName: ""  # the catalog to read. Empty reads this instance's own, `<name>-pg<postgresVersion>`. Name another to read a previous major's
+  targetTime: ""  # PITR target in RFC3339, for example "2026-07-13 14:30:00+00". Empty replays everything

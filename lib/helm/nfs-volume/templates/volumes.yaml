@@ -1,5 +1,5 @@
-{{- /* One PV and the one PVC bound to it, per entry. Ranges to nothing when volumes[] is empty, so declaring
-       this dependency without filling it in renders no manifest at all. */ -}}
+{{- /* One PV and its bound PVC per entry. An empty volumes list renders nothing, so a consumer can declare
+       this dependency without using it. */ -}}
 {{- range $v := .Values.volumes }}
 {{- $pv := include "nfs-volume.pvName" (dict "namespace" $.Release.Namespace "volume" $v) }}
 {{- $modes := $v.accessModes | default (list "ReadWriteMany") }}
@@ -11,21 +11,21 @@ metadata:
   labels:
     app: {{ $v.name }}
 spec:
-  # A ceiling nothing enforces: NFS reports no size to the kubelet and no quota is applied. It exists so the
-  # PVC below has something to request and match.
+  # Nothing enforces this size. NFS reports no size to the kubelet and nothing applies a quota. The value
+  # exists so the PVC below has something to request and match.
   capacity:
     storage: {{ $v.capacity }}
   accessModes:
     {{- $modes | toYaml | nindent 4 }}
-  # Retain by default. Delete would drop the PV object and still leave every byte on the server, so the only
-  # thing it reclaims is the illusion of having reclaimed something.
+  # Retain by default. Delete removes only the PV object and leaves every byte on the server, so it frees
+  # no space.
   persistentVolumeReclaimPolicy: {{ $v.reclaimPolicy | default "Retain" }}
-  # Explicitly empty, not omitted: an omitted class lets the DefaultStorageClass admission plugin stamp one in.
+  # Empty, not omitted. When the field is omitted, the DefaultStorageClass admission plugin sets a class.
   storageClassName: ""
   mountOptions:
     {{- $v.mountOptions | default (list "nfsvers=4.1" "hard" "noatime") | toYaml | nindent 4 }}
-  # Pre-binds the PV to exactly one PVC. Without it, any PVC anywhere whose request this PV satisfies can win
-  # the bind first, and the intended claim then sits Pending behind it.
+  # Binds the PV to exactly one PVC in advance. Without it, any other PVC that this PV satisfies can bind
+  # first, and the intended claim then stays Pending.
   claimRef:
     namespace: {{ $.Release.Namespace }}
     name: {{ $v.name }}
@@ -43,7 +43,7 @@ metadata:
     app: {{ $v.name }}
 spec:
   storageClassName: ""
-  volumeName: {{ $pv }} # names the PV, so this claim can bind to that one and nothing else
+  volumeName: {{ $pv }} # so this claim binds to this PV and no other
   accessModes:
     {{- $modes | toYaml | nindent 4 }}
   resources:

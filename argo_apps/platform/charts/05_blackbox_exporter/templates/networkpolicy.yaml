@@ -9,7 +9,7 @@ spec:
     matchLabels:
       app.kubernetes.io/name: prometheus-blackbox-exporter
   ingress:
-    # vmagent drives every probe and scrapes the exporter's own metrics; both land on :9115.
+    # vmagent triggers every probe and scrapes the exporter's own metrics. Both use :9115.
     - fromEndpoints:
         - matchLabels:
             k8s:io.kubernetes.pod.namespace: monitoring
@@ -23,7 +23,7 @@ spec:
         - ports:
             - { port: "9115", protocol: TCP }
   egress:
-    # DNS (CoreDNS).
+    # DNS to CoreDNS.
     - toEndpoints:
         - matchLabels:
             k8s:io.kubernetes.pod.namespace: kube-system
@@ -32,8 +32,8 @@ spec:
         - ports:
             - { port: "53", protocol: UDP }
             - { port: "53", protocol: TCP }
-    # The probe targets. Every ingress host resolves to the WAN address and comes back in via the router's
-    # hairpin, so from Cilium's side this is egress to `world`, not to the cluster's own gateway.
+    # The probe targets. Every ingress host resolves to the WAN address and comes back in through the router's
+    # hairpin. So Cilium sees egress to `world`, not to the cluster's own gateway.
     - toEntities: [world]
       toPorts:
         - ports:

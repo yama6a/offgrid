@@ -1,8 +1,8 @@
 apiVersion: v2
 name: cert-manager
-description: cert-manager, the X.509 issuance and renewal controller. The ClusterIssuers ship with 03_gateway, not here.
+description: cert-manager issues and renews X.509 certificates. 03_gateway ships the ClusterIssuers.
 type: application
-version: 0.1.0 # local chart, never bump version
+version: 0.1.0 # nothing publishes this chart, so never bump it
 
 dependencies:
   - name: cert-manager

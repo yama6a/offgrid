@@ -1,5 +1,5 @@
-# Deployment + Service for the /manager binary. PG_PASSWORD is injected from dbs[0]'s operator-generated owner
-# Secret. Both ingress hosts, open and SSO, route to this one Service.
+# Deployment and Service for the /manager binary. PG_PASSWORD comes from the owner Secret that the operator
+# generates for dbs[0]. Both ingress hosts, open and SSO, route to this Service.
 apiVersion: apps/v1
 kind: Deployment
 metadata:
@@ -7,10 +7,10 @@ metadata:
   namespace: {{ .Release.Namespace }}
   labels:
     app: {{ .Values.app.name }}
-    alert-criticality: critical   # app workload down -> `critical` (deployment/container outage rules). See docs/06_monitoring.md.
+    alert-criticality: critical   # the outage rules page as critical when this is down. See docs/06_monitoring.md.
 spec:
   replicas: {{ .Values.app.replicas }}
-  revisionHistoryLimit: 0  # recovery is a git revert, never a rollback, so kept history is dead weight
+  revisionHistoryLimit: 0  # recovery is a git revert, never a rollback
   selector:
     matchLabels:
       app: {{ .Values.app.name }}
@@ -18,11 +18,11 @@ spec:
     metadata:
       labels:
         app: {{ .Values.app.name }}
-        alert-criticality: critical   # pods carry it too, for the container-waiting-fatal outage rule. See docs/06_monitoring.md.
-        messaging-client: "true"   # opts this pod into the broker's CiliumNetworkPolicy ingress on 5672. See 08_messaging.md.
+        alert-criticality: critical   # on the pods too, for the container-waiting-fatal outage rule. See docs/06_monitoring.md.
+        messaging-client: "true"   # lets this pod reach the broker on 5672. See docs/08_messaging.md.
     spec:
-      # Soft + hostname: bare Pi nodes have no zone label, and soft means replicas beyond the 3 nodes, or
-      # scheduling while a node is down, co-locate instead of going permanently Pending.
+      # Soft spread by hostname. The Pi nodes have no zone label. With more replicas than nodes, or with a node
+      # down, pods share a node and do not stay Pending.
       affinity:
         podAntiAffinity:
           preferredDuringSchedulingIgnoredDuringExecution:
@@ -31,10 +31,10 @@ spec:
                 labelSelector:
                   matchLabels:
                     app: {{ .Values.app.name }}
-                matchLabelKeys: [pod-template-hash] # compare within one revision, so a rollout's old pod never repels the new one
+                matchLabelKeys: [pod-template-hash] # match one revision only, so a rollout's old pod never repels the new one
                 topologyKey: kubernetes.io/hostname
-      # PodSecurity `restricted` baseline, the same block on every first-party pod here. 65532 matches the
-      # distroless nonroot uid the sample-app image declares.
+      # Pod Security `restricted`, the same block on every first-party pod here. 65532 is the distroless
+      # nonroot uid that the sample-app image declares.
       securityContext:
         runAsNonRoot: true
         runAsUser: 65532
@@ -43,17 +43,17 @@ spec:
       containers:
         - name: app
           image: {{ .Values.app.image | quote }}
-          command: {{ .Values.app.command | toJson }}   # the /manager binary (default entrypoint; explicit for clarity)
+          command: {{ .Values.app.command | toJson }}   # the /manager binary, which is also the default entrypoint
           ports:
             - name: http
               containerPort: {{ .Values.app.port }}
           env:
-            # Makes app.port authoritative; the binary defaults to 8080.
+            # Makes app.port the port the binary uses. Its default is 8080.
             - name: PORT
               value: {{ .Values.app.port | quote }}
-            # The binary reads ONE DSN, fed to DSNFromEnv() as discrete parts so it assembles and escapes the
-            # DSN itself rather than taking a pre-built URL with a raw password. Bare PG_* is dbs[0], the
-            # instance actually dialed. User and database are `app`/`app`, from the pg-cluster initdb.
+            # The binary reads one DSN. DSNFromEnv() builds and escapes it from these parts, so no raw password
+            # goes into a URL. The bare PG_* set is dbs[0], the database it uses. pg-cluster initdb creates
+            # user `app` and database `app`.
             {{- $ns := .Release.Namespace }}
             {{- $primaryDb := index .Values.app.dbs 0 }}
             - name: PG_HOST
@@ -67,8 +67,8 @@ spec:
                 secretKeyRef:
                   name: {{ $primaryDb }}-app
                   key: password
-            # Every entry in app.dbs also gets a per-instance PG_<NAME>_* set. The non-[0] ones are cosmetic
-            # until the image reads them. Egress to each is rendered by that DB's own chart.
+            # Each entry in app.dbs also gets a PG_<NAME>_* set. The binary reads only the bare set. Each
+            # database's own chart renders the egress to it.
             {{- range .Values.app.dbs }}
             {{- $snake := regexReplaceAll "[^A-Za-z0-9]" . "_" | upper }}
             - name: PG_{{ $snake }}_HOST
@@ -83,9 +83,9 @@ spec:
                   name: {{ . }}-app
                   key: password
             {{- end }}
-            # The manager dials BOTH instances, so both get a bare alias it reads: REDIS_ADDR is redises[0]
-            # (the audit cache) and REDIS_SESSIONS_ADDR is redises[1] (the durable session store). No password
-            # env: each instance is locked to this workload by its CiliumNetworkPolicy, not requirepass.
+            # The manager uses both instances. REDIS_ADDR is redises[0], the audit cache. REDIS_SESSIONS_ADDR is
+            # redises[1], the durable session store. No password: each instance's CiliumNetworkPolicy admits
+            # only this workload.
             {{- $primaryRedis := index .Values.app.redises 0 }}
             - name: REDIS_ADDR
               value: "{{ $primaryRedis }}.{{ $ns }}.svc.cluster.local:6379"
@@ -93,21 +93,21 @@ spec:
             - name: REDIS_SESSIONS_ADDR
               value: "{{ index .Values.app.redises 1 }}.{{ $ns }}.svc.cluster.local:6379"
             {{- end }}
-            # Every entry also gets a per-instance REDIS_<NAME>_ADDR, cosmetic beyond the two above. Egress to
-            # each is rendered by that instance's own chart.
+            # Each entry also gets a REDIS_<NAME>_ADDR, which the binary does not read. Each instance's own
+            # chart renders the egress to it.
             {{- range .Values.app.redises }}
             {{- $snake := regexReplaceAll "[^A-Za-z0-9]" . "_" | upper }}
             - name: REDIS_{{ $snake }}_ADDR
               value: "{{ . }}.{{ $ns }}.svc.cluster.local:6379"
             {{- end }}
-            # The shared broker's client Service and the shared `apps` vhost. Username and password are
-            # operator-GENERATED into `<user>-user-credentials`. The binary assembles the AMQP URI itself.
+            # The broker's client Service and the shared `apps` vhost. The operator generates the username and
+            # password into `<user>-user-credentials`. The binary builds the AMQP URI itself.
             - name: RABBITMQ_HOST
-              value: "rabbitmq.rabbitmq.svc.cluster.local"   # the shared broker's client Service (03_rabbitmq_cluster)
+              value: "rabbitmq.rabbitmq.svc.cluster.local"   # the broker's client Service from 03_rabbitmq
             - name: RABBITMQ_PORT
               value: "5672"
             - name: RABBITMQ_VHOST
-              value: "apps"                                  # the shared vhost (matches rabbitmq-topology default)
+              value: "apps"                                  # the shared vhost, the rabbitmq-topology default
             - name: RABBITMQ_USERNAME
               valueFrom:
                 secretKeyRef:
@@ -118,9 +118,8 @@ spec:
                 secretKeyRef:
                   name: {{ .Values.app.name }}-user-credentials
                   key: password
-            # The `sender` field on emitted messages, and the prefix for any queues derived from it. The
-            # exchange, routing-key and queue names are compile-time constants in the binary, so nothing
-            # topology-related travels by env and a pod cannot be pointed at the wrong topic.
+            # The `sender` field on each message and the prefix of its queue names. The exchange, routing key
+            # and queue names are constants in the binary, so no env var can point a pod at the wrong topic.
             - name: WORKLOAD_NAME
               value: {{ .Values.app.name | quote }}
           securityContext:

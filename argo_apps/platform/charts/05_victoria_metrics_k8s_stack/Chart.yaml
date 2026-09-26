@@ -1,8 +1,8 @@
 apiVersion: v2
 name: victoria-metrics-k8s-stack
-description: The monitoring core, VMSingle + VMAgent + node-exporter + kube-state-metrics. The bundled operator, vmalert, Alertmanager and Grafana are all off, each runs standalone.
+description: The monitoring core. VMSingle, VMAgent, node-exporter and kube-state-metrics. The bundled operator, vmalert, Alertmanager and Grafana are off. Each runs as its own app.
 type: application
-version: 0.1.0 # local chart, never bump version
+version: 0.1.0 # nothing publishes this chart, so never bump it
 
 dependencies:
   - name: victoria-metrics-k8s-stack

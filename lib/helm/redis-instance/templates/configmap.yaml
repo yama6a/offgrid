@@ -1,12 +1,11 @@
 {{- /*
-Extra redis.conf, mounted over the operator's generated base config. The `redis-additional.conf` key name is
-fixed by the operator.
+Extra redis.conf, added on top of the base config that the operator generates. The operator fixes the key
+name `redis-additional.conf`.
 
-Active defrag: jemalloc does not return freed memory, so a high-churn workload leaves used_memory_rss inflated.
-Upstream's trigger thresholds never fire on a Pi-sized instance (default ignore-bytes 100mb against a ~77Mi
-maxmemory), hence the lowered values below.
-Redis conf takes no trailing inline comments, a `#` after a value is parsed as an argument, so the rationale
-has to live up here rather than on the lines themselves.
+Active defrag: jemalloc does not return freed memory, so a workload with many writes and deletes leaves
+used_memory_rss too high. The upstream thresholds never trigger on a Pi-sized instance. The default
+ignore-bytes is 100mb, and maxmemory is about 77Mi. So the values below are lower.
+redis.conf reads a `#` after a value as an argument, so these reasons stay up here.
 */ -}}
 apiVersion: v1
 kind: ConfigMap

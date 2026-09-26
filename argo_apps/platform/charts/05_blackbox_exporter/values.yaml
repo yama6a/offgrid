@@ -1,8 +1,8 @@
-# Probed hosts, grouped by what the edge is expected to answer an anonymous GET with, and the module that
-# asserts exactly that. Every URL is the PUBLIC name, so a probe covers DNS, the router's hairpin, the
-# LoadBalancer, the TLS cert and the route in one request. A group takes any FQDN and any path: 04_values.sh
-# fills in the targets of `sso` and `open` and nothing else, so a host off the ops./app. tiers goes in a group
-# of its own, written by hand. A group key becomes the VMProbe name and its job name, so keep it kebab-case.
+# Probed hosts, grouped by the answer the edge must give an anonymous GET. Each group names the module that
+# checks that answer. Every URL is the public name, so one request covers DNS, the router's hairpin, the
+# LoadBalancer, the TLS cert and the route. 04_values.sh writes the targets of `sso` and `open` only. Put a host
+# outside the ops. and app. tiers in a group of its own, written by hand. A group takes any FQDN and path.
+# A group key becomes the VMProbe name and its job name, so keep it kebab-case.
 probes:
   sso:
     module: http_sso_302
@@ -21,19 +21,18 @@ probes:
       - https://ntfy.ops.example.com/v1/health
       - https://sample-user-manager.app.example.com/users
 
-interval: 60s # a probe is a real request against a real backend, so this is a rate as much as a resolution
+interval: 60s # each probe is a real request to a real backend, so this also sets the load on it
 
 prometheus-blackbox-exporter:
-  fullnameOverride: blackbox-exporter # the VMProbe below addresses this Service by name
+  fullnameOverride: blackbox-exporter # templates/vmprobe.yaml addresses this Service by name
 
   config:
     modules:
-      # follow_redirects is OFF in both: following the SSO redirect would leave us grading Google's login page,
-      # and on an open host it would hide a wrong redirect behind whatever it lands on.
+      # follow_redirects is off in both HTTP modules. Following the SSO redirect would test Google's login page.
+      # On an open host it would hide a wrong redirect behind whatever page it lands on.
 
-      # For a host behind google-sso. The SecurityPolicy answers before the request ever reaches the backend,
-      # so a pass asserts the edge and that SSO is still attached, and NOTHING about the app behind it. There
-      # is no way to check that backend from here without a Google login; cover those with their own alerts.
+      # For a host behind google-sso. The SecurityPolicy answers before the backend sees the request. So a pass
+      # proves the edge works and SSO is attached, but nothing about the app. Give those apps their own alerts.
       http_sso_302:
         prober: http
         timeout: 5s
@@ -42,13 +41,13 @@ prometheus-blackbox-exporter:
           valid_status_codes: [302]
           follow_redirects: false
           preferred_ip_protocol: ip4
-          # Any 302 would pass without this. A route that lost its SecurityPolicy could redirect anywhere,
-          # so pin the destination to Google's consent screen.
+          # Without this, any 302 passes. A route that lost its SecurityPolicy can redirect anywhere,
+          # so require a redirect to Google's consent screen.
           fail_if_header_not_matches:
             - header: Location
               regexp: '^https://accounts\.google\.com/'
-      # For a host with no SSO in front, so the app itself answers and the probe is end-to-end. Point it at a
-      # path that returns 200: a host serving 404 at `/` looks identical to a broken route.
+      # For a host with no SSO, so the app itself answers and the probe covers the whole path. Point it at a
+      # path that returns 200. A host that serves 404 at `/` looks the same as a broken route.
       http_open_200:
         prober: http
         timeout: 5s
@@ -58,8 +57,8 @@ prometheus-blackbox-exporter:
           follow_redirects: false
           preferred_ip_protocol: ip4
 
-      # For a plain TCP listener with no HTTP on it. Asserts only that something accepts a connection on the
-      # port, which for something like an NFS server is the difference between "up" and "the data is gone".
+      # For a plain TCP listener with no HTTP, such as an NFS server. Passes when something accepts a
+      # connection on the port.
       tcp_connect:
         prober: tcp
         timeout: 5s
@@ -68,11 +67,10 @@ prometheus-blackbox-exporter:
 
   serviceMonitor:
     selfMonitor:
-      enabled: true # so a dead exporter trips `target-down`, instead of silently ending every probe alert
+      enabled: true # a dead exporter then fires `target-down` instead of silencing every probe alert
 
-  # A passing SSO probe logs TWO WARN lines, "Received redirect" and "Not following redirect", because
-  # follow_redirects is off and a 302 is the expected answer. That success path is 99.8% of this exporter's
-  # output (15118 of 15152 lines in 6h) and ~25MB a day. A real failure logs at ERROR, so it still surfaces.
+  # A passing SSO probe logs two WARN lines, "Received redirect" and "Not following redirect". They were
+  # 99.8% of the output, about 25MB a day. A real failure logs at ERROR, so it still shows.
   extraArgs:
     - --log.level=error
 

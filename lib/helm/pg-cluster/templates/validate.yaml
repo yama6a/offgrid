@@ -1,48 +1,48 @@
-{{- /* Validation only, renders to empty, Enforces the REQUIRED fields. */ -}}
+{{- /* Validation only. Renders nothing and fails on a missing or invalid required field. */ -}}
 {{- if not .Values.name }}
-{{- fail "pg-cluster: name is required (the explicit Postgres instance name; no release-name derivation, and it must be unique across a workload's DBs)" }}
+{{- fail "pg-cluster: name is required. It is the Postgres instance name. The chart does not derive it from the release name, and it must be unique across a workload's databases" }}
 {{- end }}
 {{- if not .Values.postgresVersion }}
-{{- fail "pg-cluster: postgresVersion is required (the Postgres major, a key in files/postgres-images.yaml; e.g. \"18\")" }}
+{{- fail "pg-cluster: postgresVersion is required. It is the Postgres major, a key in files/postgres-images.yaml, for example \"18\"" }}
 {{- end }}
 {{- if not (kindIs "bool" .Values.highAvailability) }}
-{{- fail "pg-cluster: highAvailability is required and must be explicitly true (3 instances, synchronous `any 1`, PDB, switchover) or false (single instance, no PDB, in-place restart); there is no default, and 2 or more than 3 instances are not offered" }}
+{{- fail "pg-cluster: highAvailability is required and must be true or false. true gives 3 instances, synchronous `any 1` replication, a PDB and switchover. false gives 1 instance, no PDB and an in-place restart. There is no default, and no other instance count is offered" }}
 {{- end }}
 {{- if not .Values.size }}
-{{- fail "pg-cluster: size is required (the per-instance disk ceiling, e.g. \"10Gi\"); Longhorn volumes are thin, so this reserves no disk, but it does consume that much of Longhorn's per-node scheduling budget and it is what the >90%-full alert is measured against" }}
+{{- fail "pg-cluster: size is required. It is the per-instance disk ceiling, for example \"10Gi\". Longhorn volumes are thin, so it reserves no disk. It does use that much of Longhorn's per-node scheduling budget, and the 90%-full alert measures against it" }}
 {{- end }}
 {{- if not .Values.resources }}
-{{- fail "pg-cluster: resources is required (per-instance requests/limits)" }}
+{{- fail "pg-cluster: resources is required. Give the per-instance requests and limits" }}
 {{- end }}
 {{- if not .Values.allowedClients }}
-{{- fail "pg-cluster: allowedClients is required (who may reach Postgres on 5432); the DB policy is always enforced, so an empty list would wall off the database" }}
+{{- fail "pg-cluster: allowedClients is required. It lists the pods that may reach Postgres on 5432. The database policy is always on, so an empty list would block every client" }}
 {{- end }}
 {{- if not (kindIs "bool" .Values.deletionProtection) }}
-{{- fail "pg-cluster: deletionProtection is required and must be explicitly true (a GitOps prune orphans the DB unit instead of destroying it) or false (the DB is deletable); there is no default, because the storage class reclaims on Delete and this is the only thing protecting the data" }}
+{{- fail "pg-cluster: deletionProtection is required and must be true or false. With true, a GitOps prune orphans the database instead of deleting it. With false, the database can be deleted. There is no default, because the storage class reclaims on Delete and this flag is the only guard on the data" }}
 {{- end }}
 {{- range .Values.allowedClients }}
 {{- if .namespace }}
-{{- fail (printf "pg-cluster: allowedClients entries take no `namespace` (it is always the release namespace %q; a cross-ns client needs the clusterwide-CNP variant), drop the key" $.Release.Namespace) }}
+{{- fail (printf "pg-cluster: allowedClients entries take no `namespace` key. A client is always in the release namespace %q. A client in another namespace needs a CiliumClusterwideNetworkPolicy instead. Remove the key" $.Release.Namespace) }}
 {{- end }}
 {{- if not .matchLabels }}
-{{- fail "pg-cluster: every allowedClients entry needs a non-empty matchLabels (the client pod labels); an empty selector would open 5432 to the whole namespace" }}
+{{- fail "pg-cluster: every allowedClients entry needs a non-empty matchLabels with the client pod labels. An empty selector would open 5432 to the whole namespace" }}
 {{- end }}
 {{- end }}
-{{- /* Backups turn ON only when files/backup.yaml is populated */ -}}
+{{- /* Backups are on only when files/backup.yaml has a bucket. */ -}}
 {{- if eq (include "pg-cluster.backupsEnabled" .) "true" }}
 {{- $b := .Files.Get "files/backup.yaml" | fromYaml }}
 {{- if not $b.region }}
-{{- fail "pg-cluster: files/backup.yaml has a bucket but no region; re-run 10b_cnpg_backup.sh" }}
+{{- fail "pg-cluster: files/backup.yaml has a bucket but no region. Re-run 10b_cnpg_backup.sh" }}
 {{- end }}
 {{- if not $b.retentionPolicy }}
-{{- fail "pg-cluster: files/backup.yaml has a bucket but no retentionPolicy; re-run 10b_cnpg_backup.sh" }}
+{{- fail "pg-cluster: files/backup.yaml has a bucket but no retentionPolicy. Re-run 10b_cnpg_backup.sh" }}
 {{- end }}
 {{- end }}
-{{- /* A recovery bootstrap pulls from the instance's OWN ObjectStore, which only exists when backups are on. */ -}}
+{{- /* A recovery bootstrap reads the instance's own ObjectStore, which exists only when backups are on. */ -}}
 {{- if and .Values.restore.enabled (ne (include "pg-cluster.backupsEnabled" .) "true") }}
-{{- fail "pg-cluster: restore.enabled needs backups on (backupsEnabled + a populated files/backup.yaml); there is no object store to recover from" }}
+{{- fail "pg-cluster: restore.enabled needs backups on, which means backupsEnabled and a populated files/backup.yaml. Without them there is no object store to restore from" }}
 {{- end }}
-{{- /* disabling restore, but setting restore config makes no sense. Probably a user misake. */ -}}
+{{- /* Restore settings with restore off would be ignored, so they are likely a mistake. */ -}}
 {{- if and (not .Values.restore.enabled) (or .Values.restore.targetTime .Values.restore.serverName) }}
-{{- fail "pg-cluster: restore.targetTime/serverName are set but restore.enabled is false; they would be silently ignored (set enabled, or clear them)" }}
+{{- fail "pg-cluster: restore.targetTime or restore.serverName is set but restore.enabled is false, so the chart would ignore them. Set enabled, or clear them" }}
 {{- end }}

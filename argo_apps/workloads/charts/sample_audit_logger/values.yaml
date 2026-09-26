@@ -1,6 +1,6 @@
 app:
   name: sample-audit-logger
-  image: "ghcr.io/yama6a/pi5-k8s-sample-app:23"   # three-binary image (/manager, /signup, /auditor)
+  image: "ghcr.io/yama6a/pi5-k8s-sample-app:23"   # one image with three binaries: /manager, /signup, /auditor
   command: ["/auditor"]
   replicas: 1
   resources:
@@ -8,6 +8,6 @@ app:
     limits:   { memory: 32Mi }
 
 rabbitmq-topology:
-  user: sample-audit-logger        # == app.name; the pod reads <user>-user-credentials
+  user: sample-audit-logger        # same as app.name. The pod reads <user>-user-credentials.
   subscribeEvents:
-    - { exchange: user-audit-logger }   # fanout, so routingKey is ignored; own queue sample-audit-logger.user-audit-logger
+    - { exchange: user-audit-logger }   # a fanout ignores routingKey. Its queue is sample-audit-logger.user-audit-logger.

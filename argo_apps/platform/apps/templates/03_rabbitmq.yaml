@@ -1,4 +1,4 @@
-# RabbitMQ: both operators + CRDs and the shared broker + vhost in ONE app, so the CRDs and the CRs land in one sync.
+# RabbitMQ: both operators, their CRDs, the shared broker and the vhost. One app puts the CRDs and CRs in one sync.
 apiVersion: argoproj.io/v1alpha1
 kind: Application
 metadata:

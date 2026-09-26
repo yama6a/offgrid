@@ -1,5 +1,6 @@
-{{/* ingress.gateway: one host's Gateway, a single :443 HTTPS listener terminating TLS with the
-     ingress's shared cert (merged onto the one Envoy via mergeGateways). ctx: {ingress, host}. */}}
+{{/* ingress.gateway: one Gateway per host, with a single HTTPS listener on :443. It terminates TLS with the
+     ingress's shared cert. mergeGateways puts every Gateway on the one Envoy.
+     Argument: the per-host dict from ingress.renderIngress. */}}
 {{- define "ingress.gateway" -}}
 {{- $name := include "ingress.hostName" . -}}
 apiVersion: gateway.networking.k8s.io/v1
@@ -8,7 +9,7 @@ metadata:
   name: {{ $name }}
   namespace: {{ include "ingress.gatewayNamespace" . }}
 spec:
-  {{- /* gatewayClassName hardcoded (used only here): the Envoy Gateway class from 01_envoy_gateway (mergeGateways -> one LB IP); the cluster has exactly one. */}}
+  {{- /* The one gateway class in the cluster, from 01_envoy_gateway. mergeGateways gives it one LB IP. */}}
   gatewayClassName: eg
   listeners:
     - name: {{ $name }}
