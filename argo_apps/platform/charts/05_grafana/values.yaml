@@ -121,7 +121,7 @@ grafana:
 
 # A PostSync Job that restarts grafana when files/alerts/ changed. The restart removes deleted rules.
 alertsReloadHook:
-  image: "alpine/k8s:1.37.0" # any image with kubectl and sh. Renovate reads the annotation in the template.
+  image: "alpine/k8s:1.37.1" # any image with kubectl and sh. Renovate reads the annotation in the template.
   rolloutTimeout: 5m         # how long the Job waits for the restarted grafana to become ready
   backoffLimit: 1            # Job retries before the sync hook fails
   activeDeadlineSeconds: 600 # hard Job limit in seconds: rolloutTimeout plus time for the image pull
