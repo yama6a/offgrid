@@ -26,7 +26,7 @@ VB_VALUES="${PLATFORM_CHARTS}/08_vm_backup/values.yaml" # holds the bucket, pref
 RESTORE_NS="monitoring"                                 # the namespace of the sealed creds and the stores
 SECRET_NAME="vm-backup-s3"                              # the sealed writer creds in RESTORE_NS
 # renovate: datasource=docker
-RUNNER_IMAGE="alpine/k8s:1.37.0" # has curl, aws-cli and gzip. The backup CronJob uses the same image.
+RUNNER_IMAGE="alpine/k8s:1.37.1" # has curl, aws-cli and gzip. The backup CronJob uses the same image.
 
 # ---- state ----
 KIND="" # set by parse_args / resolve_kind
