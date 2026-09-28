@@ -4,7 +4,7 @@ prometheus-smartctl-exporter:
   image:
     # `master` is the only multi-arch tag. Move to a version tag by hand once one ships arm64.
     repository: quay.io/prometheuscommunity/smartctl-exporter
-    tag: master@sha256:ab19db971b40285396153ff3a8b130ef7b2c7eae936186e0223a30cf97da1103
+    tag: master@sha256:e668e16c80ea2d9c042eab6bc852a48d44fe67c17d8d8f6457dc5d1601f38335
 
   # Autodetect would also probe Longhorn's iSCSI volumes, which look like SATA disks. One DaemonSet per
   # architecture. An extraInstances entry must repeat every key it needs, because the chart does not inherit.
