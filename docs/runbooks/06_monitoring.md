@@ -22,7 +22,8 @@ Decisions are in [../06_monitoring.md](../06_monitoring.md).
    make configure-ntfy-auth
    ```
 
-   The script creates `phone` (read-only) and `grafana` (write-only) on the `cluster-alerts` topic.
+   The script creates `phone` (read-only) and `grafana` (write-only) on the `cluster-alerts` topic. It also puts
+   `grafana` on its own ntfy tier.
 3. Commit and push the sealed token.
 4. In the ntfy Android app, add `https://ntfy.ops.example.com`, log in as `phone` and subscribe to
    `cluster-alerts`.

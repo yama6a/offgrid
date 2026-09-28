@@ -178,6 +178,8 @@ Service. The Android app subscribes over the public edge `ntfy.ops.example.com`.
   with per-user tokens is the gate.
 - The edge uses `letsencrypt-prod`, because the app validates TLS.
 - ntfy has no declarative user config, so `06_ntfy_auth.sh` seeds the users and seals Grafana's write token.
+- The `grafana` ntfy user has a tier. Without one, ntfy rejects some concurrent alerts with 403.
+  [`06_ntfy_auth.sh`](../lib/shell/06_ntfy_auth.sh) explains why.
 
 ### Watching the alert path
 

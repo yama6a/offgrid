@@ -15,6 +15,14 @@ SECRET_KEY="token"                                                     # must ma
 TOPIC="cluster-alerts"                                                 # must match the 05_grafana webhook and 05_ntfy
 PHONE_USER="phone"                                                     # the Android subscriber, read-only
 GRAFANA_USER="grafana"                                                 # the webhook publisher, write-only with a token
+GRAFANA_TIER="grafana"                                                 # the ntfy tier on the grafana user
+# The ntfy tier defaults allow emails, reservations and attachments, and expire messages after 12h.
+# Expiry matches cache-duration in 05_ntfy. A running ntfy applies changed limits only after a pod restart.
+GRAFANA_TIER_LIMITS=(
+  --message-limit 5000 --message-expiry-duration 168h
+  --email-limit 0 --call-limit 0 --reservation-limit 0
+  --attachment-file-size-limit 0 --attachment-total-size-limit 0 --attachment-bandwidth-limit 0
+)
 
 # ---- state ----
 TOKEN="" # set by mint_grafana_token
@@ -78,6 +86,20 @@ seed_users_and_acls() {
   nexec access "$GRAFANA_USER" "$TOPIC" wo > /dev/null 2>&1 && ok "grafana ACL: wo on ${TOPIC}" || bad "could not set grafana ACL"
 }
 
+# Without a tier, ntfy shares one visitor per client IP and resets its user to nil at the start of each request.
+# Two concurrent Grafana POSTs then fail the ACL check as anonymous with 403. A tier keys the visitor by user ID.
+seed_grafana_tier() {
+  say "putting the grafana user on tier '${GRAFANA_TIER}'"
+  if nexec tier add "${GRAFANA_TIER_LIMITS[@]}" "$GRAFANA_TIER" > /dev/null 2>&1; then
+    ok "tier created"
+  else
+    nexec tier change "${GRAFANA_TIER_LIMITS[@]}" "$GRAFANA_TIER" > /dev/null 2>&1 \
+      && ok "tier existed. Limits updated." || bad "could not create or update the tier"
+  fi
+  nexec user change-tier "$GRAFANA_USER" "$GRAFANA_TIER" > /dev/null 2>&1 \
+    && ok "grafana user on tier ${GRAFANA_TIER}" || bad "could not set the grafana user's tier"
+}
+
 # Removes the old grafana tokens first, so tokens do not pile up.
 mint_grafana_token() {
   local tid
@@ -120,6 +142,7 @@ EOF
 check_prerequisites
 handle_disabled
 seed_users_and_acls
+seed_grafana_tier
 mint_grafana_token
 seal_token
 
