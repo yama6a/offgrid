@@ -65,6 +65,12 @@
       groupName: "victoriametrics stack (major)",
     },
     {
+      // Operator 0.68.0 needs the VTAgent CRD, and no CRD chart ships it yet. Lift this with the matching CRD release.
+      description: "hold the operator until victoria-metrics-operator-crds ships the VTAgent CRD",
+      matchPackageNames: ["victoria-metrics-operator"],
+      allowedVersions: "<0.68.0",
+    },
+    {
       // postgresVersion is a key into pg-cluster's image map. A major PR fails CI until the map has the new
       // major, which is the intended gate before a pg_upgrade.
       description: "workload postgresVersion: major-only (patch/minor come from the pg-cluster image map)",
