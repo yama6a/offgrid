@@ -8,5 +8,5 @@ dependencies:
   - name: longhorn
     # Upstream deleted the 1.12.1 tarball, so a cold helm cache cannot build this chart. Longhorn cannot
     # downgrade, so take 1.12.2 when it ships.
-    version: "1.12.1"
+    version: "1.13.0"
     repository: https://charts.longhorn.io
