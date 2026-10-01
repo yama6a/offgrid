@@ -1,5 +1,6 @@
 # Helm renders each CRD as one line. Argo CD drops the last line of the output when its length is a multiple of 4096 bytes.
 # Helm sorts a Role after CRDs, so this empty Role keeps every CRD off the last line.
+# Remove it once Argo CD builds with k8s.io/apimachinery v0.38.0 or later. That release has the fix from https://github.com/kubernetes/kubernetes/pull/142527.
 apiVersion: rbac.authorization.k8s.io/v1
 kind: Role
 metadata:
