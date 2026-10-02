@@ -1,7 +1,7 @@
 # Reports the iGPU as the resource gpu.intel.com/i915. See docs/14_igpu.md.
 
 # renovate: datasource=docker depName=docker.io/intel/intel-gpu-plugin
-image: "intel/intel-gpu-plugin:0.37.0"
+image: "intel/intel-gpu-plugin:0.37.1"
 
 sharedDevNum: 2 # pods that may hold the iGPU at once. They share it by time slices with no isolation.
                 # With 2, a third consumer stays Pending.
