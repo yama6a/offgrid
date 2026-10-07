@@ -1,6 +1,6 @@
 app:
   name: sample-audit-logger
-  image: "ghcr.io/yama6a/pi5-k8s-sample-app:29"   # one image with three binaries: /manager, /signup, /auditor
+  image: "ghcr.io/yama6a/pi5-k8s-sample-app:30"   # one image with three binaries: /manager, /signup, /auditor
   command: ["/auditor"]
   replicas: 1
   resources:
