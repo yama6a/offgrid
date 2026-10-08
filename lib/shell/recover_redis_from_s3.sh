@@ -33,7 +33,7 @@ SEED_NS="redis-backup"                                     # the seed pod runs w
 SECRET_NAME="redis-backup-s3"                              # the sealed writer creds in SEED_NS
 # renovate: datasource=docker
 AWSCLI_IMAGE="public.ecr.aws/aws-cli/aws-cli:2.37.10" # init container of the seed pod that downloads from S3
-REBUILD_WAIT=600                                     # seconds to wait for Argo CD and the operator to rebuild an instance
+REBUILD_WAIT=600                                      # seconds to wait for Argo CD and the operator to rebuild an instance
 POLL=10
 EMPTY_RDB_BYTES=250 # an RDB with no keys is about 90 to 200 bytes. A smaller dump holds no data.
 
