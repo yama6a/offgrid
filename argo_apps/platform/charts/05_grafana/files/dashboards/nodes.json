@@ -1,7 +1,7 @@
 {
   "uid": "nodes",
   "title": "Nodes",
-  "description": "Every node at once, one row each: CPU and memory against capacity and pod requests, Longhorn disk use, and network split into node-to-node and outside traffic.",
+  "description": "A top row compares all nodes. Below it, one row per node shows CPU, memory, Longhorn disk use and network.",
   "tags": [
     "nodes",
     "longhorn"
@@ -55,13 +55,213 @@
   "panels": [
     {
       "type": "row",
+      "title": "All nodes",
+      "id": 10,
+      "gridPos": {
+        "h": 1,
+        "w": 24,
+        "x": 0,
+        "y": 0
+      },
+      "collapsed": false,
+      "panels": []
+    },
+    {
+      "type": "timeseries",
+      "title": "CPU used %",
+      "description": "Busy CPU time as a share of all logical CPUs on the node.",
+      "id": 7,
+      "gridPos": {
+        "h": 9,
+        "w": 8,
+        "x": 0,
+        "y": 1
+      },
+      "datasource": {
+        "type": "prometheus",
+        "uid": "VictoriaMetrics"
+      },
+      "targets": [
+        {
+          "refId": "A",
+          "datasource": {
+            "type": "prometheus",
+            "uid": "VictoriaMetrics"
+          },
+          "expr": "100 * sum by (nodename) (rate(node_cpu_seconds_total{mode!~\"idle|iowait|steal\"}[$__rate_interval]) * on (instance) group_left (nodename) max by (instance, nodename) (node_uname_info)) / count by (nodename) (node_cpu_seconds_total{mode=\"idle\"} * on (instance) group_left (nodename) max by (instance, nodename) (node_uname_info))",
+          "legendFormat": "{{nodename}}",
+          "range": true
+        }
+      ],
+      "fieldConfig": {
+        "defaults": {
+          "unit": "percent",
+          "min": 0,
+          "custom": {
+            "drawStyle": "line",
+            "lineWidth": 1,
+            "fillOpacity": 0,
+            "showPoints": "never",
+            "spanNulls": false,
+            "axisSoftMin": 0
+          },
+          "decimals": 0,
+          "max": 100
+        },
+        "overrides": []
+      },
+      "options": {
+        "tooltip": {
+          "mode": "multi",
+          "sort": "none"
+        },
+        "legend": {
+          "showLegend": true,
+          "displayMode": "list",
+          "placement": "bottom"
+        }
+      }
+    },
+    {
+      "type": "timeseries",
+      "title": "Memory used %",
+      "description": "MemTotal minus MemAvailable as a share of MemTotal. Includes the kernel, kubelet and containerd.",
+      "id": 8,
+      "gridPos": {
+        "h": 9,
+        "w": 8,
+        "x": 8,
+        "y": 1
+      },
+      "datasource": {
+        "type": "prometheus",
+        "uid": "VictoriaMetrics"
+      },
+      "targets": [
+        {
+          "refId": "A",
+          "datasource": {
+            "type": "prometheus",
+            "uid": "VictoriaMetrics"
+          },
+          "expr": "100 * (1 - node_memory_MemAvailable_bytes / node_memory_MemTotal_bytes) * on (instance) group_left (nodename) max by (instance, nodename) (node_uname_info)",
+          "legendFormat": "{{nodename}}",
+          "range": true
+        }
+      ],
+      "fieldConfig": {
+        "defaults": {
+          "unit": "percent",
+          "min": 0,
+          "custom": {
+            "drawStyle": "line",
+            "lineWidth": 1,
+            "fillOpacity": 0,
+            "showPoints": "never",
+            "spanNulls": false,
+            "axisSoftMin": 0
+          },
+          "decimals": 0,
+          "max": 100
+        },
+        "overrides": []
+      },
+      "options": {
+        "tooltip": {
+          "mode": "multi",
+          "sort": "none"
+        },
+        "legend": {
+          "showLegend": true,
+          "displayMode": "list",
+          "placement": "bottom"
+        }
+      }
+    },
+    {
+      "type": "timeseries",
+      "title": "Network",
+      "description": "Everything on the physical NIC, so node-to-node traffic counts with its WireGuard and VXLAN overhead. In is up, out is down.",
+      "id": 9,
+      "gridPos": {
+        "h": 9,
+        "w": 8,
+        "x": 16,
+        "y": 1
+      },
+      "datasource": {
+        "type": "prometheus",
+        "uid": "VictoriaMetrics"
+      },
+      "targets": [
+        {
+          "refId": "A",
+          "datasource": {
+            "type": "prometheus",
+            "uid": "VictoriaMetrics"
+          },
+          "expr": "sum by (nodename) (rate(node_network_receive_bytes_total{device=~\"(en|eth|wl)[a-z0-9]*\"}[$__rate_interval]) * on (instance) group_left (nodename) max by (instance, nodename) (node_uname_info))",
+          "legendFormat": "{{nodename}} in",
+          "range": true
+        },
+        {
+          "refId": "B",
+          "datasource": {
+            "type": "prometheus",
+            "uid": "VictoriaMetrics"
+          },
+          "expr": "sum by (nodename) (rate(node_network_transmit_bytes_total{device=~\"(en|eth|wl)[a-z0-9]*\"}[$__rate_interval]) * on (instance) group_left (nodename) max by (instance, nodename) (node_uname_info))",
+          "legendFormat": "{{nodename}} out",
+          "range": true
+        }
+      ],
+      "fieldConfig": {
+        "defaults": {
+          "unit": "Bps",
+          "custom": {
+            "drawStyle": "line",
+            "lineWidth": 1,
+            "fillOpacity": 0,
+            "showPoints": "never",
+            "spanNulls": false
+          }
+        },
+        "overrides": [
+          {
+            "matcher": {
+              "id": "byRegexp",
+              "options": "/ out$/"
+            },
+            "properties": [
+              {
+                "id": "custom.transform",
+                "value": "negative-Y"
+              }
+            ]
+          }
+        ]
+      },
+      "options": {
+        "tooltip": {
+          "mode": "multi",
+          "sort": "none"
+        },
+        "legend": {
+          "showLegend": true,
+          "displayMode": "list",
+          "placement": "bottom"
+        }
+      }
+    },
+    {
+      "type": "row",
       "title": "$node",
       "id": 1,
       "gridPos": {
         "h": 1,
         "w": 24,
         "x": 0,
-        "y": 0
+        "y": 10
       },
       "collapsed": false,
       "repeat": "node",
@@ -76,7 +276,7 @@
         "h": 7,
         "w": 12,
         "x": 0,
-        "y": 1
+        "y": 11
       },
       "datasource": {
         "type": "prometheus",
@@ -219,7 +419,7 @@
         "h": 7,
         "w": 12,
         "x": 12,
-        "y": 1
+        "y": 11
       },
       "datasource": {
         "type": "prometheus",
@@ -411,7 +611,7 @@
         "h": 7,
         "w": 4,
         "x": 0,
-        "y": 8
+        "y": 18
       },
       "datasource": {
         "type": "prometheus",
@@ -463,7 +663,7 @@
         "h": 7,
         "w": 10,
         "x": 4,
-        "y": 8
+        "y": 18
       },
       "datasource": {
         "type": "prometheus",
@@ -605,7 +805,7 @@
         "h": 7,
         "w": 10,
         "x": 14,
-        "y": 8
+        "y": 18
       },
       "datasource": {
         "type": "prometheus",

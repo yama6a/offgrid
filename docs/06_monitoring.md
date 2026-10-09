@@ -111,8 +111,8 @@ zone type in `node-hardware.yaml`.
   ones stay empty here. So this repo writes its own instead of patching upstream ones, which a chart bump would
   undo.
 - `persistent-volumes` replaces the stack's one-PVC-at-a-time dashboard with all 13 volumes on one axis.
-- `nodes` replaces the stack's one-node-at-a-time view with one row per node. A hidden variable repeats the row,
-  so a new node appears without an edit.
+- `nodes` replaces the stack's one-node-at-a-time view. A top row compares all nodes, then one row per node
+  follows. A hidden variable repeats that row, so a new node appears without an edit.
 - `cnpg` is a fork of the upstream dashboard, not a rewrite. Its 66 panels are too many to re-author for a few
   broken queries. A chart bump needs the fork redone, see the runbook.
 
