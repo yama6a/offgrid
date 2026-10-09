@@ -73,7 +73,7 @@
       "description": "Busy cores against requested cores. The dashed line is the logical CPU count, which counts each hyperthread as one CPU.",
       "id": 2,
       "gridPos": {
-        "h": 9,
+        "h": 7,
         "w": 12,
         "x": 0,
         "y": 1
@@ -202,7 +202,7 @@
         "legend": {
           "showLegend": true,
           "displayMode": "table",
-          "placement": "bottom",
+          "placement": "right",
           "calcs": [
             "lastNotNull",
             "max"
@@ -216,7 +216,7 @@
       "description": "Pods is the sum of all container working sets. Node is MemTotal minus MemAvailable, so it adds the kernel, kubelet and containerd. Limits counts only pods that set a memory limit.",
       "id": 3,
       "gridPos": {
-        "h": 9,
+        "h": 7,
         "w": 12,
         "x": 12,
         "y": 1
@@ -394,7 +394,7 @@
         "legend": {
           "showLegend": true,
           "displayMode": "table",
-          "placement": "bottom",
+          "placement": "right",
           "calcs": [
             "lastNotNull",
             "max"
@@ -408,10 +408,10 @@
       "description": "Longhorn volume replicas stored on this node's disks.",
       "id": 4,
       "gridPos": {
-        "h": 9,
+        "h": 7,
         "w": 4,
         "x": 0,
-        "y": 10
+        "y": 8
       },
       "datasource": {
         "type": "prometheus",
@@ -460,10 +460,10 @@
       "description": "Total is the capacity of this node's Longhorn disks. Allocated is the full provisioned size of every replica on them. Used is what the disk filesystem holds.",
       "id": 5,
       "gridPos": {
-        "h": 9,
+        "h": 7,
         "w": 10,
         "x": 4,
-        "y": 10
+        "y": 8
       },
       "datasource": {
         "type": "prometheus",
@@ -588,7 +588,7 @@
         "legend": {
           "showLegend": true,
           "displayMode": "table",
-          "placement": "bottom",
+          "placement": "right",
           "calcs": [
             "lastNotNull",
             "max"
@@ -602,10 +602,10 @@
       "description": "In is up, out is down. Node-to-node is pod traffic on cilium_vxlan. Outside is the physical NIC minus the WireGuard tunnel, which approximates traffic that leaves the cluster.",
       "id": 6,
       "gridPos": {
-        "h": 9,
+        "h": 7,
         "w": 10,
         "x": 14,
-        "y": 10
+        "y": 8
       },
       "datasource": {
         "type": "prometheus",
@@ -702,7 +702,7 @@
             },
             "properties": [
               {
-                "id": "custom.transformY",
+                "id": "custom.transform",
                 "value": "negative-Y"
               }
             ]
@@ -777,7 +777,7 @@
         "legend": {
           "showLegend": true,
           "displayMode": "table",
-          "placement": "bottom",
+          "placement": "right",
           "calcs": [
             "lastNotNull",
             "max"
