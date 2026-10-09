@@ -107,9 +107,12 @@ zone type in `node-hardware.yaml`.
 - Upstream charts ship dashboards as `grafana_dashboard` ConfigMaps. The Grafana sidecar collects them from every
   namespace.
 - This repo's own dashboards are JSON files in `05_grafana/files/dashboards/`: `hubble`, `ingress-http`,
-  `persistent-volumes` and `cnpg`. An upstream dashboard assumes upstream's config, and several Cilium ones stay
-  empty here. So this repo writes its own instead of patching upstream ones, which a chart bump would undo.
+  `persistent-volumes`, `nodes` and `cnpg`. An upstream dashboard assumes upstream's config, and several Cilium
+  ones stay empty here. So this repo writes its own instead of patching upstream ones, which a chart bump would
+  undo.
 - `persistent-volumes` replaces the stack's one-PVC-at-a-time dashboard with all 13 volumes on one axis.
+- `nodes` replaces the stack's one-node-at-a-time view with one row per node. A hidden variable repeats the row,
+  so a new node appears without an edit.
 - `cnpg` is a fork of the upstream dashboard, not a rewrite. Its 66 panels are too many to re-author for a few
   broken queries. A chart bump needs the fork redone, see the runbook.
 
