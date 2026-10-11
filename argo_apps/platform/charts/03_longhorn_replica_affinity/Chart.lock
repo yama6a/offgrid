@@ -1,6 +1,6 @@
 dependencies:
 - name: longhorn-replica-affinity
   repository: oci://ghcr.io/yama6a/charts
-  version: 0.3.25
-digest: sha256:168a692b70b0ca41d5822427d274bf46061cb79509bed35207af7f1a07386f54
+  version: 0.3.26
+digest: sha256:8fb3df6ab7a741be4a61fe21c32d01a5cd190a345f8628b67b1db647bdfc5f9a
 generated: "1970-01-01T00:00:00Z"
