@@ -2,7 +2,7 @@
 # To add a kind, append it to KINDS in templates/configmap.yaml.
 image:
   repository: python
-  tag: "3.14-slim" # renovate: datasource=docker depName=python
+  tag: "3.15-slim" # renovate: datasource=docker depName=python
 intervalSeconds: 60 # seconds between scans
 port: 9100 # metrics port
 resources:
