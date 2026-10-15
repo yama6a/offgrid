@@ -18,9 +18,12 @@ concurrency:
 permissions:
   contents: read
 
+# A deploy/* PR comes from the deploy-gitops workflow and only bumps a quoted image tag. A skipped job
+# still passes branch protection, so the PR merges without spending runner minutes.
 jobs:
   shell:
     name: shell
+    if: ${{ !startsWith(github.head_ref, 'deploy/') }}
     runs-on: ubuntu-26.04-arm
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
@@ -28,6 +31,7 @@ jobs:
 
   yaml:
     name: yaml
+    if: ${{ !startsWith(github.head_ref, 'deploy/') }}
     runs-on: ubuntu-26.04-arm
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
@@ -35,6 +39,7 @@ jobs:
 
   renovate-config:
     name: renovate-config
+    if: ${{ !startsWith(github.head_ref, 'deploy/') }}
     runs-on: ubuntu-26.04-arm
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
@@ -45,6 +50,7 @@ jobs:
 
   helm:
     name: helm
+    if: ${{ !startsWith(github.head_ref, 'deploy/') }}
     runs-on: ubuntu-26.04-arm
     env:
       JOBS: 8 # more workers than cores, because the work is part network
@@ -138,6 +144,7 @@ jobs:
   # render on a missing required value, so it needs a fixture before lint or template can run.
   chart-tests:
     name: chart-tests
+    if: ${{ !startsWith(github.head_ref, 'deploy/') }}
     runs-on: ubuntu-26.04-arm
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
