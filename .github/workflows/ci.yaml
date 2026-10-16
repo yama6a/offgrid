@@ -58,7 +58,7 @@ jobs:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
       - uses: azure/setup-helm@9bc31f4ebc9c6b171d7bfbaa5d006ae7abdb4310 # v5.0.1
         with:
-          version: v4.3.0 # pinned so the gate matches the maintainer's local helm
+          version: v4.3.1 # pinned so the gate matches the maintainer's local helm
       # Install only. The render step below passes it a file list and needs only the flags.
       - uses: yama6a/gha/.github/actions/kubeconform@v2
         with:
