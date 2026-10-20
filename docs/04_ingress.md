@@ -161,8 +161,8 @@ other registrable domain gets its own policy through `extraDomains`.
 
 ### Session length
 
-A session lasts `sessionTTL`, 24h, not the 1h of the Google id token. Envoy renews the id token with a refresh token.
-Google issues one only with `access_type=offline` and `prompt=consent`, so the policy pins both. The cost is one
+A session lasts `sessionTTL`, 30 days, not the 1h of the Google id token. Envoy renews the id token with a refresh
+token. Google issues one only with `access_type=offline` and `prompt=consent`, so the policy pins both. The cost is one
 confirm click per login.
 
 ### Workloads configure no SSO
