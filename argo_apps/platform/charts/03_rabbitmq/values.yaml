@@ -49,7 +49,7 @@ name: rabbitmq
 replicas: 3
 
 # Keep the version the operator subchart is tested with.
-image: rabbitmq:4.3.6-management-alpine
+image: rabbitmq:4.4.0-management-alpine
 
 # RabbitMQ throttles publishers only near its memory limit. With a request below the limit, the scheduler
 # overpacks the node and the kernel OOM-kills the broker first. So request equals limit, whatever KRR says.
