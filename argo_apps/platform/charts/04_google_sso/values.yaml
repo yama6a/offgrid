@@ -9,7 +9,7 @@ oidc:
   idTokenCookie: "google-id-token" # cookie that holds the Google id token
   logoutPath: "/oauth2/sign_out"   # not Envoy's default /logout, so backends keep their own /logout
   refreshToken: true               # renew silently, so a session outlives Google's 1h id token
-  sessionTTL: "24h"                # session length. Google refresh tokens never expire, so this is the only cap.
+  sessionTTL: "720h"               # session length. Google refresh tokens never expire, so this is the only cap.
   csrfTokenTTL: "5m"               # short, so cookies from abandoned logins expire fast
   # Sec-Fetch-Mode values that get a 401 instead of a 302 to Google. Empty disables it. Without it, a logged-out
   # SPA leaks cookies until Envoy resets the stream with ERR_HTTP2_PROTOCOL_ERROR.
