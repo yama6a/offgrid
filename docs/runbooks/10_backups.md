@@ -100,7 +100,7 @@ Gotchas:
 
    ```sh
    kubectl -n longhorn-system get backuptargets.longhorn.io default -o jsonpath='{.status.available}{"\n"}'  # true
-   kubectl -n longhorn-system get recurringjobs.longhorn.io   # backup-daily, backup-weekly, filesystem-trim-weekly
+   kubectl -n longhorn-system get recurringjobs.longhorn.io   # backup-daily, backup-weekly, filesystem-trim-daily
    ```
 
 ## Turn on VictoriaMetrics and VictoriaLogs backups
