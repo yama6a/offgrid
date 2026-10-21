@@ -67,7 +67,7 @@ S3 backups are in [10_backups.md](10_backups.md).
 - So it suits a queue that its consumers keep near-empty. A database that grows would cross 1GbE in full on every
   failover.
 
-A weekly trim job returns freed blocks, so thin volumes stay thin. It replaces the `discard` mount option, which would
+A daily trim job returns freed blocks, so thin volumes stay thin. It replaces the `discard` mount option, which would
 put reclaim inline in the write path of a consumer NVMe whose tail latency is already the weak point.
 
 ### Why there is no plain Retain class

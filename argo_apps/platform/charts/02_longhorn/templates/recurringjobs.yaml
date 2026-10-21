@@ -6,10 +6,10 @@ No snapshot job, because local snapshots would fill the small NVMe.
 apiVersion: longhorn.io/v1beta2
 kind: RecurringJob
 metadata:
-  name: filesystem-trim-weekly
+  name: filesystem-trim-daily
   namespace: {{ .Release.Namespace }}
 spec:
-  cron: "0 5 * * 0"   # Sunday 05:00 UTC, after the backup jobs
+  cron: "0 5 * * *"   # 05:00 UTC, after the backup jobs
   task: filesystem-trim
   # Longhorn puts every volume with no recurring job of its own in `default`. A class with its own selector
   # names `trim` instead. Trim returns freed blocks to the SSD, so a thin volume stays thin.

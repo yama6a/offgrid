@@ -36,7 +36,7 @@ empty directory.
    kubectl -n longhorn-system get pods                            # manager on every node, and CSI, Running
    kubectl -n longhorn-system get nodes.longhorn.io -o wide       # every disk Schedulable
    kubectl get storageclass                                       # the three longhorn-r2-* classes, no default
-   kubectl -n longhorn-system get recurringjob                    # filesystem-trim-weekly, and the backup jobs
+   kubectl -n longhorn-system get recurringjob                    # filesystem-trim-daily, and the backup jobs
    ```
 
 2. Optional smoke test: apply a 1Gi PVC on `longhorn-r2-ephemeral` and a pod that mounts it. Expect the PVC

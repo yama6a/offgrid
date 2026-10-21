@@ -265,7 +265,7 @@ groups:
                 - type: query
                   evaluator: {type: gt, params: [0]}
       # Counts missed runs, not wall-clock time: next minus last schedule is the period. So one rule fits a
-      # */7 crawler and a weekly trim. `last_successful_time > 0` stays quiet before the first run.
+      # */7 crawler and a weekly backup. `last_successful_time > 0` stays quiet before the first run.
       - uid: cronjob-stale
         title: CronJob has no recent success
         condition: C
