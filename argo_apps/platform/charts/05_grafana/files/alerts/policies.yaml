@@ -8,3 +8,12 @@ policies:
     group_interval: 5m
     # 8760h is a year, so a firing alert pushes once. The field has no off value, and empty means the 4h default.
     repeat_interval: 8760h
+    routes:
+      # gha-workflow-failed fires per workflow, so one broken shared workflow can fail dozens of repos at
+      # once. Grouping by alertname sends them as one notification with a count and the repo names.
+      - receiver: ntfy
+        object_matchers:
+          - ['service', '=', 'gha']
+        group_by: ['alertname']
+        # Waits one full 5m evaluation, so the count covers every failed workflow, not only the first.
+        group_wait: 5m

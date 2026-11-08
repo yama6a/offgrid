@@ -184,6 +184,22 @@ Service. The Android app subscribes over the public edge `ntfy.ops.example.com`.
 - The `grafana` ntfy user has a tier. Without one, ntfy rejects some concurrent alerts with 403.
   [`06_ntfy_auth.sh`](../lib/shell/06_ntfy_auth.sh) explains why.
 
+### GitHub Actions failures
+
+`gha-status-exporter` polls the GitHub API every 5 minutes for every non-fork, non-archived repo of
+`GHA_STATUS_OWNER`, a user or an org. It exports one series per repo and workflow on the default branch. A PodMonitor
+lets vmagent scrape it.
+
+- `gha-workflow-failed` fires while the latest finished run of a workflow ended in `failure`, `timed_out` or
+  `startup_failure`. `cancelled`, `neutral`, `skipped`, `stale` and `action_required` are skipped, so the run before
+  decides. It resolves when the next run passes. A queued or running run never counts.
+- Several failures at once arrive as one push with a count and the repo names. The `service: gha` route in
+  `policies.yaml` groups them.
+- `gha-status-scan-failing` fires when no scan succeeded for 30 minutes, for example after the token expired.
+- The token is a fine-grained PAT with Actions read and Metadata read on all repos, and no expiry. It lives in
+  `.env` as `GHA_STATUS_TOKEN_SECRET`, and `make configure-gha-status` seals it.
+- An empty `GHA_STATUS_OWNER` deploys nothing.
+
 ### Watching the alert path
 
 The chain is Grafana to ntfy to phone. If it breaks, the part that would tell you is the part that broke. Three

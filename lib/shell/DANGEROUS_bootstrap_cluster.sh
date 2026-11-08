@@ -15,7 +15,7 @@ cd "$REPO_ROOT" || exit 1
 
 # ---- knobs ----
 STEP=0
-STEP_TOTAL=18           # the number of step and run_step calls below. Change it when you add or remove a step.
+STEP_TOTAL=19           # the number of step and run_step calls below. Change it when you add or remove a step.
 STEP_DIR="$SCRIPT_DIR"  # the step scripts sit next to this one
 INGRESS_GW_NS="gateway" # namespace of the shared Gateway
 INGRESS_HOSTS=""        # space-separated hosts to check. Empty means all hosts on the Gateways.
@@ -114,6 +114,16 @@ reseal_cloudflare_token() {
   fi
 }
 
+# Sealing needs the live controller. An empty token means the exporter pod cannot start, so it stays off with no owner.
+seal_gha_status_token() {
+  if [ -n "$GHA_STATUS_TOKEN_SECRET" ]; then
+    run_step "seal the GitHub token for gha-status-exporter" "$STEP_DIR" 05_gha_status_token.sh best-effort \
+      "05_gha_status_token did not complete. Run 'make configure-gha-status', then commit and push."
+  else
+    step "seal the gha-status-exporter GitHub token: skipped, the .env token is empty"
+  fi
+}
+
 # 02b generates its own webhook secret, so it always runs. The GitHub side needs public DNS and the prod cert,
 # so it stays a manual step. 02b prints the setup.
 seal_argocd_webhook() {
@@ -206,11 +216,11 @@ ArgoCD is up and reconciles every app from git. Watch it:
   kubectl get applications -n argocd -w
 
 Notes:
-  - If step 17 succeeded, the new sealed-secrets master key is backed up to ${CLUSTER_DIR}/sealed-secrets-master.key.
+  - If step 18 succeeded, the new sealed-secrets master key is backed up to ${CLUSTER_DIR}/sealed-secrets-master.key.
     Keep a copy off the cluster. A later rebuild restores from it.
   - If the SSO seal in step 6 was skipped or failed, set the .env creds, run 04_google_sso.sh </dev/null,
     then commit and push.
-  - If NTFY_PHONE_PASSWORD_SECRET was set, step 16 set up ntfy phone alerts. On your phone, add server
+  - If NTFY_PHONE_PASSWORD_SECRET was set, step 17 set up ntfy phone alerts. On your phone, add server
     https://ntfy.${OPS_DOMAIN}, log in as 'phone' and subscribe to 'cluster-alerts'. If the step was skipped or
     failed, set the .env password, run 'make configure-ntfy-auth', commit and push, and restart Grafana.
   - The ArgoCD git poll is now a slow fallback for the webhook. Finish the GitHub webhook: paste
@@ -235,6 +245,7 @@ run_step "install ArgoCD, which delivers the rest from git" "$STEP_DIR" 02a_argo
 wait_for_sealed_secrets_controller
 reseal_google_sso
 reseal_cloudflare_token
+seal_gha_status_token
 seal_argocd_webhook
 enable_s3_backups
 commit_and_push_sealed_secrets

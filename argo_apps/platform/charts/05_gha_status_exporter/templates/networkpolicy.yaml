@@ -1,0 +1,34 @@
+{{- $ghs := index .Values "gha-status-exporter" -}}
+{{- if $ghs.owner }}
+apiVersion: cilium.io/v2
+kind: CiliumNetworkPolicy
+metadata:
+  name: gha-status-exporter
+  namespace: {{ .Release.Namespace }}
+spec:
+  endpointSelector:
+    matchLabels:
+      app.kubernetes.io/name: gha-status-exporter
+  ingress:
+    - fromEndpoints:
+        - matchLabels:
+            k8s:io.kubernetes.pod.namespace: monitoring
+            app.kubernetes.io/name: vmagent
+      toPorts:
+        - ports:
+            - {port: "8080", protocol: TCP}
+  egress:
+    - toEndpoints:
+        - matchLabels:
+            k8s:io.kubernetes.pod.namespace: kube-system
+            k8s-app: kube-dns
+      toPorts:
+        - ports:
+            - {port: "53", protocol: UDP}
+            - {port: "53", protocol: TCP}
+    # api.github.com. The pod never calls the Kubernetes API.
+    - toEntities: [world]
+      toPorts:
+        - ports:
+            - {port: "443", protocol: TCP}
+{{- end }}
