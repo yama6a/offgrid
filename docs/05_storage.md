@@ -55,7 +55,7 @@ Chart: `argo_apps/platform/charts/02_longhorn/`.
 |---|---|---|---|---|
 | `longhorn-r2-ephemeral` | Delete | disabled | none | the general-purpose tier |
 | `longhorn-r2-ephemeral-local` | Delete | best-effort | none | small volumes where write latency matters: RabbitMQ |
-| `longhorn-r2-retained-with-backups` | Retain | disabled | daily and weekly | data with no app-level backup (sqlite, config). No consumer yet |
+| `longhorn-r2-retained-with-backups` | Retain | disabled | daily and weekly | data with no app-level backup (sqlite, config) |
 
 S3 backups are in [10_backups.md](10_backups.md).
 

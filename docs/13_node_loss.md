@@ -84,8 +84,7 @@ The reasons sit next to each setting, in `lib/helm/pg-cluster/templates/cluster.
 ## RWX volumes
 
 An RWX volume's consumers mount NFS from a share-manager pod. If its node dies, every consumer breaks until
-Longhorn moves the share-manager. `rwxVolumeFastFailover` makes that seconds, not a pod eviction timeout. This
-path is not measured yet, because no RWX volume has a consumer.
+Longhorn moves the share-manager. `rwxVolumeFastFailover` makes that seconds, not a pod eviction timeout.
 
 ## What self-heals
 

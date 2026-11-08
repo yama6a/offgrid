@@ -52,7 +52,7 @@ reloads without a restart, or when a restart costs more than stale config.
 | `cilium`, `cilium-operator` | they restart themselves on a config change. Without the opt-out, the Hubble cert CronJob would restart the CNI on every node every few months |
 | `cilium-envoy` | the L7 proxy on each node. A restart drops proxied connections |
 | `envoy-eg-*` | `mergeGateways` puts all cluster ingress in one pod |
-| `longhorn-manager` | the volume data path. Nothing it mounts changes today, so the opt-out is a precaution |
+| `longhorn-manager` | the volume data path. A changed Secret or ConfigMap must never restart it |
 | `cnpg-operator` | its one mounted Secret is a webhook cert it rotates itself. A restart at the wrong moment adds about 33s to a switchover |
 | `vmagent` | the operator rewrites its scrape config on every target change, and vmagent reloads it without a restart |
 | `vmsingle`, `vlsingle` | the metrics and log stores, each on a single RWO volume |
