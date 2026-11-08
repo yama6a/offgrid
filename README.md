@@ -60,6 +60,7 @@ is a thin wrapper chart that pins its upstream version in its own `Chart.yaml`.
 | Observability     | Grafana                        | Dashboards and alerting, provisioned as code. No persistent storage.                                         |
 | Alerting          | ntfy                           | Self-hosted mobile push. No email.                                                                           |
 | Observability     | blackbox-exporter              | Probes every ingress host by its public name. It catches a broken edge before users send traffic.            |
+| Alerting          | gha-status-exporter            | Polls GitHub Actions. One push when a workflow fails on the default branch of a watched repo.                |
 | Workloads         | sample-user-manager and 2 more | Demo app with Postgres, Redis, messaging, and open and SSO ingress. The template for real workloads.         |
 
 Five shared charts under `lib/helm/` are `file://` dependencies of other charts. All are `type: application`:
@@ -196,6 +197,7 @@ list of SSO-gated hosts is policy, not config, so it lives in `argo_apps/platfor
 | Rightsize requests          | `make krr`                                                             |
 | Rotate the SSO client       | `make configure-sso`                                                   |
 | Re-seed ntfy auth           | `make configure-ntfy-auth`                                             |
+| Rotate the GitHub Actions token | `make configure-gha-status`                                      |
 | Back up the sealing key     | `make backup-secrets-key`                                              |
 | Redeliver the whole platform| `make rebuild-cluster`                                                 |
 | Credentials and login URLs  | `make view-credentials`                                                |

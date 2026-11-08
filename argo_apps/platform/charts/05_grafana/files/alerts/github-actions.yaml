@@ -1,0 +1,90 @@
+apiVersion: 1
+groups:
+  # service: gha routes to the gha policy in policies.yaml, which sends all firing workflows as one push.
+  - orgId: 1
+    name: github-actions
+    folder: offgrid
+    interval: 5m
+    rules:
+      - uid: gha-workflow-failed
+        title: GitHub Actions workflow failed
+        condition: C
+        # The value changes only when a run finishes, so it does not flap.
+        for: 0s
+        labels: {severity: warning, service: gha}
+        annotations:
+          summary: 'GitHub Actions: {{ $labels.repo }} {{ $labels.workflow_name }} failed on {{ $labels.branch }}'
+          description: |
+            - the latest finished run of this workflow failed
+            - runs: https://github.com/{{ $labels.owner }}/{{ $labels.repo }}/actions/workflows/{{ $labels.workflow }}?query=branch%3A{{ $labels.branch }}
+            - after a flake: gh run list -R {{ $labels.owner }}/{{ $labels.repo }} -w {{ $labels.workflow }} -b {{ $labels.branch }}, then gh run rerun <id> --failed
+            - resolves when the next run passes, or when the workflow is disabled
+          groupSummary: 'GitHub Actions: %d workflows failed'
+          groupItem: '{{ $labels.repo }}/{{ $labels.workflow }}'
+          groupDescription: |
+            - the latest finished run of each workflow below failed
+            - resolves when the next run passes, or when the workflow is disabled
+            - repo and workflow:
+        noDataState: OK
+        execErrState: KeepLast
+        data:
+          - refId: A
+            relativeTimeRange: {from: 600, to: 0}
+            datasourceUid: VictoriaMetrics
+            model:
+              refId: A
+              instant: true
+              expr: 'max by (owner, repo, branch, workflow, workflow_name) (gha_workflow_last_run_failed) > 0'
+          - refId: B
+            relativeTimeRange: {from: 600, to: 0}
+            datasourceUid: __expr__
+            model: {refId: B, type: reduce, expression: A, reducer: last, datasource: {type: __expr__, uid: __expr__}}
+          - refId: C
+            relativeTimeRange: {from: 600, to: 0}
+            datasourceUid: __expr__
+            model:
+              refId: C
+              type: threshold
+              expression: B
+              datasource: {type: __expr__, uid: __expr__}
+              conditions:
+                - type: query
+                  evaluator: {type: gt, params: [0]}
+      # Fires on a bad token from the first scan, because gha_exporter_scan_success starts at 0 and stays there.
+      # noDataState is OK, so a fork without the exporter and a cluster with no owner set stay quiet.
+      # A dead exporter is caught by the pod and workload alerts.
+      - uid: gha-status-scan-failing
+        title: GitHub Actions scan failing
+        condition: C
+        for: 5m
+        labels: {severity: warning}
+        annotations:
+          summary: 'gha-status-exporter: no successful GitHub scan for 30 minutes'
+          description: |
+            - workflow failures are not being reported
+            - reason: sum by (reason) (increase(gha_exporter_scan_errors_total[1h]))
+            - unauthorized usually means the token was revoked or expired
+            - logs: kubectl -n gha-status-exporter logs deploy/gha-status-exporter
+            - to rotate: create a new token, put it in .env, run make configure-gha-status, commit and push
+        noDataState: OK
+        execErrState: KeepLast
+        data:
+          - refId: A
+            relativeTimeRange: {from: 1800, to: 0}
+            datasourceUid: VictoriaMetrics
+            model: {refId: A, instant: true, expr: 'max(max_over_time(gha_exporter_scan_success[30m]))'}
+          - refId: B
+            relativeTimeRange: {from: 1800, to: 0}
+            datasourceUid: __expr__
+            model: {refId: B, type: reduce, expression: A, reducer: last, datasource: {type: __expr__, uid: __expr__}}
+          - refId: C
+            relativeTimeRange: {from: 1800, to: 0}
+            datasourceUid: __expr__
+            model:
+              refId: C
+              type: threshold
+              expression: B
+              datasource: {type: __expr__, uid: __expr__}
+              conditions:
+                - type: query
+                  evaluator: {type: lt, params: [1]}

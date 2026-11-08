@@ -1,0 +1,12 @@
+# See docs/06_monitoring.md.
+
+gha-status-exporter:
+  owner: "" # written by 04_values.sh from GHA_STATUS_OWNER in .env. Empty renders nothing
+
+  # 05_gha_status_token.sh reads both and seals the token under this name and key.
+  token:
+    secretName: gha-status-exporter-token
+    secretKey: GITHUB_TOKEN
+
+  podMonitor:
+    enabled: true

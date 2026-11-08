@@ -38,6 +38,10 @@ configure-values: ## 04: write every per-deployment value from .env into the cha
 configure-cloudflare-token: ## 04: seal the Cloudflare DNS-01 API token into cert-manager. Needs the sealed-secrets controller and the .env token.
 	bash lib/shell/04_cloudflare_token.sh
 
+.PHONY: configure-gha-status
+configure-gha-status: ## 05: seal the GitHub token for gha-status-exporter. Needs the sealed-secrets controller and the .env token.
+	bash lib/shell/05_gha_status_token.sh
+
 .PHONY: configure-sso
 configure-sso: ## 04: write the SSO client ID and seal the OAuth client secret. Needs the .env creds.
 	bash lib/shell/04_google_sso.sh

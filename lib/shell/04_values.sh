@@ -17,6 +17,7 @@ VM_VALUES="${PLATFORM_CHARTS}/05_victoria_metrics_k8s_stack/values.yaml"
 GRAFANA_VALUES="${PLATFORM_CHARTS}/05_grafana/values.yaml"
 NTFY_VALUES="${PLATFORM_CHARTS}/05_ntfy/values.yaml"
 BB_VALUES="${PLATFORM_CHARTS}/05_blackbox_exporter/values.yaml"
+GHS_VALUES="${PLATFORM_CHARTS}/05_gha_status_exporter/values.yaml"
 PI_VALUES="${PLATFORM_CHARTS}/06_platform_ingress/values.yaml"
 WL_VALUES="${WORKLOAD_CHARTS}/sample_user_manager/values.yaml"
 CILIUM_VALUES="${PLATFORM_CHARTS}/00_cilium/values.yaml"
@@ -53,7 +54,7 @@ check_prerequisites() {
   assert_api
   [ -f "${GW_CHART}/Chart.yaml" ] || die "no chart at ${GW_CHART}. Expected argo_apps/platform/charts/03_gateway."
   for f in "$GW_VALUES" "$LIB_VALUES" "$SSO_VALUES" "$EG_VALUES" "$VM_VALUES" "$GRAFANA_VALUES" "$NTFY_VALUES" \
-    "$BB_VALUES" "$PI_VALUES" "$WL_VALUES" "$CILIUM_VALUES" "$MS_VALUES" "$LH_VALUES" "${REPO_URL_FILES[@]}"; do
+    "$BB_VALUES" "$GHS_VALUES" "$PI_VALUES" "$WL_VALUES" "$CILIUM_VALUES" "$MS_VALUES" "$LH_VALUES" "${REPO_URL_FILES[@]}"; do
     [ -f "$f" ] || die "missing ${f}"
   done
   [ -n "${LE_EMAIL}" ] || die "LE_EMAIL is empty. Set it in .env."
@@ -187,6 +188,12 @@ read_control_plane_ips() {
   done
 }
 
+# Empty is valid. The exporter chart then renders nothing.
+write_gha_status_owner() {
+  say "writing GHA_STATUS_OWNER to the gha-status-exporter values (${GHA_STATUS_OWNER:-none, exporter off})"
+  ys_set "$GHS_VALUES" "\"${GHA_STATUS_OWNER}\"" gha-status-exporter owner
+}
+
 write_ingress_lb_ip() {
   say "writing INGRESS_LB_IP to the envoy-gateway values (${INGRESS_LB_IP})"
   ys_set "$EG_VALUES" "\"${INGRESS_LB_IP}\"" envoyProxy loadBalancerIP
@@ -211,6 +218,7 @@ verify_writes() {
   _eq "workload domains" "$APP_DOMAIN" "$(yq -r '[.ingress.ingresses[].domain] | unique | join(" ")' "$WL_VALUES")"
   _eq "blackbox sso" "$BB_SSO" "$(yq -r '.probes.sso.targets | join(" ")' "$BB_VALUES")"
   _eq "blackbox open" "${BB_OPEN_URLS# }" "$(yq -r '.probes.open.targets | join(" ")' "$BB_VALUES")"
+  _eq "gha-status-exporter owner" "$GHA_STATUS_OWNER" "$(yq -r '."gha-status-exporter".owner' "$GHS_VALUES")"
   _eq "envoy loadBalancerIP" "$INGRESS_LB_IP" "$(yq -r '.envoyProxy.loadBalancerIP' "$EG_VALUES")"
   for k in kubeControllerManager kubeScheduler kubeEtcd; do
     _eq "vm ${k} endpoints" "$CP_IPS" "$(yq -r ".\"victoria-metrics-k8s-stack\".${k}.endpoints | join(\" \")" "$VM_VALUES")"
@@ -268,6 +276,7 @@ write_public_hosts
 build_probe_lists
 read_control_plane_ips
 write_ingress_lb_ip
+write_gha_status_owner
 verify_writes
 
 summary
