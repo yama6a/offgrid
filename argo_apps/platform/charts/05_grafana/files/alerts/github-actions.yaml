@@ -23,8 +23,6 @@ groups:
           groupItem: '{{ $labels.repo }}/{{ $labels.workflow }}'
           groupDescription: |
             - the latest finished run of each workflow below failed
-            - runs: https://github.com/{{ $labels.owner }}/{{ $labels.repo }}/actions/workflows/{{ $labels.workflow }}?query=branch%3A{{ $labels.branch }}
-            - after a flake: gh run list -R {{ $labels.owner }}/{{ $labels.repo }} -w {{ $labels.workflow }} -b {{ $labels.branch }}, then gh run rerun <id> --failed
             - resolves when the next run passes, or when the workflow is disabled
             - repo and workflow:
         noDataState: OK
