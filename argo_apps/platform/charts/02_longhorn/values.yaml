@@ -38,7 +38,7 @@ longhorn:
   defaultBackupStore:
     backupTarget: ""
     backupTargetCredentialSecret: "longhorn-backup-s3" # sealed by 10d_longhorn_backup.sh
-    pollInterval: 300 # seconds. A rebuilt cluster finds existing backups within this time.
+    pollInterval: 3600 # seconds between full S3 syncs, each about 3 LIST requests per volume. Own backups need none
   persistence:
     # Each workload names a class, so a PVC without one stays Pending instead of landing here by accident.
     defaultClass: false

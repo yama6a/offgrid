@@ -174,7 +174,7 @@ your workload at the restored PVC.
 After a full rebuild:
 
 1. Run `make restore-secrets-key`, so `longhorn-backup-s3` decrypts.
-2. Let the platform sync. Within the `pollInterval`, Longhorn finds the `BackupVolume`s in S3.
+2. Let the platform sync. Longhorn syncs a new backup target at once and finds the `BackupVolume`s in S3.
 3. Run `make restore-longhorn` for each volume you want back.
 
 ## Restore VictoriaMetrics or VictoriaLogs
