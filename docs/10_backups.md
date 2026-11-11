@@ -82,10 +82,9 @@ one schedule for all instances, and alerts per Job, not per instance. Details ar
 ## Longhorn volumes
 
 This is for workloads that keep state on a Longhorn PVC and have no backup of their own: sqlite files, config
-directories. A workload opts in by its StorageClass. Only `longhorn-r2-retained-with-backups` backs up. No
-workload uses it yet.
+directories. A workload opts in by its StorageClass. Only `longhorn-r2-retained-with-backups` backs up.
 
-The other stateful apps use a class without backups, on purpose:
+These stores use a class without backups, on purpose:
 
 | Store | Covered by |
 |---|---|
@@ -93,7 +92,6 @@ The other stateful apps use a class without backups, on purpose:
 | Redis (durable) | RDB dumps |
 | VictoriaMetrics, VictoriaLogs | daily exports |
 | RabbitMQ | nothing. The data is messages in flight, and the quorum gives HA |
-| ntfy | nothing yet. It is the first candidate for the backed-up class |
 
 A logical dump is consistent for the app, and for a large, busy store it costs much less than a block backup.
 
