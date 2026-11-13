@@ -6,5 +6,5 @@ version: 0.1.0 # nothing publishes this chart, so never bump it
 
 dependencies:
   - name: gha-status-exporter
-    version: "0.2.4"
+    version: "0.2.5"
     repository: "oci://ghcr.io/yama6a/charts"
