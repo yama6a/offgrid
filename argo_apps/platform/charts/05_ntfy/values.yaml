@@ -1,4 +1,4 @@
-image: "binwiederhier/ntfy:v2.37.2@sha256:1875ddcf815c8a3c981d6d78c67a93452d0abba79b1ab9520b1f5f5238902bd7"
+image: "binwiederhier/ntfy:v2.38.0@sha256:771309aecfce18d8fe2bfb8069994ddd6be6ca6ccdd7badace3d791a0045ff0d"
 baseUrl: "https://ntfy.ops.example.com" # must match the ntfy host in 06_platform_ingress
 
 # ntfy has no backup. To rebuild it, run `make configure-ntfy-auth` and commit the resealed token.
