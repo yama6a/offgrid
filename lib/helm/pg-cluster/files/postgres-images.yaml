@@ -1,6 +1,6 @@
 # Renovate updates the digests, so minor and patch updates roll out on their own.
 
 # 16 is the lowest major. `pg_create_subscription`, which the cluster template grants to `app`, exists from 16.
-"16": "ghcr.io/cloudnative-pg/postgresql:16-minimal-trixie@sha256:b51a1204a6978da0eeea8273181c002ce1f6da3001323ca80f74b054e3cb3d4a"
-"17": "ghcr.io/cloudnative-pg/postgresql:17-minimal-trixie@sha256:4ae89311e5031155a139a5c6d31a80f6deb135443711e61ff7df41cb549fdcaa"
-"18": "ghcr.io/cloudnative-pg/postgresql:18-minimal-trixie@sha256:b98ae0b74a12f20ccff32219be0e33fdd35c7e2e8e73c8bff9173f1128e167d1"
+"16": "ghcr.io/cloudnative-pg/postgresql:16-minimal-trixie@sha256:836a4d140b80af5fb0fb9b43d7aea97304d3eb4d05a422e9d38e7f6b7dd67aae"
+"17": "ghcr.io/cloudnative-pg/postgresql:17-minimal-trixie@sha256:67faf4bab0efe261d48975eaa4719e9807bbeeefb75b8d25b6543fe7c3539575"
+"18": "ghcr.io/cloudnative-pg/postgresql:18-minimal-trixie@sha256:452a15584e2aa1ce658c4ae8538b5dc157eb031d41b82fd19882e0c03bcec01d"
