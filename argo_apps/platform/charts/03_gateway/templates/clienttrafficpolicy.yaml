@@ -1,0 +1,14 @@
+apiVersion: gateway.envoyproxy.io/v1alpha1
+kind: ClientTrafficPolicy
+metadata:
+  name: client-ip
+  namespace: {{ .Values.gateway.namespace }}
+spec:
+  # A selector with no labels matches every Gateway in this namespace, so it also covers the Gateways that app
+  # charts add later. The policy status lists only 16 of them.
+  targetSelectors:
+    - kind: Gateway
+  clientIPDetection:
+    xForwardedFor:
+      trustedCIDRs:
+        {{- toYaml .Values.trustedProxyCIDRs | nindent 8 }}

@@ -27,10 +27,10 @@ Decisions:
 - **kube-proxy replacement is on,** because L2 announcements need it.
 - **KubePrism (`localhost:7445`) is the API endpoint.** It is host networking, so Cilium reaches the API server
   before any pod network exists.
-- **Every `type: LoadBalancer` service uses `externalTrafficPolicy: Cluster`.** Cilium elects the announcing node
-  from the `nodeSelector` alone. With `Local`, a node with no backend can win the lease, answer ARP and drop the
-  traffic. Leases are sticky, so a bad draw looks like a permanent outage. The cost is the client source IP. See
-  [Policy gotchas](#policy-gotchas).
+- **Every `type: LoadBalancer` service uses `externalTrafficPolicy: Local`.** `Local` keeps the client source IP
+  for logs, bans and per-IP rules. `Cluster` would rewrite it to the announcing node. For a `Local` Service,
+  Cilium lets only a node with a ready backend pod hold the L2 lease. So the lease follows the pod, and Envoy runs
+  2 replicas for failover.
 - **Cilium auto-syncs with full `selfHeal` and `prune`,** like every other app, for hands-off upgrades. It is the
   one app that can cut Argo CD off its own network.
   - Argo CD reverts an out-of-band fix unless you commit it.
@@ -84,8 +84,9 @@ the file you open is the policy Cilium applies. Platform policies fall in three 
   API server proxy hits the same rule.
 - **A peer selector without a namespace label matches only the policy's own namespace.** To reach another
   namespace, add `matchExpressions: [{key: k8s:io.kubernetes.pod.namespace, operator: Exists}]`.
-- **Traffic through a LoadBalancer service is not `world`.** `externalTrafficPolicy: Cluster` rewrites the source
-  to the announcing node. A pod behind its own LoadBalancer needs `[world, remote-node, host]`.
+- **Traffic through a LoadBalancer service is `world`.** `externalTrafficPolicy: Local` keeps the client
+  address, and a LAN address is not a cluster address. Kubelet probes come from the pod's own node, which always
+  reaches its local pods.
 - **Upstream charts can bundle an allow-all `NetworkPolicy`.** Cilium unions it with the CNP, which opens the
   default-deny. So `03_rabbitmq` and `01_argocd` turn theirs off.
 

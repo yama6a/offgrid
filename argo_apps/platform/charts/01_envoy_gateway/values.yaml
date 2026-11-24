@@ -5,6 +5,7 @@ envoyProxy:
   name: eg-proxy-config
   namespace: envoy-gateway-system
   loadBalancerIP: "" # must be inside the Cilium LB-IPAM pool, loadBalancer.ipPool in 00_cilium
+  replicas: 2        # proxy pods. Only nodes that run one can hold the ingress IP, so 2 gives failover.
   # This proxy carries all ingress, so the memory limit stays generous. The shutdown-manager sidecar gets none
   # of this, and the chart has no knob for it.
   resources:

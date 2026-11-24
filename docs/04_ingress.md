@@ -8,7 +8,7 @@ Argo CD delivers the L7 ingress layer as five apps, in wave order:
 |---|---|---|
 | 1 | `01_envoy_gateway` | the Gateway API data plane |
 | 2 | `02_cert_manager` | issues the X.509 certs |
-| 3 | `03_gateway` | the shared `:80` Gateway and the Let's Encrypt ClusterIssuers |
+| 3 | `03_gateway` | the shared `:80` Gateway, the Let's Encrypt ClusterIssuers and the client IP policy |
 | 4 | `04_google_sso` | one SecurityPolicy per domain: which hosts are gated, and who may log in |
 | 6 | `06_platform_ingress` | the edges of the platform UIs |
 
@@ -40,6 +40,21 @@ external IP. `mergeGateways: true` puts every Gateway on one Envoy and one Servi
 - Each app keeps its own Gateway with its own `:443` listener.
 - The cluster keeps one ingress point. Your router forwards to that IP, so keep it stable.
 - The IP comes from `INGRESS_LB_IP` in `.env` and must sit inside the LB-IPAM pool.
+
+### Client IP
+
+Some hosts sit behind the Cloudflare proxy, others resolve straight to the router. Envoy logs the real client IP
+for both.
+
+- **`externalTrafficPolicy: Local`** keeps the source IP on the way in. Cilium lets only a node with a ready Envoy
+  pod hold the L2 lease, so the Deployment runs 2 replicas for failover. A lease moves when its node loses the pod.
+- **`trustedProxyCIDRs`** in `03_gateway` lists the Cloudflare ranges. When the TCP peer is in that list, Envoy
+  takes the client IP from `X-Forwarded-For`. From any other peer it uses the peer, so a client that connects to
+  the router directly cannot forge its IP.
+- The access log field `downstream_remote_address` holds the client IP. `downstream_direct_remote_address` holds
+  the TCP peer.
+- Cloudflare changes its ranges rarely. Compare the list with https://www.cloudflare.com/ips/ when a proxied host
+  logs a Cloudflare address as the client.
 
 ### HTTP observability at the edge
 

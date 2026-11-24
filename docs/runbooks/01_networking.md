@@ -54,7 +54,8 @@ Three places show them, cheapest first:
 - **A LoadBalancer service stays `<pending>`.** The pool is missing, full or overlaps. Run
   `kubectl get ciliumloadbalancerippool`.
 - **The LB IP is assigned but unreachable.**
-  1. Check the service's `externalTrafficPolicy`. It must be `Cluster`.
+  1. Check the service's `externalTrafficPolicy`. With `Local`, a node holds the lease only while it runs a ready
+     backend pod. No ready pod means no lease and no ARP answer.
   2. Find the lease holder: `kubectl get lease -n kube-system | grep l2announce`.
   3. Check that the holder has an interface matching `^en`. A node without one takes the lease and answers no ARP.
 - **The operator logs API throttling after the pool grew.** Raise `k8sClientRateLimit` in the Cilium values.
