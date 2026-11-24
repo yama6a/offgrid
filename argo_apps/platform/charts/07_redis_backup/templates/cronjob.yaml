@@ -18,8 +18,8 @@ spec:
   schedule: {{ .Values.schedule | quote }}
   concurrencyPolicy: Forbid
   startingDeadlineSeconds: 300
-  successfulJobsHistoryLimit: 3
-  failedJobsHistoryLimit: 3
+  successfulJobsHistoryLimit: 0
+  failedJobsHistoryLimit: 1
   jobTemplate:
     spec:
       backoffLimit: 1
