@@ -211,6 +211,18 @@ victoria-metrics-k8s-stack:
     resources:
       requests: {cpu: 10m, memory: 26Mi}
       limits: {memory: 44Mi}
+    # Alerts name the node, and a rollout must not start new series. The endpoints list replaces the chart
+    # default, so the kubelet-pod mount drop is repeated here.
+    vmScrape:
+      spec:
+        endpoints:
+          - port: metrics
+            relabelConfigs:
+              - {source_labels: [__meta_kubernetes_pod_host_ip], target_label: instance}
+              - {source_labels: [__meta_kubernetes_pod_node_name], target_label: node}
+              - {action: labeldrop, regex: pod}
+            metricRelabelConfigs:
+              - {action: drop, source_labels: [mountpoint], regex: '/var/lib/kubelet/pods.+'}
 
   kube-state-metrics:
     enabled: true
@@ -227,6 +239,19 @@ victoria-metrics-k8s-stack:
     resources:
       requests: {cpu: 13m, memory: 73Mi}
       limits: {memory: 112Mi}
+    # A constant instance and no target pod, so a rollout keeps every series and no restart counter jumps.
+    # honorLabels keeps the pod and container of the object a metric describes. The endpoints list replaces
+    # the chart default, so its labeldrop is repeated here.
+    vmScrape:
+      spec:
+        endpoints:
+          - port: http
+            honorLabels: true
+            relabelConfigs:
+              - {target_label: instance, replacement: kube-state-metrics}
+              - {action: labeldrop, regex: pod|container}
+            metricRelabelConfigs:
+              - {action: labeldrop, regex: (uid|container_id|image_id)}
     # Soft, by hostname, as elsewhere. Scaling out also needs autosharding.enabled: true to split the watched
     # objects across replicas. Without it, every replica watches everything and emits duplicate series.
     affinity:

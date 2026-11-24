@@ -25,6 +25,11 @@ prometheus-smartctl-exporter:
 
   serviceMonitor:
     enabled: true # the VM operator converts it to a VMServiceScrape, so a dead exporter fires `target-down`
+    # A disk belongs to a node. The node IP and name, and no pod, so an exporter restart keeps every series.
+    relabelings:
+      - {sourceLabels: [__meta_kubernetes_pod_host_ip], targetLabel: instance}
+      - {sourceLabels: [__meta_kubernetes_pod_node_name], targetLabel: node}
+      - {action: labeldrop, regex: pod}
 
   # Alerting is Grafana-only. See 05_grafana/files/alerts/smart-health.yaml.
   prometheusRules:
