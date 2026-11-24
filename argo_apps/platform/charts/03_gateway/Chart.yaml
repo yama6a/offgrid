@@ -1,5 +1,5 @@
 apiVersion: v2
 name: gateway
-description: The shared port 80 Gateway for cert-manager's HTTP-01 solver routes, and the Let's Encrypt ClusterIssuers. Each HTTPS host has its own Gateway.
+description: The shared port 80 Gateway for cert-manager's HTTP-01 solver routes, the Let's Encrypt ClusterIssuers, and the client IP policy of every Gateway. Each HTTPS host has its own Gateway.
 type: application
 version: 0.1.0 # nothing publishes this chart, so never bump it
