@@ -22,8 +22,8 @@ spec:
   # Every node has exactly one connected NIC. Two NICs on one segment answer with two MACs, and the IP flaps.
   interfaces:
     - ^en
-  # Every node is a candidate. For a Service with externalTrafficPolicy Cluster, the announcing node forwards to
-  # the pod on any node. For Local, Cilium skips nodes without a ready backend. See docs/01_networking.md.
+  # Every node is a candidate. Every LoadBalancer uses externalTrafficPolicy Local, so Cilium skips the nodes
+  # without a ready backend pod. See docs/01_networking.md.
   # Every node is a control-plane node, so the upstream selector `control-plane: DoesNotExist` matches none.
   nodeSelector:
     matchLabels:
