@@ -162,6 +162,10 @@ One policy per domain, not one per app. This constraint shapes the whole design:
 Per-host allowlists live in that one policy. Each authorization rule ANDs a host match with the email claim, and
 `defaultAction: Deny` denies any host with no rule.
 
+A host with `anyGoogleAccount: true` gets a rule that matches the host only, so every Google account passes. The
+jwt filter still rejects a request without a valid Google id token. Use it when the app keeps its own list of
+users, such as an admin app whose API checks its own `users` table.
+
 ```
 argocd.D (no session) -> [sso-D policy: oidc] 302 to Google -> callback to google-sso.D/oauth2/callback
                       -> [same sso-D policy] validates nonce, exchanges code, sets id-token cookie (.D) -> back to argocd.D

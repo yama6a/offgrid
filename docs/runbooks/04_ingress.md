@@ -100,6 +100,7 @@ Consumers vendor `lib/helm/ingress` as a `file://` dependency. After you change 
 | add a subdomain to an ingress | nothing, if the domain is already gated | add the host to the `hosts:` of that ingress |
 | gate a host | nothing | add its `subdomain` to `hosts` in `04_google_sso/values.yaml` |
 | change who may log in | nothing | set `SSO_ALLOWLIST` in `.env` and run `make configure-values`, or set the `allowlist` of one host |
+| let the app decide who may log in | nothing | set `anyGoogleAccount: true` on the host, and no `allowlist` |
 | add a registrable domain | one redirect URI and the apex under "Authorized domains" | see [Add a registrable domain](#add-a-registrable-domain) |
 | change the base domain | one redirect URI and the apex under "Authorized domains" | see [Change the base domain](#change-the-base-domain) |
 

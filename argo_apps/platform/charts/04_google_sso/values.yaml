@@ -7,6 +7,7 @@ oidc:
   clientSecretName: google-oauth   # sealed Secret, key `client-secret`
   authSubdomain: google-sso        # callback host is <authSubdomain>.<domain>. Register it as the redirect URI.
   idTokenCookie: "google-id-token" # cookie that holds the Google id token
+  plainTokens: false               # true stores tokens unencrypted, so a backend can verify the id token itself
   logoutPath: "/oauth2/sign_out"   # not Envoy's default /logout, so backends keep their own /logout
   refreshToken: true               # renew silently, so a session outlives Google's 1h id token
   sessionTTL: "720h"               # session length. Google refresh tokens never expire, so this is the only cap.
@@ -24,8 +25,9 @@ issuer: letsencrypt-prod   # callback cert issuer: letsencrypt-staging or letsen
 allowlist:                 # written by 04_values.sh from .env SSO_ALLOWLIST
   - you@example.com
 
-# SSO-gated hosts, as <subdomain>.<domain>. A host may set its own `allowlist`. This list is policy, so
-# 04_values.sh does not write it. sample-user-manager stays open on purpose, next to the gated -sso demo.
+# SSO-gated hosts, as <subdomain>.<domain>. A host may set its own `allowlist`, or `anyGoogleAccount: true` to
+# let every signed-in Google account in, but not both. This list is policy, so 04_values.sh does not write it.
+# sample-user-manager stays open on purpose, next to the gated -sso demo.
 hosts:
   - subdomain: argocd.ops
   - subdomain: grafana.ops
@@ -46,3 +48,5 @@ extraDomains: []
 #     - subdomain: www
 #     - subdomain: api
 #       allowlist: [ops@example.edu]  # optional, defaults to `allowlist` above
+#     - subdomain: app
+#       anyGoogleAccount: true        # optional, default false. Any Google account passes. The app decides who gets in.
