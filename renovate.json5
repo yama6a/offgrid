@@ -59,6 +59,12 @@
 
   packageRules: [
     {
+      // Must stay above the major group, so that a major still joins the rest of the stack.
+      description: "bump the VictoriaMetrics operator and its CRDs in one PR (CRDs must match the operator)",
+      matchPackageNames: ["victoria-metrics-operator", "victoria-metrics-operator-crds"],
+      groupName: "victoriametrics operator",
+    },
+    {
       description: "keep VictoriaMetrics majors together (CRDs must match the operator)",
       matchPackageNames: ["victoria-metrics-operator", "victoria-metrics-operator-crds", "victoria-metrics-k8s-stack", "victoria-logs-collector"],
       matchUpdateTypes: ["major"],
