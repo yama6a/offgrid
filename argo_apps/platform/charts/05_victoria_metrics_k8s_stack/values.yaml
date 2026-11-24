@@ -344,6 +344,9 @@ victoria-metrics-k8s-stack:
             tlsConfig:
               caFile: /var/run/secrets/kubernetes.io/serviceaccount/ca.crt
               serverName: kubernetes
+            # The body reaches 16.6MB on Kubernetes 1.37 and grows with apiserver uptime, past the 16MiB vmagent
+            # default. The drops below run only after the download, so they do not shrink it.
+            max_scrape_size: 32MiB
             metricRelabelConfigs:
               # The apiserver's own view of etcd, the largest part of this job. etcd's server metrics come from
               # the kubeEtcd job above and stay. The global rules drop apiserver_*_bucket.
