@@ -103,6 +103,16 @@ evacuate-node: ## Move any CNPG primary off a node before a drain. NODE=<hostnam
 	@test -n "$(NODE)" || { echo "usage: make evacuate-node NODE=<hostname>"; exit 1; }
 	NODE=$(NODE) bash lib/shell/evacuate_node.sh
 
+.PHONY: evict-node-storage
+evict-node-storage: ## Move every Longhorn replica off a node and wait until none is left. Before a node is wiped. NODE=<hostname>.
+	@test -n "$(NODE)" || { echo "usage: make evict-node-storage NODE=<hostname>"; exit 1; }
+	NODE=$(NODE) bash lib/shell/evict_node_storage.sh
+
+.PHONY: forget-storage-node
+forget-storage-node: ## Delete a removed node's Longhorn record, after its Kubernetes node is gone. NODE=<hostname>.
+	@test -n "$(NODE)" || { echo "usage: make forget-storage-node NODE=<hostname>"; exit 1; }
+	NODE=$(NODE) bash lib/shell/forget_storage_node.sh
+
 ##@ Data recovery: restore CNPG, Redis, Longhorn and VictoriaMetrics/Logs from S3. A GitOps prune does not delete a CNPG cluster, so restore only its files
 .PHONY: restore-cnpg
 restore-cnpg: ## Restore a CNPG database from S3, latest or point in time. In place under its own name, or into a throwaway side cluster. Interactive and resumable.
