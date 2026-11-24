@@ -177,3 +177,12 @@ storage-bench-sync: ## Measure what synchronous replication costs CNPG on Longho
 .PHONY: storage-bench-teardown
 storage-bench-teardown: ## Remove everything the benchmark created: namespace, bench StorageClasses, node tags and the operator CiliumNetworkPolicy.
 	bash lib/shell/storage_bench.sh teardown
+
+##@ Upstreaming: sync with the public offgrid repo
+.PHONY: upstream-sync
+upstream-sync: ## Merge the public repo's main into the current branch. Shows the incoming commits first and leaves conflicts to you.
+	bash lib/shell/upstream_sync.sh
+
+.PHONY: upstream-pr
+upstream-pr: ## Cherry-pick commits onto a branch off upstream/main and open a PR on the public repo. Shows the diff before it pushes. BRANCH=<name> SHAS="<sha>..." skips the prompts.
+	bash lib/shell/upstream_pr.sh $(BRANCH) $(SHAS)
