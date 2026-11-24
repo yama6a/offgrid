@@ -16,8 +16,8 @@ vlsingle:
   resources:
     # The measured working set is about 266Mi.
     requests: {cpu: 10m, memory: 288Mi}
-    # Sized for the vm-backup export, not steady state. Each hourly slice peaks at about 60MB of response.
-    limits: {memory: 640Mi}
+    # Sized for the vm-backup export, not steady state. Caches take 60% of the limit, and each hourly slice needs the rest.
+    limits: {memory: 1Gi}
 
 victoria-logs-collector:
   remoteWrite:

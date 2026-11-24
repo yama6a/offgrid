@@ -10,5 +10,11 @@
 {{- if or (eq $h.subdomain $d.domain) (hasSuffix (printf ".%s" $d.domain) $h.subdomain) }}
 {{- fail (printf "google-sso: host subdomain %q under %q looks like a full hostname. Give only the subdomain, for example \"argocd.ops\". The chart appends the domain to build both the host and the route name" $h.subdomain $d.domain) }}
 {{- end }}
+{{- if and (hasKey $h "anyGoogleAccount") (not (kindIs "bool" $h.anyGoogleAccount)) }}
+{{- fail (printf "google-sso: host %q under %q sets anyGoogleAccount to a value that is not a bool. Use true or false without quotes. A quoted \"false\" would open the host to every Google account" $h.subdomain $d.domain) }}
+{{- end }}
+{{- if and $h.anyGoogleAccount (hasKey $h "allowlist") }}
+{{- fail (printf "google-sso: host %q under %q sets both anyGoogleAccount and allowlist. anyGoogleAccount lets every Google account in, so remove one of them" $h.subdomain $d.domain) }}
+{{- end }}
 {{- end }}
 {{- end }}

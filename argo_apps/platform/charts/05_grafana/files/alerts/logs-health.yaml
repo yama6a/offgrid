@@ -17,6 +17,7 @@ groups:
           description: |
             - open VictoriaLogs (vlogs), filter on level:error and find the source
             - open the namespace and pod with the most error lines
+            - fix the source. If the lines are harmless noise, add them to the filter in logs-health.yaml
         noDataState: OK
         execErrState: KeepLast
         data:
@@ -27,9 +28,20 @@ groups:
               refId: A
               queryType: stats
               # Matches structured `level:error` and logfmt `level=error`. A bare `error` also matches info lines.
-              # The NOT list drops harmless error lines from cert-manager, the Argo CD cache, and the Argo CD
-              # repo-server, whose first `helm template` fails by design until `helm dependency build` runs.
-              expr: '(level:error OR level:ERROR OR "level=error" OR "level=ERROR") AND NOT ("OnUpdate missing ObjectOld" OR "DiffFromCache" OR "cache: key is missing" OR "but missing in charts/ directory") | stats count() as logs'
+              # NOT drops self-recovering lines: cert-manager, Argo CD cache and first `helm template`, and rollout
+              # noise. Grafana logs no line for a last failed attempt, so metrics-datasource-down covers vmsingle outages.
+              # containerd logs NotFound for each repeated kubelet RemoveContainer call, about 2 lines per deleted container.
+              expr: >-
+                (level:error OR level:ERROR OR "level=error" OR "level=ERROR") AND NOT ("OnUpdate missing ObjectOld" OR "DiffFromCache" OR "cache: key is missing" OR "but missing in charts/ directory"
+                OR (kubernetes.container_name:="kube-controller-manager" AND err:"is not as new as written version")
+                OR (kubernetes.container_name:="grafana" AND "Failed to evaluate rule" AND ("attempt=1" OR "attempt=2") AND "vmsingle-victoria-metrics-k8s-stack" AND ("connection refused" OR "no route to host"))
+                OR (kubernetes.container_name:="postgres" AND _msg:="Error collecting user query" AND error:"the database system is starting up")
+                OR (kubernetes.container_name:="postgres" AND logger:="wal-archive" AND error:="switchover in progress, refusing archiving")
+                OR (kubernetes.container_name:="postgres" AND _msg:="Reconciler error" AND error:"while refreshing secrets" AND error:"context canceled")
+                OR (kubernetes.container_name:="postgres" AND _msg:="Reconciler error" AND error:"cannot apply new PostgreSQL configuration" AND error:"the database system is shutting down")
+                OR (kubernetes.container_name:="plugin-barman-cloud" AND _msg:="While terminating server")
+                OR (file:="/var/log/cri.log" AND "ContainerStatus for" AND error:"code = NotFound"))
+                | stats count() as logs
           - refId: B
             relativeTimeRange: {from: 300, to: 0}
             datasourceUid: __expr__

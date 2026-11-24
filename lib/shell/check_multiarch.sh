@@ -23,7 +23,8 @@ EOF
 ERR_FILE="/tmp/.ma_err" # stderr of docker manifest inspect, to tell a failed read from a missing platform
 
 # Images that are single-arch on purpose. Add an entry only after the chart pins the pod to its architecture.
-# A skipped image without that pin still crashloops, only later, at deploy.
+# A skipped image without that pin still crashloops, only later, at deploy. An entry is a glob that matches the
+# start of the image reference.
 SKIP_IMAGES=(
   "intel/intel-gpu-plugin" # upstream is amd64-only. The chart sets nodeAffinity on extensions.talos.dev/i915.
 )
@@ -98,7 +99,8 @@ read_image_arches() {
 check_image() {
   local img="$1" missing="" a skip
   for skip in "${SKIP_IMAGES[@]}"; do
-    case "$img" in "${skip}"*)
+    # shellcheck disable=SC2254 # unquoted, so an entry can be a glob
+    case "$img" in ${skip}*)
       say "${img}: skipped, single-arch on purpose"
       return 0
       ;;

@@ -91,7 +91,7 @@ groups:
         for: 15m
         labels: {severity: warning}
         annotations:
-          summary: 'orphan-exporter is not reporting: orphan detection is blind'
+          summary: 'orphan-exporter is not reporting'
           description: |
             - no heartbeat from the exporter, so the orphaned_* alerts cannot fire
             - kubectl -n orphan-exporter get pods
@@ -281,9 +281,9 @@ groups:
         for: 24h
         labels: {severity: warning}
         annotations:
-          summary: 'PV {{ $labels.res_pv }} is {{ $labels.res_phase }} and nothing will bind it. Old claim: {{ $labels.res_claim }}'
+          summary: '{{ if $labels.res_claim }}PV of deleted PVC {{ $labels.res_claim }} is {{ $labels.res_phase }}{{ else }}PV {{ $labels.res_pv }} is {{ $labels.res_phase }} and was never claimed{{ end }}'
           description: |
-            - claim {{ $labels.res_claim }} is gone and the reclaim policy is {{ $labels.res_reclaim }}, so the PV and its data stay on disk
+            - the reclaim policy is {{ $labels.res_reclaim }}, so nothing will bind PV {{ $labels.res_pv }} and its data stays on disk
             - a Longhorn PV also leaves its volume behind. The volume keeps failing its recurring backup, so longhorn-backup-stale fires too
             - inspect first: kubectl describe pv {{ $labels.res_pv }}
             - list and clean up: make cleanup-abandoned-pvs
@@ -321,10 +321,11 @@ groups:
         for: 1h
         labels: {severity: warning}
         annotations:
-          summary: 'S3 backup {{ $labels.res_backupvolume }} has outlived its volume by more than 30 days'
+          summary: '{{ if $labels.res_pvc }}S3 backup of deleted PVC {{ $labels.res_pvc }}{{ else }}S3 backup of deleted volume {{ $labels.res_volume }}{{ end }} kept for more than 30 days'
           description: |
             - volume {{ $labels.res_volume }} is gone. Its backup is still in the bucket and still costs money
             - nothing prunes it. The recurring job retains per volume, and the longhorn/ prefix has no lifecycle expiry
+            - inspect: kubectl -n longhorn-system get backupvolume {{ $labels.res_backupvolume }} -o yaml
             - to remove it, delete the BackupVolume. That is the only correct way, and it deletes the S3 data too:
             - kubectl -n longhorn-system delete backupvolume {{ $labels.res_backupvolume }}
             - to keep the data instead: move its folder out of longhorn/backupstore/volumes/ in the bucket
@@ -337,7 +338,7 @@ groups:
             model:
               refId: A
               instant: true
-              expr: 'time() - max by (res_backupvolume, res_volume) (orphaned_backupvolume_last_backup_seconds > 0)'
+              expr: 'time() - max by (res_backupvolume, res_volume, res_pvc) (orphaned_backupvolume_last_backup_seconds > 0)'
           - refId: B
             relativeTimeRange: {from: 600, to: 0}
             datasourceUid: __expr__

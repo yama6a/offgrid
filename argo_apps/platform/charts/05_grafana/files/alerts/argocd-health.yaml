@@ -17,6 +17,7 @@ groups:
           description: |
             - check: argocd app get {{ $labels.name }}, or open the Argo CD UI
             - read the events and logs of the failing resource
+            - fix the cause in git. Argo CD syncs the fix
         noDataState: OK
         execErrState: KeepLast
         data:
@@ -55,6 +56,7 @@ groups:
           description: |
             - usual causes: a bad manifest, a failed hook, or a missing dependency
             - check: argocd app get {{ $labels.name }}, then read its sync result
+            - fix the manifest in git. Argo CD syncs the fix
         noDataState: OK
         execErrState: KeepLast
         data:
@@ -88,9 +90,9 @@ groups:
         for: 15m
         labels: {severity: warning}
         annotations:
-          summary: 'Argo CD app {{ $labels.name }} cannot render its manifests. Sync status is Unknown'
+          summary: 'Argo CD app {{ $labels.name }} cannot render its manifests'
           description: |
-            - the app stays on its last good state
+            - sync status is Unknown, and the app stays on its last good state
             - usual causes: a Chart.lock out of date with the chart's dependencies, a missing path, or an unreachable repo
             - check: argocd app get {{ $labels.name }}, then read the ComparisonError message in .status.conditions
             - run helm dependency build on that chart to reproduce the failure locally

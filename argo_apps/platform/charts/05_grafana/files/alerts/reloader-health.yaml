@@ -13,11 +13,13 @@ groups:
         for: 15m
         labels: {severity: warning}
         annotations:
-          summary: 'Reloader cannot restart workloads: pods keep stale config and credentials'
+          summary: 'Reloader cannot restart workloads'
           description: |
+            - pods keep stale config and credentials
             - a ConfigMap or Secret changed, but Reloader could not restart the workload that mounts it
             - check: kubectl -n reloader logs deploy/reloader
             - usual causes: RBAC, or an operator that reverts the restart on a workload it owns
+            - after the fix, restart the workload by hand: kubectl -n <ns> rollout restart deploy/<name>
         noDataState: OK
         execErrState: KeepLast
         data:

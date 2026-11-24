@@ -19,6 +19,9 @@ longhorn:
     # A flaky NIC often brings a node back within minutes. Waiting lets Longhorn reuse its replica data.
     replicaReplenishmentWaitInterval: 1800
     orphanResourceAutoDeletion: "replica-data" # stale replica data from node flaps would fill the disk
+    # A rebuild leaves snapshots below the volume head, and a trim cannot free blocks held in them. This marks
+    # that chain removed during a trim, so deleted files stop counting against the disk.
+    removeSnapshotsDuringFilesystemTrim: true
     # Down from 12%, to free scheduling room on small nodes.
     guaranteedInstanceManagerCPU: '{"v1":"8","v2":"8"}'
     # Leases the share-manager pod, so losing it costs seconds, not an eviction timeout. An older RWX volume

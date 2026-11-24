@@ -30,7 +30,9 @@ groups:
               refId: A
               instant: true
               # The series appears only on the first failure, so noDataState is OK.
-              expr: 'sum by (integration) (increase(grafana_alerting_notification_requests_failed_total[10m]))'
+              # webhook is ntfy. Right after a restart, Grafana can route one alert to its built-in email contact
+              # point before the provisioned policy applies. That send fails without SMTP, and nobody reads email.
+              expr: 'sum by (integration) (increase(grafana_alerting_notification_requests_failed_total{integration="webhook"}[10m]))'
           - refId: B
             relativeTimeRange: {from: 900, to: 0}
             datasourceUid: __expr__

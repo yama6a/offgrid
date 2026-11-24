@@ -47,9 +47,9 @@ groups:
         for: 10m
         labels: {severity: warning}
         annotations:
-          summary: 'Node {{ $labels.instance }} memory usage above 90%'
+          summary: 'Node {{ $labels.node }} memory usage above 90%'
           description: |
-            - more than 90% of node RAM is used. Pods on {{ $labels.instance }} risk OOM kills and eviction
+            - more than 90% of node RAM is used. Pods on {{ $labels.node }} risk OOM kills and eviction
             - nodes: kubectl top nodes
             - pods: kubectl top pods -A --sort-by=memory
             - move or right-size the biggest pods, or schedule less load
@@ -62,7 +62,7 @@ groups:
             model:
               refId: A
               instant: true
-              expr: '100 * (1 - node_memory_MemAvailable_bytes / node_memory_MemTotal_bytes)'
+              expr: '100 * (1 - max by (node, instance) (node_memory_MemAvailable_bytes) / max by (node, instance) (node_memory_MemTotal_bytes))'
           - refId: B
             relativeTimeRange: {from: 600, to: 0}
             datasourceUid: __expr__
@@ -78,15 +78,16 @@ groups:
               conditions:
                 - type: query
                   evaluator: {type: gt, params: [90]}
+      # A node with a `dedicated` taint runs one workload that may use all its CPU by design, so the rule skips it.
       - uid: node-high-cpu
         title: Node high CPU saturation
         condition: C
         for: 15m
         labels: {severity: warning}
         annotations:
-          summary: 'Node {{ $labels.instance }} CPU above 90%'
+          summary: 'Node {{ $labels.node }} CPU above 90%'
           description: |
-            - the CPU on {{ $labels.instance }} stays saturated. Expect throttling and slow scheduling
+            - the CPU on {{ $labels.node }} stays saturated. Expect throttling and slow scheduling
             - nodes: kubectl top nodes
             - pods: kubectl top pods -A --sort-by=cpu
             - add CPU limits to the busiest pod, or spread the load across nodes
@@ -99,7 +100,7 @@ groups:
             model:
               refId: A
               instant: true
-              expr: '100 * (1 - avg by (instance) (rate(node_cpu_seconds_total{mode="idle"}[5m])))'
+              expr: '100 * (1 - avg by (node, instance) (rate(node_cpu_seconds_total{mode="idle"}[5m]))) unless on (node) kube_node_spec_taint{key="dedicated"}'
           - refId: B
             relativeTimeRange: {from: 600, to: 0}
             datasourceUid: __expr__
@@ -135,7 +136,7 @@ groups:
             model:
               refId: A
               instant: true
-              expr: '100 * kubelet_volume_stats_used_bytes / kubelet_volume_stats_capacity_bytes'
+              expr: '100 * max by (namespace, persistentvolumeclaim) (kubelet_volume_stats_used_bytes) / max by (namespace, persistentvolumeclaim) (kubelet_volume_stats_capacity_bytes)'
           - refId: B
             relativeTimeRange: {from: 600, to: 0}
             datasourceUid: __expr__
@@ -157,9 +158,9 @@ groups:
         for: 10m
         labels: {severity: warning}
         annotations:
-          summary: 'Target {{ $labels.job }} / {{ $labels.instance }} is down'
+          summary: 'Target {{ $labels.job }} / {{ if $labels.pod }}{{ $labels.namespace }}/{{ $labels.pod }}{{ else if $labels.node }}{{ $labels.node }}{{ else }}{{ $labels.instance }}{{ end }} is down'
           description: |
-            - scrape target {{ $labels.job }} / {{ $labels.instance }} is unreachable. Metrics have a gap or the app is down
+            - scrape target {{ $labels.job }} / {{ if $labels.pod }}{{ $labels.namespace }}/{{ $labels.pod }}{{ else if $labels.node }}{{ $labels.node }}{{ else }}{{ $labels.instance }}{{ end }} is unreachable. Metrics have a gap or the app is down
             - pods: kubectl get pods -A -o wide | grep <app>
             - check the ServiceMonitor and the endpoint
             - check that the exporter port is up and a CiliumNetworkPolicy allows the scrape
@@ -172,7 +173,8 @@ groups:
             model:
               refId: A
               instant: true
-              expr: 'max by (job, instance) (up == bool 0)'
+              # A pod target drops `instance`, because its pod IP changes on every restart.
+              expr: 'max by (job, namespace, pod, node, instance) (label_replace(up{pod!=""} == bool 0, "instance", "", "", "") or label_replace(up{pod=""} == bool 0, "instance", "$1", "instance", "(.+):6443"))'
           - refId: B
             relativeTimeRange: {from: 600, to: 0}
             datasourceUid: __expr__
@@ -190,16 +192,15 @@ groups:
                   evaluator: {type: gt, params: [0]}
       # Node capacity rules are all warnings, because no workload is down yet.
       # The fstype filter keeps ext4 and xfs disks only. Extend it if your nodes use another filesystem.
-      # `instance` is the node IP:9100. node-exporter has no `node` label.
       - uid: node-disk-space
         title: Node disk almost full
         condition: C
         for: 15m
         labels: {severity: warning}
         annotations:
-          summary: 'Disk {{ $labels.mountpoint }} on {{ $labels.instance }} above 85% used'
+          summary: 'Disk {{ $labels.mountpoint }} on {{ $labels.node }} above 85% used'
           description: |
-            - check disk usage on {{ $labels.instance }}. Start with the Longhorn data path
+            - check disk usage on {{ $labels.node }}. Start with the Longhorn data path
             - prune images and logs, or expand the disk
         noDataState: OK
         execErrState: KeepLast
@@ -210,7 +211,7 @@ groups:
             model:
               refId: A
               instant: true
-              expr: '100 * (1 - node_filesystem_avail_bytes{fstype=~"ext4|xfs"} / node_filesystem_size_bytes{fstype=~"ext4|xfs"})'
+              expr: '100 * (1 - max by (node, instance, mountpoint) (node_filesystem_avail_bytes{fstype=~"ext4|xfs"}) / max by (node, instance, mountpoint) (node_filesystem_size_bytes{fstype=~"ext4|xfs"}))'
           - refId: B
             relativeTimeRange: {from: 600, to: 0}
             datasourceUid: __expr__
@@ -232,10 +233,10 @@ groups:
         for: 15m
         labels: {severity: warning}
         annotations:
-          summary: 'Inodes on {{ $labels.mountpoint }} / {{ $labels.instance }} above 85% used'
+          summary: 'Inodes of {{ $labels.mountpoint }} on {{ $labels.node }} above 85% used'
           description: |
             - free bytes may remain, so df -h looks fine
-            - check inode usage on {{ $labels.instance }}, then find the directory with the most files
+            - check inode usage on {{ $labels.node }}, then find the directory with the most files
             - delete stale small files, for example caches, tmp and old logs
         noDataState: OK
         execErrState: KeepLast
@@ -246,7 +247,7 @@ groups:
             model:
               refId: A
               instant: true
-              expr: '100 * (1 - node_filesystem_files_free{fstype=~"ext4|xfs"} / node_filesystem_files{fstype=~"ext4|xfs"})'
+              expr: '100 * (1 - max by (node, instance, mountpoint) (node_filesystem_files_free{fstype=~"ext4|xfs"}) / max by (node, instance, mountpoint) (node_filesystem_files{fstype=~"ext4|xfs"}))'
           - refId: B
             relativeTimeRange: {from: 600, to: 0}
             datasourceUid: __expr__
@@ -270,9 +271,9 @@ groups:
         for: 30m
         labels: {severity: warning}
         annotations:
-          summary: 'Disk {{ $labels.mountpoint }} on {{ $labels.instance }} will fill within 24h at the current rate'
+          summary: 'Disk {{ $labels.mountpoint }} on {{ $labels.node }} will fill within 24h at the current rate'
           description: |
-            - find the writer. Check disk usage on {{ $labels.instance }}, then run du on the mount
+            - find the writer. Check disk usage on {{ $labels.node }}, then run du on the mount
             - before it fills, prune or rotate data, or expand the disk
         noDataState: OK
         execErrState: KeepLast
@@ -283,7 +284,7 @@ groups:
             model:
               refId: A
               instant: true
-              expr: 'predict_linear(node_filesystem_avail_bytes{fstype=~"ext4|xfs"}[1d], 86400) < 0 and (node_filesystem_avail_bytes{fstype=~"ext4|xfs"} / node_filesystem_size_bytes{fstype=~"ext4|xfs"}) < 0.5'
+              expr: 'max by (node, instance, mountpoint) (predict_linear(node_filesystem_avail_bytes{fstype=~"ext4|xfs"}[1d], 86400)) < 0 and max by (node, instance, mountpoint) (node_filesystem_avail_bytes{fstype=~"ext4|xfs"} / node_filesystem_size_bytes{fstype=~"ext4|xfs"}) < 0.5'
           - refId: B
             relativeTimeRange: {from: 86400, to: 0}
             datasourceUid: __expr__
@@ -304,14 +305,14 @@ groups:
       # kube_pod_container_resource_requests still reports Completed and Failed pods until they are deleted.
       # The scheduler ignores those, so the phase join keeps finished CronJob pods out.
       - uid: node-memory-committed
-        title: Node memory requests committed >80%
+        title: Node memory requests committed >90%
         condition: C
         for: 15m
         labels: {severity: warning}
         annotations:
-          summary: 'Node {{ $labels.node }} memory requests committed above 80% of allocatable'
+          summary: 'Node {{ $labels.node }} memory requests committed above 90% of allocatable'
           description: |
-            - pod memory requests on {{ $labels.node }} are more than 80% of allocatable. Little room is left to schedule pods
+            - pod memory requests on {{ $labels.node }} are more than 90% of allocatable. Little room is left to schedule pods
             - run kubectl describe node {{ $labels.node }} and read Allocated resources
             - lower requests that are too large, or move pods to other nodes
         noDataState: OK
@@ -338,7 +339,7 @@ groups:
               datasource: {type: __expr__, uid: __expr__}
               conditions:
                 - type: query
-                  evaluator: {type: gt, params: [80]}
+                  evaluator: {type: gt, params: [90]}
       - uid: node-pressure
         title: Node under resource pressure
         condition: C
@@ -383,8 +384,9 @@ groups:
         for: 15m
         labels: {severity: warning}
         annotations:
-          summary: 'Cluster memory requests exceed capacity minus one node. Its pods would not fit after a node loss'
+          summary: 'Cluster memory requests exceed capacity minus one node'
           description: |
+            - after a node loss, the pods of that node would not fit on the others
             - usage: kubectl top nodes
             - requests: kubectl describe nodes | grep -A5 Allocated
             - lower memory requests or add capacity until one node can fail

@@ -162,7 +162,7 @@ groups:
         labels:
           severity: '{{ if eq (index $labels "label_alert_criticality") "critical" }}critical{{ else }}warning{{ end }}'
         annotations:
-          summary: 'CNPG {{ $labels.namespace }}/{{ $labels.pod }} is up but not ready. Postgres is not serving'
+          summary: 'CNPG {{ $labels.namespace }}/{{ $labels.pod }} is up but not ready'
           description: |
             - the pod runs but the collector is down. Postgres is not serving on {{ $labels.namespace }}/{{ $labels.pod }}
             - status: kubectl cnpg status <cluster> -n {{ $labels.namespace }}
@@ -177,7 +177,7 @@ groups:
             model:
               refId: A
               instant: true
-              expr: '(cnpg_collector_up == bool 0) * on(namespace, pod) group_left(label_alert_criticality) kube_pod_labels'
+              expr: 'max by (namespace, pod, label_alert_criticality) ((cnpg_collector_up == bool 0) * on(namespace, pod) group_left(label_alert_criticality) kube_pod_labels)'
           - refId: B
             relativeTimeRange: {from: 600, to: 0}
             datasourceUid: __expr__
@@ -200,7 +200,7 @@ groups:
         for: 30m
         labels: {severity: warning}
         annotations:
-          summary: 'CNPG {{ $labels.namespace }}/{{ $labels.pod }} db {{ $labels.datname }} xid age is more than 300M. Wraparound risk'
+          summary: 'CNPG {{ $labels.namespace }}/{{ $labels.pod }} db {{ $labels.datname }} xid age above 300M'
           description: |
             - xid age of db {{ $labels.datname }} grows. Autovacuum falls behind. Postgres shuts down at about 2.1B
             - psql: select datname,age(datfrozenxid) from pg_database order by 2 desc
@@ -236,7 +236,7 @@ groups:
         for: 15m
         labels: {severity: critical}
         annotations:
-          summary: 'CNPG {{ $labels.namespace }}/{{ $labels.pod }} db {{ $labels.datname }} xid age is more than 1B. Wraparound shutdown is close'
+          summary: 'CNPG {{ $labels.namespace }}/{{ $labels.pod }} db {{ $labels.datname }} xid age above 1B'
           description: |
             - db {{ $labels.datname }} is halfway to wraparound shutdown. Postgres stops itself near 2.1B
             - in psql, run VACUUM (FREEZE, VERBOSE) on the tables with the highest age now
@@ -396,7 +396,9 @@ groups:
             model:
               refId: A
               instant: true
-              expr: 'sum by (namespace, pod, datname) (increase(cnpg_pg_stat_database_deadlocks[10m]))'
+              # The counter survives a pod restart, but the pod IP in `instance` changes.
+              # Merging the series before increase() keeps one continuous count across the restart.
+              expr: 'increase((max by (namespace, pod, datname) (cnpg_pg_stat_database_deadlocks))[10m:1m])'
           - refId: B
             relativeTimeRange: {from: 600, to: 0}
             datasourceUid: __expr__
@@ -454,8 +456,9 @@ groups:
         for: 5m
         labels: {severity: warning}
         annotations:
-          summary: 'CNPG {{ $labels.namespace }}/{{ $labels.pod }} is fenced. Its I/O is paused'
+          summary: 'CNPG {{ $labels.namespace }}/{{ $labels.pod }} is fenced'
           description: |
+            - fencing pauses all I/O on this instance
             - usually operator maintenance
             - run kubectl cnpg status <cluster> -n {{ $labels.namespace }} and read Fencing
             - if nobody meant it, unfence: kubectl cnpg fencing off <cluster> -n {{ $labels.namespace }}

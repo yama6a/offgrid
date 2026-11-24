@@ -1,6 +1,8 @@
 apiVersion: 1
 groups:
   # Symptoms, always warning, with no alert-criticality join. workload-outages.yaml holds the rules that page critical.
+  # The label workload names what owns the pod: the Deployment, the DaemonSet or the Job. Other pods keep their own name,
+  # which a restart does not change. kube_pod_owner gives the owner. A ReplicaSet name minus its hash is the Deployment.
   - orgId: 1
     name: workload-anomalies
     folder: offgrid
@@ -27,7 +29,7 @@ groups:
             model:
               refId: A
               instant: true
-              expr: '(kube_pod_container_status_last_terminated_reason{reason="OOMKilled"} == 1) and on(namespace, pod, container) (increase(kube_pod_container_status_restarts_total[10m]) > 0)'
+              expr: 'max by (namespace, pod, container) (kube_pod_container_status_last_terminated_reason{reason="OOMKilled"} == 1) and on(namespace, pod, container) (increase(kube_pod_container_status_restarts_total[10m]) > 0)'
           - refId: B
             relativeTimeRange: {from: 600, to: 0}
             datasourceUid: __expr__
@@ -54,6 +56,7 @@ groups:
             - the container keeps dying and restarting. Causes: a crash, a failed probe or an OOM kill
             - logs: kubectl -n {{ $labels.namespace }} logs {{ $labels.pod }} -c {{ $labels.container }} --previous
             - events: kubectl -n {{ $labels.namespace }} describe pod {{ $labels.pod }}
+            - fix the crash, raise the memory limit, or loosen the probe
         noDataState: OK
         execErrState: KeepLast
         data:
@@ -85,10 +88,10 @@ groups:
         for: 10m
         labels: {severity: warning}
         annotations:
-          summary: 'Container {{ $labels.namespace }}/{{ $labels.pod }}/{{ $labels.container }} is CPU throttled over 50% of the time'
+          summary: 'Container {{ $labels.namespace }}/{{ $labels.workload }}/{{ $labels.container }} is CPU throttled over 50% of the time'
           description: |
             - the container wants more CPU than its limit allows. Expect higher latency
-            - current limit: kubectl -n {{ $labels.namespace }} describe pod {{ $labels.pod }}
+            - current limit: kubectl -n {{ $labels.namespace }} get pods | grep {{ $labels.workload }}, then describe the pod
             - raise the CPU limit in values.yaml, or accept it for a bursty workload that is not latency-sensitive
         noDataState: OK
         execErrState: KeepLast
@@ -99,7 +102,8 @@ groups:
             model:
               refId: A
               instant: true
-              expr: 'sum by (namespace, pod, container) (rate(container_cpu_cfs_throttled_periods_total{container!=""}[5m])) / sum by (namespace, pod, container) (rate(container_cpu_cfs_periods_total{container!=""}[5m]))'
+              # Keyed on the workload, not the pod. The limit belongs to the workload, so a new pod name must not reset the alert.
+              expr: 'max by (namespace, workload, container) ((sum by (namespace, pod, container) (rate(container_cpu_cfs_throttled_periods_total{container!=""}[5m])) / sum by (namespace, pod, container) (rate(container_cpu_cfs_periods_total{container!=""}[5m]))) * on (namespace, pod) group_left(workload) max by (namespace, pod, workload) (label_replace(kube_pod_owner{owner_kind="ReplicaSet"}, "workload", "$1", "owner_name", "(.+)-[^-]+") or label_replace(kube_pod_owner{owner_kind=~"DaemonSet|Job"}, "workload", "$1", "owner_name", "(.+)") or label_replace(kube_pod_owner{owner_kind!~"ReplicaSet|DaemonSet|Job"}, "workload", "$1", "pod", "(.+)")))'
           - refId: B
             relativeTimeRange: {from: 600, to: 0}
             datasourceUid: __expr__
@@ -121,10 +125,10 @@ groups:
         for: 10m
         labels: {severity: warning}
         annotations:
-          summary: 'Container {{ $labels.namespace }}/{{ $labels.pod }}/{{ $labels.container }} is above 90% of its memory limit: OOM risk'
+          summary: 'Container {{ $labels.namespace }}/{{ $labels.workload }}/{{ $labels.container }} is above 90% of its memory limit'
           description: |
-            - the working set is near the memory limit. An OOM kill is close
-            - inspect: kubectl -n {{ $labels.namespace }} describe pod {{ $labels.pod }}
+            - the process memory (RSS, without file cache) is near the memory limit. An OOM kill is close
+            - inspect: kubectl -n {{ $labels.namespace }} get pods | grep {{ $labels.workload }}, then describe the pod
             - raise the memory limit in values.yaml, or find the leak before the kernel kills it
         noDataState: OK
         execErrState: KeepLast
@@ -135,7 +139,8 @@ groups:
             model:
               refId: A
               instant: true
-              expr: 'max by (namespace, pod, container) (container_memory_working_set_bytes{container!=""}) / max by (namespace, pod, container) (kube_pod_container_resource_limits{resource="memory"} > 0)'
+              # Keyed on the workload, not the pod. The limit belongs to the workload, so a new pod name must not reset the alert.
+              expr: 'max by (namespace, workload, container) ((max by (namespace, pod, container) (container_memory_rss{container!=""}) / max by (namespace, pod, container) (kube_pod_container_resource_limits{resource="memory"} > 0)) * on (namespace, pod) group_left(workload) max by (namespace, pod, workload) (label_replace(kube_pod_owner{owner_kind="ReplicaSet"}, "workload", "$1", "owner_name", "(.+)-[^-]+") or label_replace(kube_pod_owner{owner_kind=~"DaemonSet|Job"}, "workload", "$1", "owner_name", "(.+)") or label_replace(kube_pod_owner{owner_kind!~"ReplicaSet|DaemonSet|Job"}, "workload", "$1", "pod", "(.+)")))'
           - refId: B
             relativeTimeRange: {from: 600, to: 0}
             datasourceUid: __expr__
@@ -151,6 +156,45 @@ groups:
               conditions:
                 - type: query
                   evaluator: {type: gt, params: [0.9]}
+      - uid: container-memory-at-limit
+        title: Container keeps hitting its memory limit
+        condition: C
+        for: 30m
+        labels: {severity: warning}
+        annotations:
+          summary: 'Container {{ $labels.namespace }}/{{ $labels.workload }}/{{ $labels.container }} hit its memory limit in every 10m window for 30m'
+          description: |
+            - the kernel keeps reclaiming memory to hold the container under its limit, and the working set is above 90% of it
+            - often tmpfs, emptyDir with medium Memory, or shared memory. The kernel cannot drop these, so RSS alone misses them
+            - inspect: kubectl -n {{ $labels.namespace }} get pods | grep {{ $labels.workload }}, then kubectl exec <pod> -c {{ $labels.container }} -- df -h
+            - raise the memory limit in values.yaml, or cap what fills the in-memory filesystem
+        noDataState: OK
+        execErrState: KeepLast
+        data:
+          - refId: A
+            relativeTimeRange: {from: 600, to: 0}
+            datasourceUid: VictoriaMetrics
+            model:
+              refId: A
+              instant: true
+              # The working set term drops containers whose limit fills with page cache only, which the kernel frees at no cost.
+              # Keyed on the workload, not the pod. The limit belongs to the workload, so a new pod name must not reset the alert.
+              expr: 'max by (namespace, workload, container) ((sum by (namespace, pod, container) (increase(container_memory_events_max_total{container!=""}[10m])) and on (namespace, pod, container) (max by (namespace, pod, container) (container_memory_working_set_bytes{container!=""}) / max by (namespace, pod, container) (kube_pod_container_resource_limits{resource="memory"} > 0) > 0.9)) * on (namespace, pod) group_left(workload) max by (namespace, pod, workload) (label_replace(kube_pod_owner{owner_kind="ReplicaSet"}, "workload", "$1", "owner_name", "(.+)-[^-]+") or label_replace(kube_pod_owner{owner_kind=~"DaemonSet|Job"}, "workload", "$1", "owner_name", "(.+)") or label_replace(kube_pod_owner{owner_kind!~"ReplicaSet|DaemonSet|Job"}, "workload", "$1", "pod", "(.+)")))'
+          - refId: B
+            relativeTimeRange: {from: 600, to: 0}
+            datasourceUid: __expr__
+            model: {refId: B, type: reduce, expression: A, reducer: last, datasource: {type: __expr__, uid: __expr__}}
+          - refId: C
+            relativeTimeRange: {from: 600, to: 0}
+            datasourceUid: __expr__
+            model:
+              refId: C
+              type: threshold
+              expression: B
+              datasource: {type: __expr__, uid: __expr__}
+              conditions:
+                - type: query
+                  evaluator: {type: gt, params: [0]}
       - uid: pod-pending
         title: Pod stuck Pending
         condition: C
@@ -201,6 +245,7 @@ groups:
             - the pod runs but fails its readiness probe, so it is out of the Service endpoints
             - events and probe config: kubectl -n {{ $labels.namespace }} describe pod {{ $labels.pod }}
             - logs: kubectl -n {{ $labels.namespace }} logs {{ $labels.pod }}
+            - fix the app or the probe
         noDataState: OK
         execErrState: KeepLast
         data:
@@ -239,6 +284,7 @@ groups:
             - the Job exited non-zero past its backoffLimit
             - logs: kubectl -n {{ $labels.namespace }} logs job/{{ $labels.job_name }}
             - events: kubectl -n {{ $labels.namespace }} describe job {{ $labels.job_name }}
+            - fix the cause, then rerun the Job or wait for the next CronJob run
         noDataState: OK
         execErrState: KeepLast
         data:
@@ -278,6 +324,7 @@ groups:
             - a CronJob stops scheduling when it is suspended or startingDeadlineSeconds keeps skipping runs
             - state: kubectl -n {{ $labels.namespace }} get cronjob {{ $labels.cronjob }}
             - last runs: kubectl -n {{ $labels.namespace }} get jobs --sort-by=.metadata.creationTimestamp
+            - read the logs of the last Job. Resume the CronJob if it is suspended
         noDataState: OK
         execErrState: KeepLast
         data:
@@ -309,11 +356,13 @@ groups:
         for: 30m
         labels: {severity: warning}
         annotations:
-          summary: 'ReplicaSet {{ $labels.namespace }}/{{ $labels.replicaset }} has fewer ready replicas than desired'
+          summary: 'ReplicaSet of {{ $labels.namespace }}/{{ reReplaceAll "-[a-z0-9]+$" "" (index $labels "replicaset") }} has fewer ready replicas than desired'
           description: |
             - some replicas never became ready. They likely crash or fail probes
             - inspect: kubectl -n {{ $labels.namespace }} describe rs {{ $labels.replicaset }}
-            - check the pods it owns: kubectl -n {{ $labels.namespace }} get pods
+            - rollout: kubectl -n {{ $labels.namespace }} rollout status deploy/{{ reReplaceAll "-[a-z0-9]+$" "" (index $labels "replicaset") }}
+            - pods: kubectl -n {{ $labels.namespace }} get pods
+            - fix the crash or the probe, or revert the release in git
         noDataState: OK
         execErrState: KeepLast
         data:
@@ -323,7 +372,7 @@ groups:
             model:
               refId: A
               instant: true
-              expr: '(kube_replicaset_spec_replicas > 0) and (kube_replicaset_status_ready_replicas < kube_replicaset_spec_replicas)'
+              expr: '(max by (namespace, replicaset) (kube_replicaset_spec_replicas) > 0) and (max by (namespace, replicaset) (kube_replicaset_status_ready_replicas) < max by (namespace, replicaset) (kube_replicaset_spec_replicas))'
           - refId: B
             relativeTimeRange: {from: 600, to: 0}
             datasourceUid: __expr__
@@ -350,6 +399,7 @@ groups:
             - capacity is partial
             - status: kubectl -n {{ $labels.namespace }} rollout status deploy/{{ $labels.deployment }}
             - inspect pods: kubectl -n {{ $labels.namespace }} describe deploy {{ $labels.deployment }}
+            - fix the crash or the probe, or revert the release in git
         noDataState: OK
         execErrState: KeepLast
         data:
@@ -359,7 +409,7 @@ groups:
             model:
               refId: A
               instant: true
-              expr: '(kube_deployment_status_replicas_available > 0) and (kube_deployment_status_replicas_available < kube_deployment_spec_replicas)'
+              expr: '(max by (namespace, deployment) (kube_deployment_status_replicas_available) > 0) and (max by (namespace, deployment) (kube_deployment_status_replicas_available) < max by (namespace, deployment) (kube_deployment_spec_replicas))'
           - refId: B
             relativeTimeRange: {from: 600, to: 0}
             datasourceUid: __expr__
@@ -381,11 +431,12 @@ groups:
         for: 15m
         labels: {severity: warning}
         annotations:
-          summary: 'Deployment {{ $labels.namespace }}/{{ $labels.deployment }} observed generation lags the spec: rollout stuck'
+          summary: 'Deployment {{ $labels.namespace }}/{{ $labels.deployment }} rollout is stuck'
           description: |
             - the controller has not seen the latest spec. The rollout is stuck or the controller lags
             - status: kubectl -n {{ $labels.namespace }} rollout status deploy/{{ $labels.deployment }}
             - inspect conditions: kubectl -n {{ $labels.namespace }} describe deploy {{ $labels.deployment }}
+            - if the controller lags, check kube-controller-manager on the control-plane nodes
         noDataState: OK
         execErrState: KeepLast
         data:
@@ -395,7 +446,7 @@ groups:
             model:
               refId: A
               instant: true
-              expr: 'kube_deployment_status_observed_generation != bool kube_deployment_metadata_generation'
+              expr: 'max by (namespace, deployment) (kube_deployment_status_observed_generation) != bool max by (namespace, deployment) (kube_deployment_metadata_generation)'
           - refId: B
             relativeTimeRange: {from: 600, to: 0}
             datasourceUid: __expr__
@@ -417,8 +468,9 @@ groups:
         for: 15m
         labels: {severity: warning}
         annotations:
-          summary: 'HPA {{ $labels.namespace }}/{{ $labels.horizontalpodautoscaler }} is at max replicas: it cannot scale further'
+          summary: 'HPA {{ $labels.namespace }}/{{ $labels.horizontalpodautoscaler }} is at max replicas'
           description: |
+            - the HPA cannot scale further
             - inspect: kubectl -n {{ $labels.namespace }} describe hpa {{ $labels.horizontalpodautoscaler }}
             - raise maxReplicas in values.yaml if the sustained load is legitimate
         noDataState: OK
@@ -430,7 +482,7 @@ groups:
             model:
               refId: A
               instant: true
-              expr: 'kube_horizontalpodautoscaler_status_current_replicas / kube_horizontalpodautoscaler_spec_max_replicas'
+              expr: 'max by (namespace, horizontalpodautoscaler) (kube_horizontalpodautoscaler_status_current_replicas) / max by (namespace, horizontalpodautoscaler) (kube_horizontalpodautoscaler_spec_max_replicas)'
           - refId: B
             relativeTimeRange: {from: 600, to: 0}
             datasourceUid: __expr__
@@ -452,9 +504,9 @@ groups:
         for: 15m
         labels: {severity: warning}
         annotations:
-          summary: 'HPA {{ $labels.namespace }}/{{ $labels.horizontalpodautoscaler }} cannot scale: AbleToScale or ScalingActive is false'
+          summary: 'HPA {{ $labels.namespace }}/{{ $labels.horizontalpodautoscaler }} cannot scale'
           description: |
-            - the HPA is blocked. Usual causes: missing metrics from metrics-server or a ServiceMonitor, or a bad scaleTargetRef
+            - AbleToScale or ScalingActive is false. Usual causes: missing metrics from metrics-server or a ServiceMonitor, or a bad scaleTargetRef
             - conditions: kubectl -n {{ $labels.namespace }} describe hpa {{ $labels.horizontalpodautoscaler }}
             - verify the metrics source is reporting for the target
         noDataState: OK
@@ -492,6 +544,7 @@ groups:
           description: |
             - conditions: kubectl -n {{ $labels.namespace }} describe hpa {{ $labels.horizontalpodautoscaler }}
             - check that the target pods are not stuck Pending or unschedulable
+            - free node capacity, or fix the pods that cannot schedule
         noDataState: OK
         execErrState: KeepLast
         data:
@@ -501,7 +554,7 @@ groups:
             model:
               refId: A
               instant: true
-              expr: 'kube_horizontalpodautoscaler_spec_min_replicas - kube_horizontalpodautoscaler_status_current_replicas'
+              expr: 'max by (namespace, horizontalpodautoscaler) (kube_horizontalpodautoscaler_spec_min_replicas) - max by (namespace, horizontalpodautoscaler) (kube_horizontalpodautoscaler_status_current_replicas)'
           - refId: B
             relativeTimeRange: {from: 600, to: 0}
             datasourceUid: __expr__

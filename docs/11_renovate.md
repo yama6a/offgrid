@@ -20,7 +20,8 @@ version that must match another.
 
 ## What merges without review
 
-- **Non-major updates:** one combined PR, with auto-merge on.
+- **Non-major updates:** one combined PR, with auto-merge on. The VictoriaMetrics operator and CRD charts get
+  their own PR, also auto-merged, because the CRDs must match the operator.
 - **Major updates:** one PR each, labelled `dep-major`. The VictoriaMetrics charts share one PR, because the CRDs
   must match the operator.
 - **Replacements:** one PR each, labelled `dep-swap`.

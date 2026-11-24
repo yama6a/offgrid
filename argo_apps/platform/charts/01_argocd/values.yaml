@@ -27,9 +27,12 @@ argo-cd:
   redis-ha:
     enabled: false # redis is only a cache and refills after a restart
   redis:
+    # The repo-server caches manifests per app and Git revision for 24h, so a day with many pushes fills redis.
+    # Upstream sets no maxmemory, so redis grows until the OOM kill. The cap makes it evict old entries instead.
+    extraArgs: [--maxmemory, 200mb, --maxmemory-policy, allkeys-lru]
     resources:
       requests: {cpu: 100m, memory: 64Mi} # upstream sets none, and the kubelet evicts such a pod first
-      limits: {memory: 128Mi}
+      limits: {memory: 256Mi} # above maxmemory, which counts only data and not the process overhead
     exporter:
       enabled: true
       resources:

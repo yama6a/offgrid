@@ -14,11 +14,13 @@ groups:
         for: 5m
         labels: {severity: critical}
         annotations:
-          summary: 'RabbitMQ broker has no reachable nodes: no node reports metrics'
+          summary: 'RabbitMQ has no reachable nodes'
           description: |
+            - no broker node reports metrics
             - check the cluster: kubectl -n rabbitmq get rabbitmqcluster,pods
             - pod events: kubectl -n rabbitmq describe pod <pod>
             - pod logs: kubectl -n rabbitmq logs <pod>
+            - recover the pods. Check their PVC and node scheduling before anything drastic
         noDataState: OK
         execErrState: KeepLast
         data:
@@ -44,15 +46,16 @@ groups:
               conditions:
                 - type: query
                   evaluator: {type: gt, params: [0]}
+      # Each node reports rabbitmq_identity_info on both scrape paths, so the node rules count distinct nodes.
       - uid: rabbitmq-quorum-at-risk
         title: RabbitMQ quorum at risk
         condition: C
         for: 2m
         labels: {severity: critical}
         annotations:
-          summary: 'RabbitMQ has fewer than 2 nodes up: quorum queues lose their majority'
+          summary: 'RabbitMQ has fewer than 2 nodes up'
           description: |
-            - quorum queues go read-only
+            - quorum queues lose their majority and go read-only
             - check node and pod state: kubectl -n rabbitmq get rabbitmqcluster,pods -o wide
             - recover the down pods. Check their PVC and node scheduling before anything drastic
         noDataState: OK
@@ -64,7 +67,7 @@ groups:
             model:
               refId: A
               instant: true
-              expr: 'count(rabbitmq_identity_info)'
+              expr: 'count(count by (rabbitmq_node) (rabbitmq_identity_info))'
           - refId: B
             relativeTimeRange: {from: 600, to: 0}
             datasourceUid: __expr__
@@ -86,9 +89,9 @@ groups:
         for: 5m
         labels: {severity: warning}
         annotations:
-          summary: 'RabbitMQ has fewer than 3 nodes up: a broker node is down'
+          summary: 'RabbitMQ has fewer than 3 nodes up'
           description: |
-            - the cluster runs degraded but keeps quorum with 2 nodes
+            - a broker node is down. The cluster keeps quorum with 2 nodes
             - find the down pod: kubectl -n rabbitmq get pods -o wide
             - inspect its events, logs, PVC and node, then restore the full replica count
         noDataState: OK
@@ -100,7 +103,7 @@ groups:
             model:
               refId: A
               instant: true
-              expr: 'count(rabbitmq_identity_info)'
+              expr: 'count(count by (rabbitmq_node) (rabbitmq_identity_info))'
           - refId: B
             relativeTimeRange: {from: 600, to: 0}
             datasourceUid: __expr__
@@ -122,11 +125,11 @@ groups:
         for: 1m
         labels: {severity: critical}
         annotations:
-          summary: 'RabbitMQ memory high-watermark alarm active on a node: publishers are blocked'
+          summary: 'RabbitMQ memory alarm on {{ $labels.pod }}: publishers blocked'
           description: |
             - usual cause: a queue with no consumer or a backlog grows in memory. See the queue backlog and no-consumer alerts
             - drain the backlog by restarting or scaling consumers, or raise the memory
-            - check: kubectl -n rabbitmq logs <pod> | grep -i memory
+            - check: kubectl -n rabbitmq logs {{ $labels.pod }} | grep -i memory
         noDataState: OK
         execErrState: KeepLast
         data:
@@ -136,7 +139,7 @@ groups:
             model:
               refId: A
               instant: true
-              expr: 'max(rabbitmq_alarms_memory_used_watermark)'
+              expr: 'max by (pod) (rabbitmq_alarms_memory_used_watermark)'
           - refId: B
             relativeTimeRange: {from: 600, to: 0}
             datasourceUid: __expr__
@@ -158,9 +161,9 @@ groups:
         for: 1m
         labels: {severity: critical}
         annotations:
-          summary: 'RabbitMQ free-disk alarm active on a node: publishers are blocked'
+          summary: 'RabbitMQ disk alarm on {{ $labels.pod }}: publishers blocked'
           description: |
-            - free disk on the node's PVC: drain the queue backlog or expand the RabbitMQ PVC
+            - free disk on the PVC of {{ $labels.pod }}: drain the queue backlog or expand the RabbitMQ PVC
             - check that the Longhorn volume under it is not full. See the storage alerts
         noDataState: OK
         execErrState: KeepLast
@@ -171,7 +174,7 @@ groups:
             model:
               refId: A
               instant: true
-              expr: 'max(rabbitmq_alarms_free_disk_space_watermark)'
+              expr: 'max by (pod) (rabbitmq_alarms_free_disk_space_watermark)'
           - refId: B
             relativeTimeRange: {from: 600, to: 0}
             datasourceUid: __expr__
@@ -193,9 +196,9 @@ groups:
         for: 10m
         labels: {severity: warning}
         annotations:
-          summary: 'RabbitMQ free disk on a node is approaching the alarm watermark'
+          summary: 'RabbitMQ free disk on {{ $labels.pod }} is approaching the alarm watermark'
           description: |
-            - the lowest node free disk is under 2x the alarm limit. Publishers get blocked at the limit
+            - free disk is under 2x the alarm limit. Publishers get blocked at the limit
             - free space or expand the RabbitMQ PVC before the disk alarm trips
             - check the usage of the Longhorn volume under it. See the storage alerts
         noDataState: OK
@@ -207,7 +210,7 @@ groups:
             model:
               refId: A
               instant: true
-              expr: 'min(rabbitmq_disk_space_available_bytes) < bool (min(rabbitmq_disk_space_available_limit_bytes) * 2)'
+              expr: 'min by (pod) (rabbitmq_disk_space_available_bytes) < bool (min by (pod) (rabbitmq_disk_space_available_limit_bytes) * 2)'
           - refId: B
             relativeTimeRange: {from: 600, to: 0}
             datasourceUid: __expr__
@@ -236,7 +239,7 @@ groups:
         for: 5m
         labels: {severity: warning}
         annotations:
-          summary: 'RabbitMQ queue {{ $labels.queue }} in vhost {{ $labels.vhost }} has no consumers: messages pile up'
+          summary: 'RabbitMQ queue {{ $labels.queue }} in vhost {{ $labels.vhost }} has no consumers'
           description: |
             - messages pile up until a memory or disk alarm
             - usual cause: the consuming workload is down or crash-looping. Check its pods
@@ -251,7 +254,7 @@ groups:
             model:
               refId: A
               instant: true
-              expr: 'rabbitmq_detailed_queue_consumers{queue!~".+\\.dlq"} == bool 0'
+              expr: 'max by (vhost, queue) (rabbitmq_detailed_queue_consumers{queue!~".+\\.dlq"}) == bool 0'
           - refId: B
             relativeTimeRange: {from: 600, to: 0}
             datasourceUid: __expr__
@@ -273,7 +276,7 @@ groups:
         for: 10m
         labels: {severity: warning}
         annotations:
-          summary: 'RabbitMQ queue {{ $labels.queue }} has over 100 ready messages: consumers fall behind'
+          summary: 'RabbitMQ queue {{ $labels.queue }} has over 100 ready messages'
           description: |
             - consumers cannot keep up with publishers
             - check consumer health and count. Scale consumers up if the load is real
@@ -287,7 +290,7 @@ groups:
             model:
               refId: A
               instant: true
-              expr: 'rabbitmq_detailed_queue_messages_ready{queue!~".+\\.dlq"}'
+              expr: 'max by (vhost, queue) (rabbitmq_detailed_queue_messages_ready{queue!~".+\\.dlq"})'
           - refId: B
             relativeTimeRange: {from: 600, to: 0}
             datasourceUid: __expr__
@@ -309,7 +312,7 @@ groups:
         for: 10m
         labels: {severity: warning}
         annotations:
-          summary: 'RabbitMQ queue {{ $labels.queue }} has over 100 unacked messages: consumers take but do not ack'
+          summary: 'RabbitMQ queue {{ $labels.queue }} has over 100 unacked messages'
           description: |
             - consumers took them but never sent ack or nack
             - usual causes: a consumer stuck mid-processing, a prefetch that is too high, or a bug in the ack logic
@@ -323,7 +326,7 @@ groups:
             model:
               refId: A
               instant: true
-              expr: 'rabbitmq_detailed_queue_messages_unacked{queue!~".+\\.dlq"}'
+              expr: 'max by (vhost, queue) (rabbitmq_detailed_queue_messages_unacked{queue!~".+\\.dlq"})'
           - refId: B
             relativeTimeRange: {from: 600, to: 0}
             datasourceUid: __expr__
@@ -345,7 +348,7 @@ groups:
         for: 5m
         labels: {severity: warning}
         annotations:
-          summary: 'RabbitMQ dead-letter queue {{ $labels.queue }} has messages: a flow is failing'
+          summary: 'RabbitMQ dead-letter queue {{ $labels.queue }} has messages'
           description: |
             - DLQ {{ $labels.queue }} holds dead-lettered messages. A flow rejected them or let them expire
             - inspect them with Get messages in the management UI to find the failing consumer and the cause
@@ -359,7 +362,7 @@ groups:
             model:
               refId: A
               instant: true
-              expr: 'rabbitmq_detailed_queue_messages{queue=~".+\\.dlq"}'
+              expr: 'max by (vhost, queue) (rabbitmq_detailed_queue_messages{queue=~".+\\.dlq"})'
           - refId: B
             relativeTimeRange: {from: 600, to: 0}
             datasourceUid: __expr__
@@ -383,7 +386,7 @@ groups:
         for: 10m
         labels: {severity: warning}
         annotations:
-          summary: 'RabbitMQ is dead-lettering messages past the delivery limit: consumers fail repeatedly'
+          summary: 'RabbitMQ is dead-lettering messages past the delivery limit'
           description: |
             - a consumer keeps sending nack past the delivery limit, so RabbitMQ dead-letters its messages
             - this also fires with no DLQ, or after a DLQ is drained. Find the queue in the management UI

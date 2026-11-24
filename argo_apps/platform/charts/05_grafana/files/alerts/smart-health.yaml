@@ -15,11 +15,11 @@ groups:
         for: 5m
         labels: {severity: critical}
         annotations:
-          summary: 'Disk {{ $labels.device }} on {{ $labels.instance }} reports SMART status failing'
+          summary: 'Disk {{ $labels.device }} on {{ $labels.node }} reports SMART status failing'
           description: |
             - the drive reports that it is failing. Replace it, and do not wait for a reason
             - move Longhorn replicas off this node first, then drain it
-            - find the attribute that tripped: smartctl -a /dev/{{ $labels.device }} on {{ $labels.instance }}
+            - find the attribute that tripped: smartctl -a /dev/{{ $labels.device }} in the smartctl-exporter pod on {{ $labels.node }}
         noDataState: OK
         execErrState: KeepLast
         data:
@@ -29,7 +29,7 @@ groups:
             model:
               refId: A
               instant: true
-              expr: 'min by (instance, device) (smartctl_device_smart_status)'
+              expr: 'min by (node, instance, device) (smartctl_device_smart_status)'
           - refId: B
             relativeTimeRange: {from: 600, to: 0}
             datasourceUid: __expr__
@@ -53,10 +53,10 @@ groups:
         for: 5m
         labels: {severity: critical}
         annotations:
-          summary: 'NVMe {{ $labels.device }} on {{ $labels.instance }} raised a critical warning'
+          summary: 'NVMe {{ $labels.device }} on {{ $labels.node }} raised a critical warning'
           description: |
             - the controller set a critical warning bit. Read-only mode and data loss are both possible
-            - find the bit: smartctl -a /dev/{{ $labels.device }} on {{ $labels.instance }}
+            - find the bit: smartctl -a /dev/{{ $labels.device }} in the smartctl-exporter pod on {{ $labels.node }}
             - in read-only mode, Longhorn replicas on this node already fail writes
         noDataState: OK
         execErrState: KeepLast
@@ -67,7 +67,7 @@ groups:
             model:
               refId: A
               instant: true
-              expr: 'max by (instance, device) (smartctl_device_critical_warning)'
+              expr: 'max by (node, instance, device) (smartctl_device_critical_warning)'
           - refId: B
             relativeTimeRange: {from: 600, to: 0}
             datasourceUid: __expr__
@@ -90,11 +90,11 @@ groups:
         for: 15m
         labels: {severity: critical}
         annotations:
-          summary: 'Disk {{ $labels.device }} on {{ $labels.instance }} is out of spare blocks'
+          summary: 'Disk {{ $labels.device }} on {{ $labels.node }} is out of spare blocks'
           description: |
             - available spare fell under the drive threshold, so it can no longer remap bad blocks
             - replace the disk. It does not recover
-            - move Longhorn replicas off {{ $labels.instance }} before draining
+            - move Longhorn replicas off {{ $labels.node }} before draining
         noDataState: OK
         execErrState: KeepLast
         data:
@@ -104,7 +104,7 @@ groups:
             model:
               refId: A
               instant: true
-              expr: 'max by (instance, device) (smartctl_device_available_spare_threshold - smartctl_device_available_spare)'
+              expr: 'max by (node, instance, device) (smartctl_device_available_spare_threshold - smartctl_device_available_spare)'
           - refId: B
             relativeTimeRange: {from: 600, to: 0}
             datasourceUid: __expr__
@@ -121,18 +121,18 @@ groups:
                 - type: query
                   evaluator: {type: gt, params: [0]}
       # increase() over 24h, because the counter never resets and one error years ago must not alert forever.
-      # That is why relativeTimeRange is 24h here and 600 in every other rule.
+      # That is why relativeTimeRange is 24h here and in smart-sata-reallocated, and 600 in every other rule.
       - uid: smart-media-errors
         title: Disk media errors increasing
         condition: C
         for: 15m
         labels: {severity: warning}
         annotations:
-          summary: 'Disk {{ $labels.device }} on {{ $labels.instance }} logged new media errors'
+          summary: 'Disk {{ $labels.device }} on {{ $labels.node }} logged new media errors'
           description: |
             - unrecoverable read or write errors in the last 24h. The drive is starting to fail
             - it still works, so plan the swap now
-            - check Longhorn for degraded volumes with a replica on {{ $labels.instance }}
+            - check Longhorn for degraded volumes with a replica on {{ $labels.node }}
         noDataState: OK
         execErrState: KeepLast
         data:
@@ -142,7 +142,7 @@ groups:
             model:
               refId: A
               instant: true
-              expr: 'max by (instance, device) (increase(smartctl_device_media_errors[24h]))'
+              expr: 'max by (node, instance, device) (increase(smartctl_device_media_errors[24h]))'
           - refId: B
             relativeTimeRange: {from: 86400, to: 0}
             datasourceUid: __expr__
@@ -166,7 +166,7 @@ groups:
         for: 1h
         labels: {severity: warning}
         annotations:
-          summary: 'Disk {{ $labels.device }} on {{ $labels.instance }} is 80% through its rated endurance'
+          summary: 'Disk {{ $labels.device }} on {{ $labels.node }} is 80% through its rated endurance'
           description: |
             - at 100%, the rated write endurance is used up. Order a replacement now
             - replication multiplies writes, so the disks on the other nodes are probably close behind
@@ -180,7 +180,7 @@ groups:
             model:
               refId: A
               instant: true
-              expr: 'max by (instance, device) (smartctl_device_percentage_used)'
+              expr: 'max by (node, instance, device) (smartctl_device_percentage_used)'
           - refId: B
             relativeTimeRange: {from: 600, to: 0}
             datasourceUid: __expr__
@@ -204,7 +204,7 @@ groups:
         for: 15m
         labels: {severity: warning}
         annotations:
-          summary: 'Disk {{ $labels.device }} on {{ $labels.instance }} is above 70C'
+          summary: 'Disk {{ $labels.device }} on {{ $labels.node }} is above 70C'
           description: |
             - the drive throttles writes well before its critical point. etcd and Longhorn both slow down
             - add a heatsink to the drive or improve airflow over it
@@ -218,7 +218,7 @@ groups:
             model:
               refId: A
               instant: true
-              expr: 'max by (instance, device) (smartctl_device_temperature{temperature_type="current"})'
+              expr: 'max by (node, instance, device) (smartctl_device_temperature{temperature_type="current"})'
           - refId: B
             relativeTimeRange: {from: 600, to: 0}
             datasourceUid: __expr__
@@ -234,35 +234,35 @@ groups:
               conditions:
                 - type: query
                   evaluator: {type: gt, params: [70]}
-      # The SATA version of media errors. NVMe drives lack this attribute, and SATA drives lack media_errors.
-      # Raw value, because the normalised one counts down from 100 and never crosses `> 0`.
+      # The SATA version of media errors, with the same 24h increase(). NVMe drives lack this attribute, and SATA
+      # drives lack media_errors. Raw value, because the normalised one counts down from 100.
       - uid: smart-sata-reallocated
         title: Disk has reallocated sectors
         condition: C
         for: 15m
         labels: {severity: warning}
         annotations:
-          summary: 'Disk {{ $labels.device }} on {{ $labels.instance }} has reallocated sectors'
+          summary: 'Disk {{ $labels.device }} on {{ $labels.node }} has reallocated sectors'
           description: |
-            - the drive remapped bad sectors onto spares. The disk is wearing out, and it rarely stops at one
-            - watch whether the count grows. A stable count from years ago is not urgent
-            - full attribute table: smartctl -a /dev/{{ $labels.device }} on {{ $labels.instance }}
+            - the drive remapped new bad sectors onto spares in the last 24h. The disk is wearing out
+            - the alert closes after 24h without growth. It fires again on the next new sector
+            - full attribute table: smartctl -a /dev/{{ $labels.device }} in the smartctl-exporter pod on {{ $labels.node }}
         noDataState: OK
         execErrState: KeepLast
         data:
           - refId: A
-            relativeTimeRange: {from: 600, to: 0}
+            relativeTimeRange: {from: 86400, to: 0}
             datasourceUid: VictoriaMetrics
             model:
               refId: A
               instant: true
-              expr: 'max by (instance, device) (smartctl_device_attribute{attribute_name="Reallocated_Sector_Ct",attribute_value_type="raw"})'
+              expr: 'max by (node, instance, device) (increase(smartctl_device_attribute{attribute_name="Reallocated_Sector_Ct",attribute_value_type="raw"}[24h]))'
           - refId: B
-            relativeTimeRange: {from: 600, to: 0}
+            relativeTimeRange: {from: 86400, to: 0}
             datasourceUid: __expr__
             model: {refId: B, type: reduce, expression: A, reducer: last, datasource: {type: __expr__, uid: __expr__}}
           - refId: C
-            relativeTimeRange: {from: 600, to: 0}
+            relativeTimeRange: {from: 86400, to: 0}
             datasourceUid: __expr__
             model:
               refId: C

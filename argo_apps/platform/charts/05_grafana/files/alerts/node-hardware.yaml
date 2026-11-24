@@ -1,5 +1,4 @@
 # Temperature comes from thermal zones, not raw hwmon chips. An unused super-I/O sensor reads a constant 127C.
-# `instance` is the node IP:9100. node-exporter has no `node` label.
 # Drive temperature is in smart-health.yaml, which covers NVMe and SATA with one metric.
 apiVersion: 1
 groups:
@@ -16,7 +15,7 @@ groups:
         for: 5m
         labels: {severity: critical}
         annotations:
-          summary: 'Node {{ $labels.instance }} reports undervoltage'
+          summary: 'Node {{ $labels.node }} reports undervoltage'
           description: |
             - the supply voltage dropped below spec. The CPU throttles and writes can corrupt
             - on a Pi: use the official 27W PSU and a short, thick USB-C cable
@@ -31,7 +30,7 @@ groups:
             model:
               refId: A
               instant: true
-              expr: 'max by (instance) (node_hwmon_in_lcrit_alarm_volts)'
+              expr: 'max by (node, instance) (node_hwmon_in_lcrit_alarm_volts)'
           - refId: B
             relativeTimeRange: {from: 600, to: 0}
             datasourceUid: __expr__
@@ -55,7 +54,7 @@ groups:
         for: 30m
         labels: {severity: warning}
         annotations:
-          summary: 'Node {{ $labels.instance }} SoC above 80C'
+          summary: 'Node {{ $labels.node }} SoC above 80C'
           description: |
             - an ARM SoC throttles from 80C. Expect slow etcd and false leader elections next
             - check that the fan spins and the heatsink is seated. Clear dust from the case
@@ -69,7 +68,7 @@ groups:
             model:
               refId: A
               range: true
-              expr: 'max by (instance) (node_thermal_zone_temp{type=~"cpu-thermal|cpu_thermal|soc.*"})'
+              expr: 'max by (node, instance) (node_thermal_zone_temp{type=~"cpu-thermal|cpu_thermal|soc.*"})'
           - refId: B
             relativeTimeRange: {from: 600, to: 0}
             datasourceUid: __expr__
@@ -92,7 +91,7 @@ groups:
         for: 15m
         labels: {severity: warning}
         annotations:
-          summary: 'Node {{ $labels.instance }} CPU package above 90C'
+          summary: 'Node {{ $labels.node }} CPU package above 90C'
           description: |
             - the x86 package is close to its shutdown point of about 100C. It throttles first, then stops
             - check the fan and that the heatsink is seated. A small chassis fills with dust fast
@@ -106,7 +105,7 @@ groups:
             model:
               refId: A
               instant: true
-              expr: 'max by (instance) (node_thermal_zone_temp{type=~"x86_pkg_temp|k10temp"})'
+              expr: 'max by (node, instance) (node_thermal_zone_temp{type=~"x86_pkg_temp|k10temp"})'
           - refId: B
             relativeTimeRange: {from: 600, to: 0}
             datasourceUid: __expr__
@@ -130,9 +129,9 @@ groups:
         for: 15m
         labels: {severity: warning}
         annotations:
-          summary: 'Node {{ $labels.instance }} CPU package is throttling'
+          summary: 'Node {{ $labels.node }} CPU package is throttling'
           description: |
-            - the CPU clocks itself down. Everything on {{ $labels.instance }} runs slower than its requests assume
+            - the CPU clocks itself down. Everything on {{ $labels.node }} runs slower than its requests assume
             - with node-cpu-temp-high, the cause is cooling. Check the fan, the heatsink and the dust
             - alone, the cause is power, not heat. The PSU is too small or a current limit applies
         noDataState: OK
@@ -144,7 +143,7 @@ groups:
             model:
               refId: A
               instant: true
-              expr: 'max by (instance) (rate(node_cpu_package_throttles_total[15m]))'
+              expr: 'max by (node, instance) (rate(node_cpu_package_throttles_total[15m]))'
           - refId: B
             relativeTimeRange: {from: 600, to: 0}
             datasourceUid: __expr__

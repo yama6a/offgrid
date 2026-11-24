@@ -6,7 +6,7 @@ resources: {}        # required. Per-instance requests and limits
 allowedClients: []   # required. Client pods in the same namespace only, for example [{matchLabels: {app: my-app}}]
 deletionProtection:  # required, bool. To delete the database, set false in one commit, then remove it in a second commit
 
-postgresql: { parameters: { max_connections: "50", shared_buffers: "128MB", effective_cache_size: "256MB", pg_stat_statements.max: "10000", pg_stat_statements.track: all } } # optional. Postgres server parameters
+postgresql: { parameters: { max_connections: "50", shared_buffers: "128MB", effective_cache_size: "256MB", pg_stat_statements.max: "10000", pg_stat_statements.track: all, wal_receiver_timeout: "10s", wal_sender_timeout: "10s" } } # optional. Postgres server parameters. The WAL timeouts outlast a Pi 5 NIC hang, up to 6 s. The CNPG default of 5s drops the standbys and stalls synchronous commits
 alertCritical: false # optional, bool. true sends this database's alerts as critical, false as warning
 backupsEnabled: true # optional, bool. Off-cluster S3 backups: a daily base backup plus WAL archiving at CNPG_BACKUP_RPO
 

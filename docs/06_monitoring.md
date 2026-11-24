@@ -143,7 +143,8 @@ rolls back on its own, with no feature lost.
 
 Every rule carries two annotations, and the ntfy payload maps them to the push notification:
 
-- `summary` is the title. One line, faulty resource first, for example `Redis <ns>/<pod> ...`.
+- `summary` is the title. One line, faulty resource first, for example `Redis <ns>/<pod> ...`. Name the resource
+  a person knows: the PVC, not the Longhorn volume UUID. Consequences and IDs belong in `description`.
 - `description` is the message. Short fragments: what is wrong and how to fix it, with a real diagnosis command.
 
 Notifications group by every label, so each faulty resource gets its own push with its name in the title.

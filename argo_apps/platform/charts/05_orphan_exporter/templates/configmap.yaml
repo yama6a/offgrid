@@ -172,9 +172,12 @@ data:
             vol = (bv.get("spec") or {}).get("volumeName") or ""
             if not vol or vol in live:
                 continue
+            status = bv.get("status") or {}
+            k8s = json.loads((status.get("labels") or {}).get("KubernetesStatus") or "{}")
+            pvc = "%s/%s" % (k8s.get("namespace"), k8s["pvcName"]) if k8s.get("pvcName") else ""
             out.append("orphaned_backupvolume_last_backup_seconds{%s} %d" % (
-                labels([("res_backupvolume", bv["metadata"]["name"]), ("res_volume", vol)]),
-                rfc3339((bv.get("status") or {}).get("lastBackupAt")),
+                labels([("res_backupvolume", bv["metadata"]["name"]), ("res_volume", vol), ("res_pvc", pvc)]),
+                rfc3339(status.get("lastBackupAt")),
             ))
         return out
 
