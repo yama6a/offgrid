@@ -19,6 +19,8 @@ groups:
           description: |
             - the CronJob may be suspended or may never schedule
             - check: kubectl -n {{ $labels.namespace }} get cronjob {{ $labels.cronjob }}
+            - last runs: kubectl -n {{ $labels.namespace }} get jobs --sort-by=.metadata.creationTimestamp
+            - run it now: kubectl -n {{ $labels.namespace }} create job --from=cronjob/{{ $labels.cronjob }} {{ $labels.cronjob }}-manual
         noDataState: OK
         execErrState: KeepLast
         data:
@@ -50,10 +52,13 @@ groups:
         for: 15m
         labels: {severity: warning}
         annotations:
-          summary: 'Longhorn backup for volume {{ $labels.volume }} is in Error state'
+          summary: 'Longhorn backup of {{ if $labels.pvc }}PVC {{ $labels.pvc_namespace }}/{{ $labels.pvc }}{{ else }}volume {{ $labels.volume }}{{ end }} failed'
           description: |
-            - check the volume's backups in the Longhorn UI
-            - check the credentials of the S3 backup target and that the cluster can reach it
+            - the last backup is in Error state, so this PVC gets no new restore point
+            - Longhorn volume: {{ $labels.volume }}
+            - list: kubectl -n longhorn-system get backups.longhorn.io -l backup-volume={{ $labels.volume }}
+            - target: kubectl -n longhorn-system get backuptargets.longhorn.io default -o yaml
+            - fix the S3 credentials or the network path. The next recurring backup retries
         noDataState: OK
         execErrState: KeepLast
         data:
@@ -63,7 +68,7 @@ groups:
             model:
               refId: A
               instant: true
-              expr: 'max by (volume) (longhorn_backup_state == 4)'  # 4 is Error. 0 New, 1 Pending, 2 InProgress, 3 Completed
+              expr: '(max by (volume) (longhorn_backup_state == 4) * on (volume) group_left(pvc_namespace, pvc) group by (volume, pvc_namespace, pvc) (longhorn_volume_capacity_bytes)) or on (volume) max by (volume) (longhorn_backup_state == 4)'  # 4 is Error. 0 New, 1 Pending, 2 InProgress, 3 Completed
           - refId: B
             relativeTimeRange: {from: 600, to: 0}
             datasourceUid: __expr__
@@ -89,10 +94,14 @@ groups:
         for: 30m
         labels: {severity: warning}
         annotations:
-          summary: 'Longhorn volume {{ $labels.volume }} has no successful backup in more than 48h'
+          summary: 'Longhorn {{ if $labels.pvc }}PVC {{ $labels.pvc_namespace }}/{{ $labels.pvc }}{{ else }}volume {{ $labels.volume }}{{ end }} has no successful backup in more than 48h'
           description: |
             - a stopped RecurringJob emits no Error, so this is the only signal
-            - check the Longhorn RecurringJob schedule and the backup target
+            - Longhorn volume: {{ $labels.volume }}
+            - schedules: kubectl -n longhorn-system get recurringjobs.longhorn.io,cronjobs
+            - volume groups: kubectl -n longhorn-system get volumes.longhorn.io {{ $labels.volume }} --show-labels
+            - target: kubectl -n longhorn-system get backuptargets.longhorn.io default -o yaml
+            - fix the schedule or the target, then take a backup in the Longhorn UI
         noDataState: OK
         execErrState: KeepLast
         data:
@@ -102,7 +111,7 @@ groups:
             model:
               refId: A
               instant: true
-              expr: 'time() - max by (volume) (longhorn_volume_last_backup_at > 0)'
+              expr: 'time() - max by (pvc_namespace, pvc, volume) (longhorn_volume_last_backup_at > 0)'
           - refId: B
             relativeTimeRange: {from: 600, to: 0}
             datasourceUid: __expr__
@@ -130,6 +139,8 @@ groups:
           description: |
             - the CronJob may be suspended or may never schedule
             - check: kubectl -n {{ $labels.namespace }} get cronjob {{ $labels.cronjob }}
+            - last runs: kubectl -n {{ $labels.namespace }} get jobs --sort-by=.metadata.creationTimestamp
+            - run it now: kubectl -n {{ $labels.namespace }} create job --from=cronjob/{{ $labels.cronjob }} {{ $labels.cronjob }}-manual
         noDataState: OK
         execErrState: KeepLast
         data:
@@ -168,6 +179,8 @@ groups:
             - WAL segments pile up on {{ $labels.namespace }}/{{ $labels.pod }} and do not reach S3
             - pg_wal grows until the volume fills and the primary goes read-only
             - check the barman-cloud sidecar logs, the S3 credentials and the bucket
+            - sidecar logs: kubectl -n {{ $labels.namespace }} logs {{ $labels.pod }} -c plugin-barman-cloud
+            - fix the credentials or the bucket. Archiving resumes by itself
         noDataState: OK
         execErrState: KeepLast
         data:
@@ -206,6 +219,7 @@ groups:
             - check: kubectl -n {{ $labels.res_namespace }} get objectstore {{ $labels.res_cluster }}-backups -o yaml
             - the times are under status.serverRecoveryWindow. The plugin creates no Backup CRs to list
             - read the barman-cloud sidecar logs on the standby
+            - to force a base backup, apply a Backup CR with method plugin for this cluster
         noDataState: OK
         execErrState: KeepLast
         data:

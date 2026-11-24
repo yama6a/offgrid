@@ -15,10 +15,12 @@ groups:
         for: 5m
         labels: {severity: critical}
         annotations:
-          summary: 'Longhorn reports no metrics. The manager is down or not scraped, so no storage alert can fire'
+          summary: 'Longhorn reports no metrics'
           description: |
+            - the manager is down or not scraped, so no storage alert can fire
             - check pods: kubectl -n longhorn-system get pods -l app=longhorn-manager
             - check the ServiceMonitor scrape target on the vmagent targets page
+            - restart stuck pods: kubectl -n longhorn-system rollout restart ds/longhorn-manager
         noDataState: OK
         execErrState: KeepLast
         data:
@@ -89,12 +91,12 @@ groups:
         for: 10m
         labels: {severity: warning}
         annotations:
-          summary: 'Longhorn disk {{ $labels.disk }} on node {{ $labels.node }} is not ready'
+          summary: 'Longhorn disk on node {{ $labels.node }} is not ready'
           description: |
             - Longhorn rejects disk {{ $labels.disk }} on {{ $labels.node }}. It holds no replicas and takes none
             - the node can still report Ready, so check the disk conditions: kubectl -n longhorn-system get nodes.longhorn.io {{ $labels.node }} -o yaml
             - DiskFilesystemChanged with "record diskUUID doesn't match" means someone replaced or reflashed that node.
-              The CR still records the old filesystem. Reset it: make reconcile-storage NODE=<host>
+              The CR still records the old filesystem. Reset it: make reconcile-storage NODE={{ $labels.node }}
             - otherwise check the Longhorn data path mount, and iscsi and multipathd on that node
         noDataState: OK
         execErrState: KeepLast
@@ -128,9 +130,9 @@ groups:
         for: 10m
         labels: {severity: warning}
         annotations:
-          summary: 'Longhorn disk {{ $labels.disk }} on node {{ $labels.node }} is unschedulable'
+          summary: 'Longhorn disk on node {{ $labels.node }} is unschedulable'
           description: |
-            - new volumes and replica rebuilds fail
+            - new volumes and replica rebuilds fail on disk {{ $labels.disk }}
             - if disk-not-ready fired for the same disk, that is the cause. Fix that and ignore this alert
             - otherwise the disk is full or above storage-reserved. Check the Node page in the Longhorn UI
             - free space or raise the disk's storage-reserved: kubectl -n longhorn-system get nodes.longhorn.io {{ $labels.node }} -o yaml
@@ -181,7 +183,7 @@ groups:
             model:
               refId: A
               instant: true
-              expr: '100 * longhorn_node_storage_usage_bytes / longhorn_node_storage_capacity_bytes'
+              expr: '100 * max by (node) (longhorn_node_storage_usage_bytes) / max by (node) (longhorn_node_storage_capacity_bytes)'
           - refId: B
             relativeTimeRange: {from: 600, to: 0}
             datasourceUid: __expr__
@@ -203,9 +205,10 @@ groups:
         for: 10m
         labels: {severity: warning}
         annotations:
-          summary: 'Longhorn volume {{ $labels.volume }} (pvc {{ $labels.pvc_namespace }}/{{ $labels.pvc }}) is degraded'
+          summary: 'Longhorn {{ if $labels.pvc }}PVC {{ $labels.pvc_namespace }}/{{ $labels.pvc }}{{ else }}volume {{ $labels.volume }}{{ end }} is degraded'
           description: |
             - the volume stays available with less redundancy
+            - Longhorn volume: {{ $labels.volume }}
             - check: kubectl -n longhorn-system get volumes.longhorn.io {{ $labels.volume }} -o yaml
             - find the failed replica on the Volume page of the Longhorn UI, then check its node and disk
             - it usually heals once a schedulable disk is available. Watch it rebuild
@@ -240,9 +243,10 @@ groups:
         for: 2m
         labels: {severity: critical}
         annotations:
-          summary: 'Longhorn volume {{ $labels.volume }} (pvc {{ $labels.pvc_namespace }}/{{ $labels.pvc }}) is faulted. No replica is healthy and data is at risk'
+          summary: 'Longhorn {{ if $labels.pvc }}PVC {{ $labels.pvc_namespace }}/{{ $labels.pvc }}{{ else }}volume {{ $labels.volume }}{{ end }} is faulted'
           description: |
-            - I/O to the volume fails
+            - no replica is healthy, so I/O fails and data is at risk
+            - Longhorn volume: {{ $labels.volume }}
             - check now: kubectl -n longhorn-system get volumes.longhorn.io {{ $labels.volume }} -o yaml
             - check the node and disk of every replica in the Longhorn UI. Bring a node back to recover. Do not delete replicas
             - if you cannot recover it, restore from a backup or snapshot
@@ -271,39 +275,3 @@ groups:
               conditions:
                 - type: query
                   evaluator: {type: gt, params: [0]}
-      - uid: longhorn-volume-near-full
-        title: Longhorn volume near full
-        condition: C
-        for: 10m
-        labels: {severity: warning}
-        annotations:
-          summary: 'Longhorn volume {{ $labels.volume }} (pvc {{ $labels.pvc_namespace }}/{{ $labels.pvc }}) is more than 90% full'
-          description: |
-            - writes fail at 100%
-            - check usage from inside the pod that uses it: kubectl -n {{ $labels.pvc_namespace }} exec ... -- df -h
-            - delete data, or grow the PVC in its spec.resources.requests.storage. Longhorn expands volumes online
-        noDataState: OK
-        execErrState: KeepLast
-        data:
-          - refId: A
-            relativeTimeRange: {from: 600, to: 0}
-            datasourceUid: VictoriaMetrics
-            model:
-              refId: A
-              instant: true
-              expr: '100 * longhorn_volume_actual_size_bytes / longhorn_volume_capacity_bytes'
-          - refId: B
-            relativeTimeRange: {from: 600, to: 0}
-            datasourceUid: __expr__
-            model: {refId: B, type: reduce, expression: A, reducer: last, datasource: {type: __expr__, uid: __expr__}}
-          - refId: C
-            relativeTimeRange: {from: 600, to: 0}
-            datasourceUid: __expr__
-            model:
-              refId: C
-              type: threshold
-              expression: B
-              datasource: {type: __expr__, uid: __expr__}
-              conditions:
-                - type: query
-                  evaluator: {type: gt, params: [90]}

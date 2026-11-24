@@ -4,6 +4,8 @@ groups:
   # The other rules are warnings, except the second level of the memory rule.
   # Instances run noeviction with maxmemory at 80% of the container limit. At maxmemory, writes fail instead of
   # evicting keys, so the rules watch memory percent, not eviction rate.
+  # The memory rules skip instances with an eviction policy, such as argocd-redis on allkeys-lru. Such a cache
+  # sits near maxmemory by design and evicts old keys there.
   - orgId: 1
     name: redis-health
     folder: offgrid
@@ -16,11 +18,11 @@ groups:
         labels:
           severity: '{{ if eq (index $labels "label_alert_criticality") "critical" }}critical{{ else }}warning{{ end }}'
         annotations:
-          summary: 'Redis {{ $labels.namespace }}/{{ $labels.pod }} is not responding: redis_up is 0'
+          summary: 'Redis {{ $labels.namespace }}/{{ reReplaceAll "-metrics$" "" (index $labels "job") }} is down'
           description: |
             - the exporter cannot reach Redis. The pod is down, crashlooping or OOMKilled
-            - check: kubectl -n {{ $labels.namespace }} get pod {{ $labels.pod }}
-            - logs: kubectl -n {{ $labels.namespace }} logs {{ $labels.pod }} -c {{ $labels.namespace }}
+            - find the pod behind the Service: kubectl -n {{ $labels.namespace }} get endpointslices -l kubernetes.io/service-name={{ $labels.job }}
+            - check it: kubectl -n {{ $labels.namespace }} describe pod <pod>, then kubectl -n {{ $labels.namespace }} logs <pod>
             - the Longhorn volume can be detached during a reschedule. Check the PVC and its attachment
         noDataState: OK
         execErrState: KeepLast
@@ -31,7 +33,7 @@ groups:
             model:
               refId: A
               instant: true
-              expr: '(redis_up == bool 0) * on(namespace, pod) group_left(label_alert_criticality) kube_pod_labels'
+              expr: 'min by (namespace, job, label_alert_criticality) ((redis_up == bool 0) * on(namespace, pod) group_left(label_alert_criticality) max by (namespace, pod, label_alert_criticality) (kube_pod_labels))'
           - refId: B
             relativeTimeRange: {from: 600, to: 0}
             datasourceUid: __expr__
@@ -54,7 +56,7 @@ groups:
         for: 5m
         labels: {severity: warning}
         annotations:
-          summary: 'Redis {{ $labels.namespace }}/{{ $labels.pod }} is above 90% of maxmemory: writes fail at 100%'
+          summary: 'Redis {{ $labels.namespace }}/{{ reReplaceAll "-metrics$" "" (index $labels "job") }} is above 90% of maxmemory'
           description: |
             - nearing maxmemory, which is 80% of the container limit. With noeviction, writes fail at 100%
             - fix: raise resources.limits.memory in the workload values.yaml
@@ -68,7 +70,7 @@ groups:
             model:
               refId: A
               instant: true
-              expr: '100 * redis_memory_used_bytes / (redis_memory_max_bytes > 0)'
+              expr: '100 * max by (namespace, job) (redis_memory_used_bytes) / (max by (namespace, job) (redis_memory_max_bytes) > 0) and on (namespace, job) redis_instance_info{maxmemory_policy="noeviction"}'
           - refId: B
             relativeTimeRange: {from: 600, to: 0}
             datasourceUid: __expr__
@@ -90,7 +92,7 @@ groups:
         for: 2m
         labels: {severity: critical}
         annotations:
-          summary: 'Redis {{ $labels.namespace }}/{{ $labels.pod }} is above 98% of maxmemory: writes are about to fail'
+          summary: 'Redis {{ $labels.namespace }}/{{ reReplaceAll "-metrics$" "" (index $labels "job") }} is above 98% of maxmemory'
           description: |
             - with noeviction, writes fail at 100%
             - fix now: raise resources.limits.memory in the workload values.yaml
@@ -104,7 +106,7 @@ groups:
             model:
               refId: A
               instant: true
-              expr: '100 * redis_memory_used_bytes / (redis_memory_max_bytes > 0)'
+              expr: '100 * max by (namespace, job) (redis_memory_used_bytes) / (max by (namespace, job) (redis_memory_max_bytes) > 0) and on (namespace, job) redis_instance_info{maxmemory_policy="noeviction"}'
           - refId: B
             relativeTimeRange: {from: 600, to: 0}
             datasourceUid: __expr__
@@ -127,7 +129,7 @@ groups:
         for: 1m
         labels: {severity: warning}
         annotations:
-          summary: 'Redis {{ $labels.namespace }}/{{ $labels.pod }} rejected connections: maxclients reached'
+          summary: 'Redis {{ $labels.namespace }}/{{ reReplaceAll "-metrics$" "" (index $labels "job") }} rejected connections: maxclients reached'
           description: |
             - clients see connection errors
             - check connected_clients against maxclients: redis-cli info clients
@@ -141,7 +143,7 @@ groups:
             model:
               refId: A
               instant: true
-              expr: 'increase(redis_rejected_connections_total[5m])'
+              expr: 'max by (namespace, job) (increase(redis_rejected_connections_total[5m]))'
           - refId: B
             relativeTimeRange: {from: 600, to: 0}
             datasourceUid: __expr__
@@ -163,7 +165,7 @@ groups:
         for: 5m
         labels: {severity: warning}
         annotations:
-          summary: 'Redis {{ $labels.namespace }}/{{ $labels.pod }} uses over 80% of maxclients'
+          summary: 'Redis {{ $labels.namespace }}/{{ reReplaceAll "-metrics$" "" (index $labels "job") }} uses over 80% of maxclients'
           description: |
             - the connection count nears maxclients. Rejections come next
             - check: redis-cli info clients. Likely a leak in the client pool
@@ -177,7 +179,7 @@ groups:
             model:
               refId: A
               instant: true
-              expr: 'redis_connected_clients / redis_config_maxclients'
+              expr: 'max by (namespace, job) (redis_connected_clients) / max by (namespace, job) (redis_config_maxclients)'
           - refId: B
             relativeTimeRange: {from: 600, to: 0}
             datasourceUid: __expr__
@@ -200,7 +202,7 @@ groups:
         for: 5m
         labels: {severity: warning}
         annotations:
-          summary: 'Redis {{ $labels.namespace }}/{{ $labels.pod }} last RDB background save failed'
+          summary: 'Redis {{ $labels.namespace }}/{{ reReplaceAll "-metrics$" "" (index $labels "job") }} last RDB background save failed'
           description: |
             - the last background RDB save failed, so the snapshot on disk is stale
             - usual causes: a full PVC, or a fork that failed under memory pressure
@@ -215,7 +217,7 @@ groups:
             model:
               refId: A
               instant: true
-              expr: 'redis_rdb_last_bgsave_status == bool 0'
+              expr: 'min by (namespace, job) (redis_rdb_last_bgsave_status) == bool 0'
           - refId: B
             relativeTimeRange: {from: 600, to: 0}
             datasourceUid: __expr__
@@ -239,7 +241,7 @@ groups:
         for: 5m
         labels: {severity: warning}
         annotations:
-          summary: 'Redis {{ $labels.namespace }}/{{ $labels.pod }} last AOF write failed: durable data at risk'
+          summary: 'Redis {{ $labels.namespace }}/{{ reReplaceAll "-metrics$" "" (index $labels "job") }} last AOF write failed'
           description: |
             - AOF writes fail on a durable instance. Writes since the last fsync are at risk
             - usual causes: a full PVC or a disk I/O error
@@ -254,7 +256,7 @@ groups:
             model:
               refId: A
               instant: true
-              expr: 'redis_aof_last_write_status == bool 0'
+              expr: 'min by (namespace, job) (redis_aof_last_write_status) == bool 0'
           - refId: B
             relativeTimeRange: {from: 600, to: 0}
             datasourceUid: __expr__
@@ -276,7 +278,7 @@ groups:
         for: 30m
         labels: {severity: warning}
         annotations:
-          summary: 'Redis {{ $labels.namespace }}/{{ $labels.pod }} memory fragmentation ratio is above 1.5'
+          summary: 'Redis {{ $labels.namespace }}/{{ reReplaceAll "-metrics$" "" (index $labels "job") }} memory fragmentation ratio is above 1.5'
           description: |
             - RSS is well above the dataset size. jemalloc does not reclaim freed memory
             - check mem_fragmentation_ratio and used_memory: redis-cli info memory
@@ -292,7 +294,7 @@ groups:
               refId: A
               instant: true
               # Only above 50% full, because RSS overhead inflates the ratio on a small, near-empty instance.
-              expr: 'redis_mem_fragmentation_ratio and (redis_memory_used_bytes / (redis_memory_max_bytes > 0) > 0.5)'
+              expr: 'max by (namespace, job) (redis_mem_fragmentation_ratio) and (max by (namespace, job) (redis_memory_used_bytes) / (max by (namespace, job) (redis_memory_max_bytes) > 0) > 0.5)'
           - refId: B
             relativeTimeRange: {from: 600, to: 0}
             datasourceUid: __expr__

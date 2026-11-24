@@ -15,12 +15,13 @@ groups:
         for: 5m
         labels: {severity: warning}
         annotations:
-          summary: 'Ingress route {{ $labels.envoy_cluster_name }} returns 5xx for more than 2% of requests'
+          summary: 'Ingress route {{ reReplaceAll "^httproute/|/rule/.*" "" (index $labels "envoy_cluster_name") }} returns 5xx for more than 2% of requests'
           description: |
             - the backend returns 5xx. The app has errors or its upstream is unhealthy
-            - the cluster name is httproute/<gw-ns>/<route>/rule/N. Find the Service and pods behind that HTTPRoute
-            - pods: kubectl get pods -A | grep <backend>
-            - logs: kubectl -n <ns> logs <pod>
+            - backends: kubectl -n {{ reReplaceAll "^httproute/|/.*" "" (index $labels "envoy_cluster_name") }} get httproute {{ reReplaceAll "^httproute/[^/]+/|/rule/.*" "" (index $labels "envoy_cluster_name") }} -o jsonpath='{.spec.rules[*].backendRefs}'
+            - pods: kubectl -n <backend-ns> get pods
+            - logs: kubectl -n <backend-ns> logs <pod>
+            - fix the app, or revert the release in git
         noDataState: OK
         execErrState: KeepLast
         data:
@@ -52,12 +53,12 @@ groups:
         for: 10m
         labels: {severity: warning}
         annotations:
-          summary: 'Ingress route {{ $labels.envoy_cluster_name }} returns 4xx for more than 25% of requests'
+          summary: 'Ingress route {{ reReplaceAll "^httproute/|/rule/.*" "" (index $labels "envoy_cluster_name") }} returns 4xx for more than 25% of requests'
           description: |
             - often 401 or 403 from SSO, or 404 from a path the route does not match
-            - the cluster name is httproute/<gw-ns>/<route>/rule/N. Check that HTTPRoute's matches and the google-sso allowlist
-            - routes: kubectl get httproute -A
+            - route: kubectl -n {{ reReplaceAll "^httproute/|/.*" "" (index $labels "envoy_cluster_name") }} get httproute {{ reReplaceAll "^httproute/[^/]+/|/rule/.*" "" (index $labels "envoy_cluster_name") }} -o yaml
             - SSO: kubectl -n gateway get securitypolicy
+            - fix the route matches or the google-sso allowlist
         noDataState: OK
         execErrState: KeepLast
         data:
@@ -89,12 +90,13 @@ groups:
         for: 10m
         labels: {severity: warning}
         annotations:
-          summary: 'Ingress route {{ $labels.envoy_cluster_name }} p95 upstream latency above 2s'
+          summary: 'Ingress route {{ reReplaceAll "^httproute/|/rule/.*" "" (index $labels "envoy_cluster_name") }} p95 upstream latency above 2s'
           description: |
             - the backend is slow. It is overloaded, CPU-throttled, or waiting on a database or Redis
-            - the cluster name is httproute/<gw-ns>/<route>/rule/N. Find the backend pods and check load and throttling
-            - load: kubectl -n <ns> top pod
-            - logs: kubectl -n <ns> logs <pod>
+            - backends: kubectl -n {{ reReplaceAll "^httproute/|/.*" "" (index $labels "envoy_cluster_name") }} get httproute {{ reReplaceAll "^httproute/[^/]+/|/rule/.*" "" (index $labels "envoy_cluster_name") }} -o jsonpath='{.spec.rules[*].backendRefs}'
+            - load: kubectl -n <backend-ns> top pod
+            - logs: kubectl -n <backend-ns> logs <pod>
+            - raise the CPU limit, add replicas, or fix the slow dependency
         noDataState: OK
         execErrState: KeepLast
         data:
@@ -126,12 +128,13 @@ groups:
         for: 5m
         labels: {severity: critical}
         annotations:
-          summary: 'Ingress route {{ $labels.envoy_cluster_name }} has no healthy upstream hosts'
+          summary: 'Ingress route {{ reReplaceAll "^httproute/|/rule/.*" "" (index $labels "envoy_cluster_name") }} has no healthy upstream hosts'
           description: |
             - outage. Every backend endpoint is down or unhealthy, so clients get 503
-            - the cluster name is httproute/<gw-ns>/<route>/rule/N. Check that the backend Service has ready endpoints
-            - endpoints: kubectl -n <ns> get endpoints <svc>
-            - pods: kubectl -n <ns> get pods
+            - backends: kubectl -n {{ reReplaceAll "^httproute/|/.*" "" (index $labels "envoy_cluster_name") }} get httproute {{ reReplaceAll "^httproute/[^/]+/|/rule/.*" "" (index $labels "envoy_cluster_name") }} -o jsonpath='{.spec.rules[*].backendRefs}'
+            - endpoints: kubectl -n <backend-ns> get endpointslices -l kubernetes.io/service-name=<svc>
+            - pods: kubectl -n <backend-ns> get pods
+            - bring the pods back to Ready. See the workload alerts for the same app
         noDataState: OK
         execErrState: KeepLast
         data:
@@ -163,12 +166,13 @@ groups:
         for: 10m
         labels: {severity: warning}
         annotations:
-          summary: 'Ingress route {{ $labels.envoy_cluster_name }} has upstream connection failures'
+          summary: 'Ingress route {{ reReplaceAll "^httproute/|/rule/.*" "" (index $labels "envoy_cluster_name") }} has upstream connection failures'
           description: |
             - Envoy cannot connect to the backend. Pods restart, the port is wrong, or a network policy blocks it
-            - the cluster name is httproute/<gw-ns>/<route>/rule/N. Check that the Service port matches the container port
-            - endpoints: kubectl -n <ns> get endpoints <svc>
-            - policies: kubectl -n <ns> get ciliumnetworkpolicy
+            - backends: kubectl -n {{ reReplaceAll "^httproute/|/.*" "" (index $labels "envoy_cluster_name") }} get httproute {{ reReplaceAll "^httproute/[^/]+/|/rule/.*" "" (index $labels "envoy_cluster_name") }} -o jsonpath='{.spec.rules[*].backendRefs}'
+            - endpoints: kubectl -n <backend-ns> get endpointslices -l kubernetes.io/service-name=<svc>
+            - policies: kubectl -n <backend-ns> get ciliumnetworkpolicy
+            - fix the Service port or allow Envoy in the CiliumNetworkPolicy
         noDataState: OK
         execErrState: KeepLast
         data:

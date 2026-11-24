@@ -16,7 +16,7 @@ groups:
         for: 5m
         labels: {severity: critical}
         annotations:
-          summary: 'Grafana cannot query VictoriaMetrics. Every other alert is frozen on its last state'
+          summary: 'Grafana cannot query VictoriaMetrics'
           description: |
             - vmsingle is unreachable or scraping has stopped, so no other alert can fire or clear
             - pods: kubectl -n monitoring get pods,pvc
@@ -54,8 +54,9 @@ groups:
         for: 10m
         labels: {severity: critical}
         annotations:
-          summary: 'vmsingle free disk is close to its reserved limit. It will stop accepting metrics'
+          summary: 'vmsingle free disk is close to its reserved limit'
           description: |
+            - vmsingle stops accepting metrics at the limit
             - check: kubectl -n monitoring get pvc, then df on the vmsingle volume
             - grow the vmsingle PVC or lower retention
         noDataState: OK
@@ -67,7 +68,7 @@ groups:
             model:
               refId: A
               instant: true
-              expr: 'vm_free_disk_space_bytes < vm_free_disk_space_limit_bytes * 3'
+              expr: 'min by (namespace, job, path) (vm_free_disk_space_bytes) < min by (namespace, job, path) (vm_free_disk_space_limit_bytes) * 3'
           - refId: B
             relativeTimeRange: {from: 600, to: 0}
             datasourceUid: __expr__
@@ -90,11 +91,12 @@ groups:
         for: 10m
         labels: {severity: warning}
         annotations:
-          summary: 'vmagent drops samples on remote-write. Metrics are lost'
+          summary: 'vmagent drops samples on remote-write'
           description: |
-            - usually vmsingle rejects them or the queue is full
-            - check: kubectl -n monitoring logs deploy/vmagent
+            - metrics are lost. Usually vmsingle rejects them or the queue is full
+            - check: kubectl -n monitoring logs sts/vmagent-victoria-metrics-k8s-stack -c vmagent
             - check vmsingle health and free disk
+            - fix vmsingle first. vmagent then drains its queue
         noDataState: OK
         execErrState: KeepLast
         data:
@@ -128,8 +130,9 @@ groups:
         annotations:
           summary: 'VictoriaLogs reports internal errors in ingestion or storage'
           description: |
-            - check: kubectl -n monitoring logs deploy/victoria-logs
+            - check: kubectl -n monitoring logs deploy/vlsingle-victoria-logs
             - check that its PVC has free space and is writable
+            - grow the PVC if it is full
         noDataState: OK
         execErrState: KeepLast
         data:

@@ -15,11 +15,12 @@ groups:
         for: 5m
         labels: {severity: warning}
         annotations:
-          summary: 'A Cilium agent is missing, so a node has lost its CNI data plane'
+          summary: 'Cilium agent missing on node {{ $labels.node }}'
           description: |
-            - a node's cilium-agent is down, so its pods lose networking
-            - check: kubectl -n kube-system get pods -l k8s-app=cilium -o wide
-            - logs: kubectl -n kube-system logs ds/cilium
+            - pods on {{ $labels.node }} lose networking
+            - check: kubectl -n kube-system get pods -l k8s-app=cilium -o wide --field-selector spec.nodeName={{ $labels.node }}
+            - logs: kubectl -n kube-system logs <pod> -c cilium-agent
+            - delete a stuck pod. The DaemonSet recreates it
         noDataState: OK
         execErrState: KeepLast
         data:
@@ -29,8 +30,8 @@ groups:
             model:
               refId: A
               instant: true
-              # Agents minus nodes follows the node count. A fixed threshold of 3 misses 3 of 4 agents up.
-              expr: 'count(up{job="cilium-agent"} == 1) - count(kube_node_info)'
+              # Starts from the nodes, so a node whose agent has no `up` series at all still fires.
+              expr: 'max by (node) (kube_node_info) unless on (node) (up{job="cilium-agent"} == 1)'
           - refId: B
             relativeTimeRange: {from: 600, to: 0}
             datasourceUid: __expr__
@@ -45,7 +46,7 @@ groups:
               datasource: {type: __expr__, uid: __expr__}
               conditions:
                 - type: query
-                  evaluator: {type: lt, params: [0]}   # one agent short of the node count
+                  evaluator: {type: gt, params: [0]}
       - uid: cilium-bpf-map-pressure
         title: Cilium BPF map pressure high
         condition: C
@@ -85,10 +86,10 @@ groups:
       - uid: cilium-unreachable-nodes
         title: Cilium unreachable nodes
         condition: C
-        for: 5m
+        for: 10m   # agent restarts during rollouts report peers unreachable for up to 7m
         labels: {severity: warning}
         annotations:
-          summary: 'A Cilium agent reports unreachable peer nodes. Cross-node networking is degraded'
+          summary: 'Cilium reports {{ printf "%.0f" $values.B.Value }} unreachable peer nodes'
           description: |
             - a cilium-agent cannot reach peer nodes, so pod and service traffic between nodes breaks
             - check: kubectl -n kube-system exec ds/cilium -- cilium status --verbose

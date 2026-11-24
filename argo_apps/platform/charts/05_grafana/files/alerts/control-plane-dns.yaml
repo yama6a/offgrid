@@ -1,6 +1,6 @@
 apiVersion: 1
 groups:
-  # target-down covers a down apiserver or kubelet. This group adds the apiserver 5xx rate.
+  # target-down covers a down apiserver or kubelet. This group adds the apiserver 5xx rate and GC CPU share.
   # kube-scheduler and kube-controller-manager have no alerts. Their metrics bind does not take effect on this
   # cluster, so they have no `up` series. Fix the scrape before you add alerts for them.
   - orgId: 1
@@ -19,6 +19,8 @@ groups:
             - API calls, controllers and kubectl fail
             - check: kubectl get --raw /healthz?verbose
             - read the apiserver static pod logs on the control-plane nodes
+            - logs: kubectl -n kube-system logs -l k8s-app=kube-apiserver --tail=50
+            - check etcd health and the load on the control-plane nodes
         noDataState: OK
         execErrState: KeepLast
         data:
@@ -44,6 +46,45 @@ groups:
               conditions:
                 - type: query
                   evaluator: {type: gt, params: [0.05]}
+      # GC takes 15 to 25% of apiserver CPU after a restart. It climbs as the memory GOMEMLIMIT counts nears the
+      # limit. Past about 60%, one burst of requests tips it into nonstop collection that took 5 of 6 cores.
+      # The uptime filter skips the first 6h, when startup GC inflates the share.
+      - uid: apiserver-gc-cpu-high
+        title: API server GC CPU share high
+        condition: C
+        for: 1h
+        labels: {severity: warning}
+        annotations:
+          summary: 'kube-apiserver on {{ $labels.instance }} spends over 45% of its CPU on garbage collection'
+          description: |
+            - the apiserver's memory need is close to its GOMEMLIMIT. A burst of requests can start nonstop GC
+            - check: go_memory_classes_profiling_buckets_bytes and go_memory_classes_heap_objects_bytes for the instance
+            - short term: restart that apiserver. Long term: raise the apiserver GOMEMLIMIT in the node config
+        noDataState: OK
+        execErrState: KeepLast
+        data:
+          - refId: A
+            relativeTimeRange: {from: 600, to: 0}
+            datasourceUid: VictoriaMetrics
+            model:
+              refId: A
+              instant: true
+              expr: '(sum by (instance) (rate(go_cpu_classes_gc_total_cpu_seconds_total{job="apiserver"}[6h])) / sum by (instance) (rate(go_cpu_classes_total_cpu_seconds_total{job="apiserver"}[6h]) - rate(go_cpu_classes_idle_cpu_seconds_total{job="apiserver"}[6h]))) and on (instance) (time() - process_start_time_seconds{job="apiserver"} > 21600)'
+          - refId: B
+            relativeTimeRange: {from: 600, to: 0}
+            datasourceUid: __expr__
+            model: {refId: B, type: reduce, expression: A, reducer: last, datasource: {type: __expr__, uid: __expr__}}
+          - refId: C
+            relativeTimeRange: {from: 600, to: 0}
+            datasourceUid: __expr__
+            model:
+              refId: C
+              type: threshold
+              expression: B
+              datasource: {type: __expr__, uid: __expr__}
+              conditions:
+                - type: query
+                  evaluator: {type: gt, params: [0.45]}
   - orgId: 1
     name: dns
     folder: offgrid
@@ -60,6 +101,7 @@ groups:
             - cluster DNS resolution is at risk
             - check: kubectl -n kube-system get pods -l k8s-app=kube-dns
             - logs: kubectl -n kube-system logs -l k8s-app=kube-dns
+            - restart stuck pods: kubectl -n kube-system rollout restart deploy/coredns
         noDataState: OK
         execErrState: KeepLast
         data:

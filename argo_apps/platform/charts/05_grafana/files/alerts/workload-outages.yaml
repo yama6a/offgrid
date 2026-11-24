@@ -21,6 +21,7 @@ groups:
             - status: kubectl -n {{ $labels.namespace }} rollout status deploy/{{ $labels.deployment }}
             - events and pods: kubectl -n {{ $labels.namespace }} describe deploy {{ $labels.deployment }}
             - logs: kubectl -n {{ $labels.namespace }} logs deploy/{{ $labels.deployment }}
+            - fix the crash or the probe, or revert the release in git
         noDataState: OK
         execErrState: KeepLast
         data:
@@ -30,7 +31,7 @@ groups:
             model:
               refId: A
               instant: true
-              expr: '(kube_deployment_spec_replicas > 0 and kube_deployment_status_replicas_available == 0) * on(namespace, deployment) group_left(label_alert_criticality) kube_deployment_labels'
+              expr: '(max by (namespace, deployment) (kube_deployment_spec_replicas) > 0 and max by (namespace, deployment) (kube_deployment_status_replicas_available) == 0) * on(namespace, deployment) group_left(label_alert_criticality) max by (namespace, deployment, label_alert_criticality) (kube_deployment_labels)'
           - refId: B
             relativeTimeRange: {from: 600, to: 0}
             datasourceUid: __expr__
@@ -59,6 +60,7 @@ groups:
             - events and pods: kubectl -n {{ $labels.namespace }} describe statefulset {{ $labels.statefulset }}
             - PVCs: kubectl -n {{ $labels.namespace }} get pvc
             - logs: kubectl -n {{ $labels.namespace }} logs statefulset/{{ $labels.statefulset }}
+            - fix the storage or the crash, or revert the release in git
         noDataState: OK
         execErrState: KeepLast
         data:
@@ -68,7 +70,7 @@ groups:
             model:
               refId: A
               instant: true
-              expr: '(kube_statefulset_replicas > 0 and kube_statefulset_status_replicas_ready == 0) * on(namespace, statefulset) group_left(label_alert_criticality) kube_statefulset_labels'
+              expr: '(max by (namespace, statefulset) (kube_statefulset_replicas) > 0 and max by (namespace, statefulset) (kube_statefulset_status_replicas_ready) == 0) * on(namespace, statefulset) group_left(label_alert_criticality) max by (namespace, statefulset, label_alert_criticality) (kube_statefulset_labels)'
           - refId: B
             relativeTimeRange: {from: 600, to: 0}
             datasourceUid: __expr__
@@ -96,6 +98,7 @@ groups:
             - events and pods: kubectl -n {{ $labels.namespace }} describe daemonset {{ $labels.daemonset }}
             - check node readiness and taints: kubectl get nodes
             - logs: kubectl -n {{ $labels.namespace }} logs daemonset/{{ $labels.daemonset }}
+            - fix the crash, or the taint that blocks the pods
         noDataState: OK
         execErrState: KeepLast
         data:
@@ -105,7 +108,7 @@ groups:
             model:
               refId: A
               instant: true
-              expr: '(kube_daemonset_status_desired_number_scheduled > 0 and kube_daemonset_status_number_available == 0) * on(namespace, daemonset) group_left(label_alert_criticality) kube_daemonset_labels'
+              expr: '(max by (namespace, daemonset) (kube_daemonset_status_desired_number_scheduled) > 0 and max by (namespace, daemonset) (kube_daemonset_status_number_available) == 0) * on(namespace, daemonset) group_left(label_alert_criticality) max by (namespace, daemonset, label_alert_criticality) (kube_daemonset_labels)'
           - refId: B
             relativeTimeRange: {from: 600, to: 0}
             datasourceUid: __expr__
@@ -145,7 +148,7 @@ groups:
             model:
               refId: A
               instant: true
-              expr: '(max by (namespace, pod, container, reason) (kube_pod_container_status_waiting_reason{reason=~"CrashLoopBackOff|ImagePullBackOff|ErrImagePull|CreateContainerConfigError|CreateContainerError|InvalidImageName"}) > 0) * on(namespace, pod) group_left(label_alert_criticality) kube_pod_labels'
+              expr: '(max by (namespace, pod, container, reason) (kube_pod_container_status_waiting_reason{reason=~"CrashLoopBackOff|ImagePullBackOff|ErrImagePull|CreateContainerConfigError|CreateContainerError|InvalidImageName"}) > 0) * on(namespace, pod) group_left(label_alert_criticality) max by (namespace, pod, label_alert_criticality) (kube_pod_labels)'
           - refId: B
             relativeTimeRange: {from: 600, to: 0}
             datasourceUid: __expr__

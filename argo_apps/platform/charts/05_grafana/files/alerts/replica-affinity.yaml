@@ -14,11 +14,12 @@ groups:
         for: 15m
         labels: {severity: warning}
         annotations:
-          summary: 'longhorn-replica-affinity is not reporting: new pods get no locality preference'
+          summary: 'longhorn-replica-affinity is not reporting'
           description: |
-            - failurePolicy is Ignore, so nothing is broken. Placement is back to random
+            - new pods get no locality preference. failurePolicy is Ignore, so nothing is broken
             - kubectl -n longhorn-replica-affinity get pods
             - kubectl -n longhorn-replica-affinity logs deploy/longhorn-replica-affinity-webhook
+            - restart stuck pods: kubectl -n longhorn-replica-affinity rollout restart deploy/longhorn-replica-affinity-webhook
         noDataState: OK
         execErrState: KeepLast
         data:
@@ -85,7 +86,7 @@ groups:
         for: 2h
         labels: {severity: warning}
         annotations:
-          summary: '{{ $labels.namespace }}/{{ $labels.pvc }} cannot be made local. Reason: {{ $labels.reason }}'
+          summary: 'Longhorn PVC {{ $labels.exported_namespace }}/{{ $labels.pvc }} cannot be made local: {{ $labels.reason }}'
           description: |
             - too-large: over maxMoveBytes, so a move is a big copy. Decide by hand
             - longhorn-managed: dataLocality is already best-effort or strict-local, so Longhorn owns the outcome
@@ -98,7 +99,8 @@ groups:
           - refId: A
             relativeTimeRange: {from: 3600, to: 0}
             datasourceUid: VictoriaMetrics
-            model: {refId: A, instant: true, expr: 'lra_volume_unfixable == 1'}
+            # Drops pod and instance, so a reconciler rollout does not restart the 2h wait.
+            model: {refId: A, instant: true, expr: 'max by (exported_namespace, pvc, reason) (lra_volume_unfixable) == 1'}
           - refId: B
             relativeTimeRange: {from: 3600, to: 0}
             datasourceUid: __expr__
