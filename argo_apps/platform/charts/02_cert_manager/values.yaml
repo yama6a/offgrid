@@ -49,7 +49,7 @@ cert-manager:
   cainjector:
     resources:
       requests: { cpu: 10m, memory: 107Mi }
-      limits:   { memory: 163Mi }
+      limits:   { memory: 200Mi }
     affinity:
       podAntiAffinity:
         preferredDuringSchedulingIgnoredDuringExecution:
