@@ -23,6 +23,7 @@ WL_VALUES="${WORKLOAD_CHARTS}/sample_user_manager/values.yaml"
 CILIUM_VALUES="${PLATFORM_CHARTS}/00_cilium/values.yaml"
 MS_VALUES="${PLATFORM_CHARTS}/02_metrics_server/values.yaml"
 LH_VALUES="${PLATFORM_CHARTS}/02_longhorn/values.yaml"
+CS_VALUES="${PLATFORM_CHARTS}/03_crowdsec/values.yaml"
 ROOT_APP="${REPO_ROOT}/argo_apps/root.yaml"
 # Every file that holds a literal repoURL. Each apps chart holds it once for all its Applications.
 REPO_URL_FILES=(
@@ -54,7 +55,7 @@ check_prerequisites() {
   assert_api
   [ -f "${GW_CHART}/Chart.yaml" ] || die "no chart at ${GW_CHART}. Expected argo_apps/platform/charts/03_gateway."
   for f in "$GW_VALUES" "$LIB_VALUES" "$SSO_VALUES" "$EG_VALUES" "$VM_VALUES" "$GRAFANA_VALUES" "$NTFY_VALUES" \
-    "$BB_VALUES" "$GHS_VALUES" "$PI_VALUES" "$WL_VALUES" "$CILIUM_VALUES" "$MS_VALUES" "$LH_VALUES" "${REPO_URL_FILES[@]}"; do
+    "$BB_VALUES" "$GHS_VALUES" "$PI_VALUES" "$WL_VALUES" "$CILIUM_VALUES" "$MS_VALUES" "$LH_VALUES" "$CS_VALUES" "${REPO_URL_FILES[@]}"; do
     [ -f "$f" ] || die "missing ${f}"
   done
   [ -n "${LE_EMAIL}" ] || die "LE_EMAIL is empty. Set it in .env."
@@ -199,6 +200,12 @@ write_ingress_lb_ip() {
   ys_set "$EG_VALUES" "\"${INGRESS_LB_IP}\"" envoyProxy loadBalancerIP
 }
 
+# Requests from the cluster itself, such as a browser test, must never get it banned.
+write_public_egress_ip() {
+  say "writing PUBLIC_EGRESS_IP to the crowdsec never-ban list (${PUBLIC_EGRESS_IP:-none})"
+  ys_set "$CS_VALUES" "\"${PUBLIC_EGRESS_IP}\"" neverBan ownPublicIP
+}
+
 _eq() { # _eq <label> <expected> <actual>
   [ "$2" = "$3" ] && ok "$1 is ${2}" || bad "$1 is '${3}', expected '${2}'"
 }
@@ -220,6 +227,7 @@ verify_writes() {
   _eq "blackbox open" "${BB_OPEN_URLS# }" "$(yq -r '.probes.open.targets | join(" ")' "$BB_VALUES")"
   _eq "gha-status-exporter owner" "$GHA_STATUS_OWNER" "$(yq -r '."gha-status-exporter".owner' "$GHS_VALUES")"
   _eq "envoy loadBalancerIP" "$INGRESS_LB_IP" "$(yq -r '.envoyProxy.loadBalancerIP' "$EG_VALUES")"
+  _eq "crowdsec ownPublicIP" "$PUBLIC_EGRESS_IP" "$(yq -r '.neverBan.ownPublicIP' "$CS_VALUES")"
   for k in kubeControllerManager kubeScheduler kubeEtcd; do
     _eq "vm ${k} endpoints" "$CP_IPS" "$(yq -r ".\"victoria-metrics-k8s-stack\".${k}.endpoints | join(\" \")" "$VM_VALUES")"
   done
@@ -276,6 +284,7 @@ write_public_hosts
 build_probe_lists
 read_control_plane_ips
 write_ingress_lb_ip
+write_public_egress_ip
 write_gha_status_owner
 verify_writes
 
