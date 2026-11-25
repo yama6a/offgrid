@@ -2,6 +2,9 @@
 
 Why CrowdSec runs this way: [../16_edge_protection.md](../16_edge_protection.md).
 
+The Grafana dashboard `CrowdSec` (uid `crowdsec`) shows the would-be bans per scenario and per IP, the parser
+health and the allowlist refreshes. The steps below read the same data at the source.
+
 Alerts, decisions and allowlists live in LAPI. Parsing, scenarios and the simulation setting live in the agent.
 
 ```bash
