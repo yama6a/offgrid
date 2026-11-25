@@ -307,8 +307,124 @@
         }
       ],
       "type": "table",
-      "title": "IPs that would be banned",
+      "title": "Would be banned right now",
       "id": 6,
+      "datasource": {
+        "type": "victoriametrics-logs-datasource",
+        "uid": "VictoriaLogs"
+      },
+      "description": "IPs whose last would-be ban is under 4h old, the ban duration in profiles.yaml of 03_crowdsec. The panel always covers the last 4h, whatever the dashboard range. During the audit nothing is blocked. After blocking starts, `cscli decisions list` holds the real bans.",
+      "gridPos": {
+        "h": 8,
+        "w": 24,
+        "x": 0,
+        "y": 14
+      },
+      "fieldConfig": {
+        "defaults": {},
+        "overrides": [
+          {
+            "matcher": {
+              "id": "byName",
+              "options": "ip"
+            },
+            "properties": [
+              {
+                "id": "links",
+                "value": [
+                  {
+                    "title": "Show the requests from this IP",
+                    "url": "/d/crowdsec/crowdsec?var-ip=${__value.raw}&${__url_time_range}"
+                  },
+                  {
+                    "title": "Open the requests in Explore",
+                    "url": "",
+                    "internal": {
+                      "datasourceUid": "VictoriaLogs",
+                      "datasourceName": "VictoriaLogs",
+                      "query": {
+                        "refId": "A",
+                        "queryType": "instant",
+                        "expr": "kubernetes.pod_namespace:envoy-gateway-system kubernetes.container_name:envoy | extract_regexp \"^[[]?(?P<client_ip>[0-9A-Fa-f.:]+?)[]]?:[0-9]+$\" from downstream_remote_address | filter client_ip:=\"${__value.raw}\" | copy \":authority\" as host | format \"<response_code> <method> <host><x-envoy-origin-path> ua=<q:user-agent>\" as _msg"
+                      }
+                    }
+                  }
+                ]
+              }
+            ]
+          }
+        ]
+      },
+      "options": {
+        "showHeader": true,
+        "cellHeight": "sm",
+        "sortBy": [
+          {
+            "displayName": "bans",
+            "desc": true
+          }
+        ]
+      },
+      "targets": [
+        {
+          "refId": "A",
+          "datasource": {
+            "type": "victoriametrics-logs-datasource",
+            "uid": "VictoriaLogs"
+          },
+          "expr": "kubernetes.pod_namespace:crowdsec kubernetes.container_name:crowdsec-lapi crowdsec_alert:=ban -scenario:=\"test alert\" | stats by (ip) count() bans, max(country) country, max(as_name) as_owner, max(as_number) as_number, uniq_values(scenario) scenarios, max(_time) last_seen | sort by (bans desc) | limit 100",
+          "queryType": "instant"
+        }
+      ],
+      "timeFrom": "4h"
+    },
+    {
+      "transformations": [
+        {
+          "id": "extractFields",
+          "options": {
+            "source": "labels",
+            "format": "json",
+            "replace": true,
+            "keepTime": true
+          }
+        },
+        {
+          "id": "organize",
+          "options": {
+            "indexByName": {
+              "ip": 0,
+              "bans": 1,
+              "country": 2,
+              "as_owner": 3,
+              "as_number": 4,
+              "scenarios": 5,
+              "last_seen": 6
+            },
+            "excludeByName": {},
+            "renameByName": {}
+          }
+        },
+        {
+          "id": "filterFieldsByName",
+          "options": {
+            "include": {
+              "names": [
+                "ip",
+                "bans",
+                "country",
+                "as_owner",
+                "as_number",
+                "scenarios",
+                "last_seen"
+              ]
+            }
+          }
+        }
+      ],
+      "type": "table",
+      "title": "IPs that would be banned",
+      "id": 7,
       "datasource": {
         "type": "victoriametrics-logs-datasource",
         "uid": "VictoriaLogs"
@@ -318,7 +434,7 @@
         "h": 10,
         "w": 24,
         "x": 0,
-        "y": 14
+        "y": 22
       },
       "fieldConfig": {
         "defaults": {},
@@ -421,7 +537,7 @@
       ],
       "type": "table",
       "title": "Requests from $ip",
-      "id": 7,
+      "id": 8,
       "datasource": {
         "type": "victoriametrics-logs-datasource",
         "uid": "VictoriaLogs"
@@ -431,7 +547,7 @@
         "h": 12,
         "w": 24,
         "x": 0,
-        "y": 24
+        "y": 32
       },
       "fieldConfig": {
         "defaults": {},
@@ -462,20 +578,20 @@
     {
       "type": "row",
       "title": "Pipeline health",
-      "id": 8,
+      "id": 9,
       "collapsed": false,
       "gridPos": {
         "h": 1,
         "w": 24,
         "x": 0,
-        "y": 36
+        "y": 44
       },
       "panels": []
     },
     {
       "type": "timeseries",
       "title": "Envoy lines per second",
-      "id": 9,
+      "id": 10,
       "datasource": {
         "type": "prometheus",
         "uid": "VictoriaMetrics"
@@ -485,7 +601,7 @@
         "h": 8,
         "w": 12,
         "x": 0,
-        "y": 37
+        "y": 45
       },
       "fieldConfig": {
         "defaults": {
@@ -547,7 +663,7 @@
     {
       "type": "timeseries",
       "title": "Events whitelisted per second",
-      "id": 10,
+      "id": 11,
       "datasource": {
         "type": "prometheus",
         "uid": "VictoriaMetrics"
@@ -557,7 +673,7 @@
         "h": 8,
         "w": 12,
         "x": 12,
-        "y": 37
+        "y": 45
       },
       "fieldConfig": {
         "defaults": {
@@ -640,7 +756,7 @@
       ],
       "type": "table",
       "title": "Crawler allowlist refreshes",
-      "id": 11,
+      "id": 12,
       "datasource": {
         "type": "victoriametrics-logs-datasource",
         "uid": "VictoriaLogs"
@@ -650,7 +766,7 @@
         "h": 8,
         "w": 12,
         "x": 0,
-        "y": 45
+        "y": 53
       },
       "fieldConfig": {
         "defaults": {},
@@ -716,7 +832,7 @@
       ],
       "type": "table",
       "title": "Failed allowlist sources",
-      "id": 12,
+      "id": 13,
       "datasource": {
         "type": "victoriametrics-logs-datasource",
         "uid": "VictoriaLogs"
@@ -726,7 +842,7 @@
         "h": 8,
         "w": 12,
         "x": 12,
-        "y": 45
+        "y": 53
       },
       "fieldConfig": {
         "defaults": {},
@@ -757,7 +873,7 @@
     {
       "type": "timeseries",
       "title": "Requests per route, top 10",
-      "id": 13,
+      "id": 14,
       "datasource": {
         "type": "prometheus",
         "uid": "VictoriaMetrics"
@@ -767,7 +883,7 @@
         "h": 8,
         "w": 24,
         "x": 0,
-        "y": 53
+        "y": 61
       },
       "fieldConfig": {
         "defaults": {
