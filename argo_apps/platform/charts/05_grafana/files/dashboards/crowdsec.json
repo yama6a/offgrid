@@ -56,7 +56,7 @@
         "type": "victoriametrics-logs-datasource",
         "uid": "VictoriaLogs"
       },
-      "description": "Alerts that carry a ban decision, counted from the LAPI log. LAPI logs only alerts that passed every whitelist and the crawler allowlist. During the audit each one is a simulated ban.",
+      "description": "Alerts that carry a ban decision. LAPI writes one JSON line per such alert to its log, after every whitelist and the crawler allowlist. During the audit each one is a simulated ban.",
       "gridPos": {
         "h": 4,
         "w": 8,
@@ -95,7 +95,7 @@
             "type": "victoriametrics-logs-datasource",
             "uid": "VictoriaLogs"
           },
-          "expr": "kubernetes.pod_namespace:crowdsec kubernetes.container_name:crowdsec-lapi \"ban on Ip\" | stats count()",
+          "expr": "kubernetes.pod_namespace:crowdsec kubernetes.container_name:crowdsec-lapi crowdsec_alert:=ban | stats count()",
           "queryType": "stats"
         }
       ]
@@ -147,7 +147,7 @@
             "type": "victoriametrics-logs-datasource",
             "uid": "VictoriaLogs"
           },
-          "expr": "kubernetes.pod_namespace:crowdsec kubernetes.container_name:crowdsec-lapi \"ban on Ip\" | extract_regexp \"(?P<scenario>[A-Za-z0-9_./-]+) by ip (?P<ip>[0-9A-Fa-f:.]+) [(](?P<country>[A-Z]*)/(?P<as>[0-9]*)[)]\" | stats count_uniq(ip)",
+          "expr": "kubernetes.pod_namespace:crowdsec kubernetes.container_name:crowdsec-lapi crowdsec_alert:=ban | stats count_uniq(ip)",
           "queryType": "stats"
         }
       ]
@@ -256,7 +256,7 @@
             "type": "victoriametrics-logs-datasource",
             "uid": "VictoriaLogs"
           },
-          "expr": "kubernetes.pod_namespace:crowdsec kubernetes.container_name:crowdsec-lapi \"ban on Ip\" | extract_regexp \"(?P<scenario>[A-Za-z0-9_./-]+) by ip (?P<ip>[0-9A-Fa-f:.]+) [(](?P<country>[A-Z]*)/(?P<as>[0-9]*)[)]\" | stats by (scenario) count()",
+          "expr": "kubernetes.pod_namespace:crowdsec kubernetes.container_name:crowdsec-lapi crowdsec_alert:=ban | stats by (scenario) count()",
           "queryType": "statsRange",
           "legendFormat": "{{scenario}}"
         }
@@ -280,9 +280,10 @@
               "ip": 0,
               "bans": 1,
               "country": 2,
-              "as_number": 3,
-              "scenarios": 4,
-              "last_seen": 5
+              "as_owner": 3,
+              "as_number": 4,
+              "scenarios": 5,
+              "last_seen": 6
             },
             "excludeByName": {},
             "renameByName": {}
@@ -296,6 +297,7 @@
                 "ip",
                 "bans",
                 "country",
+                "as_owner",
                 "as_number",
                 "scenarios",
                 "last_seen"
@@ -311,7 +313,7 @@
         "type": "victoriametrics-logs-datasource",
         "uid": "VictoriaLogs"
       },
-      "description": "Top 100 source IPs by would-be bans. Country and AS number come from CrowdSec's offline GeoIP database. Click an IP to list its requests below, or to open them in Explore.",
+      "description": "Top 100 source IPs by would-be bans. Country and AS come from CrowdSec's offline GeoIP database. Click an IP to list its requests below, or to open them in Explore.",
       "gridPos": {
         "h": 10,
         "w": 24,
@@ -370,7 +372,7 @@
             "type": "victoriametrics-logs-datasource",
             "uid": "VictoriaLogs"
           },
-          "expr": "kubernetes.pod_namespace:crowdsec kubernetes.container_name:crowdsec-lapi \"ban on Ip\" | extract_regexp \"(?P<scenario>[A-Za-z0-9_./-]+) by ip (?P<ip>[0-9A-Fa-f:.]+) [(](?P<country>[A-Z]*)/(?P<as>[0-9]*)[)]\" | stats by (ip) count() bans, max(country) country, max(as) as_number, uniq_values(scenario) scenarios, max(_time) last_seen | sort by (bans desc) | limit 100",
+          "expr": "kubernetes.pod_namespace:crowdsec kubernetes.container_name:crowdsec-lapi crowdsec_alert:=ban | stats by (ip) count() bans, max(country) country, max(as_name) as_owner, max(as_number) as_number, uniq_values(scenario) scenarios, max(_time) last_seen | sort by (bans desc) | limit 100",
           "queryType": "instant"
         }
       ]

@@ -31,6 +31,9 @@ How to read alerts, check the allowlist and refresh it: [runbooks/16_edge_protec
   are its only copy. Both PVCs carry `Prune=false,Delete=false`.
 - **The LAPI secrets are sealed, not chart-generated.** The chart generates them with Helm `lookup`, which Argo CD
   cannot run, so every sync would roll new ones. `make configure-crowdsec` generates and seals them.
+- **Each alert with a ban is also one JSON line in the LAPI log.** The `alerts_to_log` notification writes it
+  with the AS owner, which the plain LAPI log line lacks. The Grafana dashboard reads these lines. No reverse DNS:
+  a PTR lookup would tell the scanner's network that we looked it up.
 - **The chart's acquisition list holds a placeholder.** The chart refuses to render without one, and its schema
   has no `kubernetes` source. The real acquisition is `files/acquis-envoy.yaml`.
 

@@ -41,6 +41,45 @@ crowdsec:
             pull:
               community: false
               blocklists: false
+      # Notification plugins run as the LAPI user. The image default `nobody` needs CAP_SETUID, which LAPI drops.
+      plugin_config:
+        user: root
+        group: root
+    # The default profiles, plus the alerts-to-log notification on each.
+    profiles.yaml: |
+      name: default_ip_remediation
+      filters:
+        - Alert.Remediation == true && Alert.GetScope() == "Ip"
+      decisions:
+        - type: ban
+          duration: 4h
+      notifications:
+        - alerts_to_log
+      on_success: break
+      ---
+      name: default_range_remediation
+      filters:
+        - Alert.Remediation == true && Alert.GetScope() == "Range"
+      decisions:
+        - type: ban
+          duration: 4h
+      notifications:
+        - alerts_to_log
+      on_success: break
+    # Writes each alert that carries a ban as one JSON line to /proc/1/fd/1, the stdout of the LAPI container, so
+    # it lands in VictoriaLogs. The plain LAPI log line holds no AS owner, and the dashboard needs it.
+    notifications:
+      alerts-to-log.yaml: |
+        type: file
+        name: alerts_to_log
+        log_level: info
+        format: |
+          {{range . -}}
+          {"crowdsec_alert":"ban","scenario":{{.Scenario | toJson}},"ip":{{.Source.IP | toJson}},"country":{{.Source.Cn | toJson}},"as_number":{{.Source.AsNumber | toJson}},"as_name":{{.Source.AsName | toJson}},"simulated":{{.Simulated | toJson}},"events":{{.EventsCount | toJson}},"started_at":{{.StartAt | toJson}}}
+          {{end -}}
+        log_path: /proc/1/fd/1
+        rotate:
+          enabled: false # a pipe cannot rotate
 
   # 05_crowdsec_secrets.sh generates and seals this Secret. The chart would generate it with `lookup`, which
   # Argo CD cannot run, so each sync would roll new values.
