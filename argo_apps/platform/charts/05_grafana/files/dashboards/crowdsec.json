@@ -281,8 +281,9 @@
               "bans": 1,
               "country": 2,
               "as_owner": 3,
-              "scenarios": 4,
-              "last_ban": 5
+              "as_number": 4,
+              "scenarios": 5,
+              "last_seen": 6
             },
             "excludeByName": {},
             "renameByName": {}
@@ -297,8 +298,9 @@
                 "bans",
                 "country",
                 "as_owner",
+                "as_number",
                 "scenarios",
-                "last_ban"
+                "last_seen"
               ]
             }
           }
@@ -358,7 +360,7 @@
         "cellHeight": "sm",
         "sortBy": [
           {
-            "displayName": "last_ban",
+            "displayName": "bans",
             "desc": true
           }
         ]
@@ -370,7 +372,7 @@
             "type": "victoriametrics-logs-datasource",
             "uid": "VictoriaLogs"
           },
-          "expr": "kubernetes.pod_namespace:crowdsec kubernetes.container_name:crowdsec-lapi crowdsec_alert:=ban -scenario:=\"test alert\" | stats by (ip) count() bans, max(country) country, max(as_name) as_owner, uniq_values(scenario) scenarios, max(_time) last_ban | sort by (last_ban desc)",
+          "expr": "kubernetes.pod_namespace:crowdsec kubernetes.container_name:crowdsec-lapi crowdsec_alert:=ban -scenario:=\"test alert\" | stats by (ip) count() bans, max(country) country, max(as_name) as_owner, max(as_number) as_number, uniq_values(scenario) scenarios, max(_time) last_seen | sort by (bans desc) | limit 100",
           "queryType": "instant"
         }
       ],
