@@ -15,7 +15,7 @@ cd "$REPO_ROOT" || exit 1
 
 # ---- knobs ----
 STEP=0
-STEP_TOTAL=19           # the number of step and run_step calls below. Change it when you add or remove a step.
+STEP_TOTAL=20           # the number of step and run_step calls below. Change it when you add or remove a step.
 STEP_DIR="$SCRIPT_DIR"  # the step scripts sit next to this one
 INGRESS_GW_NS="gateway" # namespace of the shared Gateway
 INGRESS_HOSTS=""        # space-separated hosts to check. Empty means all hosts on the Gateways.
@@ -23,7 +23,7 @@ CONTROLLER_WAIT=900     # seconds to wait for the wave-2 sealed-secrets controll
 INGRESS_WAIT=900        # seconds to wait for the ingress to serve. HTTP-01 is slow.
 CONVERGE_WAIT=900       # seconds to wait for every app to reach Synced and Healthy
 COMMIT_MSG_SYNC="bootstrap: sync config before ArgoCD bootstrap"
-COMMIT_MSG_SEAL="bootstrap: seal SSO, webhook and S3 backup secrets again"
+COMMIT_MSG_SEAL="bootstrap: seal SSO, CrowdSec, webhook and S3 backup secrets again"
 
 # ---- functions ----
 
@@ -42,7 +42,7 @@ confirm_bootstrap() {
 This installs the whole platform onto the cluster that KUBE_CONTEXT in .env names:
   context : ${KUBE_CONTEXT}
   config  : ${KUBECONFIG}
-  steps   : 01 CNI, 04_values, commit and push, 02a ArgoCD, seal SSO, webhook and backup creds,
+  steps   : 01 CNI, 04_values, commit and push, 02a ArgoCD, seal SSO, CrowdSec, webhook and backup creds,
             commit and push, converge, seed ntfy, back up the new key, verify ingress
 
 It needs an existing Kubernetes cluster with no CNI and kube-proxy disabled, and a kubectl context for it.
@@ -122,6 +122,12 @@ seal_gha_status_token() {
   else
     step "seal the gha-status-exporter GitHub token: skipped, the .env token is empty"
   fi
+}
+
+# Generates its own values, so it always runs.
+seal_crowdsec_secrets() {
+  run_step "generate and seal the CrowdSec LAPI secrets" "$STEP_DIR" 05_crowdsec_secrets.sh best-effort \
+    "05_crowdsec_secrets did not complete. Run 'make configure-crowdsec', then commit and push."
 }
 
 # 02b generates its own webhook secret, so it always runs. The GitHub side needs public DNS and the prod cert,
@@ -246,6 +252,7 @@ wait_for_sealed_secrets_controller
 reseal_google_sso
 reseal_cloudflare_token
 seal_gha_status_token
+seal_crowdsec_secrets
 seal_argocd_webhook
 enable_s3_backups
 commit_and_push_sealed_secrets

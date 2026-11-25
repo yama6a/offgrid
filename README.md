@@ -198,6 +198,8 @@ list of SSO-gated hosts is policy, not config, so it lives in `argo_apps/platfor
 | Rotate the SSO client       | `make configure-sso`                                                   |
 | Re-seed ntfy auth           | `make configure-ntfy-auth`                                             |
 | Rotate the GitHub Actions token | `make configure-gha-status`                                      |
+| Rotate the CrowdSec secrets | `make configure-crowdsec`                                              |
+| Refresh the crawler allowlist | `make crowdsec-allowlist`                                            |
 | Back up the sealing key     | `make backup-secrets-key`                                              |
 | Redeliver the whole platform| `make rebuild-cluster`                                                 |
 | Credentials and login URLs  | `make view-credentials`                                                |
@@ -241,6 +243,7 @@ decision doc.
 | [13_node_loss](docs/13_node_loss.md)               | What the workloads do when a machine dies, measured, and how to reconcile a replaced one. |
 | [14_igpu](docs/14_igpu.md)                         | The Intel iGPU: what the driver needs, how a pod claims it, and why no NFD.     |
 | [15_replica_affinity](docs/15_replica_affinity.md) | Scheduling pods onto the node that already holds their Longhorn replica.        |
+| [16_edge_protection](docs/16_edge_protection.md)   | CrowdSec on the Envoy access log, in audit mode, and the crawler allowlist.     |
 
 [CONTRIBUTING.md](CONTRIBUTING.md) holds the repository layout and the conventions for the whole repo.
 

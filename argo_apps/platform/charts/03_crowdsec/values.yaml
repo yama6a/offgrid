@@ -1,0 +1,152 @@
+# Events from these sources never reach a scenario. See templates/parsers-configmap.yaml.
+neverBan:
+  cidrs: # private and loopback ranges
+    - 10.0.0.0/8
+    - 172.16.0.0/12
+    - 192.168.0.0/16
+    - 127.0.0.0/8
+    - fc00::/7
+  ownPublicIP: "" # the deployment's own public egress IP. 04_values.sh writes it from PUBLIC_EGRESS_IP in .env
+
+crowdsec:
+  # Any value but docker. With docker, the agent mounts the hostPath /var/lib/docker/containers, which Pod
+  # Security baseline refuses. The agent reads no container log files, so the value has no other effect.
+  container_runtime: containerd
+
+  # Pinned, because the crawler-allowlist sidecar must run the same cscli as LAPI against the same SQLite file.
+  # Keep this tag and the sidecar image below on the same version.
+  image:
+    repository: crowdsecurity/crowdsec
+    tag: v1.8.2
+
+  config:
+    # Audit mode: every decision is stored as simulated, and LAPI never hands a simulated decision to a bouncer.
+    simulation.yaml: |
+      simulation: true
+      exclusions: []
+    # auto_registration lets the agent register with the chart's token from the pod ranges. The community
+    # blocklist would add real decisions, which simulation does not cover, so both pulls stay off.
+    config.yaml.local: |
+      api:
+        server:
+          auto_registration:
+            enabled: true
+            token: "${REGISTRATION_TOKEN}"
+            allowed_ranges:
+              - "127.0.0.1/32"
+              - "192.168.0.0/16"
+              - "10.0.0.0/8"
+              - "172.16.0.0/12"
+          online_client:
+            pull:
+              community: false
+              blocklists: false
+
+  # 05_crowdsec_secrets.sh generates and seals this Secret. The chart would generate it with `lookup`, which
+  # Argo CD cannot run, so each sync would roll new values.
+  secrets:
+    externalSecret:
+      name: crowdsec-lapi-secrets
+      csLapiSecretKey: csLapiSecret
+      registrationTokenKey: registrationToken
+
+  lapi:
+    replicas: 1
+    podSecurityContext:
+      seccompProfile: { type: RuntimeDefault }
+    securityContext:
+      allowPrivilegeEscalation: false
+      privileged: false
+      capabilities: { drop: ["ALL"] }
+    resources:
+      requests: { cpu: 20m, memory: 96Mi }
+      limits:   { memory: 256Mi }
+    persistentVolume:
+      data: # the SQLite database: alerts, decisions, machines, allowlists
+        storageClassName: longhorn-r2-retained-with-backups
+        size: 1Gi
+        annotations:
+          argocd.argoproj.io/sync-options: Prune=false,Delete=false
+      config: # /etc/crowdsec with the machine and central API credentials
+        storageClassName: longhorn-r2-retained-with-backups
+        size: 100Mi
+        annotations:
+          argocd.argoproj.io/sync-options: Prune=false,Delete=false
+    metrics:
+      podMonitor:
+        enabled: true
+    # A native sidecar, so it shares the LAPI volumes and writes the SQLite file that `cscli allowlists` needs.
+    extraInitContainers:
+      - name: crawler-allowlist
+        image: "crowdsecurity/crowdsec:v1.8.2"
+        restartPolicy: Always
+        command: ["/bin/bash", "/scripts/crawler-allowlist.sh", "loop"]
+        # cscli loads config.yaml.local, which reads the token from the environment.
+        env:
+          - name: REGISTRATION_TOKEN
+            valueFrom: { secretKeyRef: { name: crowdsec-lapi-secrets, key: registrationToken } }
+        securityContext:
+          allowPrivilegeEscalation: false
+          capabilities: { drop: ["ALL"] }
+        resources:
+          requests: { cpu: 5m, memory: 16Mi }
+          limits:   { memory: 192Mi } # one cscli or yq run peaks at about 75 MB
+        volumeMounts:
+          # The same mounts as the chart's LAPI container, subPath included.
+          - { name: crowdsec-db, mountPath: /var/lib/crowdsec/data, subPath: crowdsec }
+          - { name: crowdsec-config, mountPath: /etc/crowdsec }
+          - { name: crowdsec-config-local-volume, mountPath: /etc/crowdsec/config.yaml.local, subPath: config.yaml.local }
+          - { name: crawler-allowlist, mountPath: /scripts }
+    extraVolumes:
+      - name: crawler-allowlist
+        configMap:
+          name: crowdsec-crawler-allowlist
+
+  agent:
+    isDeployment: true
+    replicas: 1
+    serviceAccountName: crowdsec-agent
+    hostVarLog: false
+    # The Envoy acquisition is files/acquis-envoy.yaml, mounted below. The chart refuses to render with no
+    # acquisition, and its schema has no kubernetes source. So this placeholder names a file that never exists,
+    # and CrowdSec logs "No matching files" once at start.
+    acquisition: []
+    additionalAcquisition:
+      - source: file
+        filenames: [/var/log/crowdsec-placeholder.log]
+        labels: { type: placeholder }
+    env:
+      - name: COLLECTIONS
+        value: "crowdsecurity/base-http-scenarios crowdsecurity/http-cve crowdsecurity/whitelist-good-actors"
+      # Takes the event time from start_time. Without it, CrowdSec uses the time it read the line.
+      - name: PARSERS
+        value: "crowdsecurity/dateparse-enrich"
+    podSecurityContext:
+      seccompProfile: { type: RuntimeDefault }
+    securityContext:
+      allowPrivilegeEscalation: false
+      privileged: false
+      capabilities: { drop: ["ALL"] }
+    wait_for_lapi:
+      securityContext:
+        allowPrivilegeEscalation: false
+        privileged: false
+        capabilities: { drop: ["ALL"] }
+    resources:
+      requests: { cpu: 20m, memory: 128Mi }
+      limits:   { memory: 384Mi }
+    metrics:
+      podMonitor:
+        enabled: true
+    extraVolumes:
+      - name: agent-files
+        configMap:
+          name: crowdsec-agent-files
+    extraVolumeMounts:
+      - { name: agent-files, mountPath: /etc/crowdsec/acquis.d/envoy.yaml, subPath: acquis-envoy.yaml }
+      - { name: agent-files, mountPath: /etc/crowdsec/parsers/s00-raw/envoy-k8s.yaml, subPath: envoy-k8s.yaml }
+      - { name: agent-files, mountPath: /etc/crowdsec/parsers/s01-parse/envoy-json.yaml, subPath: envoy-json.yaml }
+      - { name: agent-files, mountPath: /etc/crowdsec/parsers/s02-enrich/never-ban.yaml, subPath: never-ban.yaml }
+
+  appsec:
+    enabled: false

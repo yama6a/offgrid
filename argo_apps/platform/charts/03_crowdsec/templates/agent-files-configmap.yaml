@@ -1,0 +1,31 @@
+{{- /*
+The Envoy acquisition and the local parsers. The agent mounts each key where CrowdSec reads it, see
+agent.extraVolumeMounts. never-ban is rendered here, because the own public IP comes from values.
+*/ -}}
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: crowdsec-agent-files
+  namespace: {{ .Release.Namespace }}
+data:
+  acquis-envoy.yaml: |
+    {{- .Files.Get "files/acquis-envoy.yaml" | nindent 4 }}
+  envoy-k8s.yaml: |
+    {{- .Files.Get "files/parsers/envoy-k8s.yaml" | nindent 4 }}
+  envoy-json.yaml: |
+    {{- .Files.Get "files/parsers/envoy-json.yaml" | nindent 4 }}
+  # s02-enrich: drops events that must never lead to a ban, before any scenario sees them. CCBot is on the
+  # crawler allowlist, but http-bad-user-agent flags its user agent from any IP.
+  never-ban.yaml: |
+    name: local/never-ban
+    description: "Drop events from private ranges, the own public IP and CCBot"
+    whitelist:
+      reason: "private range, own public IP or CCBot"
+      cidr:
+        {{- toYaml .Values.neverBan.cidrs | nindent 8 }}
+      {{- with .Values.neverBan.ownPublicIP }}
+      ip:
+        - {{ . | quote }}
+      {{- end }}
+      expression:
+        - evt.Parsed.http_user_agent matches '(?i)CCBot'

@@ -1,0 +1,10 @@
+apiVersion: v2
+name: crowdsec
+description: CrowdSec in audit mode. The agent reads the Envoy access log through the Kubernetes API, and LAPI stores would-be bans as simulated. A sidecar in the LAPI pod loads the verified crawler IPs into an allowlist every day.
+type: application
+version: 0.1.0 # nothing publishes this chart, so never bump it
+
+dependencies:
+  - name: crowdsec
+    version: "0.24.3"
+    repository: https://crowdsecurity.github.io/helm-charts

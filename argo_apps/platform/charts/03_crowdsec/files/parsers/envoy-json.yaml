@@ -1,0 +1,48 @@
+# s01-parse: the Envoy Gateway JSON access log. downstream_remote_address already holds the client IP that the
+# client-ip ClientTrafficPolicy in 03_gateway trusts. Envoy writes response_code as a JSON number, and the hub
+# scenarios compare http_status to strings such as '404', so Sprintf turns it into one.
+# A line with an empty :authority, such as an HTTP codec error, carries no request and fails here on purpose.
+name: local/envoy-gateway-json
+description: "Parse Envoy Gateway JSON access logs"
+filter: "evt.Parsed.program == 'envoy' && TrimSpace(evt.Parsed.message) startsWith '{'"
+onsuccess: next_stage
+nodes:
+  - filter: |
+      UnmarshalJSON(evt.Parsed.message, evt.Unmarshaled, "envoy") in ["", nil]
+      && (evt.Unmarshaled.envoy[":authority"] ?? "") != ""
+    statics:
+      - parsed: remote_addr
+        expression: |
+          let a = evt.Unmarshaled.envoy.downstream_remote_address ?? "";
+          a startsWith "[" ? Split(Split(a, "]")[0], "[")[1] : Split(a, ":")[0]
+      - parsed: time
+        expression: evt.Unmarshaled.envoy.start_time
+      - parsed: request
+        expression: evt.Unmarshaled.envoy["x-envoy-origin-path"]
+      - parsed: verb
+        expression: evt.Unmarshaled.envoy.method
+      - parsed: status
+        expression: Sprintf('%v', evt.Unmarshaled.envoy.response_code)
+      - parsed: http_user_agent
+        expression: evt.Unmarshaled.envoy["user-agent"] ?? ""
+      - parsed: target_fqdn
+        expression: evt.Unmarshaled.envoy[":authority"]
+statics:
+  - target: evt.StrTime
+    expression: evt.Parsed.time
+  - meta: service
+    value: http
+  - meta: log_type
+    value: http_access-log
+  - meta: source_ip
+    expression: evt.Parsed.remote_addr
+  - meta: http_status
+    expression: evt.Parsed.status
+  - meta: http_path
+    expression: evt.Parsed.request
+  - meta: http_verb
+    expression: evt.Parsed.verb
+  - meta: http_user_agent
+    expression: evt.Parsed.http_user_agent
+  - meta: target_fqdn
+    expression: evt.Parsed.target_fqdn

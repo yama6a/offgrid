@@ -1,0 +1,95 @@
+{{- /*
+One policy per workload. The chart labels its pods k8s-app=<release> and type=agent or type=lapi.
+LAPI holds the crawler-allowlist sidecar, so its world:443 rule also carries the list downloads.
+*/ -}}
+apiVersion: cilium.io/v2
+kind: CiliumNetworkPolicy
+metadata:
+  name: crowdsec-agent
+  namespace: {{ .Release.Namespace }}
+spec:
+  endpointSelector:
+    matchLabels:
+      k8s-app: {{ .Release.Name }}
+      type: agent
+  ingress:
+    - fromEndpoints:
+        - matchLabels:
+            k8s:io.kubernetes.pod.namespace: monitoring
+            app.kubernetes.io/name: vmagent
+      toPorts:
+        - ports:
+            - { port: "6060", protocol: TCP }
+    # Kubelet probes /metrics.
+    - fromEntities: [host, remote-node]
+      toPorts:
+        - ports:
+            - { port: "6060", protocol: TCP }
+  egress:
+    - toEndpoints:
+        - matchLabels:
+            k8s:io.kubernetes.pod.namespace: kube-system
+            k8s-app: kube-dns
+      toPorts:
+        - ports:
+            - { port: "53", protocol: UDP }
+            - { port: "53", protocol: TCP }
+    # The kubernetes acquisition watches the Envoy pods and streams their logs.
+    - toEntities: [kube-apiserver]
+    - toEndpoints:
+        - matchLabels:
+            k8s-app: {{ .Release.Name }}
+            type: lapi
+      toPorts:
+        - ports:
+            - { port: "8080", protocol: TCP }
+    # The hub index and the collections the agent installs on start.
+    - toEntities: [world]
+      toPorts:
+        - ports:
+            - { port: "443", protocol: TCP }
+---
+apiVersion: cilium.io/v2
+kind: CiliumNetworkPolicy
+metadata:
+  name: crowdsec-lapi
+  namespace: {{ .Release.Namespace }}
+spec:
+  endpointSelector:
+    matchLabels:
+      k8s-app: {{ .Release.Name }}
+      type: lapi
+  ingress:
+    - fromEndpoints:
+        - matchLabels:
+            k8s-app: {{ .Release.Name }}
+            type: agent
+      toPorts:
+        - ports:
+            - { port: "8080", protocol: TCP }
+    - fromEndpoints:
+        - matchLabels:
+            k8s:io.kubernetes.pod.namespace: monitoring
+            app.kubernetes.io/name: vmagent
+      toPorts:
+        - ports:
+            - { port: "6060", protocol: TCP }
+    # Kubelet probes /health.
+    - fromEntities: [host, remote-node]
+      toPorts:
+        - ports:
+            - { port: "8080", protocol: TCP }
+  egress:
+    - toEndpoints:
+        - matchLabels:
+            k8s:io.kubernetes.pod.namespace: kube-system
+            k8s-app: kube-dns
+      toPorts:
+        - ports:
+            - { port: "53", protocol: UDP }
+            - { port: "53", protocol: TCP }
+    # The central API registration and signal sharing, and the crawler lists.
+    - toEntities: [world]
+      toPorts:
+        - ports:
+            - { port: "443", protocol: TCP }
