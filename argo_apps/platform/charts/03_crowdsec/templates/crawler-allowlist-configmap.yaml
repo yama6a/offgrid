@@ -1,0 +1,8 @@
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: crowdsec-crawler-allowlist
+  namespace: {{ .Release.Namespace }}
+data:
+  crawler-allowlist.sh: |
+    {{- .Files.Get "files/crawler-allowlist.sh" | nindent 4 }}

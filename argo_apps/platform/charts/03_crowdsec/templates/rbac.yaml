@@ -1,0 +1,27 @@
+# The kubernetes acquisition in values.yaml lists and watches the Envoy pods, then streams each container's log.
+apiVersion: rbac.authorization.k8s.io/v1
+kind: Role
+metadata:
+  name: crowdsec-agent-log-reader
+  namespace: envoy-gateway-system
+rules:
+  - apiGroups: [""]
+    resources: ["pods"]
+    verbs: ["get", "list", "watch"]
+  - apiGroups: [""]
+    resources: ["pods/log"]
+    verbs: ["get"]
+---
+apiVersion: rbac.authorization.k8s.io/v1
+kind: RoleBinding
+metadata:
+  name: crowdsec-agent-log-reader
+  namespace: envoy-gateway-system
+roleRef:
+  apiGroup: rbac.authorization.k8s.io
+  kind: Role
+  name: crowdsec-agent-log-reader
+subjects:
+  - kind: ServiceAccount
+    name: crowdsec-agent
+    namespace: {{ .Release.Namespace }}

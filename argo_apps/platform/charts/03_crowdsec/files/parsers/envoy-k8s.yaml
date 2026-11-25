@@ -1,0 +1,10 @@
+# s00-raw: marks the lines that the kubernetes acquisition labels `type: envoy` as Envoy lines.
+name: local/envoy-k8s-raw
+description: "Label raw Envoy lines from the kubernetes datasource"
+filter: "evt.Line.Labels.type == 'envoy'"
+onsuccess: next_stage
+statics:
+  - parsed: program
+    value: envoy
+  - parsed: message
+    expression: evt.Line.Raw

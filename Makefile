@@ -46,6 +46,10 @@ configure-gha-status: ## 05: seal the GitHub token for gha-status-exporter. Need
 configure-sso: ## 04: write the SSO client ID and seal the OAuth client secret. Needs the .env creds.
 	bash lib/shell/04_google_sso.sh
 
+.PHONY: configure-crowdsec
+configure-crowdsec: ## 05: generate and seal the CrowdSec LAPI secrets. Needs the sealed-secrets controller. Each run rotates them.
+	bash lib/shell/05_crowdsec_secrets.sh
+
 .PHONY: configure-ntfy-auth
 configure-ntfy-auth: ## 06: seed the ntfy users and ACLs, and seal Grafana's ntfy write token. Needs 05_ntfy synced and the .env secret.
 	bash lib/shell/06_ntfy_auth.sh
@@ -140,6 +144,10 @@ cleanup-abandoned-pvs: ## List the PVs that nothing will bind again, Released or
 	bash lib/shell/cleanup_abandoned_pvs.sh
 
 ##@ Health and inspection: read-only
+.PHONY: crowdsec-allowlist
+crowdsec-allowlist: ## Refresh the CrowdSec crawler allowlist now. The LAPI sidecar does it once a day by itself.
+	bash lib/shell/crowdsec_allowlist.sh
+
 .PHONY: view-credentials
 view-credentials: ## Print the login URLs and credentials.
 	bash lib/shell/view_credentials.sh

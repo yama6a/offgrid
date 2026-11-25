@@ -1,0 +1,8 @@
+# Streams new lines from every container of the Envoy proxy pods, through the Kubernetes API. The selector matches
+# the labels that Envoy Gateway puts on its proxy pods. The chart's values schema has no kubernetes source, so
+# this file reaches /etc/crowdsec/acquis.d through agent.extraVolumeMounts.
+source: kubernetes
+namespace: envoy-gateway-system
+selector: "app.kubernetes.io/name=envoy,app.kubernetes.io/component=proxy"
+labels:
+  type: envoy
