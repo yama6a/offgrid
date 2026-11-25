@@ -95,7 +95,7 @@
             "type": "victoriametrics-logs-datasource",
             "uid": "VictoriaLogs"
           },
-          "expr": "kubernetes.pod_namespace:crowdsec kubernetes.container_name:crowdsec-lapi crowdsec_alert:=ban | stats count()",
+          "expr": "kubernetes.pod_namespace:crowdsec kubernetes.container_name:crowdsec-lapi crowdsec_alert:=ban -scenario:=\"test alert\" | stats count()",
           "queryType": "stats"
         }
       ]
@@ -147,7 +147,7 @@
             "type": "victoriametrics-logs-datasource",
             "uid": "VictoriaLogs"
           },
-          "expr": "kubernetes.pod_namespace:crowdsec kubernetes.container_name:crowdsec-lapi crowdsec_alert:=ban | stats count_uniq(ip)",
+          "expr": "kubernetes.pod_namespace:crowdsec kubernetes.container_name:crowdsec-lapi crowdsec_alert:=ban -scenario:=\"test alert\" | stats count_uniq(ip)",
           "queryType": "stats"
         }
       ]
@@ -256,7 +256,7 @@
             "type": "victoriametrics-logs-datasource",
             "uid": "VictoriaLogs"
           },
-          "expr": "kubernetes.pod_namespace:crowdsec kubernetes.container_name:crowdsec-lapi crowdsec_alert:=ban | stats by (scenario) count()",
+          "expr": "kubernetes.pod_namespace:crowdsec kubernetes.container_name:crowdsec-lapi crowdsec_alert:=ban -scenario:=\"test alert\" | stats by (scenario) count()",
           "queryType": "statsRange",
           "legendFormat": "{{scenario}}"
         }
@@ -372,7 +372,7 @@
             "type": "victoriametrics-logs-datasource",
             "uid": "VictoriaLogs"
           },
-          "expr": "kubernetes.pod_namespace:crowdsec kubernetes.container_name:crowdsec-lapi crowdsec_alert:=ban | stats by (ip) count() bans, max(country) country, max(as_name) as_owner, max(as_number) as_number, uniq_values(scenario) scenarios, max(_time) last_seen | sort by (bans desc) | limit 100",
+          "expr": "kubernetes.pod_namespace:crowdsec kubernetes.container_name:crowdsec-lapi crowdsec_alert:=ban -scenario:=\"test alert\" | stats by (ip) count() bans, max(country) country, max(as_name) as_owner, max(as_number) as_number, uniq_values(scenario) scenarios, max(_time) last_seen | sort by (bans desc) | limit 100",
           "queryType": "instant"
         }
       ]
