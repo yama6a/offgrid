@@ -1,6 +1,6 @@
 dependencies:
 - name: gha-status-exporter
   repository: oci://ghcr.io/yama6a/charts
-  version: 0.2.9
-digest: sha256:27f3928ce5ca8727d1dccd85ee97941095a4026a27c13b1370a176a2346e373d
+  version: 0.2.10
+digest: sha256:994e35637f47f8197936460c8ec0df1a50610c9e422ae44636cae0881c9d5fda
 generated: "1970-01-01T00:00:00Z"
