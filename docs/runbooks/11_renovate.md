@@ -20,10 +20,7 @@ GitHub knows a check name only after the check has run once. Open a PR first, th
 gh api -X PUT repos/yama6a/offgrid/branches/main/protection \
   -H "Accept: application/vnd.github+json" --input - <<'JSON'
 {
-  "required_status_checks": { "strict": false, "checks": [
-    {"context": "shell"}, {"context": "helm"}, {"context": "yaml"}, {"context": "renovate-config"},
-    {"context": "chart-tests"}
-  ]},
+  "required_status_checks": { "strict": false, "checks": [{"context": "ci"}] },
   "enforce_admins": false,
   "required_pull_request_reviews": null,
   "restrictions": null

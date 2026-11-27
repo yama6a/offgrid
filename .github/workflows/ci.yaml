@@ -1,5 +1,6 @@
-# Static checks only, with no cluster. Branch protection requires each job by its name. Renaming a job drops
-# that gate until branch protection is updated too.
+# Static checks only, with no cluster. Branch protection requires the one job by its name, ci. Renaming the job
+# drops that gate until branch protection is updated too. A push or workflow_dispatch run runs no check. It only
+# fills the chart-dependency cache.
 name: CI
 
 on:
@@ -20,60 +21,62 @@ permissions:
 
 # A deploy/* PR comes from the deploy-gitops workflow and only bumps a quoted image tag. A skipped job
 # still passes branch protection, so the PR merges without spending runner minutes.
+# GitHub bills each job rounded up to a whole minute, so the checks share one job.
 jobs:
-  shell:
-    name: shell
-    if: ${{ !startsWith(github.head_ref, 'deploy/') }}
-    runs-on: ubuntu-26.04-arm
-    steps:
-      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
-      - uses: yama6a/gha/.github/actions/shell-checks@v2
-
-  yaml:
-    name: yaml
-    if: ${{ !startsWith(github.head_ref, 'deploy/') }}
-    runs-on: ubuntu-26.04-arm
-    steps:
-      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
-      - uses: yama6a/gha/.github/actions/yaml-checks@v2
-
-  renovate-config:
-    name: renovate-config
-    if: ${{ !startsWith(github.head_ref, 'deploy/') }}
-    runs-on: ubuntu-26.04-arm
-    steps:
-      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
-      # A broken config stops every dependency update without an error.
-      - uses: yama6a/gha/.github/actions/validate-renovate-config@v2
-        with:
-          config-file: renovate.json5
-
-  helm:
-    name: helm
+  ci:
+    name: ci
     if: ${{ !startsWith(github.head_ref, 'deploy/') }}
     runs-on: ubuntu-26.04-arm
     env:
       JOBS: 8 # more workers than cores, because the work is part network
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+      # Every check runs on a PR only, and still runs and reports after an earlier check failed.
+      - uses: yama6a/gha/.github/actions/shell-checks@v2
+        if: ${{ !cancelled() && github.event_name == 'pull_request' }}
+      - uses: yama6a/gha/.github/actions/yaml-checks@v2
+        if: ${{ !cancelled() && github.event_name == 'pull_request' }}
+      # A broken config stops every dependency update without an error.
+      - uses: yama6a/gha/.github/actions/validate-renovate-config@v2
+        if: ${{ !cancelled() && github.event_name == 'pull_request' }}
+        with:
+          config-file: renovate.json5
+      # The shared charts, which the render step below reaches only as a wrapper's dependency. Each one fails
+      # the render on a missing required value, so it needs a fixture before lint or template can run.
+      - uses: yama6a/gha/.github/actions/helm-chart-checks@v2
+        if: ${{ !cancelled() && github.event_name == 'pull_request' }}
+        with:
+          helm-version: v4.3.2 # the same helm as the setup-helm step below
+          charts: |
+            lib/helm/ingress
+            lib/helm/nfs-volume
+            lib/helm/pg-cluster
+            lib/helm/rabbitmq-topology
+            lib/helm/redis-instance
+          values: |
+            lib/helm/ingress=lib/helm/ingress/ci/values.yaml
+            lib/helm/nfs-volume=lib/helm/nfs-volume/ci/values.yaml
+            lib/helm/pg-cluster=lib/helm/pg-cluster/ci/values.yaml
+            lib/helm/rabbitmq-topology=lib/helm/rabbitmq-topology/ci/values.yaml
+            lib/helm/redis-instance=lib/helm/redis-instance/ci/values.yaml
+      # From here on every event fills the chart-dependency cache, also after a failed check on a PR.
       - uses: azure/setup-helm@2f5e7bc67f1f9972ab16657bb795f36d8f04de0e # v5.1.0
+        if: ${{ !cancelled() }}
         with:
           version: v4.3.2 # pinned so the gate matches the maintainer's local helm
-      # Install only. The render step below passes it a file list and needs only the flags.
-      - uses: yama6a/gha/.github/actions/kubeconform@v2
-        with:
-          strict: 'false'
-          parallelism: ${{ env.JOBS }}
       # lib/helm is in the key, because helm packages the file:// deps from it into charts/*.tgz.
       # No restore-keys. helm dependency build downloads everything again, so a partial hit saves nothing.
       - name: restore chart dependencies
         id: helm-deps
+        if: ${{ !cancelled() }}
         uses: actions/cache/restore@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v6.1.0
         with:
           path: '**/charts/*.tgz'
           key: helm-deps-v1-${{ hashFiles('**/Chart.yaml', '**/Chart.lock', 'lib/helm/**') }}
       - name: add upstream helm repos
-        if: steps.helm-deps.outputs.cache-hit != 'true'
+        if: ${{ !cancelled() && steps.helm-deps.outputs.cache-hit != 'true' }}
         # helm dependency build needs the https repos registered, as Argo CD's repo-server has them.
         # Serial and first, so the parallel workers below only read the index cache.
         run: |
@@ -87,7 +90,7 @@ jobs:
                 done
               done
       - name: helm dependency build
-        if: steps.helm-deps.outputs.cache-hit != 'true'
+        if: ${{ !cancelled() && steps.helm-deps.outputs.cache-hit != 'true' }}
         # Rebuilds charts/ from the committed Chart.lock as Argo CD does, so a stale lock fails here, not on sync.
         # --skip-refresh, because the step above just fetched every repo index.
         run: |
@@ -113,7 +116,15 @@ jobs:
         with:
           path: '**/charts/*.tgz'
           key: ${{ steps.helm-deps.outputs.cache-primary-key }}
+      # Install only. The render step below passes it a file list and needs only the flags. It runs after
+      # helm-chart-checks, so its args without -strict replace the KUBECONFORM_ARGS that action exported.
+      - uses: yama6a/gha/.github/actions/kubeconform@v2
+        if: ${{ !cancelled() && github.event_name == 'pull_request' }}
+        with:
+          strict: 'false'
+          parallelism: ${{ env.JOBS }}
       - name: helm lint + template + kubeconform
+        if: ${{ !cancelled() && github.event_name == 'pull_request' }}
         # Render every chart first, then validate. One kubeconform run downloads each CRD schema only once.
         run: |
           out="$(mktemp -d)"; render="$(mktemp -d)"; export out render
@@ -139,26 +150,3 @@ jobs:
           find "$render" -name '*.yaml' -print0 \
             | xargs -0 -r kubeconform $KUBECONFORM_ARGS || fail=1
           exit $fail
-
-  # The shared charts, which the helm job above reaches only as a wrapper's dependency. Each one fails the
-  # render on a missing required value, so it needs a fixture before lint or template can run.
-  chart-tests:
-    name: chart-tests
-    if: ${{ !startsWith(github.head_ref, 'deploy/') }}
-    runs-on: ubuntu-26.04-arm
-    steps:
-      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
-      - uses: yama6a/gha/.github/actions/helm-chart-checks@v2
-        with:
-          charts: |
-            lib/helm/ingress
-            lib/helm/nfs-volume
-            lib/helm/pg-cluster
-            lib/helm/rabbitmq-topology
-            lib/helm/redis-instance
-          values: |
-            lib/helm/ingress=lib/helm/ingress/ci/values.yaml
-            lib/helm/nfs-volume=lib/helm/nfs-volume/ci/values.yaml
-            lib/helm/pg-cluster=lib/helm/pg-cluster/ci/values.yaml
-            lib/helm/rabbitmq-topology=lib/helm/rabbitmq-topology/ci/values.yaml
-            lib/helm/redis-instance=lib/helm/redis-instance/ci/values.yaml
